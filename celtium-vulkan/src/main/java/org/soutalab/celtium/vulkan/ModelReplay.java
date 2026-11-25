@@ -207,7 +207,7 @@ final class ModelReplay {
                 return true;
             }
             int[] state = b.celtium$captureState();
-            long key = b.celtium$stateKey(VulkanImmediateFormats.ITEM, state);
+            long key = StateSignatureKeys.celtium$stateKey(VulkanImmediateFormats.ITEM, state);
             // The guard may have proved the versions and skipped the state, the colour and the affine: the tuple this
             // replay is about to record must still carry *this* replay's bytes. The version it stores was read before
             // the capture, and a value the versions do not cover (the light-map coordinate, the payload, the combine

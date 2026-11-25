@@ -279,7 +279,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** Creates (once) and returns the discard-depth variant chain pass for a non-default (count, class). */
     private long chainPairVariantPass(int colorAttachments, TargetFormatClass formatClass) {
-        long key = StateSignatureKeys.celtium(colorAttachments, formatClass.vkFormat());
+        long key = StateSignatureKeys.celtium$chainPassKey(colorAttachments, formatClass.vkFormat());
         long cached = this.chainPairVariantPasses.get(key);
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments,
@@ -299,7 +299,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long frameVariantRenderPass(int colorAttachments, TargetFormatClass formatClass) {
         int colors = Math.max(1, colorAttachments);
         TargetFormatClass effectiveClass = formatClass == null ? celtium$frameFormatClass() : formatClass;
-        long key = StateSignatureKeys.celtium(colors, effectiveClass.vkFormat());
+        long key = StateSignatureKeys.celtium$chainPassKey(colors, effectiveClass.vkFormat());
         long cached = this.frameVariantPasses.get(key);
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createFrameRenderPass(this.context, colors, effectiveClass.vkFormat());
@@ -10032,7 +10032,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // attachment is what removes it. It edits the captured values, so it needs them materialised.
                 celtium$materializeOfferState();
                 state[3] = 0;
-                stateKey = StateSignatureKeys.celtium(formatId, state);
+                stateKey = StateSignatureKeys.celtium$stateKey(formatId, state);
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("offCapture");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offPrepare");
@@ -11366,7 +11366,7 @@ this.frameBufferOpen = false;
 
     private void celtium$stateSignature(int[] out, long stateVersion, NativeTextureEnvironment currentEnvironment,
             long environmentVersion, int windowTarget) {
-        if (StateSignatureKeys.celtium(stateVersion, environmentVersion, windowTarget,
+        if (StateSignatureKeys.celtium$signatureCacheHit(stateVersion, environmentVersion, windowTarget,
                 this.celtium$signatureCacheState, this.celtium$signatureCacheEnvironment,
                 this.celtium$signatureCacheWindowTarget)) {
             this.celtium$signatureCacheHits++;
@@ -11595,8 +11595,8 @@ this.frameBufferOpen = false;
         // profile, which is the same statement about the offer stream - consecutive offers frequently carry different
         // ids - so the single entry was thrashing on exactly the pattern the census measured. Indexing by the id keeps
         // the id in the identity (a slot only answers for the id stored in it) and stops one layout evicting another.
-        int slot = StateSignatureKeys.celtium(formatId);
-        if (StateSignatureKeys.celtium(stateVersion, environmentVersion, windowTarget, formatId,
+        int slot = StateSignatureKeys.celtium$offerKeyCacheSlot(formatId);
+        if (StateSignatureKeys.celtium$stateKeyCacheHit(stateVersion, environmentVersion, windowTarget, formatId,
                 this.celtium$keyCacheStates[slot], this.celtium$keyCacheEnvironments[slot],
                 this.celtium$keyCacheWindowTargets[slot], this.celtium$keyCacheFormats[slot],
                 this.celtium$keyCacheValids[slot])) {
@@ -11636,7 +11636,7 @@ this.frameBufferOpen = false;
             celtium$stateSignature(signature, stateVersion, currentEnvironment, environmentVersion, windowTarget);
         }
         celtium$materializeSignature(signature, captureStarted);
-        long key = StateSignatureKeys.celtium(formatId, this.celtium$stateScratch);
+        long key = StateSignatureKeys.celtium$stateKey(formatId, this.celtium$stateScratch);
         if (this.celtium$keyCacheValids[slot] && key == this.celtium$keyCacheKeys[slot]) this.celtium$keyMissSameKey++;
         this.celtium$keyCacheKeys[slot] = key;
         int[] previousSlotSignature = this.celtium$keyCacheSignatures[slot];
@@ -14064,7 +14064,7 @@ this.frameBufferOpen = false;
         // happens here, at the pipeline boundary only, so groups do not split by class. For the default
         // class the fold is the identity and the pass choice is the one this code always made (rule R6).
         TargetFormatClass pairClass = celtium$currentPairFormatClass();
-        long effectiveKey = StateSignatureKeys.celtium(key, pairClass.ordinal());
+        long effectiveKey = StateSignatureKeys.celtium$pipelineKey(key, pairClass.ordinal());
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
         // version cleared the whole cache on every pass change and hashed the texture's upload serial - which an
         // animated atlas moves every tick - so half the asks missed (633,773 hits of 1,305,294 calls, 24,415 resets

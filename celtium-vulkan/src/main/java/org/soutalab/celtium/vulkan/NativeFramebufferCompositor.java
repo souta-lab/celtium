@@ -82,7 +82,7 @@ final class NativeFramebufferCompositor {
             state[1] = state[2] = state[9] = state[10] = 0;
             state[12] = state[13] = VK_BLEND_OP_ADD;
         }
-        long key = b.celtium$stateKey(VulkanImmediateFormats.POSITION_TEX_COLOR, state);
+        long key = StateSignatureKeys.celtium$stateKey(VulkanImmediateFormats.POSITION_TEX_COLOR, state);
         PreparedImmediate material = b.prepareImmediate(VulkanImmediateFormats.POSITION_TEX_COLOR, texture, key, state);
         if (material == null) {
             System.out.println("[Celtium] CELTIUM_COMPOSITE_REFUSED texture=" + texture
