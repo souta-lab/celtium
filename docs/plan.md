@@ -25,13 +25,12 @@
 ## 引き継ぎ（2026-11-07 時点のスナップショット。現在の判定は上の表）
 
 modpack 再検証で見つかった問題の一覧と再現手順は [modpack-reverify-2026-11-06.md](evidence/modpack-reverify-2026-11-06.md)。
-修正済み: 葉の暗化（atlas mip、`r123`）・FBP 粒子の頂点形式（`f0efe0055`）・ATM3 の一人称手（`1565129a2`）・
-display list の記録漏れ（`r125`/`r126`）・**defect 3 の nested ordering flush（`r129`）**: 二重 window flush 失敗が command state を recording のまま残し、次の flush が全 batch を捨てていた（RLCraft で 2,050 batch）。同じ失敗を両armで再現した A/B で `orderingFlushFailures=0`・画像 7.04 / 6.39 % →
-6.76 / 5.87 %。**6 pack すべて verified**（`w-sf4-*`・`w-rlcraft-*`・`w-sevtech-*`・`w-po3-*`、r126）。
-未解決: ATM3 の上空の帯（defect 10、Astral Sorcery の skybox で dome の draw は発行されるが presented 画像に届かない）・
-menu 境界の破棄（defect 5、43–1,314 batch/pack）・fixture の presented 計数
-（defect 6、RLCraft の AMD leg が `FAILED_PRESENTED_IMAGE` になるが絵は正しい）。**defect 12（GTCEu bloom の program 拒否）は
-r14 で既定 on にして解消**（拒否 0、chain が描く）が、halo は bloom layer の geometry 待ちで、**Nomi の画像は撮り直しが必要**。
+修正済みの各件（葉の暗化・FBP 粒子・ATM3 の一人称手・display list の記録漏れ）と未解決の defect 10・5・6、
+defect 12（r14 で解消）の現状は上の表のとおり。ここにだけある詳細: **defect 3 の nested ordering flush
+（`r129`）**は、二重 window flush 失敗が command state を recording のまま残し、次の flush が全 batch を
+捨てていたもので（RLCraft で 2,050 batch）、両armで再現した A/B で `orderingFlushFailures=0`・画像
+7.04 / 6.39 % → 6.76 / 5.87 %。defect 10 は dome の draw は発行されるが presented 画像に届かない。
+defect 5 は 43–1,314 batch/pack。
 再検証は `scripts/modpack-reverify.sh`。
 
 **KPI leg はハーネスファイルの `guiScale=3` を共有設定で渡す**（2026-11-07 実測。渡さないと calibration key が合わず fixture が leg を拒否する）。
