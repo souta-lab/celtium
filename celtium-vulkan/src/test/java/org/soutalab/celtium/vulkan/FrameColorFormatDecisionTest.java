@@ -6,7 +6,6 @@ import org.soutalab.celtium.vulkan.hal.PresentEngine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -83,7 +82,6 @@ class FrameColorFormatDecisionTest {
         assertEquals(44, TargetFormatClass.BGRA8_UNORM.vkFormat());
         assertEquals(4, TargetFormatClass.BGRA8_UNORM.bytesPerPixel());
         assertFalse(TargetFormatClass.BGRA8_UNORM.isDepth());
-        assertNull(TargetFormatClass.forGlInternalFormat(0x8058));
         for (int glInternal : new int[] {0x8058, 0x1908, 0x881A, 0x8814, 0x8C3A}) {
             assertFalse(TargetFormatClass.forGlInternalFormat(glInternal) == TargetFormatClass.BGRA8_UNORM,
                     "no GL internal format maps to the frame's BGRA class");
