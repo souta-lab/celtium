@@ -139,11 +139,16 @@ class LandedFixGuardContractTest {
      * form of this test) broke when the pack terrain loop added a third run boundary of exactly
      * the same shape - a legitimate site the guard's intent covers, measured on the
      * merge-exec-9 stack gate. The floor stays: the two original boundaries must not disappear.
+     * <p>
+     * S3R-2 widened every site's condition with the page half
+     * ({@code || indexPage != boundIndexPage}): a run boundary now binds the run's index
+     * <em>page</em> as well as its source, under the same bind-then-record order, so the pin
+     * matches the condition's prefix and covers the widened form unchanged in intent.
      */
     @Test
     void mergeRunsBindTheirIndexSourceBeforeDrawing() throws IOException {
         String backend = read(BACKEND);
-        String guard = "if (arena != arenaBound)";
+        String guard = "if (arena != arenaBound";
         int sites = 0;
         int from = 0;
         while (true) {
