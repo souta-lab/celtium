@@ -293,6 +293,22 @@ public final class VulkanPostChain {
     private int injectedFirstUseFailures;
 
     /**
+     * C2 (item 673) pass-start barrier batching, default OFF: {@code -Dceltium.vulkan.chainBarrierBatch=true}.
+     * <p>
+     * Every {@link #shaderReadBarrier} records the identical barrier - same access masks, same GENERAL to
+     * GENERAL layouts, same {@code COLOR_ATTACHMENT_OUTPUT} to {@code FRAGMENT_SHADER} stages - differing
+     * only in the image. A pass start records two of them back to back (the input image and the aux image)
+     * with nothing recorded in between, so under this switch they ride in one {@code vkCmdPipelineBarrier}
+     * call as two image barriers: the call's dependency is the union of its barriers', at the same stages,
+     * so the batched form is exactly as strong as the two calls it replaces. The aux-is-main barrier
+     * earlier in the pass start is not merged: {@code beginUse} init barriers are recorded between it and
+     * this pair, and this batching never reorders a barrier across another recording.
+     */
+    static final boolean CHAIN_BARRIER_BATCH = Boolean.getBoolean("celtium.vulkan.chainBarrierBatch");
+    private long chainBarrierCallsSaved;
+    private long chainBarriersBatched;
+
+    /**
      * Test-only: decide the route as if the device's push-constant limit were this many bytes, so the uniform-buffer
      * route can be exercised on a device whose own limit carries the block. The verified AMD device reports 256, where
      * color_convolve's 192 bytes fit and the buffer route would be dead code on that machine; with this set to 128 the
@@ -1174,9 +1190,15 @@ public final class VulkanPostChain {
                     | beginUse(commandBuffer, outTarget);
 
             // The previous pass's attachment writes (or the acquired GL frame) must be visible to this sampler.
-            shaderReadBarrier(commandBuffer, inImage);
-            if (auxTarget != null) {
-                shaderReadBarrier(commandBuffer, auxTarget.image);
+            if (CHAIN_BARRIER_BATCH && auxTarget != null) {
+                shaderReadBarriers(commandBuffer, inImage, auxTarget.image);
+                this.chainBarrierCallsSaved++;
+                this.chainBarriersBatched += inImage == auxTarget.image ? 1 : 2;
+            } else {
+                shaderReadBarrier(commandBuffer, inImage);
+                if (auxTarget != null) {
+                    shaderReadBarrier(commandBuffer, auxTarget.image);
+                }
             }
 
             // Only while the trace budget can still print: after TRACE_LIMIT lines trace() is a no-op, and these
@@ -1673,16 +1695,53 @@ public final class VulkanPostChain {
     private void shaderReadBarrier(VkCommandBuffer commandBuffer, long image) {
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default()
-                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
-                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            fillShaderReadBarrier(barrier.get(0), image);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
         }
+    }
+
+    /** Fills one shader-read barrier exactly as {@link #shaderReadBarrier} records it. */
+    private static void fillShaderReadBarrier(VkImageMemoryBarrier barrier, long image) {
+        barrier.sType$Default()
+                .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+    }
+
+    /**
+     * Records the shader-read barriers for two images in one {@code vkCmdPipelineBarrier} call
+     * ({@link #CHAIN_BARRIER_BATCH}). Both barriers are filled by {@link #fillShaderReadBarrier}, so the
+     * only difference from two {@link #shaderReadBarrier} calls is the call count: identical masks,
+     * layouts and stages, and - the two call sites being adjacent with nothing recorded between them -
+     * the same recording position. If both names stand for the same image the duplicate is dropped: a
+     * second identical barrier on one image, with no intervening access, establishes nothing the first
+     * did not.
+     */
+    private void shaderReadBarriers(VkCommandBuffer commandBuffer, long firstImage, long secondImage) {
+        try (MemoryStack stack = stackPush()) {
+            int count = firstImage == secondImage ? 1 : 2;
+            VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(count, stack);
+            fillShaderReadBarrier(barriers.get(0), firstImage);
+            if (count == 2) {
+                fillShaderReadBarrier(barriers.get(1), secondImage);
+            }
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barriers);
+        }
+    }
+
+    /** {@return how many {@code vkCmdPipelineBarrier} calls the C2 chain batching has saved so far}. */
+    long chainBarrierCallsSaved() {
+        return this.chainBarrierCallsSaved;
+    }
+
+    /** {@return how many shader-read barriers have ridden in a batched (single-call) pair so far}. */
+    long chainBarriersBatched() {
+        return this.chainBarriersBatched;
     }
 
     /**

@@ -96,6 +96,19 @@ final class PassExecutor {
     private static final VulkanDynamicMesh.Layout FULLSCREEN_QUAD_LAYOUT =
             new VulkanDynamicMesh.Layout(VulkanImmediateTexturePipeline.POSITION_TEX_BYTES, 0, 12, -1, -1, -1);
 
+    /**
+     * C2 (item 673) pass-start barrier batching, default OFF: {@code -Dceltium.vulkan.passBarrierBatch=true}.
+     * <p>
+     * A stage's input transitions used to record one {@code vkCmdPipelineBarrier} per input at the pass
+     * start. Transitions that share the same {@code (srcStage, dstStage)} pair can ride in a single call as
+     * several image barriers: the Vulkan dependency a call establishes is the union of its barriers', at
+     * exactly those stages, and nothing is recorded between the per-input calls (the loop between them only
+     * fills CPU-side arrays), so the batched form establishes exactly the dependencies the separate calls
+     * did - no stage or access mask is widened, narrowed or moved. The output transition keeps its own
+     * call: its stage pair differs from every input's, and merging across stage pairs would widen stages.
+     */
+    static final boolean PASS_BARRIER_BATCH = Boolean.getBoolean("celtium.vulkan.passBarrierBatch");
+
     private final VulkanContext context;
     private final RenderTargetRegistry targetRegistry;
     private final PublishedFrameTextures publishedTextures;
@@ -110,6 +123,13 @@ final class PassExecutor {
     private long[] scratchSamplers = new long[8];
     private int[] scratchLayouts = new int[8];
     private long[] scratchGenerations = new long[8];
+    // C2 batching scratch (PASS_BARRIER_BATCH only): the pending input transitions of one stage.
+    private long[] scratchBarrierImages = new long[8];
+    private int[] scratchBarrierOldLayouts = new int[8];
+    private int[] scratchBarrierNewLayouts = new int[8];
+    private boolean[] scratchBarrierDepths = new boolean[8];
+    private long inputBarrierCallsSaved;
+    private long inputTransitionsBatched;
     private final long[] fallbackBindCache = new long[6];
     private ByteBuffer scratchZeroUniforms;
 
@@ -241,18 +261,36 @@ final class PassExecutor {
                 long[] samplers = this.scratchSamplers;
                 int[] layouts = this.scratchLayouts;
                 long[] generations = this.scratchGenerations;
+                int pendingTransitions = 0;
                 for (int i = 0; i < inputs.length; i++) {
                     int sampledLayout = inputs[i].depth()
                             ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                    transitionImageLayout(commandBuffer, inputs[i].image(), inputs[i].layout(), sampledLayout,
-                            inputs[i].depth(), stack);
+                    if (PASS_BARRIER_BATCH) {
+                        // Deferred to recordBatchedInputTransitions below: nothing is recorded into the
+                        // command buffer between here and there (this loop only fills CPU-side arrays and
+                        // the registry note), so the grouped barriers land at the same recording position
+                        // the per-input calls occupied.
+                        if (inputs[i].layout() != sampledLayout) {
+                            this.scratchBarrierImages[pendingTransitions] = inputs[i].image();
+                            this.scratchBarrierOldLayouts[pendingTransitions] = inputs[i].layout();
+                            this.scratchBarrierNewLayouts[pendingTransitions] = sampledLayout;
+                            this.scratchBarrierDepths[pendingTransitions] = inputs[i].depth();
+                            pendingTransitions++;
+                        }
+                    } else {
+                        transitionImageLayout(commandBuffer, inputs[i].image(), inputs[i].layout(), sampledLayout,
+                                inputs[i].depth(), stack);
+                    }
                     this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), inputs[i].name(),
                             sampledLayout);
                     views[i] = inputs[i].view();
                     samplers[i] = inputs[i].sampler();
                     layouts[i] = sampledLayout;
                     generations[i] = inputs[i].generation();
+                }
+                if (PASS_BARRIER_BATCH && pendingTransitions > 0) {
+                    recordBatchedInputTransitions(commandBuffer, pendingTransitions, stack);
                 }
                 samplerSet = pipeline.samplerSetForHandles(views, samplers, layouts, generations, inputs.length);
                 if (samplerSet == 0L) {
@@ -489,6 +527,20 @@ final class PassExecutor {
         this.scratchSamplers = new long[next];
         this.scratchLayouts = new int[next];
         this.scratchGenerations = new long[next];
+        this.scratchBarrierImages = new long[next];
+        this.scratchBarrierOldLayouts = new int[next];
+        this.scratchBarrierNewLayouts = new int[next];
+        this.scratchBarrierDepths = new boolean[next];
+    }
+
+    /** {@return how many {@code vkCmdPipelineBarrier} calls the C2 batching has saved so far}. */
+    long inputBarrierCallsSaved() {
+        return this.inputBarrierCallsSaved;
+    }
+
+    /** {@return how many input transitions have ridden in a batched (multi-barrier) call so far}. */
+    long inputTransitionsBatched() {
+        return this.inputTransitionsBatched;
     }
 
     private ByteBuffer zeroUniforms(int pushBytes) {
@@ -507,7 +559,15 @@ final class PassExecutor {
             return;
         }
         VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-        barrier.get(0).sType$Default()
+        fillTransitionBarrier(barrier.get(0), image, oldLayout, newLayout, depth);
+        int[] stages = transitionStages(oldLayout, newLayout, depth);
+        vkCmdPipelineBarrier(commandBuffer, stages[0], stages[1], 0, null, null, barrier);
+    }
+
+    /** Fills one image barrier exactly as {@link #transitionImageLayout} records it. */
+    private static void fillTransitionBarrier(VkImageMemoryBarrier barrier, long image, int oldLayout,
+                                              int newLayout, boolean depth) {
+        barrier.sType$Default()
                 .oldLayout(oldLayout)
                 .newLayout(newLayout)
                 .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
@@ -523,12 +583,16 @@ final class PassExecutor {
                                         | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                                         : VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
                                                 | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
-        barrier.get(0).subresourceRange()
+        barrier.subresourceRange()
                 .aspectMask(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT)
                 .baseMipLevel(0)
                 .levelCount(1)
                 .baseArrayLayer(0)
                 .layerCount(1);
+    }
+
+    /** {@return the {@code [srcStage, dstStage]} pair {@link #transitionImageLayout} records with}. */
+    static int[] transitionStages(int oldLayout, int newLayout, boolean depth) {
         int srcStage = oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
                 ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
                 : (depth ? VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
@@ -538,7 +602,95 @@ final class PassExecutor {
                         ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
                         : (depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
                                 : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, barrier);
+        return new int[] { srcStage, dstStage };
+    }
+
+    /**
+     * {@return the group id of each transition when transitions are grouped by their exact
+     * {@code (srcStage, dstStage)} pair, in first-seen order}. Pure, so the grouping contract is testable
+     * without a device: transitions in one group share both stages, which is the whole precondition for
+     * recording them in one {@code vkCmdPipelineBarrier} call without widening any stage.
+     */
+    static int[] transitionGroups(int[] srcStages, int[] dstStages) {
+        int[] groups = new int[srcStages.length];
+        int groupCount = 0;
+        int[] groupSrc = new int[srcStages.length];
+        int[] groupDst = new int[srcStages.length];
+        for (int i = 0; i < srcStages.length; i++) {
+            int group = -1;
+            for (int g = 0; g < groupCount; g++) {
+                if (groupSrc[g] == srcStages[i] && groupDst[g] == dstStages[i]) {
+                    group = g;
+                    break;
+                }
+            }
+            if (group < 0) {
+                group = groupCount++;
+                groupSrc[group] = srcStages[i];
+                groupDst[group] = dstStages[i];
+            }
+            groups[i] = group;
+        }
+        return groups;
+    }
+
+    /** {@return how many {@code vkCmdPipelineBarrier} calls recording these transitions takes}. */
+    static int transitionBarrierCallCount(int[] srcStages, int[] dstStages, boolean batch) {
+        if (!batch) {
+            return srcStages.length;
+        }
+        int[] groups = transitionGroups(srcStages, dstStages);
+        int calls = 0;
+        for (int group : groups) {
+            calls = Math.max(calls, group + 1);
+        }
+        return calls;
+    }
+
+    /**
+     * Records the pending input transitions collected under {@link #PASS_BARRIER_BATCH}: one
+     * {@code vkCmdPipelineBarrier} per distinct {@code (srcStage, dstStage)} group, each barrier filled by
+     * the same {@link #fillTransitionBarrier} the unbatched path uses. Grouping never crosses a stage
+     * pair, so every dependency the per-input calls established is established here at the same stages
+     * with the same masks - the saving is purely the per-call recording cost of the extra calls.
+     */
+    private void recordBatchedInputTransitions(VkCommandBuffer commandBuffer, int pending, MemoryStack stack) {
+        int[] srcStages = new int[pending];
+        int[] dstStages = new int[pending];
+        for (int i = 0; i < pending; i++) {
+            int[] stages = transitionStages(this.scratchBarrierOldLayouts[i], this.scratchBarrierNewLayouts[i],
+                    this.scratchBarrierDepths[i]);
+            srcStages[i] = stages[0];
+            dstStages[i] = stages[1];
+        }
+        int[] groups = transitionGroups(srcStages, dstStages);
+        int groupCount = transitionBarrierCallCount(srcStages, dstStages, true);
+        for (int g = 0; g < groupCount; g++) {
+            int members = 0;
+            for (int i = 0; i < pending; i++) {
+                if (groups[i] == g) {
+                    members++;
+                }
+            }
+            VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(members, stack);
+            int slot = 0;
+            int first = -1;
+            for (int i = 0; i < pending; i++) {
+                if (groups[i] == g) {
+                    if (first < 0) {
+                        first = i;
+                    }
+                    fillTransitionBarrier(barriers.get(slot++), this.scratchBarrierImages[i],
+                            this.scratchBarrierOldLayouts[i], this.scratchBarrierNewLayouts[i],
+                            this.scratchBarrierDepths[i]);
+                }
+            }
+            vkCmdPipelineBarrier(commandBuffer, srcStages[first], dstStages[first], 0, null, null, barriers);
+            if (members > 1) {
+                this.inputTransitionsBatched += members;
+            }
+        }
+        this.inputBarrierCallsSaved += pending - groupCount;
     }
 
     void delete() {
