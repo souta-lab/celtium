@@ -24670,6 +24670,11 @@ this.frameBufferOpen = false;
      */
     private boolean waitForSlot(int slot) {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
+            if (slot >= 0 && slot < FRAME_SLOTS) {
+                // Nothing of this slot's is in flight, so the GPU is done with its linear-ring slices: this
+                // "not pending" answer is one of the confirmations the ring's reset gate (Stage 2) accepts.
+                this.context.celtium$resetFrameLinearSlot(slot);
+            }
             return true;
         }
         long deferredFence = this.slotDeferredFences[slot];
@@ -24678,6 +24683,29 @@ this.frameBufferOpen = false;
             // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
             this.context.celtium$flushBatchedSubmits();
             this.context.celtium$fenceOnPresenter(deferredFence, true);
+            // Stage 2: the batch this slot rode in signalled the frame timeline as it submitted, so the wait
+            // can be a single counter wait on the value the batch was handed - the frame's one permitted
+            // blocking wait - instead of a fence wait. A timeout falls through to the fence wait below rather
+            // than inventing a second disposition: its retries and stall latch are the established answer to
+            // a slot that will not confirm. The fault-injection switches skip this path deliberately: they
+            // exist to exercise the fence wait's failure shapes, and a timeline success would silently
+            // disarm them.
+            long timelineValue = this.context.celtium$timelineValueForFence(deferredFence);
+            org.soutalab.celtium.vulkan.hal.FrameTimeline timeline = this.context.frameTimeline();
+            if (timeline != null && timelineValue > 0L && !FENCE_WAIT_FAULT && !DEVICE_LOST_FAULT) {
+                long started = System.nanoTime();
+                boolean reached = timeline.awaitValue(timelineValue, IDLE_TIMEOUT_NANOS);
+                this.celtium$recordFrameWait(started);
+                if (reached) {
+                    this.scheduler.noteSlotWait(true);
+                    // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the
+                    // reclaim's callback, once, rather than here - polling also frees every earlier entry
+                    // the timeline value covered.
+                    this.context.celtium$pollDeferredSubmits();
+                    this.context.celtium$resetFrameLinearSlot(slot);
+                    return true;
+                }
+            }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
@@ -24748,6 +24776,9 @@ this.frameBufferOpen = false;
             } else {
                 celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
             }
+            // The slot's submission is confirmed, in whichever shape the confirmation arrived: its
+            // linear-ring slices are the GPU's no longer (Stage 2's reset gate).
+            this.context.celtium$resetFrameLinearSlot(slot);
             return true;
         }
     }
