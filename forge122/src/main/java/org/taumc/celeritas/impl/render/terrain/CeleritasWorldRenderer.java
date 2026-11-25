@@ -22,6 +22,7 @@ import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
 
 import java.util.*;
+import java.util.function.BooleanSupplier;
 
 /**
  * Provides an extension to vanilla's {@link net.minecraft.client.renderer.RenderGlobal}.
@@ -433,7 +434,12 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
      * passes the pre-deletion Demonica+BSL smoke), not before.
      */
     private static boolean shaderPackInUse() {
-        boolean inUse = ShaderModBridge.areShadersEnabled();
+        return shaderPackInUse(ShaderModBridge::areShadersEnabled);
+    }
+
+    /** Test seam: the production path supplies the bridge above; tests supply the shader state directly. */
+    static boolean shaderPackInUse(BooleanSupplier shadersEnabled) {
+        boolean inUse = shadersEnabled.getAsBoolean();
         if (inUse && !terrainA16GuardReported) {
             terrainA16GuardReported = true;
             System.out.println("[Celtium] CELTIUM_TERRAIN_A16_GUARD shader pack in use: TERRAIN_A16 held back, "
@@ -443,7 +449,12 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     }
 
     private ChunkVertexType chooseVertexType() {
-        if (TERRAIN_ENGINE_A && !shaderPackInUse()) {
+        return chooseVertexType(ShaderModBridge::areShadersEnabled);
+    }
+
+    /** Test seam with the same selection body as the production no-arg path. */
+    static ChunkVertexType chooseVertexType(BooleanSupplier shadersEnabled) {
+        if (TERRAIN_ENGINE_A && !shaderPackInUse(shadersEnabled)) {
             return ChunkMeshFormats.TERRAIN_A16;
         }
         // Diagnostic: the compact path builds its colours in VintageBlockRenderer, the vanilla-like path copies the
