@@ -65,8 +65,10 @@ public final class GlsmClearState {
             }
         } else {
             this.foreignClears++;
-            this.lastForeignRed = this.red; this.lastForeignGreen = this.green;
-            this.lastForeignBlue = this.blue;
+            if ((mask & 0x4000) != 0) {
+                this.lastForeignRed = this.red; this.lastForeignGreen = this.green;
+                this.lastForeignBlue = this.blue;
+            }
         }
         this.version++;
     }

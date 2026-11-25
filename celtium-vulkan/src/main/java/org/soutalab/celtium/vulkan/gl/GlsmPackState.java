@@ -189,16 +189,7 @@ public final class GlsmPackState {
         if (harvestedValues == null) {
             harvestedValues = new LinkedHashMap<>();
             for (String name : PER_FRAME_MEMBERS.keySet()) {
-                float[] value = program.floats(name);
-                if (value == null) {
-                    int[] ints = program.ints(name);
-                    if (ints != null) {
-                        value = new float[ints.length];
-                        for (int i = 0; i < ints.length; i++) {
-                            value[i] = ints[i];
-                        }
-                    }
-                }
+                float[] value = offeredValue(program, name);
                 if (value != null) {
                     harvestedValues.put(name, value.clone());
                 }
@@ -207,7 +198,7 @@ public final class GlsmPackState {
             return harvestedValues;
         }
         for (String name : PER_FRAME_MEMBERS.keySet()) {
-            float[] offered = program.floats(name);
+            float[] offered = offeredValue(program, name);
             if (offered == null) {
                 continue;
             }
@@ -219,6 +210,27 @@ public final class GlsmPackState {
             }
         }
         return harvestedValues;
+    }
+
+    /**
+     * What {@code program} currently offers for one PER_FRAME member: its float values, or
+     * its int values widened to floats (int members such as {@code frameCounter} are written
+     * through the int path). Every offer in an epoch is read this way - reading only the
+     * float path for later offers would make int members invisible after the first program:
+     * never harvested when the first writer skipped them, and never counted as divergences.
+     */
+    private static float[] offeredValue(ModProgramRegistry.Program program, String name) {
+        float[] value = program.floats(name);
+        if (value == null) {
+            int[] ints = program.ints(name);
+            if (ints != null) {
+                value = new float[ints.length];
+                for (int i = 0; i < ints.length; i++) {
+                    value[i] = ints[i];
+                }
+            }
+        }
+        return value;
     }
 
     private static boolean sameBits(float[] a, float[] b) {

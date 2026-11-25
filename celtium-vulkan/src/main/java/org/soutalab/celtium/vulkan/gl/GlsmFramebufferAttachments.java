@@ -73,27 +73,41 @@ public final class GlsmFramebufferAttachments {
         this.version++;
     }
 
-    /** A deleted texture stops being any framebuffer's attachment, in both directions. */
+    /**
+     * A deleted texture stops being any framebuffer's attachment, in both directions.
+     * A texture can be shared by several framebuffers, so every forward record is swept -
+     * cleaning only the one framebuffer the reverse map names would leave the dead texture
+     * name behind in the other sharers' records and slot arrays.
+     */
     public void textureDeleted(int texture) {
-        Integer colorFbo = this.fboByColorTexture.remove(texture);
-        if (colorFbo != null) {
-            this.colorTextureByFbo.remove(colorFbo);
-            int[] slots = this.colorSlotsByFbo.get(colorFbo);
-            if (slots != null) {
-                for (int i = 0; i < slots.length; i++) if (slots[i] == texture) slots[i] = 0;
-            }
+        this.fboByColorTexture.remove(texture);
+        this.colorTextureByFbo.entrySet().removeIf(
+                entry -> entry.getValue().intValue() == texture);
+        for (int[] slots : this.colorSlotsByFbo.values()) {
+            for (int i = 0; i < slots.length; i++) if (slots[i] == texture) slots[i] = 0;
         }
-        Integer depthFbo = this.fboByDepthTexture.remove(texture);
-        if (depthFbo != null) this.depthTextureByFbo.remove(depthFbo);
+        this.fboByDepthTexture.remove(texture);
+        this.depthTextureByFbo.entrySet().removeIf(
+                entry -> entry.getValue().intValue() == texture);
         this.version++;
     }
 
     public void framebufferDeleted(int framebuffer) {
         Integer color = this.colorTextureByFbo.remove(framebuffer);
-        if (color != null) this.fboByColorTexture.remove(color);
-        Integer depth = this.depthTextureByFbo.remove(framebuffer);
-        if (depth != null) this.fboByDepthTexture.remove(depth);
         this.colorSlotsByFbo.remove(framebuffer);
+        if (color != null && Integer.valueOf(framebuffer).equals(this.fboByColorTexture.get(color))) {
+            // The reverse entry is this framebuffer's to drop; a texture another framebuffer
+            // still shares keeps a reverse entry, re-pointed at a surviving holder by the
+            // self-healing scan. Removing it unconditionally (as the attach-side guard at the
+            // top of attachColor refuses to) would break the sharer's resolution.
+            this.fboByColorTexture.remove(color);
+            this.framebufferForColorTexture(color.intValue());
+        }
+        Integer depth = this.depthTextureByFbo.remove(framebuffer);
+        if (depth != null && Integer.valueOf(framebuffer).equals(this.fboByDepthTexture.get(depth))) {
+            this.fboByDepthTexture.remove(depth);
+            this.framebufferForDepthTexture(depth.intValue());
+        }
         this.version++;
     }
 
