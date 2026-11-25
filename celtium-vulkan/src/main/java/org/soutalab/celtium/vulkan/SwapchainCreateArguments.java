@@ -105,10 +105,11 @@ public final class SwapchainCreateArguments {
      * #422 (a) - the present path writes swapchain images solely through blits and clears, so
      * colour-attachment usage is dropped and displayable DCC compression metadata on RDNA3 proprietary
      * drivers never collides with {@code UNDEFINED -> TRANSFER_DST} presents. This is the BH-18
-     * contract's default, and it is the shipped default again since direct present landed opt-in
-     * (ruling, lanechat #9168): {@link VulkanSwapchain} makes its own selection through the explicit
-     * overloads below, passing the transfer-only shape unless {@code -Dceltium.present.direct=true}
-     * opts into the direct path, whose mode requires colour-attachment usage and keeps transfer usage
+     * contract's default for this entry point: {@link VulkanSwapchain} makes its own selection through
+     * the explicit overloads below, passing the transfer-only shape only when direct present is not
+     * in effect ({@code -Dceltium.present.direct=false}; direct present is the default since the
+     * Stage 2 integration landing restored it under ruling lanechat #9168), and the direct path's
+     * shape otherwise, whose mode requires colour-attachment usage and keeps transfer usage
      * wherever the surface offers it (the readback/dump block and the loading screen's standalone
      * present read those bits).
      *
@@ -127,7 +128,7 @@ public final class SwapchainCreateArguments {
      * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
      * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
      * The transfer-only request is the composite fallback path's shape, reached whenever direct
-     * present is not in effect (the default; {@code -Dceltium.present.direct=true} opts in).
+     * present is not in effect ({@code -Dceltium.present.direct=false}; it is on by default).
      *
      * @param surface             what the surface reported
      * @param requestedWidth      the window's framebuffer width

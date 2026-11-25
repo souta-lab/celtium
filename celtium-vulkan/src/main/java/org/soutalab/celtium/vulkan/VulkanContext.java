@@ -89,17 +89,19 @@ public final class VulkanContext {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
      * The direct present path (A→B overhaul Stage 1): frames render into a borrowed swapchain image and
-     * the present is a layout transition plus {@code vkQueuePresentKHR}, never a blit. Landed OPT-IN
-     * (ruling, lanechat #9168): the default is OFF, so an unset property takes the frame path down the
-     * composite blit present (and transfer-only swapchain usage) exactly as before this stage, and
-     * {@code -Dceltium.present.direct=true} opts into the direct path. The borrowed-image machinery
-     * carries a framebuffer/layout lifetime defect (measured: with the path on, a [50, 44] surface
-     * machine ignites and then crashes ~9 s into the world; S1 record §6/§7) that the pre-landing format
-     * gate had hidden. The default returns to ON only in the same landing that fixes that defect in the
-     * Stage 2 integration and confirms a full ignition leg run.
+     * the present is a layout transition plus {@code vkQueuePresentKHR}, never a blit. The default is ON
+     * (restored in the Stage 2 integration landing): an unset property takes the direct path, and
+     * {@code -Dceltium.present.direct=false} is the complete opt-out, taking the frame path down the
+     * composite blit present (and transfer-only swapchain usage) exactly as before Stage 1. The path
+     * landed opt-in (ruling, lanechat #9168) because the borrowed-image machinery carried a
+     * framebuffer/layout lifetime defect (measured then: ignition followed by a crash ~9 s into the
+     * world; S1 record §6/§7); the ruling's restore condition - that defect fixed and a full ignition
+     * leg run survived in the same landing - is met by the Stage 2 borrow fix (defects A-E;
+     * OVERHAUL-S2-BORROWFIX record section 5: three flag-on legs exit 0, the last with direct present
+     * held throughout and no framebuffer/layout validation errors).
      */
     public static final boolean PRESENT_DIRECT =
-            "true".equalsIgnoreCase(System.getProperty("celtium.present.direct", "false"));
+            !"false".equalsIgnoreCase(System.getProperty("celtium.present.direct", "true"));
     private static final boolean HIDE_FD_EXTENSIONS =
             Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =

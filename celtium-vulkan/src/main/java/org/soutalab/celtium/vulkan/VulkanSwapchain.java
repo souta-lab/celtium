@@ -52,8 +52,9 @@ public final class VulkanSwapchain {
     /**
      * Request transfer-only swapchain image usage (issue #422 (a)) on the composite fallback path only: the
      * direct present path renders into the swapchain image and requires colour-attachment usage, so
-     * transfer-only applies exactly when direct present is not in effect (the default since the opt-in
-     * landing; {@code -Dceltium.present.direct=true} opts in) and the frame path is the blit present.
+     * transfer-only applies exactly when direct present is not in effect (direct present is the
+     * default again since the Stage 2 integration landing; {@code -Dceltium.present.direct=false}
+     * opts out) and the frame path is the blit present.
      * On that path the {@code celtium.vulkan.presentTransferOnly} property keeps
      * its old meaning (default true; {@code false} opts back into colour-attachment usage).
      */
@@ -1809,14 +1810,17 @@ public final class VulkanSwapchain {
      * {@link #presentImage} survives only for the loading screen's standalone texture present, whose
      * source is not a frame the target rendered.
      * <p>
-     * Known shape debt, owned by Stage 2's integration (designer audit 2026-11-25, section 1 Stage 1):
-     * the final transition below is a pre-recorded command buffer submitted as its own
-     * {@code vkQueueSubmit}, where the plan's shape is no separate submit at all - the frame's render
-     * pass declares {@code PRESENT_SRC_KHR} as its final layout and the one frame submission carries the
-     * transition. Removing the separate submit belongs with Stage 2's one-submit work (with the dummy
-     * signal/wait removal and the async present thread's removal), not with this branch: the transition's
-     * semaphore choreography is the frame timeline's business, and changing it here would pre-empt the
-     * integration this audit's order prescribes.
+     * Known shape debt (designer audit 2026-11-25, section 1 Stage 1): the final transition below is a
+     * pre-recorded command buffer submitted as its own {@code vkQueueSubmit}, where the plan's shape is
+     * no separate submit at all - the frame's render pass declares {@code PRESENT_SRC_KHR} as its final
+     * layout and the one frame submission carries the transition. Adjudicated at the Stage 2
+     * integration landing (OVERHAUL-INTEGRATION-S2 record): the elimination is NOT folded into that
+     * landing, because its planned shape is a render-pass construction change (pass variants keyed by
+     * final layout, plus the layout ledger's resting-layout update), not a submit-plumbing fold, and
+     * the integration leg's verdict had to attribute to the merge and the direct-present default
+     * restoration alone. The separate submit stays until that slice lands: it is one present-path
+     * packet per presented frame, issued after the frame's batched submits are flushed
+     * ({@link #submitPreRecorded} flushes them first), in the same class as the borrow-acquire drain.
      */
     public String presentDirect(FrameImageTarget target) {
         long presentStarted = System.nanoTime();
