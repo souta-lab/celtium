@@ -369,6 +369,13 @@ public final class VulkanContext {
      */
     private static final class SharedBatch {
         private long fence;
+        /**
+         * The frame-timeline value this batch's submission signals (Stage 2), allocated in
+         * {@link #submitBatch} - the one point every batch passes on its way to the queue - and 0 while the
+         * batch is unsubmitted or the device has no timeline. A reader that sees a value above 0 knows the
+         * submission is armed and that the timeline reaching it confirms this batch exactly as its fence does.
+         */
+        private long timelineValue;
         private int pending;
         /** The creating context's serial for this batch (item 529, instrument I3). */
         private long serial;
@@ -1354,6 +1361,7 @@ public final class VulkanContext {
             } else {
                 batch.pending = 0;
                 batch.submittedNanos = 0L;
+                batch.timelineValue = 0L;
                 batch.frameEntries = 0;
                 batch.deferredEntries = 0;
                 batch.semaphoreEntries = 0;
@@ -1463,7 +1471,8 @@ public final class VulkanContext {
     private boolean[] submitChunkBarriers = new boolean[SUBMIT_CHUNK];
     private int[] submitChunkGroups = new int[SUBMIT_CHUNK];
 
-    private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence) {
+    private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence,
+            long timelineSemaphore, long timelineValue) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int chunkSize = to - from;
             if (this.submitChunkBarriers.length < chunkSize) {
@@ -1502,6 +1511,40 @@ public final class VulkanContext {
                 if (entry.signalSemaphores != null) {
                     submit.pSignalSemaphores(stack.longs(entry.signalSemaphores));
                 }
+                if (i == groupCount - 1 && timelineValue > 0L) {
+                    // Stage 2: the batch's timeline signal rides the chunk's last submit info, appended to
+                    // whatever binary signals that info already carries. The values array the timeline info
+                    // requires is one entry per wait and per signal semaphore: binary semaphores take 0, and
+                    // the appended timeline semaphore takes the batch's value. Signalling here - after every
+                    // command buffer of the batch, in queue order - is what lets one counter value confirm
+                    // the whole batch exactly as its shared fence does.
+                    int waits = entry.waitSemaphores == null ? 0 : entry.waitSemaphores.length;
+                    int signals = entry.signalSemaphores == null ? 0 : entry.signalSemaphores.length;
+                    LongBuffer signalHandles = stack.mallocLong(signals + 1);
+                    for (int s = 0; s < signals; s++) {
+                        signalHandles.put(s, entry.signalSemaphores[s]);
+                    }
+                    signalHandles.put(signals, timelineSemaphore);
+                    submit.pSignalSemaphores(signalHandles);
+                    LongBuffer signalValues = stack.mallocLong(signals + 1);
+                    for (int s = 0; s < signals; s++) {
+                        signalValues.put(s, 0L);
+                    }
+                    signalValues.put(signals, timelineValue);
+                    org.lwjgl.vulkan.VkTimelineSemaphoreSubmitInfo timelineInfo =
+                            org.lwjgl.vulkan.VkTimelineSemaphoreSubmitInfo.calloc(stack)
+                                    .sType(org.lwjgl.vulkan.VK12
+                                            .VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO)
+                                    .pSignalSemaphoreValues(signalValues);
+                    if (waits > 0) {
+                        LongBuffer waitValues = stack.mallocLong(waits);
+                        for (int w = 0; w < waits; w++) {
+                            waitValues.put(w, 0L);
+                        }
+                        timelineInfo.pWaitSemaphoreValues(waitValues);
+                    }
+                    submit.pNext(timelineInfo.address());
+                }
                 position += count;
             }
             try {
@@ -1526,13 +1569,27 @@ public final class VulkanContext {
      *         {@link #abandonFailedBatch} on its own thread
      */
     private Throwable submitBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
+        // Stage 2: the batch's timeline value is allocated here, the one point every batch passes on its way
+        // to the queue - the game thread's flush and the presenter worker alike. Allocation order is submission
+        // order because submitBatch calls are serialised by the presenter-join discipline (a flush joins the
+        // worker before it submits), and the lock keeps that true even where the discipline is only a comment.
+        // The value rides the last chunk's last submit info, beside the shared fence: both confirm the batch,
+        // the counter without a per-batch fence query.
+        if (this.frameTimeline != null && !entries.isEmpty()) {
+            synchronized (this.timelineValueLock) {
+                batch.timelineValue = this.frameTimeline.nextValue();
+            }
+        }
         // In chunks: a loading screen can queue hundreds of uploads in one batch (measured on Enigmatica 2 Expert's
         // texture stitch: "OutOfMemoryError: Out of stack space" building one VkSubmitInfo array for all of them on the
         // 64 KiB MemoryStack). Chunks go to the queue in order and only the last arms the shared fence, which the
         // queue signals after every earlier submission - the same completion the single call gave.
         for (int from = 0; from < entries.size(); from += SUBMIT_CHUNK) {
             int to = Math.min(entries.size(), from + SUBMIT_CHUNK);
-            Throwable failure = submitChunk(entries, from, to, to == entries.size() ? batch.fence : VK_NULL_HANDLE);
+            boolean lastChunk = to == entries.size();
+            Throwable failure = submitChunk(entries, from, to, lastChunk ? batch.fence : VK_NULL_HANDLE,
+                    lastChunk && batch.timelineValue > 0L ? this.frameTimeline.semaphore() : VK_NULL_HANDLE,
+                    lastChunk ? batch.timelineValue : 0L);
             if (failure != null) {
                 // A failure after an earlier chunk reached the queue is a device-level error (the same call with the
                 // same kind of entries just succeeded); the caller's free-everything path is then the lost-device one.
@@ -1825,6 +1882,10 @@ public final class VulkanContext {
             throw celtium$lostDevice("pollDeferredSubmits after previous loss");
         }
         int reclaimed = 0;
+        // Stage 2: the timeline's counter, read at most once per poll. A batch whose value the counter has
+        // reached is complete exactly as if its fence had been queried - the value and the fence are signalled
+        // by the same submission - so the walk below can reclaim it without the per-head fence ioctl.
+        long timelineCompleted = -1L;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
             if (head.batch != null && head.batch == this.presenterBatch) {
@@ -1839,6 +1900,20 @@ public final class VulkanContext {
             if (head.batch != null && head.batch == this.pendingBatch) {
                 // Still in the unflushed batch: its fence is not armed, so it reads NOT_READY - known without the
                 // ioctl a vkGetFenceStatus costs.
+                break;
+            }
+            if (head.batch != null && head.batch.timelineValue > 0L && this.frameTimeline != null) {
+                if (timelineCompleted < 0L) {
+                    timelineCompleted = this.frameTimeline.completedValue();
+                }
+                if (timelineCompleted >= head.batch.timelineValue) {
+                    this.deferredSubmits.poll();
+                    celtium$reclaimDeferred(head, false);
+                    reclaimed++;
+                    continue;
+                }
+                // Not reached: the same submission arms the batch's fence, so the fence cannot be signalled
+                // either - falling through to the fence query would only pay an ioctl for the same answer.
                 break;
             }
             int status = vkGetFenceStatus(this.device, head.fence);
@@ -2485,6 +2560,18 @@ public final class VulkanContext {
                 allocator.delete();
             }
             this.deviceLocalImageSlabsByType.clear();
+            // Stage 2's device children die with the drains above complete and before the device itself:
+            // the ring's buffers first (they are ordinary allocations), then the timeline semaphore.
+            // The timeline dies last of the three groups because slab collection reads the completed
+            // timeline value (the merged completion currency).
+            if (this.frameLinearRing != null) {
+                this.frameLinearRing.delete();
+                this.frameLinearRing = null;
+            }
+            if (this.frameTimeline != null) {
+                this.frameTimeline.delete();
+                this.frameTimeline = null;
+            }
             vkDestroyDevice(this.device, null);
             this.device = null;
         }
@@ -3104,6 +3191,25 @@ public final class VulkanContext {
     private boolean drawIndirectFirstInstanceSupported;
     /** Whether {@code VkPhysicalDeviceVulkan12Features.drawIndirectCount} was reported and enabled (E10). */
     private boolean drawIndirectCountSupported;
+    /**
+     * Whether {@code VkPhysicalDeviceVulkan12Features.timelineSemaphore} was reported and enabled at creation
+     * (Stage 2). Unlike the new architecture's experimental line, the product line does not refuse a device
+     * without it: {@link #frameTimeline} stays null and every synchronisation path keeps the fence behaviour it
+     * had, so the feature is an acceleration of the existing bookkeeping where it exists, never a new gate.
+     */
+    private boolean timelineSemaphoreSupported;
+    /**
+     * The frame timeline (Stage 2): the one timeline semaphore every batched submission signals, or null when
+     * the device did not report {@code timelineSemaphore}. Created with the device, deleted before it.
+     */
+    private org.soutalab.celtium.vulkan.hal.FrameTimeline frameTimeline;
+    /** Serialises timeline value allocation between the game thread's flush and the presenter worker's submit. */
+    private final Object timelineValueLock = new Object();
+    /**
+     * The per-frame linear ring (Stage 2), created on first use: frame-lifetime temporaries live here instead
+     * of in the persistent-resource allocators. Null until first asked for, and again after {@link #delete()}.
+     */
+    private org.soutalab.celtium.vulkan.hal.FrameLinearRing frameLinearRing;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
     /**
@@ -3115,6 +3221,63 @@ public final class VulkanContext {
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
         return this.multiDrawIndirectSupported;
+    }
+
+    /** {@return whether the device was created with {@code timelineSemaphore} enabled (Stage 2)}. */
+    public boolean timelineSemaphoreSupported() {
+        return this.timelineSemaphoreSupported;
+    }
+
+    /**
+     * {@return the frame timeline}, or null when the device did not report {@code timelineSemaphore} - every
+     * caller must treat null as "keep the fence path", which is the product line's fallback contract.
+     */
+    public org.soutalab.celtium.vulkan.hal.FrameTimeline frameTimeline() {
+        return this.frameTimeline;
+    }
+
+    /**
+     * {@return the timeline value the batch that armed {@code fence} will signal}, or 0 when no tracked batch
+     * carries that fence or the timeline is absent. The frame-slot wait reads this after flushing: the batch a
+     * slot rode in is the submission whose completion the wait actually needs, and its timeline value is that
+     * completion stated on the counter.
+     */
+    public long celtium$timelineValueForFence(long fence) {
+        if (this.frameTimeline == null || fence == VK_NULL_HANDLE) {
+            return 0L;
+        }
+        for (DeferredSubmit entry : this.deferredSubmits) {
+            if (entry.fence == fence) {
+                return entry.batch == null ? 0L : entry.batch.timelineValue;
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * {@return the per-frame linear ring (Stage 2)}, creating it on first use against this context's device.
+     * Render thread only, like the submissions whose temporaries it stages.
+     */
+    public org.soutalab.celtium.vulkan.hal.FrameLinearRing celtium$frameLinearRing() {
+        if (this.frameLinearRing == null) {
+            if (this.device == null) {
+                throw new IllegalStateException("frame linear ring asked for before the device exists");
+            }
+            this.frameLinearRing = new org.soutalab.celtium.vulkan.hal.FrameLinearRing(this);
+        }
+        return this.frameLinearRing;
+    }
+
+    /**
+     * Resets one frame slot's linear-ring slice. Called only from the frame-slot wait's success paths - the
+     * wait is the confirmation that the slot's submission completed, which is the ring's reuse gate - so a
+     * reset can never hand the CPU bytes the GPU still reads. A context whose ring was never created has
+     * nothing to reset.
+     */
+    public void celtium$resetFrameLinearSlot(int slot) {
+        if (this.frameLinearRing != null) {
+            this.frameLinearRing.reset(slot);
+        }
     }
 
     /** {@return whether the device was created with {@code pipelineStatisticsQuery} enabled}. */
@@ -3605,9 +3768,17 @@ public final class VulkanContext {
                         .calloc(stack).sType$Default().pNext(supported12.address());
                 org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features12);
                 this.drawIndirectCountSupported = supported12.drawIndirectCount();
-                if (this.drawIndirectCountSupported) {
+                // Stage 2's timelineSemaphore is queried in the same pass and carried by the same struct: a
+                // pNext chain may not hold two VkPhysicalDeviceVulkan12Features, so the two features share
+                // one, each field set to exactly what the device reported. Unlike drawIndirectCount the
+                // timeline is not required - a device that does not report it keeps the fence synchronisation
+                // it has today (see timelineSemaphoreSupported's contract) - so its absence refuses nothing.
+                this.timelineSemaphoreSupported = supported12.timelineSemaphore();
+                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported) {
                     indirectCountFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
-                            .sType$Default().drawIndirectCount(true);
+                            .sType$Default()
+                            .drawIndirectCount(this.drawIndirectCountSupported)
+                            .timelineSemaphore(this.timelineSemaphoreSupported);
                     if (createInfo.pNext() != 0L) {
                         org.lwjgl.system.MemoryUtil.memPutLong(indirectCountFeatures.address() + 8L, createInfo.pNext());
                     }
@@ -3683,6 +3854,7 @@ public final class VulkanContext {
                                 + this.storageImageWriteWithoutFormatSupported
                                 + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
                                 + " drawIndirectCount=" + this.drawIndirectCountSupported
+                                + " timelineSemaphore=" + this.timelineSemaphoreSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
                                 + " textureArray=" + this.textureArraySupported
@@ -3690,10 +3862,15 @@ public final class VulkanContext {
                         lastDeviceLossReport));
             }
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
+            if (this.timelineSemaphoreSupported) {
+                // Stage 2: the frame timeline is born with the device and dies just before it (delete()).
+                this.frameTimeline = new org.soutalab.celtium.vulkan.hal.FrameTimeline(this.device);
+            }
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
                     + " drawIndirectCount=" + this.drawIndirectCountSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
+                    + " timelineSemaphore=" + this.timelineSemaphoreSupported
                     + " textureArray=" + this.textureArraySupported
                     + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
                     + " meshShader=" + this.meshShaderSupported);

@@ -29,15 +29,18 @@ public final class FrameSubmissionScheduler {
     /**
      * Command slots the frame cycles through.
      * <p>
-     * Four, as measured by OPT-08: a slot comes round again four frames after the submission that last used it, and
-     * recording into it waits only when that submission has not completed, so fewer slots turn into waits and more
-     * slots hold more fences and command buffers for no gain. The frames-in-flight policy this number is one half of
-     * is stated once in docs/development.md (フレームの先行深度).
+     * Two, since the Stage 2 overhaul (CELTIUM-A-TO-B-PLAN-2026-11-25): the frames-in-flight policy is FIF=2,
+     * with the frame timeline ({@code hal.FrameTimeline.FRAMES_IN_FLIGHT}) as the other half of the same number -
+     * a slot comes round again two frames after the submission that last used it, and the timeline wait at that
+     * reuse is the frame's one permitted blocking wait. The earlier default of four was OPT-08's measurement
+     * under the fence-per-submission regime: deeper pipelining hid fence latency that the timeline's single
+     * counter no longer charges per submission, and each extra slot holds its fences, command buffers and
+     * per-frame resources for no remaining gain.
      * <p>
      * The count is read from the {@code celtium.vulkan.frameSlots} property (item 393's measurement knob, clamped to
-     * 1..4); unset, it is exactly the shipped four, and nothing in the shipping configuration sets it.
+     * 1..4); unset, it is exactly the shipped two, and nothing in the shipping configuration sets it.
      */
-    public static final int FRAME_SLOTS = clampSlots(Integer.getInteger("celtium.vulkan.frameSlots", 4).intValue());
+    public static final int FRAME_SLOTS = clampSlots(Integer.getInteger("celtium.vulkan.frameSlots", 2).intValue());
 
     /** Item 393's measurement knob: clamps the requested slot count to 1..4 (above 4 only fences and buffers grow). */
     private static int clampSlots(int requested) {

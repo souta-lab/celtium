@@ -73,10 +73,13 @@ class FrameSubmissionSchedulerReleaseTest {
         FrameSubmissionScheduler scheduler = new FrameSubmissionScheduler();
         Counting a = new Counting();
         Counting b = new Counting();
-        scheduler.retireToSlot(2, a, "a");
-        scheduler.retireToSlot(2, b, "b");
+        // The last valid slot, whatever the shipped slot count is (Stage 2 made it two): the test's claim
+        // is about release counting on one slot, not about how many slots exist.
+        int slot = FrameSubmissionScheduler.FRAME_SLOTS - 1;
+        scheduler.retireToSlot(slot, a, "a");
+        scheduler.retireToSlot(slot, b, "b");
 
-        assertEquals(2, scheduler.releaseOnSlotReset(2));
+        assertEquals(2, scheduler.releaseOnSlotReset(slot));
         assertEquals(1, a.releases);
         assertEquals(1, b.releases);
     }
