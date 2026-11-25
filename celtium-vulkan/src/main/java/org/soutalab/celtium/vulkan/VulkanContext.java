@@ -767,7 +767,7 @@ public final class VulkanContext {
                 "the device-local slab pool");
         SlabAllocator allocator = this.deviceLocalSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            allocator = new SlabAllocator(this, "deviceLocal", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
             this.deviceLocalSlabsByType.put(Integer.valueOf(type), allocator);
         }
         return allocator;
@@ -787,7 +787,7 @@ public final class VulkanContext {
                 "the host-visible slab pool");
         SlabAllocator allocator = this.hostVisibleSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, true);
+            allocator = new SlabAllocator(this, "hostVisible", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, true);
             this.hostVisibleSlabsByType.put(Integer.valueOf(type), allocator);
         }
         return allocator;
@@ -806,7 +806,8 @@ public final class VulkanContext {
                 "the device-local image slab pool");
         SlabAllocator allocator = this.deviceLocalImageSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            allocator = new SlabAllocator(this, "deviceLocalImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8,
+                    false);
             this.deviceLocalImageSlabsByType.put(Integer.valueOf(type), allocator);
         }
         return allocator;
@@ -818,7 +819,10 @@ public final class VulkanContext {
      * the process-wide total, so nothing said which pool - host-visible staging, device-local buffers or images -
      * held the memory. Each entry names the pool kind and memory type and gives its used and free bytes, its
      * largest free run and its live slab count against the cap, so the next leg can attribute the holding and
-     * tell a full pool from a fragmented one.
+     * tell a full pool from a fragmented one. Each entry also splits the ordinary and fixed-page ledgers:
+     * the r10 leg's refusing pool was one of these allocators, but its ordinary ledger sat at the cap with a
+     * 16384-byte largest free run while the aggregated entry showed slabs=16 and a 15.3 MB largest free run
+     * from the fixed ledger, so the aggregate alone could not attribute the refusal.
      */
     public String celtium$slabPoolSummary() {
         StringBuilder summary = new StringBuilder("slabPools=[");
@@ -840,7 +844,20 @@ public final class VulkanContext {
                     .append("):usedBytes=").append(allocator.usedBytes())
                     .append(",freeBytes=").append(allocator.freeBytes())
                     .append(",largestFreeRun=").append(allocator.largestFreeRun())
-                    .append(",slabs=").append(allocator.liveSlabCount());
+                    .append(",slabs=").append(allocator.liveSlabCount())
+                    // Ledger split (r10 follow-up): the aggregates above mix the ordinary and fixed-page
+                    // ledgers, and in r10 the fixed ledger's free runs made an exhausted ordinary ledger
+                    // (8 of 8 slabs, largest free run 16384) read as a healthy pool with slabs=16 and a
+                    // multi-megabyte largest free run. The split keeps each ledger attributable on its own.
+                    .append(",ordinarySlabs=").append(allocator.ordinarySlabCount())
+                    .append(",ordinaryUsedBytes=").append(allocator.ordinaryUsedBytes())
+                    .append(",ordinaryFreeBytes=").append(allocator.ordinaryFreeBytes())
+                    .append(",ordinaryLargestFreeRun=").append(allocator.ordinaryLargestFreeRun())
+                    .append(",fixedSlabs=").append(allocator.fixedSlabCount())
+                    .append(",fixedUsedBytes=").append(allocator.fixedUsedBytes())
+                    .append(",fixedFreeBytes=").append(allocator.fixedFreeBytes())
+                    .append(",fixedLargestFreeRun=").append(allocator.fixedLargestFreeRun())
+                    .append(",oversizedSlabs=").append(allocator.oversizedSlabCount());
         }
         return first;
     }

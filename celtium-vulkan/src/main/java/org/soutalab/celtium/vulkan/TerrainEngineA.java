@@ -535,8 +535,8 @@ final class TerrainEngineA {
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             "a host-visible terrain slab of " + sizeBytes + " bytes");
                     TerrainEngineA.this.slabAllocator = new SlabAllocator(TerrainEngineA.this.context,
-                            memoryType, TerrainEngineA.this.store.geometryAllocator().slabBytes(),
-                            MAX_SLABS, true);
+                            "terrainGeometry", memoryType,
+                            TerrainEngineA.this.store.geometryAllocator().slabBytes(), MAX_SLABS, true);
                 }
                 createdAllocation = TerrainEngineA.this.slabAllocator.allocate(
                         requirements.size(), requirements.alignment());

@@ -64,6 +64,15 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * submission; {@link #collectCompleted(long)} is what makes the bytes reusable, once the timeline proves the GPU is
  * done with them.
  * <p>
+ * <b>Pool naming and OOM identification (r10 follow-up):</b> every allocator carries a {@link #name()} given by
+ * its factory (the context pools are {@code deviceLocal}, {@code hostVisible} and {@code deviceLocalImage} per
+ * memory type; the terrain geometry allocator is {@code terrainGeometry}). The Phase 1 leg r10 died on a
+ * 32768-byte request refused by an unnamed ordinary ledger at its 8-slab cap, and the final census could not
+ * attribute the failure: the per-pool summary aggregates the ordinary and fixed-page ledgers, so a healthy
+ * fixed ledger's free runs masked the ordinary ledger's exhaustion in the same allocator. The out-of-memory
+ * refusal therefore names its pool and reports the two ledgers separately, and the context summary reports
+ * the same split, so a refusal is attributable from the crash text alone.
+ * <p>
  * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
  * {@link #delete()} must happen before the context is deleted.
  */
@@ -80,6 +89,7 @@ public final class SlabAllocator {
     static final int FIXED_SLAB_INDEX_BASE = 1024;
 
     private final VulkanContext context;
+    private final String name;
     private final int memoryTypeIndex;
     private final long slabSizeBytes;
     private final int maxSlabs;
@@ -115,13 +125,29 @@ public final class SlabAllocator {
      */
     public SlabAllocator(VulkanContext context, int memoryTypeIndex, long slabSizeBytes, int maxSlabs,
             boolean hostVisible) {
+        this(context, hostVisible ? "hostVisible" : "deviceLocal", memoryTypeIndex, slabSizeBytes, maxSlabs,
+                hostVisible);
+    }
+
+    /**
+     * Creates an allocator with an explicit pool {@code name}: the name the out-of-memory refusal and the
+     * per-pool census summary attribute this allocator's ledgers to (see the class documentation). Factories
+     * that keep several allocators of the same visibility apart (the context's buffer and image pools) pass
+     * their own names; the unnamed constructor keeps a visibility-derived default.
+     */
+    public SlabAllocator(VulkanContext context, String name, int memoryTypeIndex, long slabSizeBytes,
+            int maxSlabs, boolean hostVisible) {
         if (context == null) {
             throw new IllegalArgumentException("context must not be null");
+        }
+        if (name == null || name.isEmpty()) {
+            throw new IllegalArgumentException("name must not be null or empty");
         }
         if (memoryTypeIndex < 0) {
             throw new IllegalArgumentException("memoryTypeIndex must not be negative, was " + memoryTypeIndex);
         }
         this.context = context;
+        this.name = name;
         this.memoryTypeIndex = memoryTypeIndex;
         this.slabSizeBytes = slabSizeBytes;
         this.maxSlabs = maxSlabs;
@@ -169,10 +195,20 @@ public final class SlabAllocator {
             pooled = collectAndRetry(sizeBytes, alignment);
         }
         if (pooled == null) {
-            throw new IllegalStateException("SlabAllocator is out of memory: no slab can serve " + sizeBytes
-                    + " bytes with alignment " + alignment + " (" + this.pool.slabCount() + " of " + this.maxSlabs
-                    + " slabs in use, " + this.pool.freeBytes() + " bytes free but fragmented, largest free run "
-                    + this.pool.largestFreeRun() + " bytes)");
+            // The refusal names its pool and reports the ordinary and fixed-page ledgers separately: the
+            // aggregated figures (usedBytes/freeBytes/largestFreeRun) mix the two ledgers, and in the r10 leg
+            // that mix is exactly what hid this ledger's exhaustion behind the fixed ledger's free runs.
+            throw new IllegalStateException("SlabAllocator is out of memory: pool " + this.name
+                    + " (memoryType=" + this.memoryTypeIndex + ", hostVisible=" + this.hostVisible
+                    + ") cannot serve " + sizeBytes + " bytes with alignment " + alignment
+                    + " [ordinary: " + this.pool.slabCount() + " of " + this.maxSlabs + " slabs in use, "
+                    + this.pool.usedBytes() + " bytes used, " + this.pool.freeBytes()
+                    + " bytes free but fragmented, largest free run " + this.pool.largestFreeRun() + " bytes, "
+                    + this.pool.liveAllocationCount() + " live allocations, " + this.pool.pendingDeferredCount()
+                    + " pending deferred releases; fixedPage: " + this.fixedPool.slabCount() + " of "
+                    + this.maxSlabs + " slabs in use, " + this.fixedPool.freeBytes()
+                    + " bytes free, largest free run " + this.fixedPool.largestFreeRun()
+                    + " bytes; oversized slabs: " + this.oversizedSlabs.size() + "]");
         }
         try {
             ensurePoolSlabs();
@@ -311,6 +347,56 @@ public final class SlabAllocator {
     /** Length of the longest single free run in any ordinary or fixed-page slab of this pool. */
     public long largestFreeRun() {
         return Math.max(this.pool.largestFreeRun(), this.fixedPool.largestFreeRun());
+    }
+
+    /** The pool name this allocator's refusals and census entries are attributed to. */
+    public String name() {
+        return this.name;
+    }
+
+    /** Whether this allocator's slabs are host-visible and mapped for their whole lifetime. */
+    public boolean hostVisible() {
+        return this.hostVisible;
+    }
+
+    /** Number of ordinary slabs the ledger currently holds, against the {@code maxSlabs} cap. */
+    public int ordinarySlabCount() {
+        return this.pool.slabCount();
+    }
+
+    /** Bytes held by live allocations in the ordinary ledger alone (see {@link #usedBytes()} for the total). */
+    public long ordinaryUsedBytes() {
+        return this.pool.usedBytes();
+    }
+
+    /** Bytes not held by any live allocation in the ordinary ledger alone. */
+    public long ordinaryFreeBytes() {
+        return this.pool.freeBytes();
+    }
+
+    /** Length of the longest single free run in the ordinary ledger alone. */
+    public long ordinaryLargestFreeRun() {
+        return this.pool.largestFreeRun();
+    }
+
+    /** Bytes held by live allocations in the fixed-page ledger alone. */
+    public long fixedUsedBytes() {
+        return this.fixedPool.usedBytes();
+    }
+
+    /** Bytes not held by any live allocation in the fixed-page ledger alone. */
+    public long fixedFreeBytes() {
+        return this.fixedPool.freeBytes();
+    }
+
+    /** Length of the longest run of consecutive free pages in the fixed-page ledger alone, in bytes. */
+    public long fixedLargestFreeRun() {
+        return this.fixedPool.largestFreeRun();
+    }
+
+    /** Number of dedicated oversized slabs currently held. */
+    public int oversizedSlabCount() {
+        return this.oversizedSlabs.size();
     }
 
     /**
