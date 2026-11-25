@@ -4580,6 +4580,31 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * Restarts the renderer's per-frame barrier distribution at the warm window's begin edge, so the summary
+     * printed at the end edge is the window's own. Reflective, like the other backend bridges in this class: the
+     * validation module does not link the vulkan module, and a backend without the counter simply skips this.
+     */
+    private static void celtium$resetBarrierSamples() {
+        try {
+            Class.forName("org.soutalab.celtium.vulkan.DrawCounters")
+                    .getMethod("resetBarrierSamples").invoke(null);
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            // Not a Celtium backend, or an older one without the counter: the window edges still log.
+        }
+    }
+
+    /** The renderer's per-frame barrier distribution, or "unavailable" when the backend has no counter. */
+    private static String celtium$barrierSummary() {
+        try {
+            Object summary = Class.forName("org.soutalab.celtium.vulkan.DrawCounters")
+                    .getMethod("barrierSummary").invoke(null);
+            return String.valueOf(summary);
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            return "unavailable";
+        }
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished) return;
@@ -4604,10 +4629,12 @@ public final class ValidationClient {
                     // the join line is ~20 s earlier and the run ends ~2 s after the window, so neither can stand in.
                     this.celtium$warmBeginLogged = true;
                     System.out.println("[Celtium] CELTIUM_WARM_WINDOW begin worldTicks=" + worldTicks);
+                    celtium$resetBarrierSamples();
                 }
             } else if (this.celtium$warmBeginLogged && !this.celtium$warmEndLogged) {
                 this.celtium$warmEndLogged = true;
                 System.out.println("[Celtium] CELTIUM_WARM_WINDOW end worldTicks=" + worldTicks);
+                System.out.println("[Celtium] CELTIUM_BARRIERS_WARM " + celtium$barrierSummary());
             }
         }
         Minecraft mc = Minecraft.getMinecraft();
