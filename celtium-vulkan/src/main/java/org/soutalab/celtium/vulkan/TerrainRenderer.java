@@ -294,7 +294,20 @@ public final class TerrainRenderer {
     /** Zero-allocation overload reusing caller's pre-allocated 1-element vertex buffer/offset scratch buffers. */
     void bindVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, java.nio.LongBuffer buffers,
             java.nio.LongBuffer offsets, RegionResources resources) {
-        buffers.put(0, resources.vertexArena.buffer().buffer());
+        resources.vertexArena.noteBind();
+        buffers.put(0, resources.vertexArena.pageBuffer(0).buffer());
+        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
+    }
+
+    /**
+     * Binds one page of an arena as the vertex buffer (S3R-2): the direct draw loops rebind when the
+     * page under the next draw changes, addressing the page at offset 0 and drawing with page-local
+     * base vertices. The upload census rides the initial bind ({@link #bindVertexBuffer}), not these
+     * per-page rebinds.
+     */
+    void bindVertexBufferPage(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, java.nio.LongBuffer buffers,
+            java.nio.LongBuffer offsets, VulkanArena arena, int pageIndex) {
+        buffers.put(0, arena.pageBuffer(pageIndex).buffer());
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
     }
 
@@ -309,7 +322,8 @@ public final class TerrainRenderer {
         if (this.sharedVertexArena == null) {
             return;
         }
-        buffers.put(0, this.sharedVertexArena.buffer().buffer());
+        this.sharedVertexArena.noteBind();
+        buffers.put(0, this.sharedVertexArena.pageBuffer(0).buffer());
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
     }
 
@@ -776,6 +790,20 @@ public final class TerrainRenderer {
             this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
             return false;
         }
+        // S3R-2: the pre-encoded paths address an arena as one buffer (one bind, global offsets), so a
+        // batch whose arena has grown past one page is drawn by the page-exact direct path instead. The
+        // gate sits here, ahead of the packet reservation, so a refused batch leaves no packet state.
+        VulkanArena sharedVertex = sharedVertexArenaIfPresent();
+        if (sharedVertex != null && sharedVertex.pageCount() > 1) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the shared vertex arena spans more than one page";
+            return false;
+        }
+        if (regionIndex && resources.indexArena.pageCount() > 1) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the region index arena spans more than one page";
+            return false;
+        }
         if (size > Integer.MAX_VALUE / INDIRECT_COMMAND_BYTES) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the indirect packet byte count exceeds the supported range";
@@ -788,7 +816,7 @@ public final class TerrainRenderer {
         }
         long afterSetup = System.nanoTime();
         this.indirectSetupNanos += afterSetup - setupStarted;
-        this.preparedIndexBuffer = regionIndex ? resources.indexArena.buffer()
+        this.preparedIndexBuffer = regionIndex ? resources.indexArena.pageBuffer(0)
                 : sharedIndexBuffers.get(primitiveType);
         this.preparedMaxDraws = maxDraws;
         // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
@@ -919,12 +947,12 @@ public final class TerrainRenderer {
                 this.meshTerrain = new VulkanMeshTerrain(context);
             }
             VulkanArena vertexArena = sharedVertexArenaIfPresent();
-            if (vertexArena != null) {
+            if (vertexArena != null && vertexArena.pageCount() == 1) {
                 flushTerrainChain(commandBuffer);
                 boolean drawn;
                 try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
                     drawn = this.meshTerrain.recordBatch(stack, commandBuffer, pipeline,
-                            vertexArena.buffer(), this.preparedIndexBuffer,
+                            vertexArena.pageBuffer(0), this.preparedIndexBuffer,
                             this.indirectBuffer.mappedAddress() + this.indirectBatchOffset,
                             batch.size(), this.indirectRecordingSlot);
                 }

@@ -10,57 +10,60 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * L02-04 (bughunt 2026-11-21, lane 2): the arena's growth and split alignment.
  * <p>
  * BH-01's invariant is that every arena boundary - capacity included - is a multiple of the alignment unit
- * {@code lcm(4, stride)}. The constructor honoured it, but {@code grow} aimed at a raw maximum whose
- * minimum-growth term (524,288 bytes) is not a multiple of units like 24, 28 or 36, and
+ * {@code lcm(4, stride)}. The constructor honoured it, but the old doubling {@code grow} aimed at a raw
+ * maximum whose minimum-growth term (524,288 bytes) is not a multiple of units like 24, 28 or 36, and
  * {@code VulkanBuffer.ensureCapacity} rounds only to 4: the capacity could land off the unit, the appended
  * tail then ended off the unit, and a split of that tail derived a start below the range it split -
- * overlapping the live segment in front and driving the remainder's length negative. These tests pin the
- * two pure functions the fix is made of ({@code growthTarget} and {@code splitStart}), because the arena
- * itself cannot be constructed without a device; the wiring is one call each in {@code grow} and
+ * overlapping the live segment in front and driving the remainder's length negative.
+ * <p>
+ * S3R-2 replaced the doubling growth with pages: a page's capacity is now the one number that has to stay
+ * on the unit, because every later page's base is a sum of page capacities. These tests pin the two pure
+ * functions that carry the invariant ({@code pageCapacityBytes} and {@code splitStart}), because the arena
+ * itself cannot be constructed without a device; the wiring is one call each in {@code addPage} and
  * {@code allocate}.
  */
 class VulkanArenaGrowthAlignmentTest {
 
     @Test
-    void growthTargetIsAlwaysAMultipleOfTheUnit() {
-        // Units whose lcm(4, stride) does not divide 524,288 - the strides the raw maximum betrayed.
+    void pageCapacityIsAlwaysAMultipleOfTheUnit() {
+        // Units whose lcm(4, stride) does not divide the page sizes in play - the strides an off-unit
+        // capacity would betray, because the next page's base inherits the error.
         int[] units = {24, 28, 36};
-        int[] capacities = {96, 4096, 100_008, 524_280, 1_048_576};
-        int[] neededs = {24, 4096, 300_000, 2_000_000};
+        int[] pageUnits = {96, 4096, 100_008, 524_288, 16_777_216, 67_108_864};
+        int[] neededs = {0, 24, 4096, 300_000, 2_000_000};
         for (int unit : units) {
-            for (int capacity : capacities) {
+            for (int pageUnit : pageUnits) {
                 for (int needed : neededs) {
-                    long target = VulkanArena.growthTarget(capacity, needed, unit);
-                    assertEquals(0L, target % unit,
-                            "growth target must stay on the unit (unit=" + unit + ", capacity=" + capacity
+                    long capacity = VulkanArena.pageCapacityBytes(pageUnit, needed, unit);
+                    assertEquals(0L, capacity % unit,
+                            "page capacity must stay on the unit (unit=" + unit + ", pageUnit=" + pageUnit
                                     + ", needed=" + needed + ")");
-                    assertTrue(target >= (long) capacity + needed,
-                            "growth target must hold the used bytes plus the request");
-                    assertTrue(target >= 524_288L, "growth target keeps the minimum growth");
+                    assertTrue(capacity >= pageUnit, "a page is never smaller than the page unit");
+                    assertTrue(capacity >= needed, "a page always holds the request that forced it");
                 }
             }
         }
     }
 
     @Test
-    void theMinimumGrowthTermIsRoundedUpToTheUnit() {
-        // The concrete BH-01 shape: a small arena whose doubling and capacity+needed both stay under the
-        // 524,288 minimum. 524,288 mod 24 = 8, so the raw maximum ended 8 bytes off the unit; the target
-        // is the next whole unit up.
-        assertEquals(524_304L, VulkanArena.growthTarget(4096, 24, 24));
-        // Units that do divide the minimum keep it exactly.
-        assertEquals(524_288L, VulkanArena.growthTarget(4096, 16, 16));
-        assertEquals(524_288L, VulkanArena.growthTarget(4096, 4, 4));
+    void anOrdinaryPageInheritsTheUnitExactly() {
+        // The two arenas the tree actually creates: the page unit is the initial capacity, inherited
+        // unchanged for every ordinary page - no doubling, no minimum-growth term.
+        assertEquals(67_108_864L, VulkanArena.pageCapacityBytes(67_108_864, 4096, 4));
+        assertEquals(16_777_216L, VulkanArena.pageCapacityBytes(16_777_216, 4096, 4));
+        // A unit that is itself off the alignment unit rounds up once, at the page size, so every page
+        // base stays on the unit: 524,288 mod 24 = 8, so the page is the next whole unit up.
+        assertEquals(524_304L, VulkanArena.pageCapacityBytes(524_288, 24, 24));
+        // Units that divide the page size keep it exactly.
+        assertEquals(524_288L, VulkanArena.pageCapacityBytes(524_288, 16, 16));
     }
 
     @Test
-    void doublingStaysExactWhenTheUnitDividesItAndRoundsUpWhenItDoesNot() {
-        // The two arenas the tree actually creates start at 4 MiB / 512 KiB with small units: doubling
-        // already lands on the unit, and the rounding must not move those targets.
-        assertEquals(8_388_608L, VulkanArena.growthTarget(4_194_304, 1024, 4));
-        assertEquals(1_048_576L, VulkanArena.growthTarget(524_288, 1024, 4));
-        // 2^20 is not a multiple of 24, so a doubled 512 KiB capacity rounds up to the next whole unit.
-        assertEquals(1_048_584L, VulkanArena.growthTarget(524_288, 1024, 24));
+    void anOversizeRequestGetsAPageOfItsOwnSize() {
+        // A single allocation larger than the page unit: the page is the request's aligned size, not
+        // a multiple of the unit pages - the excess of a doubled page would be stranded tail.
+        assertEquals(2_000_000L, VulkanArena.pageCapacityBytes(4096, 2_000_000, 4));
+        assertEquals(2_000_016L, VulkanArena.pageCapacityBytes(4096, 2_000_000, 24));
     }
 
     @Test
