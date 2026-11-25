@@ -105,6 +105,41 @@ public final class TerrainSlabAllocator {
         return new Allocation(slab, offset, byteSize, reserved);
     }
 
+    /**
+     * Allocates {@code byteSize} bytes (page-rounded) from one named slab only,
+     * opening that slab when it is the next unopened one and the cap allows.
+     * Paired arenas whose placements must coincide (the store's geometry and
+     * quad space) allocate slab by slab through this entry point: two
+     * independent first-fit scans diverge as soon as their page granularities
+     * make them fill slabs at different rates, and every later placement then
+     * misses its pair even with most of the arena empty.
+     *
+     * @return the allocation, or {@code null} when that slab cannot serve it
+     */
+    public synchronized Allocation allocateInSlab(int slab, long byteSize) {
+        if (byteSize <= 0) {
+            throw new IllegalArgumentException("byteSize must be positive: " + byteSize);
+        }
+        if (slab < 0 || slab > this.freeBySlab.size() || slab >= this.maxSlabs) {
+            return null;
+        }
+        long reserved = roundUpToPage(byteSize);
+        if (reserved > this.slabBytes) {
+            return null;
+        }
+        if (slab == this.freeBySlab.size()) {
+            TreeMap<Long, Long> free = new TreeMap<>();
+            free.put(0L, this.slabBytes);
+            this.freeBySlab.add(free);
+        }
+        Long offset = takeFromSlab(slab, reserved);
+        if (offset == null) {
+            return null;
+        }
+        this.liveBytes += reserved;
+        return new Allocation(slab, offset, byteSize, reserved);
+    }
+
     /** Returns an allocation's pages at once (init/teardown paths only). */
     public synchronized void free(Allocation allocation) {
         returnToSlab(allocation.slabId, allocation.byteOffset, allocation.reservedBytes);
@@ -176,6 +211,10 @@ public final class TerrainSlabAllocator {
 
     public int slabCount() {
         return this.freeBySlab.size();
+    }
+
+    public int maxSlabs() {
+        return this.maxSlabs;
     }
 
     public long slabBytes() {

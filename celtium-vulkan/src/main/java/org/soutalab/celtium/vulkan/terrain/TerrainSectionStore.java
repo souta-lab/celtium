@@ -119,14 +119,33 @@ public final class TerrainSectionStore {
             return new RegisterResult(null, RegisterFailure.OVERSIZE);
         }
         long vertexBytes = (long) built.totalQuads * 4 * 16;
-        TerrainSlabAllocator.Allocation geometry = this.geometryAllocator.allocate(vertexBytes);
+        // Geometry and quad space must land in the same slab, so they are placed
+        // as a pair, slab by slab. Two independent first-fit allocations diverge
+        // once the quad space's 4096-quad pages fill a slab ahead of the geometry
+        // arena (a 1,024-quad section reserves a whole quad page but only 64 KiB
+        // of geometry): measured on the pre-fix store, registration stopped at
+        // 256 small sections with 16 MiB of geometry live in a single slab —
+        // ARENA_FULL at 3% of the designed quad capacity (TerrainArenaCapacityTest).
+        TerrainSlabAllocator.Allocation geometry = null;
+        TerrainSlabAllocator.Allocation quadSpace = null;
+        for (int slab = 0; slab < this.geometryAllocator.maxSlabs(); slab++) {
+            geometry = this.geometryAllocator.allocateInSlab(slab, vertexBytes);
+            if (geometry == null) {
+                continue;
+            }
+            quadSpace = this.quadSpaceAllocator.allocateInSlab(slab, built.totalQuads);
+            if (quadSpace != null) {
+                break;
+            }
+            this.geometryAllocator.free(geometry);
+            geometry = null;
+        }
         if (geometry == null) {
             return new RegisterResult(null, RegisterFailure.ARENA_FULL);
         }
-        TerrainSlabAllocator.Allocation quadSpace = this.quadSpaceAllocator.allocate(built.totalQuads);
         TerrainSlabAllocator.Allocation factor = null;
         TerrainSlabAllocator.Allocation sorted = null;
-        boolean ok = quadSpace != null && quadSpace.slabId == geometry.slabId;
+        boolean ok = true;
         if (ok) {
             factor = this.factorAllocator.allocate((long) built.totalQuads * 4);
             ok = factor != null;
@@ -288,6 +307,14 @@ public final class TerrainSectionStore {
 
     public TerrainSlabAllocator geometryAllocator() {
         return this.geometryAllocator;
+    }
+
+    public TerrainSlabAllocator quadSpaceAllocator() {
+        return this.quadSpaceAllocator;
+    }
+
+    public TerrainSlabAllocator factorAllocator() {
+        return this.factorAllocator;
     }
 
     public TerrainSlabAllocator sortedAllocator() {
