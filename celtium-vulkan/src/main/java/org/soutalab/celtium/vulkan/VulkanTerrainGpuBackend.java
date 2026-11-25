@@ -17068,7 +17068,7 @@ this.frameBufferOpen = false;
         // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
         String handoff = takeHandoffSummary();
         String detail = this.frameTarget == null ? null : this.frameTarget.takeTimingSummary();
-        String base = CopyReadSide.describe();
+        String base = describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
         String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
         return withDetail + " | " + verificationSummary();
