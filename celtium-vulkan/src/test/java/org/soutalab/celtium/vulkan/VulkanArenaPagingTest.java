@@ -84,9 +84,9 @@ class VulkanArenaPagingTest {
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanArena.java"));
         // The one capacity call allowed to remain is the readback verify buffer's own growth;
         // a page buffer growing by capacity would be the copy path returning.
-        int verify = source.indexOf("this.verifyBuffer.ensureCapacity");
-        assertTrue(verify >= 0, "the readback verify buffer still grows by capacity");
-        assertEquals(verify + "this.verifyBuffer".length(), source.lastIndexOf("ensureCapacity"),
+        assertTrue(source.contains("this.verifyBuffer.ensureCapacity"),
+                "the readback verify buffer still grows by capacity");
+        assertFalse(source.replace("this.verifyBuffer.ensureCapacity", "").contains("ensureCapacity"),
                 "the verify buffer's call is the only ensureCapacity left in the arena");
         assertFalse(source.contains("private void grow("),
                 "the doubling grow is deleted, not bypassed");
