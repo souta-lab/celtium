@@ -165,4 +165,5 @@ final class StateSignatureKeys {
                 && environmentVersion == cachedEnvironmentVersion
                 && windowTarget == cachedWindowTarget
                 && formatId == cachedFormat;
+    }
 }
