@@ -187,13 +187,16 @@ public final class FrameCoordinator {
         this.host.context().flushUploads();
         if (this.host.frameBufferOpen()) {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
-            // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
-            // target mid-recording falls through instead and takes the direct path below.
-            if (!frameSemaphores) {
+            // once at the frame boundary via celtium$finishFrameBuffer. E1(a): a target that coalesces frame
+            // semaphores also stays recorded here and carries the wait/signal pair once on the boundary submit.
+            if (!frameSemaphores || this.host.frameTarget().coalescesFrameSemaphores()) {
                 return Submission.RECORDED;
             }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // E1(b): flush any deferred pass-to-pass hand-back right before closing the command buffer, rather
+            // than eagerly after every segment that remains RECORDED in the unified buffer.
+            this.host.frameTarget().flushPendingHandback(this.host.commandBuffer());
             // The frame's own GPU-time pair closes here, so it spans both the passes and everything between them.
             this.host.recordFrameEndTimestamp();
             this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer");
@@ -279,6 +282,8 @@ public final class FrameCoordinator {
             stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
             signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
         }
+        // E1(b): record any pending deferred hand-back before ending the unified frame buffer.
+        this.host.frameTarget().flushPendingHandback(this.host.commandBuffer());
         this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer(frame)");
         this.host.commandState().end();
         if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
@@ -295,6 +300,9 @@ public final class FrameCoordinator {
         }
         this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
         celtium$noteSubmissionBookkeeping(frameSemaphores);
+        if (frameSemaphores && this.host.frameTarget().coalescesFrameSemaphores()) {
+            this.host.frameTarget().consumeCoalescedDone();
+        }
     }
 
     /**
@@ -338,9 +346,9 @@ public final class FrameCoordinator {
         this.host.setFrameSubmitReachedQueue(true);
         this.host.setLastFrameReachedQueue(true);
         if (frameSemaphores && this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-            // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
-            // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
-            // outstanding and the next beginFrame signalled the same binary semaphore twice).
+            // This submission waited on the frame's wait semaphore and signalled its done semaphore, so record both
+            // transitions on the target (fog-path's VUID-00067 chain and E1(a) coalesced done consumption).
+            gllessTarget.noteDoneSemaphoreSignalled();
             gllessTarget.noteWaitConsumed();
         }
     }

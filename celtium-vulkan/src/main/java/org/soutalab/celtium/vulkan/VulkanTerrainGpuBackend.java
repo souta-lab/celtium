@@ -945,7 +945,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     public boolean celtium$unifiedFrameBuffer() {
         return !this.gpuStalled
-                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
+                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores()
+                        || this.frameTarget.coalescesFrameSemaphores());
     }
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
@@ -1836,7 +1837,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
 
         try {
-            if (!progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
+            boolean needsPerSegmentSemaphores =
+                    this.frameTarget.needsFrameSemaphores() && !this.frameTarget.coalescesFrameSemaphores();
+            if (!progress.canCloseTarget(needsPerSegmentSemaphores)) {
                 // An external owner requires its semaphore packet to have been queued. A native same-queue target
                 // does not: its accepted recording intentionally stays open until the real frame boundary. Do not
                 // pretend RECORDED means QUEUED, or count every native terrain pass as a failed GL handoff.
@@ -3821,9 +3824,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
                         celtium$frameSerial(), bindCache);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                this.frameTarget.flushPendingHandback(this.commandBuffer);
                 FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
-                if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
+                if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores()
+                        && !this.frameTarget.coalescesFrameSemaphores())) {
                     this.frameTarget.endFrame();
                 }
             }
@@ -13538,10 +13541,8 @@ this.frameBufferOpen = false;
                             throw recordError;
                         }
                     }
-                    // A release the target held for hand-back aggregation must be recorded before this
-                    // buffer can be submitted: the submission is where a deferred barrier stops being
-                    // reachable by the next acquire's merge.
-                    this.frameTarget.flushPendingHandback(this.commandBuffer);
+                    // E1(b): leave a deferred hand-back pending across consecutive windows in the unified command
+                    // buffer so it merges into the next acquire; FrameCoordinator flushes it before vkEndCommandBuffer.
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winSubmit");
                     org.soutalab.celtium.vulkan.FrameCoordinator.Submission submission =
                             this.frameCoordinator.submitCommands();
@@ -22903,9 +22904,10 @@ this.frameBufferOpen = false;
         // The pass area is the window's until a pass says otherwise; see the field's own note.
         this.passAreaWidth = this.targetWidth;
         this.passAreaHeight = this.targetHeight;
-        // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
-        // needs the wait/signal pair keeps the per-recording submits the contract was built on.
-        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores();
+        // Open the unified frame buffer for this frame when the target carries no per-segment semaphore contract
+        // (E1(a): a target that coalesces frame semaphores keeps the unified buffer open and submits once at the boundary).
+        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores()
+                || this.frameTarget.coalescesFrameSemaphores();
     }
 
     /**

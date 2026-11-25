@@ -513,7 +513,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // be the second on the same binary semaphore.
             consumeOutstandingWait("beginFrame found the previous frame open");
         }
-        if (FRAME_SEMAPHORES) {
+        if (FRAME_SEMAPHORES && !this.waitSignalled) {
             signalWait();
             this.waitSignalled = true;
         }
@@ -536,9 +536,29 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private static final boolean FRAME_SEMAPHORES =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.frameSemaphores", "false"));
 
+    /**
+     * E1(a) (item 679): when frame semaphores are enabled on this same-queue target, coalesce the wait/signal
+     * pair onto the unified frame buffer's single frame-boundary submission rather than splitting every window
+     * and terrain pass into its own begin/submit/end cycle.
+     */
+    static final boolean FRAME_SEMAPHORE_COALESCE =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.frameSemaphoreCoalesce", "true"));
+
     @Override
     public boolean needsFrameSemaphores() {
         return FRAME_SEMAPHORES;
+    }
+
+    @Override
+    public boolean coalescesFrameSemaphores() {
+        return FRAME_SEMAPHORE_COALESCE;
+    }
+
+    @Override
+    public void consumeCoalescedDone() {
+        if (FRAME_SEMAPHORES && this.doneSemaphoreOutstanding) {
+            consumeDone();
+        }
     }
 
     /**
@@ -613,12 +633,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return;
         }
         if (FRAME_SEMAPHORES) {
-            consumeDone();
+            if (!FRAME_SEMAPHORE_COALESCE || this.doneSemaphoreOutstanding) {
+                consumeDone();
+            }
         }
         // With the pair skipped nothing was ever signalled, so there is nothing to consume: the wait-only
-        // submission is the third queue packet per stage this mode exists to remove.
+        // submission is the third queue packet per stage this mode exists to remove. When coalesced into the
+        // unified frame buffer, waitSignalled stays true until the frame-boundary submit consumes it.
         this.frameOpen = false;
-        this.waitSignalled = false;
+        if (!FRAME_SEMAPHORE_COALESCE) {
+            this.waitSignalled = false;
+        }
     }
 
     @Override

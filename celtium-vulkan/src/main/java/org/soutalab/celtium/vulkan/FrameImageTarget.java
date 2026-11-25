@@ -55,6 +55,21 @@ public interface FrameImageTarget {
         return true;
     }
 
+    /**
+     * {@return whether this target coalesces the wait/done semaphore pair to the frame boundary instead of
+     * breaking the unified command buffer per segment (E1(a), item 679)}.
+     */
+    default boolean coalescesFrameSemaphores() {
+        return false;
+    }
+
+    /**
+     * Consumes the done semaphore signalled by the frame-boundary submission when {@link #coalescesFrameSemaphores()}
+     * deferred the per-segment semaphore pair to {@code celtium$finishFrameBuffer}. No-op when nothing is pending.
+     */
+    default void consumeCoalescedDone() {
+    }
+
 
     /**
      * Marks the frame open: under the shared target the game framebuffer's content is copied in and the
