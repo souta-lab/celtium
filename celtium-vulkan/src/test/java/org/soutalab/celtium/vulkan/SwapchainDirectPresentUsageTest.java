@@ -51,7 +51,9 @@ class SwapchainDirectPresentUsageTest {
     @Test
     void selectPrefersTheFrameFormatWhenDirectPresentAsks() {
         // Offered BGRA first, RGBA second: without the preference the surface order wins (44); with it,
-        // the frame format (37) is chosen - the only format a generation may be borrowed in (Stage 1 gate).
+        // the classic frame format (37) is chosen, so a surface offering both keeps the frame in the
+        // format it has always used. A BGRA-only offer still takes 44 - since the BGRA ignition the
+        // frame follows it there, so that generation is borrowable too.
         SwapchainCreateArguments.Surface surface = surfaceWithFormats(
                 SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM, 0,
                 SwapchainCreateArguments.FORMAT_R8G8B8A8_UNORM, 0);
@@ -70,7 +72,7 @@ class SwapchainDirectPresentUsageTest {
                 SwapchainCreateArguments.select(surface, 1024, 640, 3, false, true);
         assertEquals(SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM, result.format);
         assertTrue(result.formatNote.contains("did not offer"),
-                "the fallback must say why this generation cannot be borrowed: " + result.formatNote);
+                "the fallback must say the preferred format was not offered: " + result.formatNote);
     }
 
     @Test

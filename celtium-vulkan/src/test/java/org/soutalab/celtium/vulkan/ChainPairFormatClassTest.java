@@ -155,4 +155,22 @@ class ChainPairFormatClassTest {
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT), "rule R1: a pinned identity is never forced");
     }
+
+    // Stage 1 BGRA ignition / rule R1 revised: on a BGRA frame the pin serves the frame's class, because
+    // the pinned target is composed into that frame, byte order included.
+    @Test
+    void aPinnedTargetOnABgraFrameIsServedTheFrameClass() {
+        assertEquals(TargetFormatClass.BGRA8_UNORM, VulkanColorFormat.pinnedOrRequested(
+                true, 0x881A, TargetFormatClass.BGRA8_UNORM),
+                "pinned on a BGRA frame: BGRA, whatever GL asked for");
+        assertEquals(TargetFormatClass.BGRA8_UNORM, VulkanColorFormat.pinnedOrRequested(
+                true, 0x8058, TargetFormatClass.BGRA8_UNORM));
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanColorFormat.pinnedOrRequested(
+                false, 0x881A, TargetFormatClass.BGRA8_UNORM),
+                "unpinned: the frame's class does not leak into a pair's own resolution");
+        assertEquals(TargetFormatClass.BGRA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
+                TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.BGRA8_UNORM),
+                "rule R1 on a BGRA frame: a pinned identity is never forced - it stays in the frame's class");
+    }
 }

@@ -1084,6 +1084,13 @@ final class CopyReadSide {
             // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
             this.backend.targetRegistry.noteFrameTargetReplaced();
         }
+        // Stage 1 BGRA ignition: the new target's colour format follows the swapchain's, so the present
+        // path gets its chance to create a generation before the target reads the decision - otherwise
+        // the first target of a session would fix the frame at the classic format from an uninformed
+        // state and no BGRA surface could ever be borrowed. A failed creation is not fatal here: the
+        // target then takes the classic format and the session presents composed (the context records
+        // that degradation at the note).
+        this.backend.presentSwapchain.ensureSwapchain();
         try {
             // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
             // signalled and consumed by Vulkan submissions alone.

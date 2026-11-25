@@ -10,7 +10,6 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
@@ -115,6 +114,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private final VulkanContext context;
     private final int width;
     private final int height;
+    /**
+     * The format this target's frame colour image is allocated in, and its class (Stage 1 BGRA ignition,
+     * QUEUE 404 rule R1 revised): {@code VK_FORMAT_R8G8B8A8_UNORM} on a classic surface, {@code
+     * VK_FORMAT_B8G8R8A8_UNORM} when the frame followed a BGRA surface so its generations can be borrowed.
+     * Fixed at construction - a target never changes format; a recreation builds a new target, and the
+     * context's noted decision gives it the same format.
+     */
+    private final int colorFormat;
+    private final TargetFormatClass frameFormatClass;
 
     private long colorImage;
     private long colorMemory;
@@ -153,7 +161,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * <p>
      * Its one writer is the game's draw stream with no framebuffer bound (identity 0).
      */
-    private final Pair defaultPair = new Pair("default");
+    private final Pair defaultPair;
     /**
      * The chain pair per framebuffer identity. Two non-main identities used to share one Pair: the second one's
      * clear or draw then reached the first one's content between its draw and the read that sampled it - measured
@@ -307,6 +315,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.context = context;
         this.width = width;
         this.height = height;
+        // The frame's own format (Stage 1 BGRA ignition, QUEUE 404 rule R1 revised): decided by the
+        // context from the surface's adopted format - the caller (CopyReadSide.ensureFrameTarget) gives
+        // the present path its chance to create a generation first, so this reads the informed decision.
+        // Assigned before the default pair exists because a pair's initial class is the frame's class:
+        // the default pair is identity 0's pair, and identity 0 is pinned to the frame.
+        this.frameFormatClass = context.celtium$frameFormatClass();
+        this.colorFormat = this.frameFormatClass.vkFormat();
+        this.defaultPair = new Pair("default");
+        context.celtium$noteFrameColorFormat(this.colorFormat);
     }
 
     public static GllessFrameTarget create(VulkanContext context, int width, int height) {
@@ -315,9 +332,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         GllessFrameTarget target = new GllessFrameTarget(context, width, height);
         try {
-            // The frame's own colour is always RGBA8_UNORM (QUEUE 404 rule R1): it is the image the finished
-            // frame is composed into and presented from, whatever a mod's own framebuffer asked for.
-            long[] color = target.allocateImage(true, width, height, TargetFormatClass.RGBA8_UNORM);
+            // The frame's own colour is the frame's class (QUEUE 404 rule R1, revised by Stage 1's BGRA
+            // ignition): the image the finished frame is composed into and presented from follows the
+            // surface's format, whatever a mod's own framebuffer asked for.
+            long[] color = target.allocateImage(true, width, height, target.frameFormatClass);
             target.colorImage = color[0];
             target.colorMemory = color[1];
             target.colorView = color[2];
@@ -356,8 +374,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // against is "a depth attachment that can also be sampled", and an image created without it would not be
             // the image that predicate was verified for.
             // The colour format is the caller's class (QUEUE 404, S3): the frame and the default pair pass
-            // RGBA8_UNORM, a chain pair passes the class its identity resolved. The class was device-checked by
-            // the resolver (VulkanColorFormat.usable) before it reached a pair, so creation does not re-decide it.
+            // the frame's class (RGBA8_UNORM, or BGRA8_UNORM when the frame followed a BGRA surface), a
+            // chain pair passes the class its identity resolved. The class was device-checked by the
+            // resolver (VulkanColorFormat.usable) before it reached a pair, so creation does not re-decide it.
             int format = color ? colorClass.vkFormat()
                     : VulkanDepthFormat.chosen(this.context.physicalDevice());
             int usage = color
@@ -660,6 +679,48 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return hasLivePresentBorrow() ? this.presentBorrow.image() : this.colorImage;
     }
 
+    /** {@return the VkFormat this target's frame colour image is allocated in}. */
+    public int colorFormat() {
+        return this.colorFormat;
+    }
+
+    /** {@return the format class of this target's frame colour image}: the class the frame pin serves. */
+    public TargetFormatClass frameFormatClass() {
+        return this.frameFormatClass;
+    }
+
+    /** {@return whether this target owns any chain pair} - i.e. whether a custom framebuffer (a mod FBO,
+     * the entity-outline framebuffer) has drawn into this frame. The present path asks it as a borrow
+     * bypass condition: a borrowed swapchain image cannot be sampled, and a chain pair's passes sample
+     * the frame colour. */
+    public boolean celtium$hasChainPairs() {
+        return !this.chainPairs.isEmpty();
+    }
+
+    /**
+     * {@return the format class of a colour image this target owns} - the frame image (owned or, while a
+     * borrow is live, the borrowed swapchain image, which the borrow gate only accepts in this target's
+     * own format), the default pair's images, or a chain pair's images - or {@code null} when the image
+     * is none of those (a texture, another target's image). The readback path asks it to unpack in the
+     * image's own byte order and to refuse classes its 4-byte expansion cannot read.
+     */
+    public TargetFormatClass celtium$imageFormatClass(long image) {
+        if (image == 0L) {
+            return null;
+        }
+        if (hasLivePresentBorrow() && image == this.presentBorrow.image()) {
+            return this.frameFormatClass;
+        }
+        if (image == this.colorImage) {
+            return this.frameFormatClass;
+        }
+        if (this.defaultPair.ownsColorImage(image)) {
+            return this.defaultPair.formatClass;
+        }
+        long identity = chainPairIdentityForImage(image);
+        return identity == Long.MIN_VALUE ? null : chainPairFormatClass(identity);
+    }
+
     /** {@return the delivered image's width}, which the probe reports instead of assuming the capture's size. */
     public int width() {
         return this.width;
@@ -723,12 +784,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return true;
         }
         // The format gate (Stage 1, overhaul): the frame's render passes are built for the frame colour
-        // format (R1: always VK_FORMAT_R8G8B8A8_UNORM), so a swapchain generation in any other format -
-        // the BGRA formats most desktop surfaces offer - can never be borrowed as the render target; its
+        // format (R1 revised: the surface's format, followed at target creation - see the constructor),
+        // so a swapchain generation in any other format can never be borrowed as the render target; its
         // frames take the composed present instead. Borrowing through the mismatch built framebuffers the
         // validation layer rejected (VUID-VkFramebufferCreateInfo-pAttachments-00880) and ANV crashed on.
         if (engine == null
-                || !PresentEngine.formatAllowsBorrow(engine.swapchainFormat(), VK_FORMAT_R8G8B8A8_UNORM)) {
+                || !PresentEngine.formatAllowsBorrow(engine.swapchainFormat(), this.colorFormat)) {
             return false;
         }
         if (!ensurePresentAcquirePool(engine.imageCount())) {
@@ -2060,14 +2121,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * {@return whether {@code image} is a colour image of a chain pair allocated in a non-default format
-     * class}. The readback path asks this because it expands 4 bytes per pixel: a 16F pair's image read that
-     * way is half read and wrong, not merely imprecise (QUEUE 404 rule R10).
+     * {@return whether {@code image} is a colour image of a chain pair allocated in a format class the
+     * 4-byte readback cannot expand}. The readback path asks this because it expands 4 bytes per pixel: a
+     * 16F pair's image read that way is half read and wrong, not merely imprecise (QUEUE 404 rule R10).
+     * Both 8-bit UNORM classes are readable - RGBA8 and, since Stage 1's BGRA ignition, BGRA8, whose byte
+     * order the readback answers for - so "non-default" is no longer the question; readability is.
      */
-    public boolean chainPairImageHasNonDefaultFormat(long image) {
+    public boolean chainPairImageHasUnreadableFormat(long image) {
         long identity = chainPairIdentityForImage(image);
-        return identity != Long.MIN_VALUE
-                && chainPairFormatClass(identity) != TargetFormatClass.RGBA8_UNORM;
+        if (identity == Long.MIN_VALUE) {
+            return false;
+        }
+        TargetFormatClass formatClass = chainPairFormatClass(identity);
+        return formatClass != TargetFormatClass.RGBA8_UNORM
+                && formatClass != TargetFormatClass.BGRA8_UNORM;
     }
 
     /**
@@ -2078,7 +2145,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     public void ensureChainPairColors(long identity, int attachments, int width, int height) {
         // The class-preserving form: the pair keeps the class the registration junction resolved for it
-        // (rule R5). A pair nobody resolved a class for keeps RGBA8_UNORM, its field's initial value.
+        // (rule R5). A pair nobody resolved a class for is ensured in RGBA8_UNORM explicitly: the frame's
+        // BGRA class enters through the pin (identity 0 / main) only, never through an unresolved pair.
         Pair existing = existingChainPair(identity);
         ensureChainPairColors(identity, attachments, width, height,
                 existing == null ? TargetFormatClass.RGBA8_UNORM : existing.formatClass);
@@ -2881,10 +2949,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         /**
          * The format class this pair's colour images are allocated in (QUEUE 404, S3). An attribute of the
          * pair, not of its slot: it is fixed for the pair's current images, and a different wanted class is a
-         * rebuild, exactly like a different size (rule R3). The default pair and a pair nobody resolved a
-         * class for stay {@code RGBA8_UNORM}, which is the format every pair had before classes existed.
+         * rebuild, exactly like a different size (rule R3). A pair starts in the frame's own class - the
+         * default pair is identity 0's pair and identity 0 is pinned to the frame (rule R1) - and a chain
+         * pair's first ensure replaces it with the class its identity resolved, which is never the frame's
+         * BGRA class: BGRA enters only through the pin.
          */
-        private TargetFormatClass formatClass = TargetFormatClass.RGBA8_UNORM;
+        private TargetFormatClass formatClass;
         private int creations;
         /** Unique across pairs and evictions: which images a framebuffer built over this pair's views names. */
         private long generation;
@@ -2893,6 +2963,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
         private Pair(String label) {
             this.label = label;
+            this.formatClass = GllessFrameTarget.this.frameFormatClass;
+        }
+
+        /** {@return whether {@code image} is one of this pair's colour images (slot 0 or an extra)}. */
+        private boolean ownsColorImage(long image) {
+            if (image == 0L) {
+                return false;
+            }
+            if (image == this.colorImage) {
+                return true;
+            }
+            if (this.extraColorImages != null) {
+                for (int i = 0; i < this.extraColorCount; i++) {
+                    if (this.extraColorImages[i] == image) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /** {@return the layout this pair's colour image is actually in}. */

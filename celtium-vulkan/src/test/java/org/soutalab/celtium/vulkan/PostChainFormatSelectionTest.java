@@ -60,6 +60,33 @@ class PostChainFormatSelectionTest {
                 "the same class resolves to the same pipeline");
     }
 
+    // Stage 1 BGRA ignition: on a BGRA frame, a pass writing main writes in the frame's class, and the
+    // bare pipeline key belongs to the frame's class - an RGBA8 chain target on that frame is the
+    // variant, not the default.
+    @Test
+    void onABgraFrameTheFrameClassIsTheDefault() {
+        assertEquals(TargetFormatClass.BGRA8_UNORM,
+                VulkanPostChain.celtium$outFormatClass(true, TargetFormatClass.RGBA16_FLOAT,
+                        TargetFormatClass.BGRA8_UNORM),
+                "writing main on a BGRA frame writes BGRA");
+        assertEquals(TargetFormatClass.BGRA8_UNORM,
+                VulkanPostChain.celtium$outFormatClass(false, null, TargetFormatClass.BGRA8_UNORM),
+                "an unresolved chain on a BGRA frame runs in the frame's class");
+        assertEquals(TargetFormatClass.RGBA16_FLOAT,
+                VulkanPostChain.celtium$outFormatClass(false, TargetFormatClass.RGBA16_FLOAT,
+                        TargetFormatClass.BGRA8_UNORM),
+                "a resolved chain class is still the chain's own");
+        assertEquals("blur",
+                VulkanPostChain.celtium$programKey("blur", TargetFormatClass.BGRA8_UNORM,
+                        TargetFormatClass.BGRA8_UNORM),
+                "the frame's class keeps the bare key on its own frame");
+        assertNotEquals(VulkanPostChain.celtium$programKey("blur", TargetFormatClass.BGRA8_UNORM,
+                        TargetFormatClass.BGRA8_UNORM),
+                VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA8_UNORM,
+                        TargetFormatClass.BGRA8_UNORM),
+                "RGBA8 on a BGRA frame is a variant and must not share the bare key");
+    }
+
     // A target is rebuilt when its size changes (the rule that predates selection) or when the class the
     // pass asks for differs from the class the image was created in - an image's format cannot change.
     @Test

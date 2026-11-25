@@ -312,6 +312,30 @@ final class PresentSwapchain {
         if (backend.celtium$recordingOpen()) {
             return;
         }
+        // Borrow bypass conditions (designer audit 2026-11-25, section 1 Stage 1): a borrowed image is
+        // the swapchain's own - it was created without SAMPLED usage and nothing may read it back - so a
+        // frame that needs any of the following keeps its own image and takes the composed present. The
+        // conditions are named here, at the one place that decides, rather than left to emerge from the
+        // paths that would break:
+        // 1. A shader pack is active. The pack's own passes sample the frame colour and write through
+        //    their targets; the frame they compose must be an image those passes can sample.
+        if (org.embeddedt.embeddium.impl.render.ShaderModBridge.areShadersEnabled()) {
+            return;
+        }
+        // 2. The frame target carries chain pairs - custom framebuffers (a mod FBO, the entity-outline
+        //    framebuffer) have drawn into this frame, and their passes sample the frame colour as a
+        //    texture. Conservative by construction: the vanilla outline framebuffer trips it too, which
+        //    costs those frames the direct present and nothing else.
+        if (target.celtium$hasChainPairs()) {
+            return;
+        }
+        // 3. A presented-image readback is outstanding (a diagnostics dump requested of the backend or
+        //    already handed to the swapchain): the dump reads the presented image back, which the borrow
+        //    contract does not offer. Costs nothing outside a leg - no fixture, no dump requests.
+        if (!backend.pendingPresentedDumps.isEmpty()
+                || (backend.swapchain != null && backend.swapchain.hasPendingPresentedImageDumps())) {
+            return;
+        }
         if (backend.swapchain != null && backend.context.presentEngine().borrowAbandoned()) {
             releaseSwapchainForRebuild();
         }

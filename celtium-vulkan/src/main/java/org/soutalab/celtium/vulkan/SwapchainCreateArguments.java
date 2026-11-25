@@ -292,7 +292,8 @@ public final class SwapchainCreateArguments {
             chosenColorSpace = fallbackColorSpace;
             chosen = true;
             result.formatNote = "direct present prefers R8G8B8A8_UNORM, which the surface did not offer;"
-                    + " took the first acceptable format (frames from this generation use the composed present)";
+                    + " took the first acceptable format (the frame adopts this format, so this generation"
+                    + " can be borrowed - Stage 1 R1 revised)";
         }
         if (!chosen) {
             // No preferred format: take the first real one the surface listed, never the UNDEFINED marker.
@@ -322,6 +323,40 @@ public final class SwapchainCreateArguments {
         result.format = chosenFormat;
         result.colorSpace = chosenColorSpace;
         return result;
+    }
+
+    /**
+     * {@return the format the frame colour image is allocated in} (Stage 1 BGRA ignition, QUEUE 404 rule R1
+     * revised): the frame follows the swapchain's format, so a generation whose format the frame can adopt
+     * can be borrowed for direct present instead of composed.
+     * <p>
+     * The classic frame format is {@link #FORMAT_R8G8B8A8_UNORM}. It stays the answer whenever direct present
+     * is off (nothing borrows, so the frame keeps the format every existing pass and readback was built
+     * against), and whenever the surface's chosen format is not one the frame may adopt: the sRGB formats
+     * are never adopted (an sRGB attachment would apply a linear-to-sRGB conversion on every write, and
+     * Minecraft's pipeline is not linear), and {@link #FORMAT_B8G8R8A8_UNORM} is adopted only when the device
+     * can attach, blend and sample it ({@code bgraUsable}, the caller's device answer) - a frame the device
+     * cannot render into would be worse than a composed present. Any other answer leaves the generation
+     * unborrowable: the borrow gate compares formats and refuses, which is the composed present, never a
+     * mismatched framebuffer.
+     * <p>
+     * The alternative considered and not taken: {@code VK_KHR_swapchain_mutable_format} with a component
+     * swizzle, keeping the frame at R8G8B8A8 over a BGRA swapchain image. A view's component mapping applies
+     * to reads of the image, not to colour-attachment writes, so the frame's R would land in the swapchain
+     * image's B byte - the presented picture would swap red and blue. The extension would also need
+     * {@code VK_KHR_image_format_list} plumbing at creation for a benefit the follow-the-surface rule
+     * already provides on every offer shape.
+     *
+     * @param swapchainFormat the format the live generation was created in, or {@link #FORMAT_UNDEFINED}
+     *                        when no generation exists yet
+     * @param directPresent   whether direct present is enabled ({@code -Dceltium.present.direct})
+     * @param bgraUsable      whether the device can attach, blend and sample B8G8R8A8_UNORM
+     */
+    public static int frameColorFormat(int swapchainFormat, boolean directPresent, boolean bgraUsable) {
+        if (directPresent && swapchainFormat == FORMAT_B8G8R8A8_UNORM && bgraUsable) {
+            return FORMAT_B8G8R8A8_UNORM;
+        }
+        return FORMAT_R8G8B8A8_UNORM;
     }
 
     /**

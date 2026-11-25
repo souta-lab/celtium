@@ -546,6 +546,11 @@ public final class VulkanSwapchain {
     }
 
 
+    /** {@return whether a presented-image dump request is still outstanding on this swapchain}. */
+    public boolean hasPendingPresentedImageDumps() {
+        return !this.pendingDumpPaths.isEmpty();
+    }
+
     /** Transfers unfulfilled requests before this wrapper is replaced; completed dumps are not replayed. */
     public java.util.List<java.nio.file.Path> takePendingPresentedImageDumps() {
         java.util.List<java.nio.file.Path> pending = new java.util.ArrayList<>(this.pendingDumpPaths);
@@ -1873,6 +1878,15 @@ public final class VulkanSwapchain {
      * <p>
      * {@link #presentImage} survives only for the loading screen's standalone texture present, whose
      * source is not a frame the target rendered.
+     * <p>
+     * Known shape debt, owned by Stage 2's integration (designer audit 2026-11-25, section 1 Stage 1):
+     * the final transition below is a pre-recorded command buffer submitted as its own
+     * {@code vkQueueSubmit}, where the plan's shape is no separate submit at all - the frame's render
+     * pass declares {@code PRESENT_SRC_KHR} as its final layout and the one frame submission carries the
+     * transition. Removing the separate submit belongs with Stage 2's one-submit work (with the dummy
+     * signal/wait removal and the async present thread's removal), not with this branch: the transition's
+     * semaphore choreography is the frame timeline's business, and changing it here would pre-empt the
+     * integration this audit's order prescribes.
      */
     public String presentDirect(FrameImageTarget target) {
         long presentStarted = System.nanoTime();

@@ -157,7 +157,7 @@ public final class TargetFormatCensus {
             return -1;
         }
         return switch (formatClass) {
-            case RGBA8_UNORM -> 8;
+            case RGBA8_UNORM, BGRA8_UNORM -> 8;
             case RGBA16_FLOAT -> 16;
             case RGBA32_FLOAT -> 32;
             case R11G11B10_FLOAT -> channel == 3 ? 0 : (channel == 2 ? 10 : 11);
@@ -177,7 +177,12 @@ public final class TargetFormatCensus {
         if (resolution.anyUnmapped()) {
             return new Outcome(Verdict.FALLBACK, "unmapped");
         }
-        if (resolution.pinned() && requested != TargetFormatClass.RGBA8_UNORM) {
+        if (resolution.pinned() && requested != chosen) {
+            // The pin serves the frame's own class, whatever the request asked for: under the classic
+            // RGBA8 frame that class is RGBA8_UNORM (the comparison this replaces), and under a BGRA
+            // frame (Stage 1 R1 revised) it is BGRA8_UNORM, which no GL request names - so on a BGRA
+            // frame every pinned resolution is counted here, with the census line's chosen= naming the
+            // class the pin actually served.
             return new Outcome(Verdict.FALLBACK, "main-identity-pinned");
         }
         if (resolution.deviceRefused()) {
@@ -238,7 +243,7 @@ public final class TargetFormatCensus {
         if (resolution.slotsDiffer()) {
             TUPLE_WIDENED.incrementAndGet();
         }
-        if (resolution.pinned() && resolution.widestRequested() != TargetFormatClass.RGBA8_UNORM) {
+        if (resolution.pinned() && resolution.widestRequested() != resolution.chosen()) {
             MAIN_PINNED.incrementAndGet();
         }
         if (resolution.deviceRefused()) {

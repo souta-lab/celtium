@@ -1647,18 +1647,27 @@ public final class TextureCopyService {
     }
 
     public int[] readImageRectangle(long image, int x, int y, int width, int height) {
-        // This read expands 4 bytes per pixel (the buffer below is w*h*4 and the unpacking assumes
-        // R8G8B8A8). A chain pair allocated in a non-default format class (QUEUE 404) does not have 4-byte
-        // pixels: reading it this way would return half the bytes with wrong values, which is worse than
-        // refusing - the caller already handles null as "no readback" (rule R10). Converting instead of
-        // refusing is a separate item; the refusal keeps the two cases distinguishable.
+        // This read expands 4 bytes per pixel (the buffer below is w*h*4). An image the frame target owns
+        // in a format class that is not a 4-byte UNORM (QUEUE 404: a chain pair in a float class) does not
+        // have 4-byte pixels: reading it this way would return half the bytes with wrong values, which is
+        // worse than refusing - the caller already handles null as "no readback" (rule R10). Converting
+        // instead of refusing is a separate item; the refusal keeps the two cases distinguishable. The two
+        // 4-byte UNORM classes are both readable: their byte order differs, and the unpacking below
+        // answers for the image's own class (Stage 1 BGRA ignition) - an image the target does not own
+        // (a texture mirror) keeps the classic RGBA assumption it has always been read under.
         GllessFrameTarget readTarget = this.host.offTargetTarget();
-        if (readTarget != null && readTarget.chainPairImageHasNonDefaultFormat(image)) {
+        RenderTargetRegistry.TargetFormatClass imageClass = readTarget == null ? null
+                : readTarget.celtium$imageFormatClass(image);
+        boolean swapRedBlue = imageClass != RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM;
+        if (imageClass != null
+                && imageClass != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM
+                && imageClass != RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM) {
             if (this.formatRefusedReadLogs < 2) {
                 this.formatRefusedReadLogs++;
                 System.out.println("[Celtium] CELTIUM_COPY_READ_FORMAT_REFUSED image=0x"
                         + Long.toHexString(image)
-                        + " (a chain pair in a non-RGBA8 format class; the 4-byte readback does not apply)");
+                        + " (a frame image in the " + imageClass
+                        + " format class; the 4-byte readback does not apply)");
             }
             return null;
         }
@@ -1775,21 +1784,24 @@ public final class TextureCopyService {
                     != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 return null;
             }
-            // The owned colour image is VK_FORMAT_R8G8B8A8_UNORM, so the bytes are R, G, B, A in that order - the ARGB
-            // int the mirror's patch path expects packs R in bits 16..23.
+            // The ARGB int the mirror's patch path expects packs R in bits 16..23. An R8G8B8A8 image's
+            // bytes are R, G, B, A in that order, which a little-endian int reads as 0xAABBGGRR, so the
+            // unpacking swaps R and B; a B8G8R8A8 image's little-endian int already is 0xAARRGGBB - the
+            // same convention the presented-image dump's readback block uses - so no swap runs for it.
             int[] pixels = new int[width * height];
             // One bulk get, then a shift per pixel: the byte-at-a-time form did four memGetByte calls per pixel and was
             // the largest single cost in a JFR of the world window (16.4% of the client thread in this method alone,
-            // found the same week the presented-image dump turned out to pay 284 ms for the same pattern). The mapped
-            // bytes are R,G,B,A, which a little-endian int reads as 0xAABBGGRR.
+            // found the same week the presented-image dump turned out to pay 284 ms for the same pattern).
             org.lwjgl.system.MemoryUtil.memIntBuffer(mapped.get(0), pixels.length).get(pixels);
-            for (int pixel = 0; pixel < pixels.length; pixel++) {
-                int rgba = pixels[pixel];
-                int r = rgba & 0xFF;
-                int g = (rgba >>> 8) & 0xFF;
-                int b = (rgba >>> 16) & 0xFF;
-                int a = (rgba >>> 24) & 0xFF;
-                pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
+            if (swapRedBlue) {
+                for (int pixel = 0; pixel < pixels.length; pixel++) {
+                    int rgba = pixels[pixel];
+                    int r = rgba & 0xFF;
+                    int g = (rgba >>> 8) & 0xFF;
+                    int b = (rgba >>> 16) & 0xFF;
+                    int a = (rgba >>> 24) & 0xFF;
+                    pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
+                }
             }
             org.lwjgl.vulkan.VK10.vkUnmapMemory(this.host.context().device(), memory);
             // No row reversal, and the earlier comment here argued for one. The owned image is in GL texture order -

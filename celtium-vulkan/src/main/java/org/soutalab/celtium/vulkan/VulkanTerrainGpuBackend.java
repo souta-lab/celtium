@@ -165,13 +165,47 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     FrameImageTarget frameTarget;
     /** Standalone frame-compatible render pass for UI-only frames - only used when no terrain pass has run. */
     long uiRenderPass;
+    /** The VkFormat {@link #uiRenderPass} was built for; 0 while none exists. */
+    private int uiRenderPassFormat;
+    /**
+     * UI passes retired by a frame-format change (Stage 1 BGRA ignition): kept, not destroyed, until
+     * teardown - a pass may still be named by submitted command buffers, and the variant caches take the
+     * same keep-until-teardown line. Bounded by the number of frame formats (two).
+     */
+    private final java.util.ArrayList<Long> retiredUiRenderPasses = new java.util.ArrayList<>();
 
     long uiRenderPass() {
+        // The pass must declare the frame's format: before the first frame target exists the context's
+        // decision can still be provisional (an RGBA answer a later BGRA surface would have moved), so a
+        // cached pass built for another format is retired and rebuilt rather than handed out - a pass
+        // whose attachment format disagrees with the framebuffer's image is a validation error, not a
+        // picture difference.
+        int frameFormat = this.context.celtium$frameColorFormat();
+        if (this.uiRenderPass != 0L && this.uiRenderPassFormat != frameFormat) {
+            this.retiredUiRenderPasses.add(this.uiRenderPass);
+            this.uiRenderPass = 0L;
+            record("standalone UI render pass retired: the frame format moved to " + frameFormat);
+        }
         if (this.uiRenderPass == 0L) {
             this.uiRenderPass = VulkanTerrainPipeline.createFrameRenderPass(this.context);
+            this.uiRenderPassFormat = frameFormat;
             record("standalone UI render pass created for the no-terrain-pass frame");
         }
         return this.uiRenderPass;
+    }
+
+    /**
+     * {@return the frame's own format class} (Stage 1 BGRA ignition, QUEUE 404 rule R1 revised): the class
+     * the live frame target was allocated in, which is what the pin sites mean by "the frame's class". With
+     * no target yet, the context's decision answers - the same value the target will be created in, because
+     * target creation is what notes the decision final.
+     */
+    TargetFormatClass celtium$frameFormatClass() {
+        FrameImageTarget target = this.frameTarget;
+        if (target instanceof GllessFrameTarget glless) {
+            return glless.frameFormatClass();
+        }
+        return this.context.celtium$frameFormatClass();
     }
 
     /**
@@ -187,7 +221,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.chainPairRenderPass == 0L) {
             this.chainPairRenderPass = VulkanTerrainPipeline.createChainPairRenderPass(this.context);
             record("chain-pair render pass created (depth cleared and discarded)");
-            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=RGBA8_UNORM vk=37 count=1 discard=true");
+            TargetFormatClass frameClass = celtium$frameFormatClass();
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + frameClass
+                    + " vk=" + frameClass.vkFormat() + " count=1 discard=true");
         }
         return this.chainPairRenderPass;
     }
@@ -207,8 +243,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments);
             this.chainPairRenderPassesByCount[colorAttachments] = cached;
             record("chain-pair MRT render pass created (colors=" + colorAttachments + ")");
-            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=RGBA8_UNORM vk=37 count="
-                    + colorAttachments + " discard=true");
+            TargetFormatClass frameClass = celtium$frameFormatClass();
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + frameClass
+                    + " vk=" + frameClass.vkFormat() + " count=" + colorAttachments + " discard=true");
         }
         return cached;
     }
@@ -223,13 +260,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
-     * The one-colour chain-pair pass for a pair allocated in {@code formatClass} (QUEUE 404, S4). The default
-     * class is the ordinary pass above - same handle, same creation order - so the shipped path gains no pass
-     * and loses none (rule R6); a non-default class gets its own discard-depth pass in that format, cached in
-     * the variant map.
+     * The one-colour chain-pair pass for a pair allocated in {@code formatClass} (QUEUE 404, S4). The
+     * frame's own class is the ordinary pass above - same handle, same creation order - so the shipped path
+     * gains no pass and loses none (rule R6); any other class gets its own discard-depth pass in that
+     * format, cached in the variant map. "The frame's own class" is what "default" means here since Stage
+     * 1's BGRA ignition: on a BGRA frame the ordinary pass is the BGRA one, and an RGBA8 pair - the common
+     * unresolved case - takes the variant map like any other non-frame class.
      */
     long chainPairRenderPass(TargetFormatClass formatClass) {
-        if (formatClass == null || formatClass == TargetFormatClass.RGBA8_UNORM) {
+        if (formatClass == null || formatClass == celtium$frameFormatClass()) {
             return chainPairRenderPass();
         }
         return chainPairVariantPass(1, formatClass);
@@ -237,11 +276,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /**
      * The chain-pair render pass for {@code colorAttachments} colour targets in {@code formatClass}
-     * (QUEUE 404, S4): the variant keyed by (count, class). The default class delegates to the per-count
+     * (QUEUE 404, S4): the variant keyed by (count, class). The frame's class delegates to the per-count
      * cache above, unchanged (rule R6).
      */
     long chainPairRenderPass(int colorAttachments, TargetFormatClass formatClass) {
-        if (formatClass == null || formatClass == TargetFormatClass.RGBA8_UNORM) {
+        if (formatClass == null || formatClass == celtium$frameFormatClass()) {
             return chainPairRenderPass(colorAttachments);
         }
         return chainPairVariantPass(Math.max(1, colorAttachments), formatClass);
@@ -268,7 +307,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Creates (once) and returns a load/store-depth multi-target render pass for shader-pack terrain passes. */
     private long frameVariantRenderPass(int colorAttachments, TargetFormatClass formatClass) {
         int colors = Math.max(1, colorAttachments);
-        TargetFormatClass effectiveClass = formatClass == null ? TargetFormatClass.RGBA8_UNORM : formatClass;
+        TargetFormatClass effectiveClass = formatClass == null ? celtium$frameFormatClass() : formatClass;
         long key = celtium$chainPassKey(colors, effectiveClass.vkFormat());
         long cached = this.frameVariantPasses.get(key);
         if (cached == 0L) {
@@ -541,17 +580,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /**
      * {@return the format class of the pair the current target's batches will be drawn into}: the frame's
-     * class ({@code RGBA8_UNORM}) for identity 0 and the main identity (rule R1), the current identity's
-     * chain-pair class otherwise. The prepare path reads this because a batch is offered while its target is
-     * current - the same fact the state key's window term already relies on.
+     * class for identity 0 and the main identity (rule R1 - {@code RGBA8_UNORM} on a classic surface,
+     * {@code BGRA8_UNORM} when the frame followed a BGRA one), the current identity's chain-pair class
+     * otherwise. The prepare path reads this because a batch is offered while its target is current - the
+     * same fact the state key's window term already relies on.
      */
     TargetFormatClass celtium$currentPairFormatClass() {
         long identity = this.targetRegistry.currentIdentity();
         if (identity == 0L || identity == this.targetRegistry.mainIdentity()) {
-            return TargetFormatClass.RGBA8_UNORM;
+            return celtium$frameFormatClass();
         }
         GllessFrameTarget target = offTargetTarget();
-        return target == null ? TargetFormatClass.RGBA8_UNORM : target.chainPairFormatClass(identity);
+        return target == null ? celtium$frameFormatClass() : target.chainPairFormatClass(identity);
     }
 
     /**
@@ -7219,8 +7259,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the request facts the format census (QUEUE 405, S5) classifies the decision by. The census facts
      * are read off the same pass that resolves the class - they change nothing about it.
      * <p>
-     * The rules, in order: the main identity and identity 0 are pinned to {@code RGBA8_UNORM} (R1, via
-     * {@link VulkanColorFormat#pinnedOrRequested}); the forced class, when set, wins over the request (R8)
+     * The rules, in order: the main identity and identity 0 are pinned to the frame's class (R1, via
+     * {@link VulkanColorFormat#pinnedOrRequested} - {@code RGBA8_UNORM}, or {@code BGRA8_UNORM} when the
+     * frame followed a BGRA surface); the forced class, when set, wins over the request (R8)
      * and is resolved without reading one, which its census record says ({@code slot0Gl} -1); a multi-target
      * tuple takes the widest class any slot asked for (R4); and a class this device cannot use as a sampled
      * colour attachment falls back to {@code RGBA8_UNORM} (R5 of the readiness, the device check). An
@@ -7236,7 +7277,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return new TargetFormatCensus.Resolution(chosen, color, -1, FORCED_TARGET_FORMAT_CLASS,
                     false, false, false, false, true, chosen != FORCED_TARGET_FORMAT_CLASS);
         }
-        TargetFormatClass widest = TargetFormatClass.RGBA8_UNORM;
+        // The fold's floor is the class a slot with no mapped request resolves to: the frame's class for
+        // a pinned identity (every slot folds to it), the classic default otherwise. widestRequested's
+        // floor stays the classic default - it records what was asked, and no GL request asks for BGRA.
+        TargetFormatClass widest = pinned ? celtium$frameFormatClass() : TargetFormatClass.RGBA8_UNORM;
         TargetFormatClass widestRequested = TargetFormatClass.RGBA8_UNORM;
         int slot0Gl = 0;
         boolean slotsDiffer = false;
@@ -7269,7 +7313,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
             }
             widest = VulkanColorFormat.widest(widest,
-                    VulkanColorFormat.pinnedOrRequested(pinned, glInternal));
+                    VulkanColorFormat.pinnedOrRequested(pinned, glInternal, celtium$frameFormatClass()));
         }
         TargetFormatClass chosen = celtium$deviceCheckedFormatClass(widest);
         return new TargetFormatCensus.Resolution(chosen, color, slot0Gl, widestRequested, slotsDiffer,
@@ -7292,7 +7336,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 identity == 0L || identity == this.targetRegistry.mainIdentity(),
                 target.chainPairFormatClass(identity),
                 FORCED_TARGET_FORMAT_CLASS == null ? null
-                        : celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS));
+                        : celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS),
+                celtium$frameFormatClass());
     }
 
     /**
@@ -7302,11 +7347,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static TargetFormatClass celtium$windowPairClass(TargetFormatClass forcedClass, boolean pinned,
             TargetFormatClass pairClass, TargetFormatClass deviceCheckedForcedClass) {
+        return celtium$windowPairClass(forcedClass, pinned, pairClass, deviceCheckedForcedClass,
+                TargetFormatClass.RGBA8_UNORM);
+    }
+
+    /**
+     * {@link #celtium$windowPairClass(TargetFormatClass, boolean, TargetFormatClass, TargetFormatClass)}
+     * against the frame's own class: "the default" a pinned identity never leaves is the frame's class
+     * (rule R1 as revised by Stage 1's BGRA ignition).
+     */
+    static TargetFormatClass celtium$windowPairClass(TargetFormatClass forcedClass, boolean pinned,
+            TargetFormatClass pairClass, TargetFormatClass deviceCheckedForcedClass,
+            TargetFormatClass frameClass) {
         if (forcedClass == null) {
             return pairClass;
         }
         if (pinned) {
-            return TargetFormatClass.RGBA8_UNORM;
+            return frameClass;
         }
         return deviceCheckedForcedClass;
     }
@@ -7328,9 +7385,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
-    /** {@return {@code wanted} when this device can use it as a pair colour image, else the default class}. */
+    /**
+     * {@return {@code wanted} when this device can use it as a pair colour image, else the default class}.
+     * The frame's own class is returned unchecked, as the classic default always was: on an RGBA frame it
+     * is that default, and on a BGRA frame the frame decision itself already asked the device (the context
+     * only follows a BGRA surface when the class is usable), so re-asking here would only duplicate it.
+     */
     private TargetFormatClass celtium$deviceCheckedFormatClass(TargetFormatClass wanted) {
-        if (wanted == TargetFormatClass.RGBA8_UNORM) {
+        if (wanted == celtium$frameFormatClass()) {
             return wanted;
         }
         return VulkanColorFormat.usable(this.context.physicalDevice(), wanted)
@@ -14341,12 +14403,12 @@ this.frameBufferOpen = false;
                     + " (no complete native image or initialized framebuffer attachment)";
             return null;
         }
-        // The pass the pipeline is built against: the frame pass for the default class, as always. A batch
-        // offered for a non-default-class pair gets the class' frame-shaped pass instead (QUEUE 404, S4) -
-        // a pipeline built against the 8-bit frame pass is not compatible with that pair's pass, because
+        // The pass the pipeline is built against: the frame pass for the frame's class, as always. A batch
+        // offered for a pair in any other class gets the class' frame-shaped pass instead (QUEUE 404, S4) -
+        // a pipeline built against the frame pass is not compatible with that pair's pass, because
         // compatibility compares attachment formats. The class' pass is compatible with the pair's
         // one-colour chain pass, so the same pipeline draws in the window.
-        long pass = pairClass != TargetFormatClass.RGBA8_UNORM
+        long pass = pairClass != celtium$frameFormatClass()
                 ? formatClassPipelinePass(pairClass)
                 : terrain != null ? terrain.renderPass() : uiRenderPass();
         long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -17404,6 +17466,12 @@ this.frameBufferOpen = false;
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
             this.uiRenderPass = 0;
         }
+        for (long retiredPass : this.retiredUiRenderPasses) {
+            if (retiredPass != 0) {
+                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), retiredPass, null);
+            }
+        }
+        this.retiredUiRenderPasses.clear();
         if (this.chainPairRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.chainPairRenderPass, null);
             this.chainPairRenderPass = 0;
@@ -18026,7 +18094,7 @@ this.frameBufferOpen = false;
                 }
             }
 
-            TargetFormatClass pairClass = onMain ? TargetFormatClass.RGBA8_UNORM : celtium$currentPairFormatClass();
+            TargetFormatClass pairClass = onMain ? celtium$frameFormatClass() : celtium$currentPairFormatClass();
             long targetRenderPass = frameVariantRenderPass(targetColors, pairClass);
             int passW = this.targetWidth;
             int passH = this.targetHeight;

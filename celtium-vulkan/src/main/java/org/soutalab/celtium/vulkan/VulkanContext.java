@@ -142,6 +142,16 @@ public final class VulkanContext {
     private VkQueue queue;
     /** The owner of the swapchain lending contract (lanechat #8830); built with the queue, before any swapchain. */
     private PresentEngine presentEngine;
+    /**
+     * The frame colour format, once decided (Stage 1 BGRA ignition, R1 revised): 0 while undecided. The
+     * decision is {@link SwapchainCreateArguments#frameColorFormat} over the present engine's adopted
+     * format; it latches the first time it is made from an informed state (a generation exists, or direct
+     * present is off and the answer cannot change), and the first frame target notes its own format here,
+     * so every format-shaped object created afterwards - render passes, pipelines, the frame image itself
+     * on recreation - agrees with the frame that exists. A later generation in a different format does not
+     * move it: the borrow gate compares formats and presents composed, never mismatched.
+     */
+    private int frameColorFormat;
     private int queueFamilyIndex = -1;
     private String deviceName;
     private String deviceUuid;
@@ -704,6 +714,50 @@ public final class VulkanContext {
     /** {@return this context's present engine}: the owner of the swapchain lending contract (lanechat #8830). */
     public PresentEngine presentEngine() {
         return this.presentEngine;
+    }
+
+    /**
+     * {@return the format the frame colour image is allocated in} (Stage 1 BGRA ignition, R1 revised; see
+     * {@link SwapchainCreateArguments#frameColorFormat} for the rule and the rejected mutable-format
+     * alternative). While no generation exists and direct present is on, the answer is provisional - the
+     * classic format, not latched - because a surface that appears later may still be followed; the frame
+     * target's creation is the point that makes the answer final (see
+     * {@link #celtium$noteFrameColorFormat}).
+     */
+    public int celtium$frameColorFormat() {
+        if (this.frameColorFormat != 0) {
+            return this.frameColorFormat;
+        }
+        int adopted = this.presentEngine == null ? SwapchainCreateArguments.FORMAT_UNDEFINED
+                : this.presentEngine.swapchainFormat();
+        int decided = SwapchainCreateArguments.frameColorFormat(adopted, PRESENT_DIRECT,
+                VulkanColorFormat.usable(this.physicalDevice,
+                        RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM));
+        if (!PRESENT_DIRECT || adopted != SwapchainCreateArguments.FORMAT_UNDEFINED) {
+            this.frameColorFormat = decided;
+        }
+        return decided;
+    }
+
+    /** {@return the frame colour format as a format class}: the vocabulary the pair resolution pins to. */
+    public RenderTargetRegistry.TargetFormatClass celtium$frameFormatClass() {
+        return celtium$frameColorFormat() == SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM
+                ? RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM
+                : RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+    }
+
+    /**
+     * Notes the format a frame target was actually created in, fixing the decision for this context's
+     * lifetime. The target computes its format from {@link #celtium$frameColorFormat()} after the present
+     * path has had its chance to create a generation, so the noted value is the informed one in every
+     * realistic flow; when swapchain creation failed at that moment the noted value is the classic format
+     * and the session presents composed even if a BGRA generation appears later - the safe degradation,
+     * recorded here rather than discovered from a mismatched framebuffer.
+     */
+    public void celtium$noteFrameColorFormat(int format) {
+        if (this.frameColorFormat == 0) {
+            this.frameColorFormat = format;
+        }
     }
 
     /** Index of the queue family the queue was taken from. */
