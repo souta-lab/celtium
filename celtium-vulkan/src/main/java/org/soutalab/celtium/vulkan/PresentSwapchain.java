@@ -298,6 +298,18 @@ final class PresentSwapchain {
      * retired here before borrowing again. Never called while a recording is open: an acquire is a queue
      * operation, not a recording, and the frame being recorded already holds its borrow.
      */
+    /** Bounded CELTIUM_BORROW_BYPASS lines per reason; the bypasses themselves are not bounded. */
+    private int borrowBypassLines;
+
+    /** Prints why a borrow was bypassed, a bounded number of times per run (see the conditions above). */
+    private void celtium$noteBorrowBypass(String reason) {
+        if (this.borrowBypassLines < 4) {
+            this.borrowBypassLines++;
+            System.out.println("[Celtium] CELTIUM_BORROW_BYPASS reason=" + reason
+                    + " (the frame keeps its own image and takes the composed present)");
+        }
+    }
+
     void celtium$ensureBorrowedFrameImage() {
         if (!VulkanContext.PRESENT_DIRECT) {
             return;
@@ -313,20 +325,30 @@ final class PresentSwapchain {
             return;
         }
         // Borrow bypass conditions (designer audit 2026-11-25, section 1 Stage 1): a borrowed image is
-        // the swapchain's own - it was created without SAMPLED usage and nothing may read it back - so a
-        // frame that needs any of the following keeps its own image and takes the composed present. The
-        // conditions are named here, at the one place that decides, rather than left to emerge from the
-        // paths that would break:
+        // the swapchain's own - it was created without SAMPLED usage - so a frame whose colour must be
+        // sampled keeps its own image and takes the composed present. The conditions are named here, at
+        // the one place that decides, rather than left to emerge from the paths that would break. Each
+        // refusal is printed a bounded number of times: a bypass that fires silently forever is
+        // indistinguishable from the path never existing (the fallback-visibility rule).
         // 1. A shader pack is active. The pack's own passes sample the frame colour and write through
         //    their targets; the frame they compose must be an image those passes can sample.
         if (org.embeddedt.embeddium.impl.render.ShaderModBridge.areShadersEnabled()) {
+            celtium$noteBorrowBypass("shader-pack");
             return;
         }
-        // 2. The frame target carries chain pairs - custom framebuffers (a mod FBO, the entity-outline
-        //    framebuffer) have drawn into this frame, and their passes sample the frame colour as a
-        //    texture. Conservative by construction: the vanilla outline framebuffer trips it too, which
-        //    costs those frames the direct present and nothing else.
-        if (target.celtium$hasChainPairs()) {
+        // 2. A post chain has been adopted on this backend (a custom framebuffer's ShaderGroup - the
+        //    entity outline, a mod's bloom chain - has run natively): the chain's main-input passes
+        //    sample the frame image, and a chain that ran once is live machinery whose groups recur
+        //    while their feature is on. The condition is the chain executor's existence, not the mere
+        //    existence of chain pairs: pairs are allocated for framebuffers that may never sample the
+        //    frame (the outline framebuffer exists from startup, the leg harness's capture FBOs
+        //    likewise), and keying on them disabled the borrow for whole sessions that never ran a
+        //    chain (measured: agera leg run-s1bgra-agera, 0 direct presents with postChains=0). The
+        //    one frame a session's first chain is adopted on can still hold a borrow taken before the
+        //    chain existed; that frame is closed at the chain's own entry instead
+        //    (PostChainBridge.celtium$postChainRun refuses a main-reading chain over a live borrow).
+        if (backend.postChain != null) {
+            celtium$noteBorrowBypass("post-chain");
             return;
         }
         // 3. A presented-image readback is outstanding (a diagnostics dump requested of the backend or
@@ -334,6 +356,7 @@ final class PresentSwapchain {
         //    contract does not offer. Costs nothing outside a leg - no fixture, no dump requests.
         if (!backend.pendingPresentedDumps.isEmpty()
                 || (backend.swapchain != null && backend.swapchain.hasPendingPresentedImageDumps())) {
+            celtium$noteBorrowBypass("readback");
             return;
         }
         if (backend.swapchain != null && backend.context.presentEngine().borrowAbandoned()) {

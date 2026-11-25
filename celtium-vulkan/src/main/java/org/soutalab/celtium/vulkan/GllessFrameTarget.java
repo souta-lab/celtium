@@ -689,14 +689,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.frameFormatClass;
     }
 
-    /** {@return whether this target owns any chain pair} - i.e. whether a custom framebuffer (a mod FBO,
-     * the entity-outline framebuffer) has drawn into this frame. The present path asks it as a borrow
-     * bypass condition: a borrowed swapchain image cannot be sampled, and a chain pair's passes sample
-     * the frame colour. */
-    public boolean celtium$hasChainPairs() {
-        return !this.chainPairs.isEmpty();
-    }
-
     /**
      * {@return the format class of a colour image this target owns} - the frame image (owned or, while a
      * borrow is live, the borrowed swapchain image, which the borrow gate only accepts in this target's
