@@ -247,6 +247,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.context = context;
         this.width = width;
         this.height = height;
+        this.sharedDepthStore = new SharedDepthStore(
+                () -> this.context.device(),
+                (w, h) -> allocateImage(false, w, h, TargetFormatClass.RGBA8_UNORM),
+                this::retirePairsBorrowing);
     }
 
     public static GllessFrameTarget create(VulkanContext context, int width, int height) {
@@ -1369,10 +1373,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * pairs that borrowed it, which is chain-pair business. Consumers read and record through
      * {@link #sharedDepths()} directly.
      */
-    private final SharedDepthStore sharedDepthStore = new SharedDepthStore(
-            () -> this.context.device(),
-            (width, height) -> allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM),
-            this::retirePairsBorrowing);
+    private final SharedDepthStore sharedDepthStore;
 
     /** {@return the shared depth store}: one depth image per depth-texture identity, borrowed by pairs. */
     public SharedDepthStore sharedDepths() {
