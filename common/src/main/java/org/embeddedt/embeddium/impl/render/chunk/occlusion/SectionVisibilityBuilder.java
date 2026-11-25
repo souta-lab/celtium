@@ -103,30 +103,41 @@ public class SectionVisibilityBuilder {
         return data;
     }
 
+    private static final int ALL_FACES_MASK = (1 << GraphDirection.COUNT) - 1;
+
     private long computeWithFloodFill() {
         long resultEncoding = 0;
         // The fill marks cells as visited by setting their bit, which would corrupt the opacity data other
         // callers (computeOccluderBoxes()) still need. Clone it into scratch space instead of mutating
         // this.blocks in place; opaque cells start pre-marked since the fill must not pass through them.
         BitSet visited = (BitSet) this.blocks.clone();
-        BitSet escapedFaces = new BitSet(GraphDirection.COUNT);
         IntArrayFIFOQueue queue = new IntArrayFIFOQueue();
         for (int i : INDICES_TO_INITIATE_FLOODFILL) {
             if (!visited.get(i)) {
-                escapedFaces.clear();
                 queue.clear();
-                exploreFrom(visited, escapedFaces, queue, i);
-                for (int dir = escapedFaces.nextSetBit(0); dir >= 0; dir = escapedFaces.nextSetBit(dir+1)) {
-                    for (int dir2 = escapedFaces.nextSetBit(0); dir2 >= 0; dir2 = escapedFaces.nextSetBit(dir2+1)) {
+                int escapedMask = exploreFrom(visited, queue, i);
+                if (escapedMask == ALL_FACES_MASK) {
+                    // Nothirium B6: one connected air region already reaches all 6 section faces, so every
+                    // face can see every face — stop flood-filling the rest of the section immediately.
+                    return VisibilityEncoding.EVERYTHING;
+                }
+                for (int m1 = escapedMask; m1 != 0; m1 &= (m1 - 1)) {
+                    int dir = Integer.numberOfTrailingZeros(m1);
+                    for (int m2 = escapedMask; m2 != 0; m2 &= (m2 - 1)) {
+                        int dir2 = Integer.numberOfTrailingZeros(m2);
                         resultEncoding |= 1L << VisibilityEncoding.bit(dir, dir2);
                     }
+                }
+                if (resultEncoding == VisibilityEncoding.EVERYTHING) {
+                    return VisibilityEncoding.EVERYTHING;
                 }
             }
         }
         return resultEncoding;
     }
 
-    private static void exploreFrom(BitSet visited, BitSet escapedFaces, IntArrayFIFOQueue queue, int startIndex) {
+    private static int exploreFrom(BitSet visited, IntArrayFIFOQueue queue, int startIndex) {
+        int escapedMask = 0;
         queue.enqueue(startIndex);
         // Mark the start location as handled
         visited.set(startIndex, true);
@@ -143,10 +154,14 @@ public class SectionVisibilityBuilder {
                     }
                 } else {
                     // We moved out of the section, mark this as an escaping face
-                    escapedFaces.set(dir);
+                    escapedMask |= (1 << dir);
+                    if (escapedMask == ALL_FACES_MASK) {
+                        return escapedMask;
+                    }
                 }
             }
         }
+        return escapedMask;
     }
 
     private static int getNeighborIndex(int idx, int dir) {
