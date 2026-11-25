@@ -16,6 +16,7 @@ import java.nio.LongBuffer;
 
 import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT;
 import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT;
+import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
 import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT;
 import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT_EXT;
 import static org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT;
@@ -36,8 +37,9 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 /**
  * The Vulkan side of the bindless texture array: one descriptor set whose single binding is a
  * {@value BindlessTextureTable#CAPACITY}-entry {@code COMBINED_IMAGE_SAMPLER} array, created with
- * {@code PARTIALLY_BOUND | UPDATE_AFTER_BIND} so slots can be written while other slots are in
- * use and unwritten slots may stay unbound (new-architecture design section 2.2). Draws index the
+ * {@code PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING} so slots can be
+ * written while other slots are in use and unwritten slots may stay unbound (new-architecture
+ * design section 2.2). Draws index the
  * array with the slot from {@link BindlessTextureTable}; a texture binding change never splits a
  * batch again.
  *
@@ -61,6 +63,21 @@ public final class BindlessDescriptorArray {
         createLayoutAndSet();
     }
 
+    /**
+     * The binding flags the array's single binding is created with.
+     * <p>
+     * {@code UPDATE_UNUSED_WHILE_PENDING} is the one S5-1 adds: without it, writing a slot no
+     * in-flight command buffer references is still a validation error when the set is bound by a
+     * pending submission, which is exactly the shape of a texture registering mid-frame (the
+     * terrain path's {@code VulkanTextureArray} has carried the same trio from the start).
+     * Package-private and static so the flag contract is testable without a device.
+     */
+    static int bindingFlags() {
+        return VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT
+                | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT
+                | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
+    }
+
     private void createLayoutAndSet() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorSetLayoutBinding.Buffer binding =
@@ -70,9 +87,7 @@ public final class BindlessDescriptorArray {
                     .descriptorCount(BindlessTextureTable.CAPACITY)
                     .stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-            IntBuffer bindingFlags = stack.ints(
-                    VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT
-                            | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT);
+            IntBuffer bindingFlags = stack.ints(bindingFlags());
             VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo =
                     VkDescriptorSetLayoutBindingFlagsCreateInfo.calloc(stack)
                             .sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT)

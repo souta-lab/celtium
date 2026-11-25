@@ -11,6 +11,12 @@ package org.soutalab.celtium.vulkan.batch;
  * {@link DrawSortKey}, ordered items in capture sequence, and adjacent entries fused when they
  * describe one contiguous, identically-stated run (see the batcher). Arrays are sized to the
  * entry count exactly; the plan is a per-frame value, not reused.
+ *
+ * <p>Each entry also carries the texture slot of its first item. With bindless texturing the
+ * executor ignores it (the texture rides in the instance record); on the per-texture fallback
+ * ({@code ImmediateBatcher.setBindlessEnabled(false)}) entries never fuse across a texture
+ * change, so a change in this value between consecutive entries is exactly where the executor
+ * rebinds the per-texture descriptor set.
  */
 public final class BatchPlan {
 
@@ -20,16 +26,18 @@ public final class BatchPlan {
     private final int[] firstIndices;
     private final int[] vertexOffsets;
     private final int[] firstInstances;
+    private final int[] textureSlots;
     private final int sourceItems;
 
     BatchPlan(int[] pipelineKeys, int[] indexCounts, int[] instanceCounts, int[] firstIndices,
-              int[] vertexOffsets, int[] firstInstances, int sourceItems) {
+              int[] vertexOffsets, int[] firstInstances, int[] textureSlots, int sourceItems) {
         this.pipelineKeys = pipelineKeys;
         this.indexCounts = indexCounts;
         this.instanceCounts = instanceCounts;
         this.firstIndices = firstIndices;
         this.vertexOffsets = vertexOffsets;
         this.firstInstances = firstInstances;
+        this.textureSlots = textureSlots;
         this.sourceItems = sourceItems;
     }
 
@@ -64,5 +72,10 @@ public final class BatchPlan {
 
     public int firstInstance(int entry) {
         return this.firstInstances[entry];
+    }
+
+    /** The texture slot of the entry's first item (a GL texture name on the fallback path). */
+    public int textureSlot(int entry) {
+        return this.textureSlots[entry];
     }
 }
