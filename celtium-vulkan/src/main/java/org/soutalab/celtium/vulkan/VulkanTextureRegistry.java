@@ -50,6 +50,14 @@ public final class VulkanTextureRegistry {
         int width;
         int height;
         final VulkanGlTexture texture;
+        /**
+         * F2 identical-announcement record: the hash of the last announcement this entry applied, with the
+         * per-name announced generation at that application. Zero means "no usable record" - every path that
+         * can change the mirror's content without going through that application (invalidation, a rendered
+         * texture, a replaced entry) either clears it or moves the generation / stale set the skip checks.
+         */
+        long lastAnnouncementHash;
+        int lastAnnouncementGeneration;
 
         Entry(int glId, int width, int height, VulkanGlTexture texture) {
             this.glId = glId;
@@ -226,6 +234,9 @@ public final class VulkanTextureRegistry {
      * the {@code int[][]} a patch announces - as one event per application.
      */
     private int filledFromAnnouncement;
+    /** F2 census: announcements the identical check hashed, and how many it skipped (see ANIM_SKIP_IDENTICAL). */
+    private int animIdenticalChecked;
+    private int animIdenticalSkipped;
     /**
      * Under the GL stub, pixels moved into a mirror from an upload the stub captured - the whole level-0 surface as GL
      * was given it, which is the only whole-image source for a texture the game uploads piecewise (the block atlas).
@@ -307,6 +318,26 @@ public final class VulkanTextureRegistry {
      */
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
+    /**
+     * F2 (QUEUE item 729, optim-plan-1 F chapter): whether an announcement whose pixels are provably identical
+     * to the ones the mirror already holds for the same region may skip its conversion and upload.
+     * <p>
+     * The animation path re-announces its sprites every tick (e9-post-a1 census: animUpload p50 307us +
+     * animMirror p50 259us per tick, the tick body's largest named component), and the mirror update -
+     * conversion, staging, per-level copies - is paid in full even when the announced frame is byte-identical
+     * to the one already applied. Default off: the skip is a measurement candidate, and the counters beside it
+     * ({@link #animIdenticalSkipped()} / {@link #animIdenticalChecked()}) are what an ON/OFF pair reads to
+     * learn how often identical announcements actually occur before the default is discussed.
+     */
+    private static final boolean ANIM_SKIP_IDENTICAL =
+            Boolean.getBoolean("celtium.vulkan.animSkipIdentical");
+    /**
+     * The largest announcement, in texels summed over the applied levels, the identical check will hash.
+     * Bounding the hash keeps the check from ever costing more than the conversion it can save: a sprite patch
+     * is a few hundred texels, while a whole-texture announcement (the light map, 256x256) is left on the
+     * existing path rather than hashed speculatively every tick.
+     */
+    private static final int ANIM_SKIP_IDENTICAL_MAX_TEXELS = 8192;
     /** Bounded lifecycle log budget and the frame serial both paths print, so announce and forget can be ordered. */
     private static int lifecycleLogs;
     private static final int LIFECYCLE_LOG_LIMIT = 64;
@@ -675,7 +706,9 @@ public final class VulkanTextureRegistry {
                 + " drops=" + this.memoDrops + " forgets=" + this.memoForgets
                 + " perName=" + MEMO_PER_NAME + "]"
                 + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]"
-                + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]";
+                + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]"
+                + " animIdentical[checked=" + this.animIdenticalChecked + " skipped=" + this.animIdenticalSkipped
+                + "]";
     }
 
     /** As {@link #get(int)}, with linear filtering - for the lightmap, whose GL texture is filtered linearly. */
@@ -1020,6 +1053,59 @@ public final class VulkanTextureRegistry {
     public void invalidateRenderedTexture(int id) {
         this.announcedImages.remove(id);
         this.staleIds.add(id);
+        Entry entry = this.entries.get(id);
+        if (entry != null) {
+            entry.lastAnnouncementHash = 0L;
+        }
+    }
+
+    /** {@return how many announcements the F2 identical check hashed (flag on, within the texel bound)}. */
+    public int animIdenticalChecked() {
+        return this.animIdenticalChecked;
+    }
+
+    /** {@return how many announcements the F2 identical check skipped as already mirrored}. */
+    public int animIdenticalSkipped() {
+        return this.animIdenticalSkipped;
+    }
+
+    /**
+     * FNV-1a (64-bit) over an announcement's geometry and exactly the texels its application would convert:
+     * levels {@code 0..appliedLevels-1}, each read as {@code (width >> level) x (height >> level)} texels with
+     * the same short-data rule as {@link #toRgba} (missing texels read as zero). Pure and static so the
+     * contract - identical inputs hash equal, any differing texel or geometry field changes the hash - is
+     * unit-testable without a registry or a device.
+     */
+    static long announcementHash(int glTextureId, int x, int y, int width, int height, boolean wholeTexture,
+            int[][] data, int appliedLevels) {
+        long hash = 0xcbf29ce484222325L;
+        hash = mixAnnouncement(hash, glTextureId);
+        hash = mixAnnouncement(hash, x);
+        hash = mixAnnouncement(hash, y);
+        hash = mixAnnouncement(hash, width);
+        hash = mixAnnouncement(hash, height);
+        hash = mixAnnouncement(hash, wholeTexture ? 1 : 0);
+        hash = mixAnnouncement(hash, appliedLevels);
+        for (int level = 0; level < appliedLevels; level++) {
+            int levelWidth = width >> level;
+            int levelHeight = height >> level;
+            int total = levelWidth > 0 && levelHeight > 0 ? levelWidth * levelHeight : 0;
+            int[] texels = data != null && level < data.length ? data[level] : null;
+            int available = texels == null ? 0 : Math.min(total, texels.length);
+            hash = mixAnnouncement(hash, total);
+            for (int i = 0; i < total; i++) {
+                hash = mixAnnouncement(hash, i < available ? texels[i] : 0);
+            }
+        }
+        // Zero is the record's "no usable hash" sentinel; a real announcement never keeps it.
+        return hash == 0L ? 1L : hash;
+    }
+
+    private static long mixAnnouncement(long hash, int value) {
+        hash ^= value & 0xffffffffL;
+        hash *= 0x100000001b3L;
+        hash ^= hash >>> 29;
+        return hash;
     }
 
     /**
@@ -1630,6 +1716,30 @@ public final class VulkanTextureRegistry {
         // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
         // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
         int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : producerDepth;
+        // F2 identical-announcement skip (default off, see ANIM_SKIP_IDENTICAL): the hash covers exactly the
+        // texels the application below would convert - the applied levels at their scaled extents - plus the
+        // geometry, so a hit means "the mirror already holds these bytes at this region". The generation and
+        // stale checks are the safety half: any invalidation, rendered-texture write or intervening different
+        // application since the recorded one defeats the skip, and the recorded hash is additionally cleared
+        // by invalidate / invalidateAll / invalidateRenderedTexture.
+        long identicalHash = 0L;
+        if (ANIM_SKIP_IDENTICAL) {
+            long texels = 0L;
+            for (int level = 0; level < appliedLevels; level++) {
+                texels += (long) (width >> level) * (height >> level);
+            }
+            if (texels <= ANIM_SKIP_IDENTICAL_MAX_TEXELS) {
+                this.animIdenticalChecked++;
+                identicalHash = announcementHash(glTextureId, x, y, width, height, wholeTexture, data,
+                        appliedLevels);
+                if (identicalHash != 0L && entry.lastAnnouncementHash == identicalHash
+                        && entry.lastAnnouncementGeneration == announcedGenerationOfInt(glTextureId)
+                        && !this.staleIds.contains(glTextureId)) {
+                    this.animIdenticalSkipped++;
+                    return true;
+                }
+            }
+        }
         java.nio.ByteBuffer[] levelBytes = this.announceLevelBytes;
         if (levelBytes.length < appliedLevels) {
             levelBytes = new java.nio.ByteBuffer[appliedLevels];
@@ -1670,6 +1780,12 @@ public final class VulkanTextureRegistry {
             this.imageUploads++;
             this.staleIds.remove(glTextureId);
             recordApplication(glTextureId, wholeTexture);
+            if (identicalHash != 0L) {
+                // Recorded only after the application actually landed, keyed by the generation this
+                // application just moved the name to - a later skip must match both.
+                entry.lastAnnouncementHash = identicalHash;
+                entry.lastAnnouncementGeneration = announcedGenerationOfInt(glTextureId);
+            }
             if (wholeTexture) {
                 celtium$noteMirrorSource(glTextureId, "announced-int[]", width, height, levelBytes[0]);
             }
@@ -2626,6 +2742,9 @@ public final class VulkanTextureRegistry {
         // Marked, not dropped: dropping meant the next use created a new image and view, which changed every descriptor
         // key in the immediate path and made the cache useless. The content is re-read into the same resources instead.
         this.staleIds.addAll(this.entries.keySet());
+        for (Entry entry : this.entries.values()) {
+            entry.lastAnnouncementHash = 0L;
+        }
     }
 
     /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
@@ -2639,6 +2758,10 @@ public final class VulkanTextureRegistry {
         }
         if (this.entries.containsKey((int) (glTextureId))) {
             this.staleIds.add(glTextureId);
+            Entry entry = this.entries.get((int) (glTextureId));
+            if (entry != null) {
+                entry.lastAnnouncementHash = 0L;
+            }
         }
     }
 
