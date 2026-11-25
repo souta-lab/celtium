@@ -56,7 +56,7 @@ final class PostChainBridge {
         // because the executor now exists (PresentSwapchain's post-chain condition). A pass READS the
         // frame when its input or its aux input is the main framebuffer; writing main is an attachment
         // write, which a borrowed image serves like any other.
-        org.soutalab.celtium.vulkan.backend.FrameImageTarget chainFrameTarget = b.frameTarget;
+        FrameImageTarget chainFrameTarget = b.frameTarget;
         if (chainFrameTarget instanceof GllessFrameTarget
                 && ((GllessFrameTarget) chainFrameTarget).hasLivePresentBorrow()) {
             for (VulkanPostChain.Pass pass : passes) {
