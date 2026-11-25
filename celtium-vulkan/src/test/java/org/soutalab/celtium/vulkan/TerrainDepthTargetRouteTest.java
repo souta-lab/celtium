@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.vulkan.VK10;
+import org.soutalab.celtium.vulkan.hal.SharedDepthStore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -167,13 +168,13 @@ class TerrainDepthTargetRouteTest {
         // not acquired yet) would otherwise clear the depth the first member's pass just wrote, and the copy that
         // follows would serve a cleared image (design review §2.4 and its R1).
         final long depthKey = 0x1a2b3c4d5e6fL;
-        assertTrue(GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, -1L, 41L),
+        assertTrue(SharedDepthStore.clearNeeded(depthKey, -1L, 41L),
                 "a depth image that has never been cleared this frame may be cleared");
-        assertFalse(GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, 41L, 41L),
+        assertFalse(SharedDepthStore.clearNeeded(depthKey, 41L, 41L),
                 "the same depth image, already cleared in this frame, is refused for the second identity");
-        assertTrue(GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, 41L, 42L),
+        assertTrue(SharedDepthStore.clearNeeded(depthKey, 41L, 42L),
                 "the next frame may clear it again - the record is per frame, not once ever");
-        assertFalse(GllessFrameTarget.celtium$sharedDepthClearNeeded(0L, -1L, 41L),
+        assertFalse(SharedDepthStore.clearNeeded(0L, -1L, 41L),
                 "no shared depth key means there is nothing to guard; the caller only asks when the pair borrows one");
     }
 

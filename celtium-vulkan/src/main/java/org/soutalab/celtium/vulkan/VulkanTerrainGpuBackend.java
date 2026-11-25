@@ -42,6 +42,7 @@ import org.lwjgl.vulkan.VkRenderPassBeginInfo;
 import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
+import org.soutalab.celtium.vulkan.hal.SharedDepthStore;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -7129,7 +7130,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         + " identity=0x" + Long.toHexString(identity) + " colorTexture=" + color
                         + " depthTexture=" + depth + " via=" + (selectTarget ? "bind" : "attach")
                         + " size=" + colorExtent[0] + "x" + colorExtent[1]
-                        + " shared=" + shared + " sharedDepths=" + target.sharedDepthCount());
+                        + " shared=" + shared + " sharedDepths=" + target.sharedDepths().count());
             }
         }
     }
@@ -7327,10 +7328,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             long depthKey = RenderTargetRegistry.rawColorTextureIdentity(texture);
             GllessFrameTarget target = offTargetTarget();
             if (target != null) {
-                target.forgetSharedDepth(depthKey);
+                target.sharedDepths().forget(depthKey);
             }
             if (this.frameTarget instanceof GllessFrameTarget mainTarget && mainTarget != target) {
-                mainTarget.forgetSharedDepth(depthKey);
+                mainTarget.sharedDepths().forget(depthKey);
             }
         }
         onGlTextureReallocated(texture);
@@ -8043,7 +8044,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return false;
         }
         long depthKey = RenderTargetRegistry.rawColorTextureIdentity(glTextureName);
-        if (target.sharedDepthImage(depthKey) == 0L) {
+        if (target.sharedDepths().image(depthKey) == 0L) {
             return false;
         }
         return celtium$publishDepthFromSharedStore(glTextureName, depthKey);
@@ -8111,18 +8112,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return false;
         }
         long depthKey = RenderTargetRegistry.rawColorTextureIdentity(glTextureName);
-        long image = target.sharedDepthImage(depthKey);
+        long image = target.sharedDepths().image(depthKey);
         if (image == 0L) {
             // The depth copy's late registration, for the same case: a framebuffer whose pair has not borrowed
             // the shared depth yet registers here, and the store is re-read before the refusal stands.
             int fbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                     .celtium$framebufferForDepthTexture(glTextureName);
             if (fbo != 0) celtium$registerRawFramebuffer(fbo, false);
-            image = target.sharedDepthImage(depthKey);
+            image = target.sharedDepths().image(depthKey);
         }
-        long view = target.sharedDepthView(depthKey);
-        int[] extent = target.sharedDepthExtent(depthKey);
-        int layout = target.sharedDepthLayout(depthKey);
+        long view = target.sharedDepths().view(depthKey);
+        int[] extent = target.sharedDepths().extent(depthKey);
+        int layout = target.sharedDepths().layout(depthKey);
         if (image == 0L || view == 0L || extent == null
                 || layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
             if (this.fboPublishRefusalLogs < 16) {
@@ -14916,7 +14917,7 @@ this.frameBufferOpen = false;
                                     windowDepthKey,
                                     depthWidth, depthHeight);
                             if (sharedDepth) {
-                                windowAttachedDepthImage = offTarget.sharedDepthImage(windowDepthKey);
+                                windowAttachedDepthImage = offTarget.sharedDepths().image(windowDepthKey);
                                 windowSharedDepthUsed = true;
                             }
                             if (this.sharedDepthWindowLogs < 8) {
@@ -14929,7 +14930,7 @@ this.frameBufferOpen = false;
                                         + " size=" + depthWidth + "x" + depthHeight
                                         + " pairSize=" + pairWidth + "x" + pairHeight
                                         + " shared=" + sharedDepth
-                                        + " sharedDepths=" + offTarget.sharedDepthCount());
+                                        + " sharedDepths=" + offTarget.sharedDepths().count());
                             }
                         }
                     }
@@ -15020,12 +15021,12 @@ this.frameBufferOpen = false;
                                     chainIdentityValue)
                                     && windowSharedDepthUsed && windowDepthKey != 0L
                                     && celtium$routedDepthClearAllowed(windowDepthKey,
-                                            offTarget.sharedDepthClearedFrameSerial(windowDepthKey),
+                                            offTarget.sharedDepths().clearedFrameSerial(windowDepthKey),
                                             celtium$frameSerial())) {
                                 double depthVal = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
                                 if (offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
                                         0x0100, new float[4], depthVal)) {
-                                    offTarget.noteSharedDepthCleared(windowDepthKey, celtium$frameSerial());
+                                    offTarget.sharedDepths().noteCleared(windowDepthKey, celtium$frameSerial());
                                 }
                             }
                             this.targetRegistry.noteChainPairCleared(chainIdentityValue,
@@ -17717,7 +17718,7 @@ this.frameBufferOpen = false;
      * {@return whether the depth half of a routed pass's owed clear may run in {@code frameSerial}}.
      * <p>
      * Two shapes of pair depth, two guards. A pair borrowing a shared depth image (a nonzero {@code depthKey}) is
-     * guarded by the shared rule, {@link GllessFrameTarget#celtium$sharedDepthClearNeeded}: once per frame per
+     * guarded by the shared rule, {@link SharedDepthStore#clearNeeded}: once per frame per
      * depth key, because the family of framebuffers attaching that texture shares the one image. A pair on its
      * own depth (key 0) has no family to guard against - the image is this pair's alone - and the once-per-frame
      * rule for its depth half is the per-identity one the consume has already passed
@@ -17730,7 +17731,7 @@ this.frameBufferOpen = false;
      */
     static boolean celtium$routedDepthClearAllowed(long depthKey, long clearedFrameSerial, long frameSerial) {
         return depthKey == 0L
-                || GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, clearedFrameSerial, frameSerial);
+                || SharedDepthStore.clearNeeded(depthKey, clearedFrameSerial, frameSerial);
     }
 
     /**
@@ -17756,7 +17757,7 @@ this.frameBufferOpen = false;
         boolean latched = pending != null;
         int mask = latched ? pending.mask : (0x4000 | 0x0100);
         boolean depthAllowed = celtium$routedDepthClearAllowed(depthKey,
-                owner.sharedDepthClearedFrameSerial(depthKey), celtium$frameSerial());
+                owner.sharedDepths().clearedFrameSerial(depthKey), celtium$frameSerial());
         if ((mask & 0x0100) != 0 && !depthAllowed) {
             mask &= ~0x0100;
             if (this.sharedDepthClearRefusalLogs < 8) {
@@ -17794,7 +17795,7 @@ this.frameBufferOpen = false;
             return;
         }
         if ((mask & 0x0100) != 0) {
-            owner.noteSharedDepthCleared(depthKey, celtium$frameSerial());
+            owner.sharedDepths().noteCleared(depthKey, celtium$frameSerial());
         }
         celtium$noteClearApplied(identity, RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                 (mask & 0x4000) != 0, latched);
@@ -18049,7 +18050,7 @@ this.frameBufferOpen = false;
                     if (pairOwner.ensureChainPairSharedDepth(drawIdentity, candidateKey, depthRecord[1], depthRecord[2])
                             && pairOwner.chainPairUsesSharedDepth(drawIdentity, candidateKey)) {
                         routedDepthKey = candidateKey;
-                        routedDepthImage = pairOwner.sharedDepthImage(candidateKey);
+                        routedDepthImage = pairOwner.sharedDepths().image(candidateKey);
                     }
                 }
                 attachedColorImages = new long[targetColors];
@@ -18071,12 +18072,12 @@ this.frameBufferOpen = false;
                                 pairOwner.chainPairAcquired(drawIdentity),
                                 this.targetRegistry.chainPairClearContentIdentity(drawIdentity), drawIdentity)
                                 && celtium$routedDepthClearAllowed(routedDepthKey,
-                                        pairOwner.sharedDepthClearedFrameSerial(routedDepthKey),
+                                        pairOwner.sharedDepths().clearedFrameSerial(routedDepthKey),
                                         celtium$frameSerial())) {
                             double depthVal = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
                             if (pairOwner.applyGameClearToChainPair(drawIdentity, this.commandBuffer,
                                     0x0100, new float[4], depthVal) && routedDepthKey != 0L) {
-                                pairOwner.noteSharedDepthCleared(routedDepthKey, celtium$frameSerial());
+                                pairOwner.sharedDepths().noteCleared(routedDepthKey, celtium$frameSerial());
                             }
                         }
                         this.targetRegistry.noteChainPairCleared(drawIdentity, celtium$frameSerial(), drawIdentity);
@@ -19371,7 +19372,7 @@ this.frameBufferOpen = false;
             passAreaHeight = (int) depthRouting[4];
             GllessFrameTarget depthOwner = offTargetTarget();
             long routedColorImage = depthOwner != null ? depthOwner.chainPairColorImage(routedDepthIdentity) : 0L;
-            long routedDepthImage = depthOwner != null ? depthOwner.sharedDepthImage(routedDepthKey) : 0L;
+            long routedDepthImage = depthOwner != null ? depthOwner.sharedDepths().image(routedDepthKey) : 0L;
             this.passAttachedColorImage = routedColorImage;
             this.passAttachedDepthImage = routedDepthImage;
             // Hand back any published wrapper over this routed target's color or depth image BEFORE the sampling
@@ -19418,7 +19419,7 @@ this.frameBufferOpen = false;
                             boundDepthRecord[1], boundDepthRecord[2])
                             && pairOwner.chainPairUsesSharedDepth(identity, candidateKey)) {
                         boundDepthKey = candidateKey;
-                        boundDepthImage = pairOwner.sharedDepthImage(candidateKey);
+                        boundDepthImage = pairOwner.sharedDepths().image(candidateKey);
                     }
                 }
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);

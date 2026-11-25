@@ -1095,7 +1095,7 @@ b.frameBufferOpen = false;
                 } else {
                     depthDestination = entryValue.samplingLayout();
                 }
-                pairOwner.noteSharedDepthLayoutIfChanged(depthKey, depthDestination);
+                pairOwner.sharedDepths().noteLayoutIfChanged(depthKey, depthDestination);
             }
         }
         if (!general && attachImages == null && PUBLISH_WALK_ONCE) {
@@ -1223,7 +1223,7 @@ b.frameBufferOpen = false;
                 // A depth publication stands for the shared depth store's image for its key, not a pair's colour
                 // image: the store is its liveness record, and a recreated store entry re-points the name the
                 // same way a recreated pair re-points a colour name.
-                live = offTarget.sharedDepthImage(depthKey);
+                live = offTarget.sharedDepths().image(depthKey);
             } else if (owner != Long.MIN_VALUE) {
                 // The name stands for the slot it was published over: a tuple slot's live image is not slot 0's
                 // (comparing against slot 0 re-published colortex4/5 and shadowcolor1 over the pair's own image).
@@ -1240,9 +1240,9 @@ b.frameBufferOpen = false;
             if (live != 0L) {
                 VulkanGlTexture republished;
                 if (depthKey != 0L) {
-                    long liveView = offTarget.sharedDepthView(depthKey);
-                    int[] liveExtent = offTarget.sharedDepthExtent(depthKey);
-                    int liveLayout = offTarget.sharedDepthLayout(depthKey);
+                    long liveView = offTarget.sharedDepths().view(depthKey);
+                    int[] liveExtent = offTarget.sharedDepths().extent(depthKey);
+                    int liveLayout = offTarget.sharedDepths().layout(depthKey);
                     republished = liveView == 0L || liveExtent == null
                             || liveLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED ? null
                                     : b.celtium$registry().publishExternalDepthImage(name, live, liveView,

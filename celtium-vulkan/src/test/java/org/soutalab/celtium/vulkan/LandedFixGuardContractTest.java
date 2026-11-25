@@ -79,7 +79,7 @@ class LandedFixGuardContractTest {
         assertTrue(refusal >= 0, "the same-image refusal is present");
         assertTrue(body.contains("resolve to the same shared depth image"),
                 "the refusal names itself, in the method's existing refusal style");
-        int extent = body.indexOf("sharedDepthExtent(sourceKey)");
+        int extent = body.indexOf("sharedDepths().extent(sourceKey)");
         assertTrue(extent < 0 || refusal < extent,
                 "the refusal precedes the extent lookup and the barrier built from it");
     }
