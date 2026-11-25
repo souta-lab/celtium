@@ -672,7 +672,7 @@ final class ModelReplay {
             fast.noteMiss(ModelReplayFastPath.MISS_RUN);
             return false;
         }
-        b.celtium$noteStateStatistics(cached.state, cached.signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK]);
+        b.celtium$noteStateStatistics(cached.state, cached.signature[StateSignatureKeys.SIGNATURE_COLOR_MASK]);
         b.modelInstances.appendCached(open.modelRun, cached.firstIndex, cached.vertexOffset, cached.indexCount,
                 modelView, cached.colourValid ? cached.colour : null,
                 cached.combineValid ? cached.combineColour : null,

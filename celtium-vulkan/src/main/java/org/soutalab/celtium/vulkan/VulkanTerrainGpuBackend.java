@@ -251,15 +251,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
-     * {@return the variant key of a chain-pair render pass}: the (colour attachment count, Vk colour format)
-     * pair, packed so the two dimensions cannot collide. Pure and static so the key is pinned without a
-     * device (QUEUE 404, S4).
-     */
-    static long celtium$chainPassKey(int colorCount, int vkFormat) {
-        return ((long) colorCount << 32) | (vkFormat & 0xFFFF_FFFFL);
-    }
-
-    /**
      * The one-colour chain-pair pass for a pair allocated in {@code formatClass} (QUEUE 404, S4). The
      * frame's own class is the ordinary pass above - same handle, same creation order - so the shipped path
      * gains no pass and loses none (rule R6); any other class gets its own discard-depth pass in that
@@ -288,7 +279,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** Creates (once) and returns the discard-depth variant chain pass for a non-default (count, class). */
     private long chainPairVariantPass(int colorAttachments, TargetFormatClass formatClass) {
-        long key = celtium$chainPassKey(colorAttachments, formatClass.vkFormat());
+        long key = StateSignatureKeys.celtium(colorAttachments, formatClass.vkFormat());
         long cached = this.chainPairVariantPasses.get(key);
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments,
@@ -308,7 +299,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long frameVariantRenderPass(int colorAttachments, TargetFormatClass formatClass) {
         int colors = Math.max(1, colorAttachments);
         TargetFormatClass effectiveClass = formatClass == null ? celtium$frameFormatClass() : formatClass;
-        long key = celtium$chainPassKey(colors, effectiveClass.vkFormat());
+        long key = StateSignatureKeys.celtium(colors, effectiveClass.vkFormat());
         long cached = this.frameVariantPasses.get(key);
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createFrameRenderPass(this.context, colors, effectiveClass.vkFormat());
@@ -416,7 +407,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     final long[] chainPairRenderPassesByCount = new long[9];
     /**
      * The non-default-class chain-pair passes (QUEUE 404, S4), keyed by
-     * {@link #celtium$chainPassKey(int, int)}: only (count, class) combinations a pair actually resolved to
+     * { StateSignatureKeys#celtium(int, int)}: only (count, class) combinations a pair actually resolved to
      * are created, so the default class - which keeps the two fields above - creates none of these.
      */
     final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairVariantPasses =
@@ -558,25 +549,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     /** The frame-shaped pipeline passes for non-default classes, indexed by class ordinal (0 = unused). */
     final long[] formatClassPipelinePasses = new long[TargetFormatClass.values().length];
-
-    /**
-     * {@return the pipeline cache key for a batch offered under {@code classOrdinal}}: the state key with the
-     * format class folded in (QUEUE 404, S4). Pure and static so the fold is pinned without a device.
-     * <p>
-     * The default class (ordinal 0) is the identity - the key's value does not change, so every cache that
-     * compares keys (the pipeline caches, {@code prepareCache}'s entry key) hits exactly as before (rule R6).
-     * A non-default class folds below {@link #LINE_KEY_BIT}: the bit is saved, the fold runs with it clear,
-     * and it is restored afterwards, so the fold can neither set the line flag on a triangle batch nor clear
-     * it on a line batch - the measured failure the bit exists to prevent.
-     */
-    static long celtium$pipelineKey(long stateKey, int classOrdinal) {
-        if (classOrdinal == 0) {
-            return stateKey;
-        }
-        long flag = stateKey & LINE_KEY_BIT;
-        long mixed = ((stateKey & ~LINE_KEY_BIT) * 31L + classOrdinal) & ~LINE_KEY_BIT;
-        return mixed | flag;
-    }
 
     /**
      * {@return the format class of the pair the current target's batches will be drawn into}: the frame's
@@ -10060,7 +10032,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // attachment is what removes it. It edits the captured values, so it needs them materialised.
                 celtium$materializeOfferState();
                 state[3] = 0;
-                stateKey = celtium$stateKey(formatId, state);
+                stateKey = StateSignatureKeys.celtium(formatId, state);
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("offCapture");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offPrepare");
@@ -10070,7 +10042,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (VulkanImmediateDrawer.isLineMode(drawMode)) {
                 // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
                 // The hash itself never sets it: see celtium$stateKey, which masks it for exactly this reason.
-                stateKey |= LINE_KEY_BIT;
+                stateKey |= StateSignatureKeys.LINE_KEY_BIT;
             }
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
             // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
@@ -11354,43 +11326,6 @@ this.frameBufferOpen = false;
     private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
 
     /**
-     * The sixteen integers a batch's pipeline is keyed by, plus the raw inputs a replay can compare instead.
-     * <p>
-     * Split out of {@link #celtium$captureState()} for the model replay path: the replay asks whether the state is the
-     * one it resolved last time, and answering that from the raw inputs costs a comparison per input instead of the
-     * whole capture. {@link #celtium$stateFromSignature} is the only place the mapping lives, so a captured state and a
-     * signature can never disagree about what the state would be - which is what lets a hit reuse the array.
-     */
-    static final int SIGNATURE_BLEND = 0;
-    static final int SIGNATURE_SRC_RGB = 1;
-    static final int SIGNATURE_DST_RGB = 2;
-    static final int SIGNATURE_SRC_ALPHA = 3;
-    static final int SIGNATURE_DST_ALPHA = 4;
-    static final int SIGNATURE_EQ_RGB = 5;
-    static final int SIGNATURE_EQ_ALPHA = 6;
-    static final int SIGNATURE_COLOR_MASK = 7;
-    static final int SIGNATURE_ALPHA_TEST = 8;
-    static final int SIGNATURE_ALPHA_REF = 9;
-    static final int SIGNATURE_ALPHA_FUNC = 10;
-    static final int SIGNATURE_CULL = 11;
-    static final int SIGNATURE_DEPTH_TEST = 12;
-    static final int SIGNATURE_DEPTH_WRITE = 13;
-    static final int SIGNATURE_DEPTH_FUNC = 14;
-    static final int SIGNATURE_LIGHTING = 15;
-    static final int SIGNATURE_ENV_MODE = 16;
-    static final int SIGNATURE_ENV_RGB = 17;
-    static final int SIGNATURE_WINDOW_TARGET = 18;
-    /**
-     * The culled face and the front-face winding, appended so the state's cull slot can carry all three parts.
-     * <p>
-     * The enable alone was enough while every pipeline baked GL's default pair (back, counter-clockwise). A mod that
-     * asks for {@code GL_FRONT} or {@code glFrontFace(GL_CW)} needs its own pipeline, and a value the state does not
-     * read would be a comparison the replay guard pays for and a change it cannot see.
-     */
-    static final int SIGNATURE_CULL_FACE = 19;
-    static final int SIGNATURE_FRONT_FACE = 20;
-
-    /**
      * The last signature captured, and the three versions that decide whether it can be reused.
      * <p>
      * The capture reads twenty-one inputs, two of them through a hash map, and it runs on every offer (~220 a frame).
@@ -11420,21 +11355,6 @@ this.frameBufferOpen = false;
         return this.celtium$signatureCacheHits + "/" + this.celtium$signatureCacheMisses;
     }
 
-    /**
-     * Whether the cached signature was taken under exactly these three keys.
-     * <p>
-     * Extracted so the arithmetic can be exercised without a device: the capture itself needs the live state objects,
-     * but "which keys make a hit" is a comparison, and a green test here is not evidence that a capture was skipped.
-     * The initial cache is {@code (-1, -1, -1)}, which no live key can equal: both version counters start at zero and
-     * only increase, and the window-target bit is 0 or 1.
-     */
-    static boolean celtium$signatureCacheHit(long stateVersion, long environmentVersion, int windowTarget,
-            long cachedStateVersion, long cachedEnvironmentVersion, int cachedWindowTarget) {
-        return stateVersion == cachedStateVersion
-                && environmentVersion == cachedEnvironmentVersion
-                && windowTarget == cachedWindowTarget;
-    }
-
     /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
     void celtium$stateSignature(int[] out) {
         long stateVersion = this.immediateState.keyStateVersion();
@@ -11446,7 +11366,7 @@ this.frameBufferOpen = false;
 
     private void celtium$stateSignature(int[] out, long stateVersion, NativeTextureEnvironment currentEnvironment,
             long environmentVersion, int windowTarget) {
-        if (celtium$signatureCacheHit(stateVersion, environmentVersion, windowTarget,
+        if (StateSignatureKeys.celtium(stateVersion, environmentVersion, windowTarget,
                 this.celtium$signatureCacheState, this.celtium$signatureCacheEnvironment,
                 this.celtium$signatureCacheWindowTarget)) {
             this.celtium$signatureCacheHits++;
@@ -11457,30 +11377,30 @@ this.frameBufferOpen = false;
         }
         this.celtium$signatureCacheMisses++;
         boolean blend = this.immediateState.blendEnabled();
-        out[SIGNATURE_BLEND] = blend ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_BLEND] = blend ? 1 : 0;
         // The GL values, not the Vulkan ones: the mapping is pure, so comparing what the game asked for is as strong
         // as comparing what it maps to, and the factors stay readable in a dump.
-        out[SIGNATURE_SRC_RGB] = this.immediateState.blendSrcRgb();
-        out[SIGNATURE_DST_RGB] = this.immediateState.blendDstRgb();
-        out[SIGNATURE_SRC_ALPHA] = this.immediateState.blendSrcAlpha();
-        out[SIGNATURE_DST_ALPHA] = this.immediateState.blendDstAlpha();
-        out[SIGNATURE_EQ_RGB] = this.immediateState.blendEquationRgb();
-        out[SIGNATURE_EQ_ALPHA] = this.immediateState.blendEquationAlpha();
-        out[SIGNATURE_COLOR_MASK] = this.immediateState.colorMask();
-        out[SIGNATURE_ALPHA_TEST] = this.immediateState.alphaTestEnabled() ? 1 : 0;
-        out[SIGNATURE_ALPHA_REF] = Float.floatToIntBits(this.immediateState.alphaFuncReference());
-        out[SIGNATURE_ALPHA_FUNC] = this.immediateState.alphaFunc();
-        out[SIGNATURE_CULL] = this.immediateState.cullEnabled() ? 1 : 0;
-        out[SIGNATURE_CULL_FACE] = this.immediateState.cullFace();
-        out[SIGNATURE_FRONT_FACE] = this.immediateState.frontFace();
-        out[SIGNATURE_DEPTH_TEST] = this.immediateState.depthTestEnabled() ? 1 : 0;
-        out[SIGNATURE_DEPTH_WRITE] = this.immediateState.depthMask() ? 1 : 0;
-        out[SIGNATURE_DEPTH_FUNC] = this.immediateState.depthFunc();
-        out[SIGNATURE_LIGHTING] = this.immediateState.lightingEnabled() ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_SRC_RGB] = this.immediateState.blendSrcRgb();
+        out[StateSignatureKeys.SIGNATURE_DST_RGB] = this.immediateState.blendDstRgb();
+        out[StateSignatureKeys.SIGNATURE_SRC_ALPHA] = this.immediateState.blendSrcAlpha();
+        out[StateSignatureKeys.SIGNATURE_DST_ALPHA] = this.immediateState.blendDstAlpha();
+        out[StateSignatureKeys.SIGNATURE_EQ_RGB] = this.immediateState.blendEquationRgb();
+        out[StateSignatureKeys.SIGNATURE_EQ_ALPHA] = this.immediateState.blendEquationAlpha();
+        out[StateSignatureKeys.SIGNATURE_COLOR_MASK] = this.immediateState.colorMask();
+        out[StateSignatureKeys.SIGNATURE_ALPHA_TEST] = this.immediateState.alphaTestEnabled() ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(this.immediateState.alphaFuncReference());
+        out[StateSignatureKeys.SIGNATURE_ALPHA_FUNC] = this.immediateState.alphaFunc();
+        out[StateSignatureKeys.SIGNATURE_CULL] = this.immediateState.cullEnabled() ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_CULL_FACE] = this.immediateState.cullFace();
+        out[StateSignatureKeys.SIGNATURE_FRONT_FACE] = this.immediateState.frontFace();
+        out[StateSignatureKeys.SIGNATURE_DEPTH_TEST] = this.immediateState.depthTestEnabled() ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_DEPTH_WRITE] = this.immediateState.depthMask() ? 1 : 0;
+        out[StateSignatureKeys.SIGNATURE_DEPTH_FUNC] = this.immediateState.depthFunc();
+        out[StateSignatureKeys.SIGNATURE_LIGHTING] = this.immediateState.lightingEnabled() ? 1 : 0;
         NativeTextureEnvironment environment = currentEnvironment;
-        out[SIGNATURE_ENV_MODE] = environment.unitParameter(0, NativeTextureEnvironment.MODE);
-        out[SIGNATURE_ENV_RGB] = environment.unitParameter(0, NativeTextureEnvironment.RGB);
-        out[SIGNATURE_WINDOW_TARGET] = windowTarget;
+        out[StateSignatureKeys.SIGNATURE_ENV_MODE] = environment.unitParameter(0, NativeTextureEnvironment.MODE);
+        out[StateSignatureKeys.SIGNATURE_ENV_RGB] = environment.unitParameter(0, NativeTextureEnvironment.RGB);
+        out[StateSignatureKeys.SIGNATURE_WINDOW_TARGET] = windowTarget;
         // The cache is filled from what was just written, not from the inputs again: a hit has to reproduce exactly the
         // bytes this capture produced, and re-reading the inputs would be the capture it exists to avoid.
         System.arraycopy(out, 0, this.celtium$signatureCache, 0, ModelReplayFastPath.SIGNATURE);
@@ -11498,18 +11418,18 @@ this.frameBufferOpen = false;
      * here because it is part of what a batch is told, not of the state the game asked for.
      */
     static void celtium$stateFromSignature(int[] signature, int[] state) {
-        boolean blend = signature[SIGNATURE_BLEND] != 0;
-        int source = blend ? glBlendFactorToVk(signature[SIGNATURE_SRC_RGB]) : 0;
-        int destination = blend ? glBlendFactorToVk(signature[SIGNATURE_DST_RGB]) : 0;
-        int sourceAlpha = blend ? glBlendFactorToVk(signature[SIGNATURE_SRC_ALPHA]) : 0;
-        int destinationAlpha = blend ? glBlendFactorToVk(signature[SIGNATURE_DST_ALPHA]) : 0;
-        int colorOp = blend ? glBlendEquationToVk(signature[SIGNATURE_EQ_RGB]) : 0;
-        int alphaOp = blend ? glBlendEquationToVk(signature[SIGNATURE_EQ_ALPHA]) : 0;
-        int writeMask = signature[SIGNATURE_COLOR_MASK];
+        boolean blend = signature[StateSignatureKeys.SIGNATURE_BLEND] != 0;
+        int source = blend ? glBlendFactorToVk(signature[StateSignatureKeys.SIGNATURE_SRC_RGB]) : 0;
+        int destination = blend ? glBlendFactorToVk(signature[StateSignatureKeys.SIGNATURE_DST_RGB]) : 0;
+        int sourceAlpha = blend ? glBlendFactorToVk(signature[StateSignatureKeys.SIGNATURE_SRC_ALPHA]) : 0;
+        int destinationAlpha = blend ? glBlendFactorToVk(signature[StateSignatureKeys.SIGNATURE_DST_ALPHA]) : 0;
+        int colorOp = blend ? glBlendEquationToVk(signature[StateSignatureKeys.SIGNATURE_EQ_RGB]) : 0;
+        int alphaOp = blend ? glBlendEquationToVk(signature[StateSignatureKeys.SIGNATURE_EQ_ALPHA]) : 0;
+        int writeMask = signature[StateSignatureKeys.SIGNATURE_COLOR_MASK];
         // Comparison switch, default on: forcing the threshold to zero isolates alpha testing in one build.
-        boolean alphaTest = ALPHA_TEST_ENABLED && signature[SIGNATURE_ALPHA_TEST] != 0;
-        float alphaReference = alphaTest ? Float.intBitsToFloat(signature[SIGNATURE_ALPHA_REF]) : 0.0f;
-        int alphaFunction = alphaTest ? signature[SIGNATURE_ALPHA_FUNC] : 0;
+        boolean alphaTest = ALPHA_TEST_ENABLED && signature[StateSignatureKeys.SIGNATURE_ALPHA_TEST] != 0;
+        float alphaReference = alphaTest ? Float.intBitsToFloat(signature[StateSignatureKeys.SIGNATURE_ALPHA_REF]) : 0.0f;
+        int alphaFunction = alphaTest ? signature[StateSignatureKeys.SIGNATURE_ALPHA_FUNC] : 0;
         // The one-flag controls. Each keeps the captured state but substitutes the value the pipeline baked before the
         // finding was fixed, so a single build can be run twice and the picture compared against itself rather than
         // against another build's picture - the difference between the legs is then the state and nothing else. The
@@ -11532,7 +11452,7 @@ this.frameBufferOpen = false;
         // quads blended SRC_ALPHA into the image's alpha, so the blurred panorama - itself blended by SRC_ALPHA - could
         // not cover the frame and the native window copy had to decline into a synchronous host readback, seven of them
         // per menu frame.
-        if (signature[SIGNATURE_WINDOW_TARGET] != 0) {
+        if (signature[StateSignatureKeys.SIGNATURE_WINDOW_TARGET] != 0) {
             writeMask &= ~0x8;
         }
         if (alphaFunction != 0 && ALPHA_FUNC_OVERRIDE != 0) {
@@ -11541,15 +11461,15 @@ this.frameBufferOpen = false;
         state[0] = blend ? 1 : 0;
         state[1] = source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source;
         state[2] = destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination;
-        state[3] = signature[SIGNATURE_DEPTH_TEST] != 0 ? 1 : 0;
-        state[4] = signature[SIGNATURE_DEPTH_WRITE] != 0 ? 1 : 0;
+        state[3] = signature[StateSignatureKeys.SIGNATURE_DEPTH_TEST] != 0 ? 1 : 0;
+        state[4] = signature[StateSignatureKeys.SIGNATURE_DEPTH_WRITE] != 0 ? 1 : 0;
         // The cull slot carries the enable, the face and the winding: the pipelines bake all three (VulkanCullState),
         // and with GL's default pair this is still 1, so every existing pipeline key is unchanged.
-        state[5] = VulkanCullState.encode(signature[SIGNATURE_CULL] != 0, signature[SIGNATURE_CULL_FACE],
-                signature[SIGNATURE_FRONT_FACE]);
+        state[5] = VulkanCullState.encode(signature[StateSignatureKeys.SIGNATURE_CULL] != 0, signature[StateSignatureKeys.SIGNATURE_CULL_FACE],
+                signature[StateSignatureKeys.SIGNATURE_FRONT_FACE]);
         state[6] = Float.floatToIntBits(alphaReference);
-        state[7] = signature[SIGNATURE_DEPTH_FUNC];
-        state[8] = signature[SIGNATURE_LIGHTING] != 0 ? 1 : 0;
+        state[7] = signature[StateSignatureKeys.SIGNATURE_DEPTH_FUNC];
+        state[8] = signature[StateSignatureKeys.SIGNATURE_LIGHTING] != 0 ? 1 : 0;
         // The first nine slots above keep their meaning; the appended ones follow.
         state[9] = sourceAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE : sourceAlpha;
         state[10] = destinationAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destinationAlpha;
@@ -11560,8 +11480,8 @@ this.frameBufferOpen = false;
         // The multi-unit light combine (COMBINE4's fragment stage): unit 0 COMBINE with a SUBTRACT RGB function is the
         // set-up GuiMap.setupTextures makes, and the only one that shader evaluates beyond MODULATE. In the key, so a
         // combined tile and a plain one never share a group.
-        state[15] = signature[SIGNATURE_ENV_MODE] == NativeTextureEnvironment.COMBINE
-                && signature[SIGNATURE_ENV_RGB] == 0x84E7 ? 1 : 0;
+        state[15] = signature[StateSignatureKeys.SIGNATURE_ENV_MODE] == NativeTextureEnvironment.COMBINE
+                && signature[StateSignatureKeys.SIGNATURE_ENV_RGB] == 0x84E7 ? 1 : 0;
     }
 
     /**
@@ -11626,7 +11546,7 @@ this.frameBufferOpen = false;
      * srcAlphaVk, dstAlphaVk, colorWriteMask, colorOpVk, alphaOpVk, alphaFuncGl}} - the first nine slots are the
      * original layout and keep their meaning, everything BH-07/BH-10/BH-03 added is appended so a reader written
      * before the change still reads what it read. The key is computed over the whole array
-     * ({@link #celtium$stateKey}), which is what makes a batch that differs only in its alpha factors, its write mask
+     * ({ StateSignatureKeys#celtium(int, int[])}), which is what makes a batch that differs only in its alpha factors, its write mask
      * or its alpha comparison a different pipeline <em>and</em> a different group.
      */
     int[] celtium$captureState() {
@@ -11634,14 +11554,14 @@ this.frameBufferOpen = false;
         celtium$stateSignature(signature);
         int[] state = this.celtium$stateScratch;
         celtium$stateFromSignature(signature, state);
-        celtium$noteStateStatistics(state, signature[SIGNATURE_COLOR_MASK]);
+        celtium$noteStateStatistics(state, signature[StateSignatureKeys.SIGNATURE_COLOR_MASK]);
         return state;
     }
 
     /**
      * The offer path's state key, cached on the three versions the signature is cached on plus the layout id.
      * <p>
-     * {@link #celtium$stateKey} hashes the layout id and the sixteen mapped integers, and the mapping
+     * { StateSignatureKeys#celtium(int, int[])} hashes the layout id and the sixteen mapped integers, and the mapping
      * ({@link #celtium$stateFromSignature}) is a pure function of the signature. The signature is itself a pure
      * function of {@code VulkanGlState.stateVersion()}, {@code NativeTextureEnvironment.version()} and the
      * window-target bit - the contract round 58 established and {@code StateSignatureVersionContractTest} enumerates
@@ -11675,8 +11595,8 @@ this.frameBufferOpen = false;
         // profile, which is the same statement about the offer stream - consecutive offers frequently carry different
         // ids - so the single entry was thrashing on exactly the pattern the census measured. Indexing by the id keeps
         // the id in the identity (a slot only answers for the id stored in it) and stops one layout evicting another.
-        int slot = celtium$offerKeyCacheSlot(formatId);
-        if (celtium$stateKeyCacheHit(stateVersion, environmentVersion, windowTarget, formatId,
+        int slot = StateSignatureKeys.celtium(formatId);
+        if (StateSignatureKeys.celtium(stateVersion, environmentVersion, windowTarget, formatId,
                 this.celtium$keyCacheStates[slot], this.celtium$keyCacheEnvironments[slot],
                 this.celtium$keyCacheWindowTargets[slot], this.celtium$keyCacheFormats[slot],
                 this.celtium$keyCacheValids[slot])) {
@@ -11716,7 +11636,7 @@ this.frameBufferOpen = false;
             celtium$stateSignature(signature, stateVersion, currentEnvironment, environmentVersion, windowTarget);
         }
         celtium$materializeSignature(signature, captureStarted);
-        long key = celtium$stateKey(formatId, this.celtium$stateScratch);
+        long key = StateSignatureKeys.celtium(formatId, this.celtium$stateScratch);
         if (this.celtium$keyCacheValids[slot] && key == this.celtium$keyCacheKeys[slot]) this.celtium$keyMissSameKey++;
         this.celtium$keyCacheKeys[slot] = key;
         int[] previousSlotSignature = this.celtium$keyCacheSignatures[slot];
@@ -11728,40 +11648,6 @@ this.frameBufferOpen = false;
         this.celtium$keyCacheFormats[slot] = formatId;
         this.celtium$keyCacheValids[slot] = true;
         return key;
-    }
-
-    /**
-     * The offer state-key cache slot a layout id uses.
-     * <p>
-     * Sixteen slots, indexed by the low four bits of the id, and the id is stored in the slot and compared on every
-     * lookup - so the index is a hint and the comparison is the identity. Every layout the table maps is below sixteen
-     * ({@link VulkanImmediateFormats#COUNT}), so in practice no two ids share a slot; an id outside that range would
-     * share one and simply miss more often, never answer wrongly.
-     * <p>
-     * Extracted so the property that matters can be asserted without a device: the two ids the merge census names as
-     * the dominant alternation (2 and 6, 52% of the format splits) must not land in the same slot, or the change would
-     * be a rename of the single entry rather than a fix for it.
-     */
-    static int celtium$offerKeyCacheSlot(int formatId) {
-        return formatId & (OFFER_KEY_CACHE_SLOTS - 1);
-    }
-
-    /**
-     * Whether the cached key was taken under exactly these four keys.
-     * <p>
-     * Extracted so the arithmetic can be exercised without a device, the same shape as
-     * {@link #celtium$signatureCacheHit}: the capture needs the live state objects, but "which keys make a hit" is a
-     * comparison, and a green test here is not evidence that a capture was skipped. The initial cache is invalid, so
-     * no live key can match it - a live key can legitimately be {@code (0, 0, 0, 0)} on the first offer of a session.
-     */
-    static boolean celtium$stateKeyCacheHit(long stateVersion, long environmentVersion, int windowTarget,
-            int formatId, long cachedStateVersion, long cachedEnvironmentVersion, int cachedWindowTarget,
-            int cachedFormat, boolean cachedValid) {
-        return cachedValid
-                && stateVersion == cachedStateVersion
-                && environmentVersion == cachedEnvironmentVersion
-                && windowTarget == cachedWindowTarget
-                && formatId == cachedFormat;
     }
 
     /**
@@ -11783,7 +11669,7 @@ this.frameBufferOpen = false;
 
     private void celtium$materializeSignature(int[] signature, long started) {
         celtium$stateFromSignature(signature, this.celtium$stateScratch);
-        celtium$noteStateStatistics(this.celtium$stateScratch, signature[SIGNATURE_COLOR_MASK]);
+        celtium$noteStateStatistics(this.celtium$stateScratch, signature[StateSignatureKeys.SIGNATURE_COLOR_MASK]);
         this.celtium$offerStateFresh = true;
         if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
     }
@@ -11795,13 +11681,12 @@ this.frameBufferOpen = false;
      * are small enough that the whole table is a handful of cache lines. The slot is chosen by the id and the id is
      * compared, so a slot never answers for a layout it was not filled with.
      */
-    private static final int OFFER_KEY_CACHE_SLOTS = 16;
-    private final long[] celtium$keyCacheKeys = new long[OFFER_KEY_CACHE_SLOTS];
-    private final long[] celtium$keyCacheStates = new long[OFFER_KEY_CACHE_SLOTS];
-    private final long[] celtium$keyCacheEnvironments = new long[OFFER_KEY_CACHE_SLOTS];
-    private final int[] celtium$keyCacheWindowTargets = new int[OFFER_KEY_CACHE_SLOTS];
-    private final int[] celtium$keyCacheFormats = new int[OFFER_KEY_CACHE_SLOTS];
-    private final boolean[] celtium$keyCacheValids = new boolean[OFFER_KEY_CACHE_SLOTS];
+    private final long[] celtium$keyCacheKeys = new long[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
+    private final long[] celtium$keyCacheStates = new long[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
+    private final long[] celtium$keyCacheEnvironments = new long[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
+    private final int[] celtium$keyCacheWindowTargets = new int[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
+    private final int[] celtium$keyCacheFormats = new int[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
+    private final boolean[] celtium$keyCacheValids = new boolean[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS];
     private long celtium$keyCacheHits;
     private long celtium$keyCacheMisses;
     /** Offer-key misses by first differing input, and misses whose recomputed key equalled the slot's previous key. */
@@ -11812,7 +11697,7 @@ this.frameBufferOpen = false;
     private long celtium$keyMissSameKey;
     /** Hits answered by an equal signature after the version moved, and the per-slot signatures they compare. */
     private long celtium$keyValueHits;
-    private final int[][] celtium$keyCacheSignatures = new int[OFFER_KEY_CACHE_SLOTS][ModelReplayFastPath.SIGNATURE];
+    private final int[][] celtium$keyCacheSignatures = new int[StateSignatureKeys.OFFER_KEY_CACHE_SLOTS][ModelReplayFastPath.SIGNATURE];
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
     private boolean celtium$offerStateFresh;
 
@@ -12341,37 +12226,6 @@ this.frameBufferOpen = false;
             }
         }
         return true;
-    }
-
-    /**
-     * The bit of a group's state key that marks a line batch ({@code GL_LINES} / {@code GL_LINE_STRIP}).
-     * <p>
-     * The bit is set by the accept path for a line draw and read by the prepare path to choose the line-list pipeline.
-     * It is therefore <em>not</em> part of {@link #celtium$stateKey}'s hash: see that method.
-     */
-    static final long LINE_KEY_BIT = 1L << 61;
-
-    /**
-     * {@return the identity of one drawing state: a 64-bit hash of the format and the captured state array}.
-     * <p>
-     * The hash never sets {@link #LINE_KEY_BIT}. That bit is a flag the accept path adds ({@code stateKey |=
-     * LINE_KEY_BIT}) and the prepare path reads to pick the line-list pipeline, so a hash that happened to set it turned
-     * a triangle batch into three line segments - and half of all states do, because the bit is as likely as any other.
-     * Measured on the creative inventory (leg r24d): the hovered slot's half-white highlight ({@code POSITION_COLOR},
-     * colour {@code 0x80FFFFFF}, state key {@code 0x364d31f191fb43aa}, bit 61 set) was drawn with
-     * {@code VK_PRIMITIVE_TOPOLOGY_LINE_LIST}, so the quad reached the image as three one-pixel lines - its top edge,
-     * its bottom edge and its diagonal - and the slot looked unhighlighted. Poisoning the same quad's vertices to opaque
-     * magenta made exactly those three lines visible, which is how the pipeline was identified.
-     * <p>
-     * Masking the bit costs one collision between two states that differ only in it, which a 64-bit hash already permits;
-     * leaving it set costs a silently misdrawn batch whenever it happens.
-     */
-    static long celtium$stateKey(int formatId, int[] state) {
-        long key = formatId;
-        for (int value : state) {
-            key = (key * 31) + value;
-        }
-        return key & ~LINE_KEY_BIT;
     }
 
     /**
@@ -14210,7 +14064,7 @@ this.frameBufferOpen = false;
         // happens here, at the pipeline boundary only, so groups do not split by class. For the default
         // class the fold is the identity and the pass choice is the one this code always made (rule R6).
         TargetFormatClass pairClass = celtium$currentPairFormatClass();
-        long effectiveKey = celtium$pipelineKey(key, pairClass.ordinal());
+        long effectiveKey = StateSignatureKeys.celtium(key, pairClass.ordinal());
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
         // version cleared the whole cache on every pass change and hashed the texture's upload serial - which an
         // animated atlas moves every tick - so half the asks missed (633,773 hits of 1,305,294 calls, 24,415 resets
@@ -14291,7 +14145,7 @@ this.frameBufferOpen = false;
      * Whether a slot answers exactly this question - all six inputs equal, and a value to return.
      * <p>
      * Extracted so the predicate can be exercised without a device, the same shape as
-     * {@link #celtium$stateKeyCacheHit}: the table needs a context, but "which inputs make a hit" is a comparison, and
+     * { StateSignatureKeys#celtium}: the table needs a context, but "which inputs make a hit" is a comparison, and
      * a green test here is not evidence that a material was reused. Every field is compared because every field is an
      * input: the pass decides the render pass the pipeline was built against, the format and the state key decide the
      * pipeline, the texture id and its wrapper key decide the descriptor, and the light map key decides the lit
@@ -14545,7 +14399,7 @@ this.frameBufferOpen = false;
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
-            boolean lineBatch = (key & LINE_KEY_BIT) != 0;
+            boolean lineBatch = (key & StateSignatureKeys.LINE_KEY_BIT) != 0;
             VulkanColorBlendState colorBlend = celtium$blendState(state);
             // No computeIfAbsent: it boxed the state key and allocated a capturing lambda per batch. The two caches
             // hold the same kind of pipeline, so one lookup and one creation branch have the same shape as before.

@@ -80,14 +80,14 @@ class ChainPairFormatClassTest {
     // T2 / S4: the render-pass variant key separates (count, format) and nothing else.
     @Test
     void thePassVariantKeySeparatesCountAndFormat() {
-        long oneRgba8 = VulkanTerrainGpuBackend.celtium$chainPassKey(1, 37);
-        assertEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(1, 37), "the key is stable");
-        assertNotEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(2, 37),
+        long oneRgba8 = StateSignatureKeys.celtium$chainPassKey(1, 37);
+        assertEquals(oneRgba8, StateSignatureKeys.celtium$chainPassKey(1, 37), "the key is stable");
+        assertNotEquals(oneRgba8, StateSignatureKeys.celtium$chainPassKey(2, 37),
                 "the count is part of the key");
-        assertNotEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(1, 97),
+        assertNotEquals(oneRgba8, StateSignatureKeys.celtium$chainPassKey(1, 97),
                 "the format is part of the key");
-        assertNotEquals(VulkanTerrainGpuBackend.celtium$chainPassKey(2, 97),
-                VulkanTerrainGpuBackend.celtium$chainPassKey(1, 109),
+        assertNotEquals(StateSignatureKeys.celtium$chainPassKey(2, 97),
+                StateSignatureKeys.celtium$chainPassKey(1, 109),
                 "count and format do not trade places");
     }
 
@@ -95,26 +95,26 @@ class ChainPairFormatClassTest {
     @Test
     void thePipelineKeyFoldIsTheIdentityForTheDefaultClass() {
         long key = 0x1234_5678_9ABC_DEF0L;
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$pipelineKey(key, 0),
+        assertEquals(key, StateSignatureKeys.celtium$pipelineKey(key, 0),
                 "class 0 folds to the key itself, so every existing pipeline cache entry stays valid");
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        assertEquals(lineKey, VulkanTerrainGpuBackend.celtium$pipelineKey(lineKey, 0));
+        long lineKey = key | StateSignatureKeys.LINE_KEY_BIT;
+        assertEquals(lineKey, StateSignatureKeys.celtium$pipelineKey(lineKey, 0));
     }
 
     @Test
     void thePipelineKeyFoldSeparatesClassesAndKeepsTheLineBit() {
         long key = 0x1234_5678_9ABC_DEF0L;
-        long folded16 = VulkanTerrainGpuBackend.celtium$pipelineKey(key, 1);
-        long folded32 = VulkanTerrainGpuBackend.celtium$pipelineKey(key, 2);
+        long folded16 = StateSignatureKeys.celtium$pipelineKey(key, 1);
+        long folded32 = StateSignatureKeys.celtium$pipelineKey(key, 2);
         assertNotEquals(key, folded16);
         assertNotEquals(folded16, folded32, "two non-default classes must not share a pipeline entry");
-        assertEquals(folded16, VulkanTerrainGpuBackend.celtium$pipelineKey(key, 1), "the fold is stable");
+        assertEquals(folded16, StateSignatureKeys.celtium$pipelineKey(key, 1), "the fold is stable");
 
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        long foldedLine = VulkanTerrainGpuBackend.celtium$pipelineKey(lineKey, 1);
-        assertTrue((foldedLine & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0,
+        long lineKey = key | StateSignatureKeys.LINE_KEY_BIT;
+        long foldedLine = StateSignatureKeys.celtium$pipelineKey(lineKey, 1);
+        assertTrue((foldedLine & StateSignatureKeys.LINE_KEY_BIT) != 0,
                 "a line batch keeps its line bit through the fold");
-        assertEquals(0L, folded16 & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+        assertEquals(0L, folded16 & StateSignatureKeys.LINE_KEY_BIT,
                 "a non-line batch does not gain the line bit");
         assertNotEquals(foldedLine, folded16, "line and non-line batches of one class stay apart");
     }

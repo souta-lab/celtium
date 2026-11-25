@@ -145,13 +145,13 @@ class StateSignatureVersionContractTest {
      */
     @Test
     void theCacheHitsOnlyWhenAllThreeKeysAreUnchanged() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$signatureCacheHit(7L, 3L, 1, 7L, 3L, 1));
-        assertFalse(VulkanTerrainGpuBackend.celtium$signatureCacheHit(8L, 3L, 1, 7L, 3L, 1), "state version moved");
-        assertFalse(VulkanTerrainGpuBackend.celtium$signatureCacheHit(7L, 4L, 1, 7L, 3L, 1), "environment moved");
-        assertFalse(VulkanTerrainGpuBackend.celtium$signatureCacheHit(7L, 3L, 0, 7L, 3L, 1), "window target moved");
+        assertTrue(StateSignatureKeys.celtium$signatureCacheHit(7L, 3L, 1, 7L, 3L, 1));
+        assertFalse(StateSignatureKeys.celtium$signatureCacheHit(8L, 3L, 1, 7L, 3L, 1), "state version moved");
+        assertFalse(StateSignatureKeys.celtium$signatureCacheHit(7L, 4L, 1, 7L, 3L, 1), "environment moved");
+        assertFalse(StateSignatureKeys.celtium$signatureCacheHit(7L, 3L, 0, 7L, 3L, 1), "window target moved");
         // The initial cache is "no signature yet": -1 for both versions and -1 for the target, which no live version
         // can equal because both counters start at zero and only increase.
-        assertFalse(VulkanTerrainGpuBackend.celtium$signatureCacheHit(0L, 0L, 0, -1L, -1L, -1));
+        assertFalse(StateSignatureKeys.celtium$signatureCacheHit(0L, 0L, 0, -1L, -1L, -1));
     }
 
     private static void assertMoved(String input, long before, long after) {
@@ -177,18 +177,18 @@ class StateSignatureVersionContractTest {
      */
     @Test
     void theKeyCacheHitsOnlyWhenAllFourKeysAreUnchanged() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 1, 2, 7L, 3L, 1, 2, true));
-        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(8L, 3L, 1, 2, 7L, 3L, 1, 2, true),
+        assertTrue(StateSignatureKeys.celtium$stateKeyCacheHit(7L, 3L, 1, 2, 7L, 3L, 1, 2, true));
+        assertFalse(StateSignatureKeys.celtium$stateKeyCacheHit(8L, 3L, 1, 2, 7L, 3L, 1, 2, true),
                 "state version moved");
-        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 4L, 1, 2, 7L, 3L, 1, 2, true),
+        assertFalse(StateSignatureKeys.celtium$stateKeyCacheHit(7L, 4L, 1, 2, 7L, 3L, 1, 2, true),
                 "environment moved");
-        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 0, 2, 7L, 3L, 1, 2, true),
+        assertFalse(StateSignatureKeys.celtium$stateKeyCacheHit(7L, 3L, 0, 2, 7L, 3L, 1, 2, true),
                 "window target moved");
-        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 1, 6, 7L, 3L, 1, 2, true),
+        assertFalse(StateSignatureKeys.celtium$stateKeyCacheHit(7L, 3L, 1, 6, 7L, 3L, 1, 2, true),
                 "layout id moved");
         // The initial cache is invalid rather than "taken under -1": a live key can legitimately be (0, 0, 0, 0) on the
         // first offer of a session, so the flag is what says "nothing cached yet".
-        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(0L, 0L, 0, 0, -1L, -1L, -1, -1, false));
+        assertFalse(StateSignatureKeys.celtium$stateKeyCacheHit(0L, 0L, 0, 0, -1L, -1L, -1, -1, false));
     }
 
     /**
@@ -206,18 +206,18 @@ class StateSignatureVersionContractTest {
      */
     @Test
     void theKeyCacheGivesEachLayoutItsOwnSlot() {
-        assertNotEquals(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2),
-                VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(6),
+        assertNotEquals(StateSignatureKeys.celtium$offerKeyCacheSlot(2),
+                StateSignatureKeys.celtium$offerKeyCacheSlot(6),
                 "the dominant format alternation must not share a slot");
         java.util.Set<Integer> slots = new java.util.HashSet<>();
         for (int id = 0; id < VulkanImmediateFormats.COUNT; id++) {
-            assertTrue(slots.add(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(id)),
+            assertTrue(slots.add(StateSignatureKeys.celtium$offerKeyCacheSlot(id)),
                     "layout id " + id + " shares a slot with a lower id");
         }
         // The slot is a hint, not the identity: the id is stored in the slot and compared, so an id outside the table
         // may share a slot and can only miss more often, never answer for another layout.
-        assertEquals(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2),
-                VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2 + 16));
+        assertEquals(StateSignatureKeys.celtium$offerKeyCacheSlot(2),
+                StateSignatureKeys.celtium$offerKeyCacheSlot(2 + 16));
     }
 
     /**
@@ -230,10 +230,10 @@ class StateSignatureVersionContractTest {
         state[0] = 1;
         state[3] = 1;
         state[5] = 1;
-        long first = VulkanTerrainGpuBackend.celtium$stateKey(2, state);
-        long second = VulkanTerrainGpuBackend.celtium$stateKey(6, state);
+        long first = StateSignatureKeys.celtium$stateKey(2, state);
+        long second = StateSignatureKeys.celtium$stateKey(6, state);
         assertTrue(first != second, "layouts 2 and 6 produced the same key: " + first);
-        assertEquals(first, VulkanTerrainGpuBackend.celtium$stateKey(2, state.clone()),
+        assertEquals(first, StateSignatureKeys.celtium$stateKey(2, state.clone()),
                 "the same layout and state must produce the same key");
     }
 

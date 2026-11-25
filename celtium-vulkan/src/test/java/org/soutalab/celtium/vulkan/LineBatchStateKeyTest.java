@@ -52,14 +52,14 @@ class LineBatchStateKeyTest {
     void theMeasuredHighlightHashWouldHaveSetTheLineFlag() {
         // The defect, pinned as a number: without the mask this state is a line batch by accident.
         assertNotEquals(0L, rawHash(VulkanImmediateFormats.POSITION_COLOR, HIGHLIGHT)
-                & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+                & StateSignatureKeys.LINE_KEY_BIT,
                 "the hash of the measured highlight state sets bit 61 - the mask is what keeps it a triangle batch");
     }
 
     @Test
     void theStateKeyNeverSetsTheLineFlag() {
-        assertEquals(0L, VulkanTerrainGpuBackend.celtium$stateKey(VulkanImmediateFormats.POSITION_COLOR, HIGHLIGHT)
-                & VulkanTerrainGpuBackend.LINE_KEY_BIT);
+        assertEquals(0L, StateSignatureKeys.celtium$stateKey(VulkanImmediateFormats.POSITION_COLOR, HIGHLIGHT)
+                & StateSignatureKeys.LINE_KEY_BIT);
         // The contract, over the slots that vary: every combination of the boolean slots, both colour masks and a sweep
         // of the depth function and the alpha reference.
         for (int blend = 0; blend <= 1; blend++) {
@@ -75,9 +75,9 @@ class LineBatchStateKeyTest {
                                 state[5] = cull;
                                 state[11] = mask;
                                 state[7] = depthFunc;
-                                long key = VulkanTerrainGpuBackend.celtium$stateKey(
+                                long key = StateSignatureKeys.celtium$stateKey(
                                         VulkanImmediateFormats.POSITION_COLOR, state);
-                                assertEquals(0L, key & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+                                assertEquals(0L, key & StateSignatureKeys.LINE_KEY_BIT,
                                         "a triangle state must never carry the line flag: blend=" + blend
                                                 + " depthTest=" + depthTest + " depthWrite=" + depthWrite
                                                 + " cull=" + cull + " mask=0x" + Integer.toHexString(mask)
@@ -92,9 +92,9 @@ class LineBatchStateKeyTest {
 
     @Test
     void aLineBatchAndATriangleBatchWithTheSameStateStillDiffer() {
-        long triangle = VulkanTerrainGpuBackend.celtium$stateKey(VulkanImmediateFormats.POSITION_COLOR, HIGHLIGHT);
-        long line = triangle | VulkanTerrainGpuBackend.LINE_KEY_BIT;
+        long triangle = StateSignatureKeys.celtium$stateKey(VulkanImmediateFormats.POSITION_COLOR, HIGHLIGHT);
+        long line = triangle | StateSignatureKeys.LINE_KEY_BIT;
         assertNotEquals(triangle, line, "the flag must separate the two batches, or they would share a pipeline");
-        assertTrue((line & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0L, "the line batch keeps its flag");
+        assertTrue((line & StateSignatureKeys.LINE_KEY_BIT) != 0L, "the line batch keeps its flag");
     }
 }
