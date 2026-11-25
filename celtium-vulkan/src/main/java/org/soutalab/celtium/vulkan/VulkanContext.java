@@ -164,6 +164,15 @@ public final class VulkanContext {
      */
     private final java.util.Map<Integer, SlabAllocator> hostVisibleSlabsByType =
             new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The device-local slab pools mirrored-texture <em>images</em> allocate from. Separate from the buffer
+     * pools above on purpose: a {@code VkDeviceMemory} that backs both buffers and images must keep buffer
+     * and image ranges apart by the device's {@code bufferImageGranularity}, which the shared ledger does
+     * not model. An image-only pool never mixes kinds, so the question does not arise. One pool per memory
+     * type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalImageSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
     /** The synchronous present path (the async presenter thread's replacement), created with the queue. */
     private PresentEngine presentEngine;
 
@@ -784,6 +793,25 @@ public final class VulkanContext {
         return allocator;
     }
 
+    /**
+     * {@return the device-local image slab pool serving images whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. Kept apart from {@link #celtium$deviceLocalSlabs}
+     * (the buffer pools) so no slab ever mixes buffer and image ranges; see the field's documentation.
+     * Ordinary slabs are capped at 8 per type, so the live {@code vkAllocateMemory} count for all mirrored
+     * textures combined is bounded by the slab caps of the image pools they use (plus one dedicated slab
+     * per live oversized image), not by the texture count.
+     */
+    public SlabAllocator celtium$deviceLocalImageSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local image slab pool");
+        SlabAllocator allocator = this.deviceLocalImageSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            this.deviceLocalImageSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
     /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
     public int celtium$hostVisibleSlabCount() {
         int total = 0;
@@ -800,7 +828,8 @@ public final class VulkanContext {
      */
     private void celtium$collectSlabReleases() {
         if (this.frameTimeline == null
-                || (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty())) {
+                || (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty()
+                        && this.deviceLocalImageSlabsByType.isEmpty())) {
             return;
         }
         long completed;
@@ -816,6 +845,9 @@ public final class VulkanContext {
             allocator.collectCompleted(completed);
         }
         for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
             allocator.collectCompleted(completed);
         }
     }
@@ -2530,6 +2562,10 @@ public final class VulkanContext {
                 allocator.delete();
             }
             this.hostVisibleSlabsByType.clear();
+            for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalImageSlabsByType.clear();
             this.presentEngine = null;
             vkDestroyDevice(this.device, null);
             this.device = null;
