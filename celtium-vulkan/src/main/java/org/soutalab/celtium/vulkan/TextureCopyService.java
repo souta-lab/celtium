@@ -1106,7 +1106,7 @@ public final class TextureCopyService {
         if (readFbo == 0 && this.host.currentRenderTargetIsMain() && this.host.frameTarget() != null) {
             return this.host.frameTarget().colorImage();
         }
-        if (readFbo == 0 && "frame-image".equals(GllessFrameTarget.routeLabelForBinding(
+        if (readFbo == 0 && "frame-image".equals(org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(
                 this.host.currentRenderTarget(), this.host.currentRenderTargetIsMain())) && this.host.frameTarget() != null) {
             // The window's own image, which is where a name-0 bind's draws went (identity 0 is the window in every
             // phase). The routing rule is asked rather than the name compared, so the read and the draws answer the
@@ -1122,7 +1122,7 @@ public final class TextureCopyService {
             // returned uniform white. routeLabelForBinding is the one place the routing rule lives (main -> frame
             // image, identity 0 -> default pair, every other non-main identity -> chain pair), so the read follows
             // the same rule the draws did.
-            String route = GllessFrameTarget.routeLabelForBinding(this.host.currentRenderTarget(), this.host.currentRenderTargetIsMain());
+            String route = org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(this.host.currentRenderTarget(), this.host.currentRenderTargetIsMain());
             if ("chain-pair".equals(route)) {
                 glless.ensureChainPair(this.host.currentRenderTarget(), this.host.targetWidth(), this.host.targetHeight());
                 return glless.chainPairColorImage(this.host.currentRenderTarget());
@@ -1157,7 +1157,7 @@ public final class TextureCopyService {
                 // chain pair unconditionally read an image the last-drawn identity never wrote - measured on the
                 // menu, where the panorama's faces go to the default pair and this returned the chain pair's
                 // uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`, firstPixels all 0xffffffff).
-                if ("chain-pair".equals(GllessFrameTarget.routeLabelForBinding(this.host.lastDrawnOffTargetIdentity(),
+                if ("chain-pair".equals(org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(this.host.lastDrawnOffTargetIdentity(),
                         false))) {
                     glless.ensureChainPair(this.host.lastDrawnOffTargetIdentity(),
                             this.host.targetWidth(), this.host.targetHeight());
