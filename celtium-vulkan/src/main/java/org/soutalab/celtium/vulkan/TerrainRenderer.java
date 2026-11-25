@@ -1393,6 +1393,32 @@ public final class TerrainRenderer {
     }
 
     /**
+     * Overwrites the {@code u_RegionOffset} field of the pass uniform block at
+     * {@code offset} with the Tier-A value: world origin minus camera, in the same
+     * computation order {@link #writeRegionOffset} uses for a region at the origin.
+     * <p>
+     * The compact vertex stages no longer read the block's offset field (their
+     * per-region offset arrives through the binding-5 array), so
+     * {@link #writePassUniforms} writes zeros there. {@code terrain_a.vert} is the
+     * one stage that still reads it — its contract is that the field carries
+     * world-origin-minus-camera, because the section translation comes from the
+     * SectionDesc record and the vertex positions are section-local. Leaving the
+     * zeros in place displaced every Tier-A section by the full camera position
+     * (leg r7, 2026-11-25: terrain collapsed into a dark layered fragment in one
+     * corner of the frame). The backend calls this only for a pass Tier-A armed,
+     * whose region loop records no compact draws, so the overwrite reaches no
+     * other reader of the block.
+     */
+    void writeTierAWorldOffset(long offset, CameraTransform camera) {
+        VulkanUniformBuffer activeUniforms = this.uniformBuffers[this.uniformSlot];
+        long addr = activeUniforms.mappedAddress() + offset;
+        MemoryUtil.memPutFloat(addr + 0, (0 - camera.intX) - camera.fracX);
+        MemoryUtil.memPutFloat(addr + 4, (0 - camera.intY) - camera.fracY);
+        MemoryUtil.memPutFloat(addr + 8, (0 - camera.intZ) - camera.fracZ);
+        MemoryUtil.memPutFloat(addr + 12, 0.0f);
+    }
+
+    /**
      * Appends this region's offset to the frame slot's binding-5 array and returns its index,
      * which the caller carries into the region's draw commands as firstInstance (agera-kpi-3).
      * The values are the identical floats the uniform block's {@code u_RegionOffset} used to

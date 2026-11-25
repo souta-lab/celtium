@@ -19596,6 +19596,13 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
         long passUniformStarted = System.nanoTime();
         long passUniformOffset = this.terrain.writePassUniforms(pass, camera);
+        if (tierAArmed) {
+            // Tier-A's vertex stage reads the block's u_RegionOffset field as
+            // world-origin-minus-camera (terrain_a.vert's contract); the compact
+            // stages ignore the field, so writePassUniforms left it zeroed and
+            // every Tier-A section was displaced by the camera position.
+            this.terrain.writeTierAWorldOffset(passUniformOffset, camera);
+        }
         long passAfterUniform = System.nanoTime();
         this.terrainUniformNanos += passAfterUniform - passUniformStarted;
         if (tierAArmed) {
