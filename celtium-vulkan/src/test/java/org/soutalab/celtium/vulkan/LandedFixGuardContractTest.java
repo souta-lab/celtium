@@ -33,6 +33,10 @@ class LandedFixGuardContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/ModShaderCompiler.java";
     private static final String GL_STUB =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java";
+    private static final String FRAME_TARGET =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java";
+    private static final String FRAMEBUFFER_CACHE =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramebufferCache.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative));
@@ -213,6 +217,91 @@ class LandedFixGuardContractTest {
             assertEquals(0, count(source, "position - dynLights.u_DynamicLightInfo.yzw"),
                     shader + " must not subtract the header camera a second time");
         }
+    }
+
+    /**
+     * Stage 2 borrow-lifetime fix (defect B): while a present borrow is live, the frame target's
+     * layout barriers and game clear must act on the image {@code colorImage()} answers for - the
+     * borrowed swapchain image - because the tracked layout describes that image too. The inherited
+     * code named the owned image field at all four sites, so the borrowed image was never moved out
+     * of the layout the lender handed it in (the 09600 family around swapchain images in
+     * run-s1bgra2-agera) while the owned image collected transitions for draws it never received.
+     * {@code FramebufferCacheRotationTest} pins the companion cache fix behaviourally; the target's
+     * sites are device-bound, so they are pinned here by shape. The slice ends at the Pair class:
+     * a pair's own {@code this.colorImage} is a different field and stays as it is.
+     */
+    @Test
+    void theFrameLayoutBarriersAndClearActOnTheBorrowAwareImage() throws IOException {
+        String target = read(FRAME_TARGET);
+        int pair = target.indexOf("private final class Pair {");
+        assertTrue(pair >= 0, "the Pair class bounds the frame target's own region");
+        String frameRegion = target.substring(0, pair);
+        assertEquals(3, count(frameRegion, ".image(colorImage())"),
+                "the acquire/release, clear-to-transfer and transfer-to-attachment barriers all"
+                        + " name the borrow-aware colour image");
+        assertEquals(0, count(frameRegion, ".image(this.colorImage)"),
+                "no frame-image barrier names the owned image field directly");
+        assertTrue(frameRegion.contains("vkCmdClearColorImage(command, colorImage(),"),
+                "the game clear clears the image the frame draws into, borrowed or owned");
+        assertEquals(0, count(frameRegion, "vkCmdClearColorImage(command, this.colorImage,"),
+                "the game clear must not clear the owned image behind a live borrow");
+    }
+
+    /**
+     * Stage 2 borrow-lifetime fix (defect A), the source half: {@code FramebufferCache.frame} must
+     * take its answer from the (pass, view) map alone. The last-entry memo's only remaining role is
+     * being forgotten when its entry is retired; a lookup shaped like the inherited one - memo
+     * first for same-pass requests - is what stranded a retired entry under its own key and handed
+     * its destroyed handle to a later request. The behaviour is pinned by
+     * {@code FramebufferCacheRotationTest}; this pins that the memo lookup does not come back.
+     */
+    @Test
+    void theFrameCacheAnswersFromTheMapAlone() throws IOException {
+        String cache = read(FRAMEBUFFER_CACHE);
+        assertEquals(0, count(cache, "? this.lastFrameEntry"),
+                "frame() must not answer same-pass requests from the last-entry memo");
+        assertTrue(cache.contains("byView.get(colorView)"),
+                "frame() answers from the entry stored under the requested view's own key");
+    }
+
+    /**
+     * Stage 2 borrow-lifetime fix (defect D, found by the first fixed leg): a borrow released with
+     * its acquire never consumed - a dropped frame, or a borrow the present dropped when its
+     * generation retired - orphans the pending signal, and ownership alone cannot free its slot
+     * (the ownership release rule proves a previous present was consumed; a dropped borrow has no
+     * present). The release point is the one place every borrow passes, so the drain lives there;
+     * this pins that it is not removed.
+     */
+    @Test
+    void aBorrowReleasedWithItsAcquireUnconsumedDrainsTheSignal() throws IOException {
+        String target = read(FRAME_TARGET);
+        int pair = target.indexOf("private final class Pair {");
+        assertTrue(pair >= 0, "the Pair class bounds the frame target's own region");
+        String frameRegion = target.substring(0, pair);
+        assertTrue(frameRegion.contains("drainUnconsumedAcquire(this.presentAcquireSemaphoreUsed)"),
+                "releasePresentBorrow drains an unconsumed acquire before clearing the bookkeeping");
+    }
+
+    /**
+     * Stage 2 borrow-lifetime fix (defect E, the 01779 burst itself): the borrow acquire pool must
+     * hand out semaphores under the ownership discipline the swapchain's own pool uses - a plain
+     * cursor cycle reused a semaphore whose waiting submission the GPU had not executed yet
+     * whenever the frames ran behind, measured as ten VUID-vkAcquireNextImageKHR-semaphore-01779
+     * messages inside one second of both run-s2borrow legs. This pins the borrow path to the owned
+     * pool's own helpers, so the two pools cannot drift back to different disciplines.
+     */
+    @Test
+    void theBorrowAcquirePoolHandsOutSemaphoresByOwnership() throws IOException {
+        String target = read(FRAME_TARGET);
+        int pair = target.indexOf("private final class Pair {");
+        assertTrue(pair >= 0, "the Pair class bounds the frame target's own region");
+        String frameRegion = target.substring(0, pair);
+        assertTrue(frameRegion.contains("VulkanSwapchain.freeAcquireSlot(this.presentAcquireOwnerImage"),
+                "the borrow picks its acquire semaphore from the unowned slots");
+        assertTrue(frameRegion.contains("VulkanSwapchain.assignAcquireOwner(this.presentAcquireOwnerImage"),
+                "a successful borrow records which image owns its acquire semaphore");
+        assertTrue(frameRegion.contains("VUID-vkAcquireNextImageKHR-semaphore-01779"),
+                "the pool documents the measured failure the discipline prevents");
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */

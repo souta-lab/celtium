@@ -284,6 +284,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.presentLagOne = one;
         this.presentLagMore = more;
     }
+    /**
+     * The tracked layout of the image {@link #colorImage()} currently answers for - the borrowed
+     * swapchain image while a borrow is live, the owned image otherwise. Every barrier and clear in
+     * this class that moves or uses the frame colour image acts on that same image: the two must
+     * never diverge, because a barrier recorded against the owned image while the ledger describes
+     * the borrowed one (or the reverse) leaves the image the frame actually draws into in a layout
+     * nobody recorded - the VUID-vkCmdDraw-None-09600 family the borrow legs reported around
+     * swapchain images, and a present that transitions the borrowed image from a layout it is not in.
+     */
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     /**
@@ -298,12 +307,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** The owned colour image's tracked layout, saved at borrow time and restored when the borrow ends. */
     private int ownedColorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     /**
-     * The per-image acquire semaphore pool for borrowed images, cursor-cycled exactly like the
-     * swapchain's own acquire pool: an acquire semaphore may not be reused while a previous signal is
-     * still unconsumed, and with one borrow outstanding at a time the cursor cycle is what keeps reuse
-     * behind the present that consumed the last signal. Sized to the lender's image count.
+     * The per-image acquire semaphore pool for borrowed images, handed out under the ownership
+     * discipline the swapchain's own acquire pool uses: a semaphore is owned by the image its acquire
+     * returned until that image is acquired again - that acquire returning proves the image's previous
+     * present was consumed, and the submission that waited on the old semaphore was ordered before
+     * that present. Plain cursor cycling reused a semaphore whose waiting submission the GPU had not
+     * executed yet whenever the frames ran behind, which is
+     * VUID-vkAcquireNextImageKHR-semaphore-01779 (the owned pool's l8switch-amd measurement, and ten
+     * messages inside one second of the run-s2borrow legs for this pool). Sized to the lender's image
+     * count at first; grows by one when every semaphore is owned.
      */
     private long[] presentAcquireSemaphores = new long[0];
+    private long[] presentAcquireOwnerImage = new long[0];
     private int presentAcquireCursor;
     /** The semaphore the live borrow's acquire signals; handed out once by {@link #presentAcquireSemaphore()}. */
     private long presentAcquireSemaphoreUsed = VK_NULL_HANDLE;
@@ -787,13 +802,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (!ensurePresentAcquirePool(engine.imageCount())) {
             return false;
         }
-        long acquireSemaphore = this.presentAcquireSemaphores[this.presentAcquireCursor
-                % this.presentAcquireSemaphores.length];
-        this.presentAcquireCursor++;
-        PresentEngine.BorrowedImage borrowed = engine.acquireNextImage(acquireSemaphore, frameSlot);
-        if (borrowed == null) {
+        int slot = VulkanSwapchain.freeAcquireSlot(this.presentAcquireOwnerImage,
+                this.presentAcquireCursor);
+        if (slot < 0 && growPresentAcquirePool()) {
+            slot = this.presentAcquireSemaphores.length - 1;
+        }
+        if (slot < 0) {
             return false;
         }
+        this.presentAcquireCursor = slot + 1;
+        long acquireSemaphore = this.presentAcquireSemaphores[slot];
+        PresentEngine.BorrowedImage borrowed = engine.acquireNextImage(acquireSemaphore, frameSlot);
+        if (borrowed == null) {
+            // A failed acquire may leave its semaphore signaled (the spec allows it), and the slot
+            // would hand that pending signal to a later acquire: replace the semaphore, the owned
+            // pool's replaceAcquireSemaphore discipline. The slot stays unowned.
+            replacePresentAcquireSemaphore(slot);
+            return false;
+        }
+        VulkanSwapchain.assignAcquireOwner(this.presentAcquireOwnerImage, slot, borrowed.index());
         this.ownedColorImageLayout = this.colorImageLayout;
         this.presentBorrow = borrowed;
         this.colorImageLayout = borrowed.initialLayout();
@@ -812,12 +839,46 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.presentBorrow;
     }
 
+    /**
+     * Consumes one orphaned borrow acquire signal with a submission that only waits on it, the shape
+     * {@code consumeDone} uses for the bridge's done semaphore. The signal has already fired (the image
+     * was acquired), so the wait completes without touching any image.
+     */
+    private void drainUnconsumedAcquire(long semaphore) {
+        try (MemoryStack stack = stackPush()) {
+            LongBuffer wait = stack.mallocLong(1);
+            wait.put(0, semaphore);
+            this.context.celtium$flushBatchedSubmits();
+            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
+                    .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
+                    .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT));
+            VulkanContext.queueSubmitCalls++;
+            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
+                    "vkQueueSubmit (borrow acquire drain)");
+        }
+    }
+
     @Override
     public void releasePresentBorrow() {
         if (this.presentBorrow == null) {
             return;
         }
         this.presentBorrow = null;
+        if (this.presentAcquireWaitPending) {
+            // The borrow ends with its acquire never consumed: no submission waited the signal and no
+            // present took it (a dropped frame, or a borrow the present dropped when its generation
+            // retired). Clearing the bookkeeping without consuming the signal orphans it: ownership
+            // alone cannot free this slot, because the ownership release rule - the image being
+            // acquired again - proves a previous present was consumed, and a dropped borrow has no
+            // present. Drain the signal here, at the one point every borrow release passes, and give
+            // the slot back: the drain is the wait that makes the semaphore reusable.
+            drainUnconsumedAcquire(this.presentAcquireSemaphoreUsed);
+            for (int slot = 0; slot < this.presentAcquireSemaphores.length; slot++) {
+                if (this.presentAcquireSemaphores[slot] == this.presentAcquireSemaphoreUsed) {
+                    this.presentAcquireOwnerImage[slot] = -1L;
+                }
+            }
+        }
         this.presentAcquireWaitPending = false;
         this.presentAcquireSemaphoreUsed = VK_NULL_HANDLE;
         // The tracked layout goes back to describing the owned image, which nothing touched while the
@@ -867,6 +928,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         long[] replaced = this.presentAcquireSemaphores;
         this.presentAcquireSemaphores = created;
+        this.presentAcquireOwnerImage = new long[imageCount];
+        java.util.Arrays.fill(this.presentAcquireOwnerImage, -1L);
         this.presentAcquireCursor = 0;
         if (replaced.length > 0) {
             final long[] retired = replaced;
@@ -877,6 +940,57 @@ public final class GllessFrameTarget implements FrameImageTarget {
             });
         }
         return true;
+    }
+
+    /** Grows the acquire pool by one semaphore when every slot is owned, with its ownership slot. */
+    private boolean growPresentAcquirePool() {
+        VkDevice device = this.context.device();
+        long created;
+        try (MemoryStack stack = stackPush()) {
+            org.lwjgl.vulkan.VkSemaphoreCreateInfo semaphoreInfo = org.lwjgl.vulkan.VkSemaphoreCreateInfo
+                    .calloc(stack).sType$Default();
+            LongBuffer pointer = stack.mallocLong(1);
+            if (org.lwjgl.vulkan.VK10.vkCreateSemaphore(device, semaphoreInfo, null, pointer)
+                    != VK_SUCCESS) {
+                return false;
+            }
+            created = pointer.get(0);
+        }
+        long[] pool = new long[this.presentAcquireSemaphores.length + 1];
+        System.arraycopy(this.presentAcquireSemaphores, 0, pool, 0,
+                this.presentAcquireSemaphores.length);
+        pool[pool.length - 1] = created;
+        this.presentAcquireSemaphores = pool;
+        long[] owners = new long[pool.length];
+        java.util.Arrays.fill(owners, -1L);
+        System.arraycopy(this.presentAcquireOwnerImage, 0, owners, 0,
+                this.presentAcquireOwnerImage.length);
+        this.presentAcquireOwnerImage = owners;
+        return true;
+    }
+
+    /**
+     * Replaces one pool slot's semaphore with a fresh one, retiring the old through the retire queue:
+     * a pending wait may still name it. Used after a failed acquire, which may leave its semaphore
+     * signaled. If the replacement cannot be created the old semaphore stays - a degraded pool beats
+     * an empty slot.
+     */
+    private void replacePresentAcquireSemaphore(int slot) {
+        VkDevice device = this.context.device();
+        long created;
+        try (MemoryStack stack = stackPush()) {
+            org.lwjgl.vulkan.VkSemaphoreCreateInfo semaphoreInfo = org.lwjgl.vulkan.VkSemaphoreCreateInfo
+                    .calloc(stack).sType$Default();
+            LongBuffer pointer = stack.mallocLong(1);
+            if (org.lwjgl.vulkan.VK10.vkCreateSemaphore(device, semaphoreInfo, null, pointer)
+                    != VK_SUCCESS) {
+                return;
+            }
+            created = pointer.get(0);
+        }
+        final long retired = this.presentAcquireSemaphores[slot];
+        this.presentAcquireSemaphores[slot] = created;
+        VulkanRetireQueue.retire(() -> org.lwjgl.vulkan.VK10.vkDestroySemaphore(device, retired, null));
     }
 
     @Override
@@ -1279,7 +1393,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // cube visible only where it was drawn directly, against the accepted (98,102,96)).
                 value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage,
+                org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, colorImage(),
                         DEPTH_TRANSFER_LAYOUT, value, range);
             }
             if (depth) {
@@ -1343,7 +1457,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             int index = 0;
             if (color) {
                 VkImageMemoryBarrier barrier = barriers.get(index++);
-                barrier.sType$Default().image(this.colorImage)
+                barrier.sType$Default().image(colorImage())
                         .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
                         .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                         .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
@@ -1440,7 +1554,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             int index = 0;
             if (color) {
                 VkImageMemoryBarrier barrier = barriers.get(index++);
-                barrier.sType$Default().image(this.colorImage)
+                barrier.sType$Default().image(colorImage())
                         .oldLayout(DEPTH_TRANSFER_LAYOUT)
                         .newLayout(COLOR_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
@@ -1528,10 +1642,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
             VkImageMemoryBarrier colorBarrier = barriers.get(0);
             colorBarrier.sType$Default()
-                    .image(this.colorImage)
+                    .image(colorImage())
                     // The colour image's true layout is whatever the last phase left it in - acquire, release or the
                     // present's own transition - so it is tracked rather than assumed, the way the present path
-                    // reports the layout it restored through noteColorImageLayout.
+                    // reports the layout it restored through noteColorImageLayout. The image named is the one
+                    // colorImage() answers for: while a borrow is live that is the borrowed swapchain image,
+                    // and the tracked layout describes it too (see the field's note). Naming the owned image
+                    // here instead moved an image nothing was drawing into while the borrowed image kept the
+                    // layout the lender handed it in, which the sampling draws then reported as 09600.
                     .oldLayout(colorOldLayout)
                     .newLayout(colorNewLayout)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
