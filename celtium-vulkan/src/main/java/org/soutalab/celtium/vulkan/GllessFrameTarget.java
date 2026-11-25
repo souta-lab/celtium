@@ -53,6 +53,7 @@ import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.soutalab.celtium.vulkan.hal.FrameTargetPair;
+import org.soutalab.celtium.vulkan.hal.PresentLagRecord;
 import org.soutalab.celtium.vulkan.hal.SharedDepthStore;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearDepthStencilValue;
@@ -258,16 +259,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.framesWithNoClear = frames;
     }
 
-    /** How far behind the game the presented frame was, as {max, at most one, more than one}. */
-    private long presentLagMax;
-    private long presentLagOne;
-    private long presentLagMore;
+    /** How far behind the game the presented frame was; the record lives in {@link PresentLagRecord}. */
+    private final PresentLagRecord presentLag = new PresentLagRecord();
 
     /** Sets the present-lag counters the summary reports. */
     public void setPresentLag(long max, long one, long more) {
-        this.presentLagMax = max;
-        this.presentLagOne = one;
-        this.presentLagMore = more;
+        this.presentLag.set(max, one, more);
     }
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2257,8 +2254,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears
                 + ",noClear=" + this.framesWithoutClear
                 + ",framesNoClear=" + this.framesWithNoClear
-                + " presentLag=[max=" + this.presentLagMax + ",one=" + this.presentLagOne
-                + ",more=" + this.presentLagMore + "]"
+                + " " + this.presentLag.describe()
                 + " offTargetPairs=[" + pairSummary() + "]";
     }
 
