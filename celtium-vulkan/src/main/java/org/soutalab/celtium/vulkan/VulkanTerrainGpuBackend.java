@@ -2838,71 +2838,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private float celtium$censusSearchDistance;
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
-    /**
-     * Mesh stage 4 (item 677): the stage-3 pipeline factory this backend feeds, created
-     * lazily on the first pass head the stage-2 gate admits. Null while the stage-2 flag
-     * is off or the device lacks the mesh/task pair — on HD 620 / UHD 630 nothing of the
-     * stage-4 wiring is ever created and the terrain path is byte-identical to before.
-     */
-    private VulkanMeshStage2Pipeline celtium$meshStage2;
-    /** Set when stage-4 creation or recording failed once: the wiring stays off rather than retrying per frame. */
-    private boolean celtium$meshStage2Failed;
-    /** The frame collection the region loop is currently filling (stage 4); rotated at the next frame's first pass head. */
-    private CeltiumMeshFrame celtium$meshCollecting;
-    /** The finished frame collection the next pass head may draw from (stage 4, E10's shadow-generation seat). */
-    private CeltiumMeshFrame celtium$meshFinished;
-    /** The last frame the stage-4 rotation ran for; rotation (and the ring reset with it) is once per frame, not per pass. */
-    private long celtium$meshRotatedFrame = -1L;
-    /** Per-slot stage-4 table buffers: the finished frame's section-granular table, uploaded at the pass head. */
-    private final VulkanHostBuffer[] celtium$meshTableBuffers =
-            new VulkanHostBuffer[FrameSubmissionScheduler.FRAME_SLOTS];
-    /** Pass heads that declined the mesh draw because the finished collection no longer covers the pass exactly. */
-    private long celtium$meshCoverageMisses;
-    /** Passes actually drawn through the stage-2 task draw by this wiring. */
-    private long celtium$meshPassesDrawn;
-
-    /** One region's batch as the region loop drew it, retained for the stage-4 collection. */
-    private static final class CeltiumMeshRegionBatch {
-        final RenderRegion region;
-        final VulkanMultiDrawBatch batch;
-
-        CeltiumMeshRegionBatch(RenderRegion region, VulkanMultiDrawBatch batch) {
-            this.region = region;
-            this.batch = batch;
-        }
-    }
-
-    /** One pass' retained batches within a stage-4 frame collection, in region-loop order. */
-    private static final class CeltiumMeshPass {
-        /** Ordinal assigned in first-collection order, the form the table's entry flags carry. */
-        final int ordinal;
-        final List<CeltiumMeshRegionBatch> regions = new ArrayList<CeltiumMeshRegionBatch>();
-
-        CeltiumMeshPass(int ordinal) {
-            this.ordinal = ordinal;
-        }
-    }
-
-    /**
-     * One frame's stage-4 collection: the batches the region loop drew, per pass, plus the
-     * search context in force while they were drawn (the mask supply and the distance
-     * limit, captured from the {@link #noteSearchContext} fields when the frame opened).
-     */
-    private static final class CeltiumMeshFrame {
-        final long frameId;
-        final SectionLattice.VisibilitySnapshot snapshot;
-        final int visibleFrame;
-        final float searchDistance;
-        final Map<String, CeltiumMeshPass> passes = new LinkedHashMap<String, CeltiumMeshPass>();
-
-        CeltiumMeshFrame(long frameId, SectionLattice.VisibilitySnapshot snapshot,
-                         int visibleFrame, float searchDistance) {
-            this.frameId = frameId;
-            this.snapshot = snapshot;
-            this.visibleFrame = visibleFrame;
-            this.searchDistance = searchDistance;
-        }
-    }
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
     /**
      * The within-leg equivalence check the plan's acceptance needs, and the reason it is a check rather than a picture.
@@ -17210,17 +17145,6 @@ this.frameBufferOpen = false;
                 this.shadowGpuTerrainDraw.delete();
                 this.shadowGpuTerrainDraw = null;
             }
-            if (this.celtium$meshStage2 != null) {
-                this.celtium$meshStage2.taskDraw().delete();
-                this.celtium$meshStage2.release();
-                this.celtium$meshStage2 = null;
-            }
-            for (int slot = 0; slot < this.celtium$meshTableBuffers.length; slot++) {
-                if (this.celtium$meshTableBuffers[slot] != null) {
-                    this.celtium$meshTableBuffers[slot].delete();
-                    this.celtium$meshTableBuffers[slot] = null;
-                }
-            }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
             // One failing release must not strand the rest or the registration (issue #425): before this
@@ -19109,257 +19033,6 @@ this.frameBufferOpen = false;
     }
 
     /** The frame's view-projection in column-major array form, computed once per frame. */
-    /**
-     * Mesh stage 4 (item 677): frame rotation of the stage-4 collection, at the first
-     * pass head of a new frame — the frame the region loop just finished filling becomes
-     * the finished collection the pass heads draw from, and the factory's ring cursor for
-     * this frame slot resets with it (the slot's fence has completed by the time its
-     * frame id comes round again, the same opening stage 1 uses). With the stage-2 gate
-     * closed this returns on the first test and nothing is retained.
-     */
-    private void celtium$meshRotateCollection() {
-        if (!VulkanMeshTaskDraw.available(this.context)) {
-            return;
-        }
-        if (this.celtium$meshRotatedFrame == this.frameId) {
-            return;
-        }
-        this.celtium$meshRotatedFrame = this.frameId;
-        if (this.celtium$meshCollecting != null
-                && this.celtium$meshCollecting.frameId != this.frameId) {
-            this.celtium$meshFinished = this.celtium$meshCollecting;
-            this.celtium$meshCollecting = null;
-        }
-        if (this.celtium$meshStage2 != null) {
-            this.celtium$meshStage2.beginSlot(this.frameSlot);
-        }
-    }
-
-    /**
-     * Mesh stage 4 (item 677): retains one region's batch in the current frame's
-     * collection, beside the census' collect in the region loop. The collection opens
-     * lazily on the frame's first retained batch and captures the search context in
-     * force for the lists being drawn, exactly as the census' frame collection does.
-     */
-    private void celtium$meshCollect(String passName, RenderRegion region,
-                                      VulkanMultiDrawBatch batch) {
-        if (this.celtium$meshCollecting == null
-                || this.celtium$meshCollecting.frameId != this.frameId) {
-            this.celtium$meshCollecting = new CeltiumMeshFrame(this.frameId,
-                    this.celtium$censusSnapshot, this.celtium$censusSnapshotFrame,
-                    this.celtium$censusSearchDistance);
-        }
-        CeltiumMeshPass pass = this.celtium$meshCollecting.passes.get(passName);
-        if (pass == null) {
-            pass = new CeltiumMeshPass(this.celtium$meshCollecting.passes.size());
-            this.celtium$meshCollecting.passes.put(passName, pass);
-        }
-        pass.regions.add(new CeltiumMeshRegionBatch(region, batch));
-    }
-
-    /**
-     * Mesh stage 4 (item 677): the pass-head attempt. Builds this pass' section-granular
-     * table from the finished frame's collection — through the E10-b {@link
-     * GpuTerrainDrawTable.Builder}, so the entries carry the assembler's section tags
-     * ({@code FLAG_SECTION_BOX}) and the mask is the lattice form the noted snapshot
-     * supplies — uploads it into this slot's stage-4 table buffer, and hands everything
-     * {@link VulkanMeshStage2Pipeline#recordPassHead} needs to the stage-3 issuance path.
-     *
-     * <p>The draw is taken only when the finished collection still covers this pass
-     * exactly: every region the pass would draw is in the collection with the very
-     * batch object the loop would draw (a stale cached batch is a rebuild the loop
-     * must perform, so it is a miss), and the collection names no region the pass no
-     * longer draws. A miss is counted here and the pass falls through to the region
-     * loop untouched; a taken attempt's refusal is counted by the task draw's gate
-     * census, in stage 3's form. The region-offset indices the table's remap names are
-     * written here, in collection order, before the attempt: on a refusal the loop
-     * writes its own indices for its own draws and the head's entries simply go unread
-     * (the values are identical — same region, same camera — and the buffer's growth
-     * guard covers the double write).
-     *
-     * @return true when the task draw was recorded and the region loop must be skipped
-     */
-    private boolean celtium$meshTryPassHead(MemoryStack stack,
-            VulkanTerrainPipeline pipeline, ChunkRenderMatrices matrices,
-            ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-            CameraTransform occlusionCamera, CameraTransform camera,
-            SectionRenderDataStorage.BatchCacheParams cacheParams,
-            ChunkPrimitiveType primitiveType) {
-        if (this.celtium$meshStage2Failed || this.celtium$meshFinished == null) {
-            return false;
-        }
-        // Stage 3's scope is the SOLID pass only; recordPassHead would refuse any
-        // other pass pipeline as NO_PIPELINE, so decline here without spending the
-        // coverage walk or the table build on it.
-        if (!SpirvShaders.SOLID_VERTEX.equals(pipeline.vertexModuleName())) {
-            return false;
-        }
-        CeltiumMeshPass collected = this.celtium$meshFinished.passes.remove(pass.name());
-        if (collected == null || collected.regions.isEmpty()) {
-            return false;
-        }
-        try {
-            // Coverage: the pass' current batches, keyed by region id, from the same
-            // cache-validity test the region loop applies (without its rebuild: a batch
-            // that would be rebuilt is a miss, not a candidate).
-            Map<Integer, VulkanMultiDrawBatch> current = new LinkedHashMap<Integer, VulkanMultiDrawBatch>();
-            for (int i = 0; i < renderLists.getNumRegions(); i++) {
-                ChunkRenderList renderList = renderLists.getRegion(i);
-                RenderRegion region = renderList.getRegion();
-                if (this.terrain.resourcesIfPresent(region) == null) {
-                    continue;
-                }
-                SectionRenderDataStorage storage = region.getStorage(pass);
-                if (storage == null) {
-                    continue;
-                }
-                CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
-                if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
-                        renderList.getSectionsWithGeometryCount(), occlusionCamera.intX,
-                        occlusionCamera.intY, occlusionCamera.intZ)) {
-                    return celtium$meshCoverageMiss(pass);
-                }
-                if (!(cached.getBatch() instanceof VulkanMultiDrawBatch)
-                        || cached.getBatch().isEmpty()
-                        || !((VulkanMultiDrawBatch) cached.getBatch()).unsortedOffsetsClean()) {
-                    return celtium$meshCoverageMiss(pass);
-                }
-                current.put(region.getId(), (VulkanMultiDrawBatch) cached.getBatch());
-            }
-            if (current.size() != collected.regions.size()) {
-                return celtium$meshCoverageMiss(pass);
-            }
-            for (CeltiumMeshRegionBatch retained : collected.regions) {
-                if (current.get(retained.region.getId()) != retained.batch) {
-                    return celtium$meshCoverageMiss(pass);
-                }
-            }
-            VulkanArena vertexArena = this.terrain.sharedVertexArenaIfPresent();
-            if (vertexArena == null) {
-                return celtium$meshCoverageMiss(pass);
-            }
-            if (this.celtium$meshStage2 == null) {
-                this.celtium$meshStage2 = new VulkanMeshStage2Pipeline(this.context,
-                        new VulkanMeshTaskDraw(this.context));
-                this.celtium$meshStage2.beginSlot(this.frameSlot);
-            }
-            // The table: one entry per retained command, section-granular where the
-            // batch kept the assembler's tag — the census' transcription, verbatim.
-            GpuTerrainDrawTable.Builder builder = new GpuTerrainDrawTable.Builder();
-            for (CeltiumMeshRegionBatch retained : collected.regions) {
-                RenderRegion region = retained.region;
-                VulkanMultiDrawBatch batch = retained.batch;
-                int frameIndex = this.terrain.writeRegionOffset(region, camera);
-                int dictIndex = builder.dictIndexFor(region.getId(), frameIndex);
-                int flags = (collected.ordinal << 8) | 0; // index source: shared quad buffer
-                for (int i = 0, size = batch.size(); i < size; i++) {
-                    int sectionTag = batch.sectionTag(i);
-                    if (sectionTag >= 0) {
-                        builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
-                                batch.baseVertex(i), dictIndex,
-                                region.getChunkX() + LocalSectionIndex.unpackX(sectionTag),
-                                region.getChunkY() + LocalSectionIndex.unpackY(sectionTag),
-                                region.getChunkZ() + LocalSectionIndex.unpackZ(sectionTag),
-                                flags | GpuTerrainDrawTable.FLAG_SECTION_BOX));
-                    } else {
-                        builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
-                                batch.baseVertex(i), dictIndex,
-                                region.getChunkX(), region.getChunkY(), region.getChunkZ(),
-                                flags));
-                    }
-                }
-            }
-            celtium$meshSupplyLatticeMask(builder, this.celtium$meshFinished);
-            GpuTerrainDrawTable.Table table = builder.build();
-            // Upload: this slot's stage-4 table buffer, in the census slot's form.
-            VulkanHostBuffer tableBuffer = this.celtium$meshTableBuffers[this.frameSlot];
-            if (tableBuffer == null) {
-                tableBuffer = new VulkanHostBuffer(this.context,
-                        Math.max(1L, (long) table.entries.length * GpuTerrainDrawTable.ENTRY_BYTES),
-                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-                this.celtium$meshTableBuffers[this.frameSlot] = tableBuffer;
-            } else {
-                tableBuffer.ensureCapacity(
-                        Math.max(1L, (long) table.entries.length * GpuTerrainDrawTable.ENTRY_BYTES));
-            }
-            ByteBuffer view = MemoryUtil.memByteBuffer(tableBuffer.mappedAddress(),
-                    Math.max(1, table.entriesBytes()));
-            view.order(java.nio.ByteOrder.nativeOrder());
-            table.packEntries(view, 0);
-            float[] planes = GpuTerrainDrawTable.extractPlanes(
-                    celtium$gpuTerrainCensusVp(matrices));
-            float maxDistance = this.celtium$meshFinished.searchDistance > 0.0f
-                    ? this.celtium$meshFinished.searchDistance
-                    : GpuTerrainCulling.MAX_DISTANCE_BLOCKS;
-            VulkanMeshTaskDraw.GateReason verdict = this.celtium$meshStage2.recordPassHead(
-                    stack, this.commandBuffer, this.frameSlot, pipeline,
-                    pipeline.descriptorSetHandle(this.frameSlot), vertexArena.buffer(),
-                    this.sharedIndexBuffers.get(primitiveType), tableBuffer.buffer(),
-                    table, planes, (float) occlusionCamera.x, (float) occlusionCamera.y,
-                    (float) occlusionCamera.z, maxDistance, collected.ordinal, 0,
-                    this.terrainBudget.capActive());
-            if (verdict == VulkanMeshTaskDraw.GateReason.NONE) {
-                this.celtium$meshPassesDrawn++;
-                if (this.celtium$meshPassesDrawn % 60L == 1L) {
-                    System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE4_WIRE pass="
-                            + pass.name() + " sectionsDrawn=" + this.celtium$meshPassesDrawn
-                            + " coverageMisses=" + this.celtium$meshCoverageMisses);
-                }
-                return true;
-            }
-            return false;
-        } catch (RuntimeException failure) {
-            this.celtium$meshStage2Failed = true;
-            System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE4_DISABLED reason=" + failure);
-            return false;
-        }
-    }
-
-    /** Counts a stage-4 coverage miss (throttled print) and declines the mesh draw. */
-    private boolean celtium$meshCoverageMiss(TerrainRenderPass pass) {
-        this.celtium$meshCoverageMisses++;
-        if (this.celtium$meshCoverageMisses % 60L == 1L) {
-            System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE4_COVERAGE pass="
-                    + pass.name() + " misses=" + this.celtium$meshCoverageMisses
-                    + " (the finished collection does not cover this pass exactly;"
-                    + " the region loop draws it)");
-        }
-        return false;
-    }
-
-    /**
-     * The lattice-mask supply for a stage-4 table, transcribed from the census'
-     * (design section 3.4): the noted snapshot's visible set over section lattice
-     * indices, withheld unless every entry the builder holds is section-granular.
-     */
-    private static void celtium$meshSupplyLatticeMask(GpuTerrainDrawTable.Builder builder,
-                                                      CeltiumMeshFrame frame) {
-        SectionLattice.VisibilitySnapshot snapshot = frame.snapshot;
-        if (snapshot == null || snapshot.dimX() <= 0 || !builder.allSectionGranular()) {
-            return;
-        }
-        int[] frames = snapshot.visibleFrames();
-        boolean[] installed = snapshot.installed();
-        int cells = frames.length;
-        int[] words = new int[GpuTerrainDrawTable.MASK_HEADER_WORDS + (cells + 31) / 32];
-        words[0] = snapshot.baseX();
-        words[1] = snapshot.baseY();
-        words[2] = snapshot.baseZ();
-        words[3] = snapshot.dimX();
-        words[4] = snapshot.dimY();
-        words[5] = snapshot.dimZ();
-        for (int i = 0; i < cells; i++) {
-            if (installed[i] && frames[i] >= frame.visibleFrame) {
-                words[GpuTerrainDrawTable.MASK_HEADER_WORDS + (i >>> 5)] |= 1 << (i & 31);
-            }
-        }
-        builder.latticeMask(words, snapshot.baseX(), snapshot.baseY(), snapshot.baseZ(),
-                snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
-                GpuTerrainDrawTable.latticeGeneration(snapshot.baseX(), snapshot.baseY(),
-                        snapshot.baseZ(), snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
-                        frame.visibleFrame));
-    }
-
     private float[] celtium$gpuTerrainCensusVp(ChunkRenderMatrices matrices) {
         if (this.gpuTerrainCensusVp == null || this.gpuTerrainCensusVpFrame != this.frameId) {
             float[] vp = new float[16];
@@ -19468,7 +19141,6 @@ this.frameBufferOpen = false;
         // Item 691: recHead covers the pass head up to recordPrepare - see FramePassTimings for the split.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recHead");
         celtium$gpuTerrainCensusRollover();
-        celtium$meshRotateCollection();
         this.terrainStatistics.noteTerrainPasses();
         // One budget window per presented frame, shared by every pass of the frame (item 328, V-03). Rolling
         // it here also finishes the previous frame's window, whose line is printed below when it saw a drop
@@ -19870,21 +19542,8 @@ this.frameBufferOpen = false;
         this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
         this.terrain.beginTerrainChain();
         org.soutalab.celtium.vulkan.FramePassTimings.end("recPassSetup");
-        // Mesh stage 4 (item 677): the stage-3 issuance path, wired. The seat is the head
-        // of the pass' in-render-pass recording — pipeline bound, matrices pushed, the
-        // pass' descriptor set bound above — and the material is the previous frame's
-        // finished collection, E10's shadow-generation seat one stage up: when the
-        // collection still covers this pass exactly, the table built from it is uploaded
-        // and recordPassHead records the one task draw that replaces the region loop
-        // below. Any refusal — counted in the task draw's gate census, or a coverage
-        // miss counted here — leaves the loop to draw the pass exactly as before.
-        boolean meshDrewPass = false;
-        if (!pass.isSorted() && VulkanMeshTaskDraw.available(this.context)) {
-            meshDrewPass = celtium$meshTryPassHead(stack, pipeline, matrices, renderLists,
-                    pass, occlusionCamera, camera, cacheParams, primitiveType);
-        }
         try {
-        while (!meshDrewPass) {
+        while (true) {
             // Item 691: the iterator advance sat outside every bracket (recLoop opens after next()).
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recIter");
             if (!iterator.hasNext()) {
@@ -20082,16 +19741,6 @@ this.frameBufferOpen = false;
                         celtium$gpuTerrainCensusVp(matrices),
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
-            }
-            // Mesh stage 4 collection (item 677): the census' population narrowed to
-            // stage 3's scope — unsorted SOLID passes, batches on the uniform shared
-            // index source — retained as (region, batch) pairs for the next frame's
-            // pass head. The stage-2 gate test comes first, so an unarmed build
-            // records nothing extra here.
-            if (!sortedPass && VulkanMeshTaskDraw.available(this.context)
-                    && batch.unsortedOffsetsClean()
-                    && SpirvShaders.SOLID_VERTEX.equals(pipeline.vertexModuleName())) {
-                celtium$meshCollect(pass.name(), region, batch);
             }
             // OPT-09/BH-36: the batch's commands as one indirect call when the device can carry it. The index source
             // has to be uniform across the whole batch for that to be legal - one indirect call binds one index buffer -

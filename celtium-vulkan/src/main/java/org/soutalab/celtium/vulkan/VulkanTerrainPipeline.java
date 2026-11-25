@@ -668,31 +668,6 @@ public final class VulkanTerrainPipeline {
         return descriptorSetLayout;
     }
 
-    /** The front face this pipeline's rasterisation state was created with (mesh sibling mirror, item 652). */
-    int celtium$meshFrontFace() {
-        return this.frontFace;
-    }
-
-    /** Whether this pipeline culls back faces (mesh sibling mirror, item 652). */
-    boolean celtium$meshBlockFaceCulling() {
-        return this.blockFaceCulling;
-    }
-
-    /** Whether this pipeline blends (mesh sibling mirror, item 652). */
-    boolean celtium$meshBlended() {
-        return this.blended;
-    }
-
-    /** The fragment-discard specialization value this pipeline's fragment stage carries (mesh sibling mirror, item 652). */
-    boolean celtium$meshFragmentDiscard() {
-        return this.fragmentDiscard;
-    }
-
-    /** Whether this pipeline tests depth - the {@code noTerrainDepth} lab switch, read as the creation code reads it (item 652). */
-    boolean celtium$meshDepthTestEnabled() {
-        return !NO_TERRAIN_DEPTH;
-    }
-
     /** {@return the vertex input state this pipeline was created with} */
     public String vertexInputSummary() {
         return this.vertexInputSummary;
