@@ -280,6 +280,7 @@ final class ModPrograms {
         if ((samplerCount + imageCount > 0 || pipeline.uniformsViaBuffer()) && set == 0L) {
             return celtium$modFailure(programId, "no descriptor set could be allocated");
         }
+        int dynamicOffset = pipeline.celtium$pendingDynamicOffset();
         String label = null;
         boolean needsCensusReport = this.modProgramReported.size() < 64
                 && !this.reportedDrawnFastKeys.contains(drawnFastKey);
@@ -349,10 +350,10 @@ final class ModPrograms {
         // in the descriptor set's ring slot (staged by samplersAndImages above) and the draw's buffer is never
         // read, so the shared packed buffer goes in as before.
         java.nio.ByteBuffer drawUniforms = pipeline.uniformsViaBuffer()
-                ? VulkanModProgramPipeline.packUniforms(program)
+                ? (pipeline.celtium$dynamicUniform() ? null : VulkanModProgramPipeline.packUniforms(program))
                 : VulkanModProgramPipeline.packUniformsSnapshot(program);
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                drawUniforms, set, label, drawInputs, imageTextures, constantOffset), set, 0L);
+                drawUniforms, set, label, drawInputs, imageTextures, constantOffset, dynamicOffset), set, 0L);
     }
 
     /**

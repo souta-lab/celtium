@@ -130,14 +130,21 @@ public final class VulkanModProgramPipeline {
 
         /** The constant ring slot's byte offset holding the draw's current colour; -1 when nothing reads it. */
         final long constantOffset;
+        /** The dynamic uniform ring byte offset for this draw; -1 when the pipeline is not on the dynamic route. */
+        final int dynamicOffset;
 
         Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
              VulkanGlTexture[] inputs, VulkanGlTexture[] images) {
-            this(pipeline, uniforms, samplerSet, label, inputs, images, -1L);
+            this(pipeline, uniforms, samplerSet, label, inputs, images, -1L, -1);
         }
 
         Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
              VulkanGlTexture[] inputs, VulkanGlTexture[] images, long constantOffset) {
+            this(pipeline, uniforms, samplerSet, label, inputs, images, constantOffset, -1);
+        }
+
+        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
+             VulkanGlTexture[] inputs, VulkanGlTexture[] images, long constantOffset, int dynamicOffset) {
             this.pipeline = pipeline;
             this.uniforms = uniforms;
             this.samplerSet = samplerSet;
@@ -145,13 +152,15 @@ public final class VulkanModProgramPipeline {
             this.inputs = inputs;
             this.images = images;
             this.constantOffset = constantOffset;
+            this.dynamicOffset = dynamicOffset;
         }
 
         public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long[] bindCache) {
             if (this.constantOffset >= 0L) {
                 this.pipeline.bindConstant(commandBuffer, this.constantOffset);
             }
-            this.pipeline.draw(commandBuffer, mesh, this.uniforms, this.samplerSet, this.images, bindCache);
+            this.pipeline.draw(commandBuffer, mesh, this.uniforms, this.samplerSet, this.images,
+                    this.dynamicOffset, bindCache);
         }
     }
 
@@ -166,26 +175,37 @@ public final class VulkanModProgramPipeline {
     private final boolean uniformsViaBuffer;
     /** The uniform block's byte size on the buffer route; 0 on the push route. */
     private final int uniformBlockBytes;
-    /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's ring depth. */
+    /**
+     * Whether non-terrain mod program pipelines on the uniform-buffer route use a dynamic uniform buffer
+     * and expanded ring (carrying B3's dynamic-offset binding to deferred, composite, entity and block
+     * passes). Default off ({@code -Dceltium.vulkan.modProgramDynamicUniform=true}) for paired A/B legs.
+     */
+    static final boolean MOD_DYNAMIC_UNIFORM =
+            Boolean.getBoolean("celtium.vulkan.modProgramDynamicUniform");
+    /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's legacy ring depth. */
     private static final int UNIFORM_RING_SLOTS = 32;
+    /** Ring depth for non-terrain mod pipelines when {@link #MOD_DYNAMIC_UNIFORM} is enabled (256 claims/frame across 2 frames in flight). */
+    static final int MOD_DYNAMIC_UNIFORM_RING_SLOTS = 512;
     /** Ring depth of a shader-pack terrain pipeline: one claim per region per pass, and two frames in flight. */
     private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
-    /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
+    /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, {@link #MOD_DYNAMIC_UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS}. */
     private int uniformRingSlots = UNIFORM_RING_SLOTS;
     /**
      * Whether the uniform binding is a dynamic uniform buffer (item 678 Layer B, B3): the descriptor set
      * names the ring's base and the staged slot travels as the bind's dynamic offset, so one set serves
-     * every slot of a sampler group instead of one set per (sampler group, slot). Terrain pipelines on
-     * the buffer route only - the post chain's ring-32 pipelines keep the plain binding, whose sets the
-     * prepared-draw path binds without dynamic offsets.
+     * every slot of a sampler group instead of one set per (sampler group, slot). Always on for terrain
+     * pipelines on the buffer route; opt-in via {@link #MOD_DYNAMIC_UNIFORM} for non-terrain mod pipelines.
      */
     private boolean dynamicUniform;
     /**
-     * The dynamic offset the next {@link #bindTerrainUniformsAndSet} call binds, remembered by
-     * {@link #samplersAndImages} on the dynamic route: the terrain backend calls the two back to back for
-     * one region, so the slot staged for that region is still the value here when its set is bound.
+     * The dynamic offset staged by the most recent {@link #samplersAndImages} call on the dynamic route:
+     * consumed immediately by {@link #bindTerrainUniformsAndSet} (terrain) or captured into {@link Draw}
+     * via {@link #celtium$pendingDynamicOffset()} (prepared immediate draws).
      */
     private int pendingDynamicOffset;
+    /** Command buffer address and dynamic offset of the last dynamic descriptor bind on this pipeline. */
+    private long lastBoundDynamicCmd;
+    private int lastBoundDynamicOffset = -1;
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
@@ -501,6 +521,10 @@ public final class VulkanModProgramPipeline {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
         }
+        if (MOD_DYNAMIC_UNIFORM && built.uniformsViaBuffer) {
+            built.uniformRingSlots = celtium$modUniformRingSlots(true, true);
+            built.dynamicUniform = true;
+        }
         try {
             built.createLayouts();
             built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId,
@@ -530,6 +554,10 @@ public final class VulkanModProgramPipeline {
         if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
+        }
+        if (MOD_DYNAMIC_UNIFORM && built.uniformsViaBuffer) {
+            built.uniformRingSlots = celtium$modUniformRingSlots(true, true);
+            built.dynamicUniform = true;
         }
         try {
             built.createLayouts();
@@ -1030,6 +1058,24 @@ public final class VulkanModProgramPipeline {
         return slot * stride;
     }
 
+    /**
+     * {@return the ring depth for a non-terrain mod program pipeline}: {@link #MOD_DYNAMIC_UNIFORM_RING_SLOTS}
+     * when the dynamic-uniform route is enabled on a buffer-backed program, and {@link #UNIFORM_RING_SLOTS}
+     * otherwise. Static and pure so the sizing rule is pinned without a device.
+     */
+    static int celtium$modUniformRingSlots(boolean uniformsViaBuffer, boolean dynamicEnabled) {
+        return uniformsViaBuffer && dynamicEnabled ? MOD_DYNAMIC_UNIFORM_RING_SLOTS : UNIFORM_RING_SLOTS;
+    }
+
+    /**
+     * {@return the maximum uniform-ring claims permitted within a single frame epoch}: half the ring when
+     * dynamic offsets allow the ring to protect two frames in flight without per-slot descriptor sets,
+     * or the full ring on the legacy 32-slot plain route.
+     */
+    static int celtium$maxUniformClaimsPerEpoch(int ringSlots, boolean dynamicUniform) {
+        return (ringSlots == TERRAIN_UNIFORM_RING_SLOTS || dynamicUniform) ? ringSlots / 2 : ringSlots;
+    }
+
     private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
                                 boolean depthTest, boolean depthWrite, int depthCompareOp,
                                 VulkanColorBlendState colorBlend, boolean honourModProgramFlags,
@@ -1369,8 +1415,8 @@ public final class VulkanModProgramPipeline {
         if (staged >= 0) {
             return staged;
         }
-        if (this.uniformClaimsThisEpoch >= (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS
-                ? this.uniformRingSlots / 2 : this.uniformRingSlots)) {
+        if (this.uniformClaimsThisEpoch >= celtium$maxUniformClaimsPerEpoch(this.uniformRingSlots,
+                this.dynamicUniform)) {
             return -1;
         }
         int slot = this.uniformCursor;
@@ -2033,11 +2079,16 @@ public final class VulkanModProgramPipeline {
 
     void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
               long[] bindCache) {
-        draw(commandBuffer, mesh, uniforms, samplerSet, EMPTY_IMAGES, bindCache);
+        draw(commandBuffer, mesh, uniforms, samplerSet, EMPTY_IMAGES, -1, bindCache);
     }
 
     void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
               VulkanGlTexture[] images, long[] bindCache) {
+        draw(commandBuffer, mesh, uniforms, samplerSet, images, -1, bindCache);
+    }
+
+    void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
+              VulkanGlTexture[] images, int dynamicOffset, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
         }
@@ -2051,12 +2102,27 @@ public final class VulkanModProgramPipeline {
             bindCache[4] = this.pipeline;
             bindCache[5] = -1L;
         }
-        if (samplerSet != 0L && bindCache[5] != samplerSet) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                        stack.longs(samplerSet), null);
+        if (samplerSet != 0L) {
+            if (this.dynamicUniform) {
+                int offset = Math.max(0, dynamicOffset);
+                long cmdAddr = commandBuffer.address();
+                if (bindCache[5] != samplerSet || this.lastBoundDynamicCmd != cmdAddr
+                        || this.lastBoundDynamicOffset != offset) {
+                    try (MemoryStack stack = MemoryStack.stackPush()) {
+                        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                                stack.longs(samplerSet), stack.ints(offset));
+                    }
+                    bindCache[5] = samplerSet;
+                    this.lastBoundDynamicCmd = cmdAddr;
+                    this.lastBoundDynamicOffset = offset;
+                }
+            } else if (bindCache[5] != samplerSet) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                            stack.longs(samplerSet), null);
+                }
+                bindCache[5] = samplerSet;
             }
-            bindCache[5] = samplerSet;
         }
         if (this.pushBytes > 0 && uniforms != null) {
             uniforms.position(0).limit(this.pushBytes);
@@ -2088,6 +2154,16 @@ public final class VulkanModProgramPipeline {
     /** {@return whether this pipeline's uniform block travels through the uniform ring} */
     public boolean uniformsViaBuffer() {
         return this.uniformsViaBuffer;
+    }
+
+    /** {@return whether this pipeline binds its uniform ring slot via a dynamic offset} */
+    boolean celtium$dynamicUniform() {
+        return this.dynamicUniform;
+    }
+
+    /** {@return the dynamic uniform offset staged by the most recent {@link #samplersAndImages} call, or -1 if plain} */
+    int celtium$pendingDynamicOffset() {
+        return this.dynamicUniform ? this.pendingDynamicOffset : -1;
     }
 
     public List<ModGlslTranslator.SamplerBinding> samplers() {
