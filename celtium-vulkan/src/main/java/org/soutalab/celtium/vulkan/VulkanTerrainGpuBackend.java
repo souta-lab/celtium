@@ -2209,6 +2209,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
     int presentFlushFailures;
     /**
+     * Presents where the present-time drain opened the unified frame buffer and the buffer was
+     * still open at the {@code lastFrameReachedQueue} gate - the B4 exposure census: those drained
+     * groups were not queued, so they missed that present. Structurally zero while
+     * {@link #PRESENT_DRAIN_FINISH_GUARD} is on; a nonzero count names a guard-off run (or a
+     * wiring regression) rather than a silent lag.
+     */
+    long presentDrainUnfinished;
+    /**
      * Presented-image dumps held before swapchain creation or across a wrapper replacement.
      * <p>
      * The loading phase is the caller: {@code Minecraft.startGame} reaches {@code drawSplashScreen}
@@ -12853,14 +12861,21 @@ this.frameBufferOpen = false;
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "true"));
 
     /**
-     * Default-off guard for {@link PresentSwapchain}'s present-time drain ordering: when enabled
-     * ({@code -Dceltium.vulkan.presentDrainFinishGuard=true}), {@code celtium$finishFrameBuffer()} is
-     * called after {@code flushPendingBeforeGlDraw()} inside {@code celtium$presentFrameBody()} so any
-     * groups drained there are ended and queued before {@code lastFrameReachedQueue} and
-     * {@code swapchain.presentImage()}.
+     * Guard for {@link PresentSwapchain}'s present-time drain ordering, default ON since the B4
+     * harm proof (OVERHAUL-B4-HARM-2026-11-26: with the guard off, groups drained by
+     * {@code flushPendingBeforeGlDraw()} stay recorded in the open unified frame buffer, so they
+     * mechanically miss the present that drained them - one frame late on the composite path, and
+     * on the direct-present path potentially drawn into an already-presented, already-released
+     * borrowed image). When enabled, {@code celtium$finishFrameBuffer()} is called after
+     * {@code flushPendingBeforeGlDraw()} inside {@code celtium$presentFrameBody()} so any groups
+     * drained there are ended and queued before {@code lastFrameReachedQueue} and
+     * {@code swapchain.presentImage()}. Opt out with
+     * {@code -Dceltium.vulkan.presentDrainFinishGuard=false} (comparison legs only). The flag
+     * itself is retired by the R-07 present-submit slice, which makes the post-drain finish
+     * unconditional.
      */
     static final boolean PRESENT_DRAIN_FINISH_GUARD =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "false"));
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "true"));
 
     /** Set across {@code bindFramebuffer(0L, false)} while leaving the main framebuffer. */
     private boolean pendingGlDrawLeavingMainToDefault;
