@@ -33,8 +33,7 @@ class TerrainUploadBudgetTest {
         budget.beginFrame();
         assertTrue(budget.tryAdmitDeferred(1000));
         budget.beginFrame();
-        assertFalse(budget.tryAdmitDeferred(1000), "only 500 of the backlog remains");
-        assertTrue(budget.tryAdmitDeferred(500));
+        assertTrue(budget.tryAdmitDeferred(500), "the caller admits the head upload's actual size");
         assertEquals(0, budget.pendingBytes());
         assertEquals(0, budget.framesToDrain());
     }

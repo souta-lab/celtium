@@ -85,6 +85,9 @@ class SectionDescTest {
         java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(SectionDesc.BYTES);
         desc.pack(buffer);
         buffer.flip();
+        // pack(ByteBuffer) writes little-endian (the GPU std430 order) and restores
+        // the buffer's previous order, so the read-back must opt into LE explicitly.
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN);
         for (int i = 0; i < SectionDesc.WORDS; i++) {
             assertEquals(words[i], buffer.getInt(i * 4), "word " + i);
         }
