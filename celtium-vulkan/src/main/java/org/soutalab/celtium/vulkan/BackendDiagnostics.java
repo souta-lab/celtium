@@ -665,7 +665,7 @@ final class BackendDiagnostics {
                 // different, earlier question (the GL identity and the interop contract); this is the live one.
                 + " driverInfo=[" + VulkanContext.driverSummary() + "]"
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
-                + " identityPairs=[" + org.soutalab.celtium.vulkan.GllessFrameTarget.identityPairCensus() + "]"
+                + " identityPairs=[" + org.soutalab.celtium.vulkan.hal.FrameTargetRouting.identityPairCensus() + "]"
                 // QUEUE 405 (S5/S6): what the chain pairs were asked for against what they were allocated
                 // in - exact/widened/fallback with the fallback reasons kept apart, the stub-side request
                 // distribution, and the bit-count answers that no longer describe the current target.
@@ -1055,7 +1055,7 @@ final class BackendDiagnostics {
                     + " groups=" + b.immediateGroups.size() + " identity=" + identityMatrices
                     + " placements=" + byPlacement.size() + " perTileRotations=[" + perTile + "]"
                     + " textures=[" + textureList + "]"
-                    + " route=" + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
+                    + " route=" + org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(target, isMainTarget)
                     + " projection=" + b.projectionSummary(b.immediateGroups.get(0).projection));
         }
     }

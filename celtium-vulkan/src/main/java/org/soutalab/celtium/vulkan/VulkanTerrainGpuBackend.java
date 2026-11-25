@@ -6276,11 +6276,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /**
      * Which of the two owned pairs an off-target identity's draws render into. The rule itself is stated once, in
-     * {@link GllessFrameTarget#pairLabelForIdentity(long)}, which owns the pairs; this is the name the backend's
+     * {@link org.soutalab.celtium.vulkan.hal.FrameTargetRouting#pairLabelForIdentity(long)}, which owns the pairs; this is the name the backend's
      * counters use so a reported identity is never read against the wrong image.
      */
     private static String pairOfOffTargetIdentity(long identity) {
-        return GllessFrameTarget.pairLabelForIdentity(identity);
+        return org.soutalab.celtium.vulkan.hal.FrameTargetRouting.pairLabelForIdentity(identity);
     }
 
     /** {@return the owned pairs' own creation/clear/self-test counters, or "none" for the GL bridge}. */
@@ -7441,7 +7441,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         boolean isMain = this.targetRegistry.currentIsMain()
                 || identity == this.gameFramebufferIdentity
                 || identity == this.targetRegistry.mainIdentity();
-        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        String route = org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(identity, isMain);
         GllessFrameTarget target = offTargetTarget();
         long routed = "frame-image".equals(route) ? (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
                 : "chain-pair".equals(route) ? (target == null ? 0L : target.chainPairColorImage(identity))
@@ -7550,7 +7550,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         boolean isMain = this.targetRegistry.currentIsMain();
         long[] colourTexture = framebufferColorTexture(identity);
         GllessFrameTarget target = offTargetTarget();
-        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        String route = org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(identity, isMain);
         long frameImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
         /**
          * The second pair, for draws the game addresses to one of <em>its own</em> framebuffers - the entity-outline
@@ -7650,7 +7650,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 text.append(' ');
             }
             text.append("0x").append(Long.toHexString(identity)).append(':')
-                    .append(GllessFrameTarget.routeLabelForBinding(identity,
+                    .append(org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(identity,
                             identity == this.targetRegistry.mainIdentity()))
                     .append(":tex=").append(formatIntSet(entry.getValue()))
                     .append(":fmt=").append(formatIntSet(this.targetStageFormats.get(identity)));
@@ -7821,7 +7821,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * <p>
      * The sampling side's half of the rule the copy path already follows: a name that is a framebuffer's colour
      * attachment stands for the image that framebuffer's draws went into, and which image that is comes from the same
-     * routing rule the draws themselves were accepted under ({@code GllessFrameTarget.routeLabelForBinding}) - main to
+     * routing rule the draws themselves were accepted under ({@code FrameTargetRouting.routeLabelForBinding}) - main to
      * the frame image, identity 0 to the default pair, every other non-main identity to the chain pair. Nothing here
      * looks at a size or a name to decide: the census is what ties the two together, and it is filled where the
      * framebuffer is bound.
@@ -7886,7 +7886,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         boolean isMain = identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity
                 || this.framebufferIdentityIsMain.get(identity)
                 || this.mainFramebufferColorNames.contains(glTextureName);
-        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        String route = org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(identity, isMain);
         if (this.framebufferCensusLogs < 12) {
             this.framebufferCensusLogs++;
             System.out.println("[Celtium] CELTIUM_FBO_CENSUS name=" + glTextureName + " identity=0x"
@@ -8306,7 +8306,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.immediateStatistics.notePassBoundaryFlushes();
         }
         this.targetRegistry.noteBind(targetIdentity, isMain,
-                GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain));
+                org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(targetIdentity, isMain));
         if (isMain) {
             int mainName = framebufferColorTextureName(targetIdentity);
             if (mainName != 0) {
@@ -8325,13 +8325,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // The route column is the one the backend actually takes, not the pair an identity would take if it were
         // off-target: the main framebuffer's identity is non-zero, so the old "pair=" column read
         // "main=true pair=chain-pair" - a label that named an image no main-identity draw goes to. The rule and this
-        // separation live in GllessFrameTarget.routeLabelForBinding.
+        // separation live in FrameTargetRouting.routeLabelForBinding.
         // BH-14: the census is fed here because this is the one place the routing rule is applied to a live bind.
         if (TARGET_CENSUS_ENABLED) {
-            org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
+            org.soutalab.celtium.vulkan.hal.FrameTargetRouting.noteIdentityForCensus(targetIdentity, isMain);
             if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
                 record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
-                        + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
+                        + " route=" + org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(targetIdentity, isMain)
                         + " pair=" + pairOfOffTargetIdentity(targetIdentity)
                         + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
             }
@@ -14554,7 +14554,7 @@ this.frameBufferOpen = false;
         // Any chain pair was enough before, so a mod framebuffer drawn into another mod framebuffer was dropped as a
         // self composite - Xaero's Minimap's rotation pass sampling its scaling framebuffer wrote nothing, and the
         // minimap was see-through (pair dump, leg xmap2-pairs-amd: scaling pair held the map, rotation pair empty).
-        return "chain-pair".equals(GllessFrameTarget.routeLabelForBinding(owner, false))
+        return "chain-pair".equals(org.soutalab.celtium.vulkan.hal.FrameTargetRouting.routeLabelForBinding(owner, false))
                 && offTarget.chainPairColorImage(owner) == targetPair;
     }
 

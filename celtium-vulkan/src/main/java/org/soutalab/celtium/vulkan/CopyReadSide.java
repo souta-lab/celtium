@@ -40,7 +40,7 @@ final class CopyReadSide {
     //
     // What the copy needs is the pixels the game's own draws put in the bound read framebuffer, and this renderer owns
     // that image: identity 0 is the GL-less default framebuffer, whose draws the off-target pass puts in the frame
-    // target's default pair (see GllessFrameTarget.pairLabelForIdentity), and the game's main identity is drawn into
+    // target's default pair (see FrameTargetRouting.pairLabelForIdentity), and the game's main identity is drawn into
     // the frame image the present path blits from. Nothing else is served: a read of a framebuffer this renderer does
     // not own (a mod's own FBO) stays a refusal rather than reading whatever happens to be bound.
 
