@@ -22,6 +22,14 @@ public final class GpuTerrainCulling {
     public static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling");
 
     /**
+     * E10-b ordered translucent pass toggle (item 723): when {@link #ENABLED} is on, also run
+     * ordered GPU culling ({@code instanceCount = 0} for culled commands) for the translucent pass
+     * so back-to-front draw order is preserved without atomic compaction. Default on when E10 is enabled.
+     */
+    public static final boolean TRANSLUCENT_ORDERED =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.gpuTerrainCulling.translucent", "true"));
+
+    /**
      * Shadow-generation census mode (design section 5.3 (c)): the compute pass runs and its
      * generated command list is compared against the CPU's canonical list for the same frame,
      * while drawing stays on the current path. Independent of {@link #ENABLED}: census alone

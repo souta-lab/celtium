@@ -63,6 +63,8 @@ final class VulkanGpuTerrainDraw {
     private final int passOrdinal;
     /** This instance's pass name, used in its printed lines. */
     private final String passName;
+    /** Ordered emission mode (translucent pass): preserves draw order via instanceCount=0 for culled entries. */
+    private final boolean ordered;
     private long setLayout;
     private long pipelineLayout;
     private long pipeline;
@@ -166,23 +168,23 @@ final class VulkanGpuTerrainDraw {
 
     /** The camera-side executor: pass ordinal 0 (SOLID), the E10-b shape. */
     VulkanGpuTerrainDraw(VulkanContext context) {
-        this(context, 0, "solid");
+        this(context, 0, "solid", false);
+    }
+
+    VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName) {
+        this(context, passOrdinal, passName, false);
     }
 
     /**
-     * A pass-specialised executor, in the cutout arm's shape: the pass ordinal rides each
-     * entry's flags ({@code ordinal << 8}) and the pass name rides the printed lines, so
-     * several passes' executors can coexist without their populations or counters being
-     * attributable to the wrong pass. The shadow arm uses ordinal 3, name {@code shadow},
-     * and runs {@link #generationHead}, which arms the generated list for issuance; the
-     * backend issues it (one {@link #recordDraw} at the loop's end) only on the GLSM
-     * region-table route, and cancels the arm everywhere else, where the generation is
-     * priced and the loop draws unchanged (see {@link GpuTerrainCulling#SHADOW_DRAW}).
+     * A pass-specialised executor: the pass ordinal rides each entry's flags ({@code ordinal << 8})
+     * and the pass name rides the printed lines, so SOLID, CUTOUT_MIPPED, CUTOUT, TRANSLUCENT (ordered),
+     * and SHADOW executors can coexist independently.
      */
-    VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName) {
+    VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName, boolean ordered) {
         this.context = context;
         this.passOrdinal = passOrdinal;
         this.passName = passName;
+        this.ordered = ordered;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -191,16 +193,17 @@ final class VulkanGpuTerrainDraw {
         }
         if (!this.gatePrinted) {
             this.gatePrinted = true;
-            if (passOrdinal == 0) {
-                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created drawIndirectCount="
-                        + context.drawIndirectCountEnabled()
-                        + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
-                        + " mode=gpu-draw (E10-b: SOLID pass, previous-frame generation)");
-            } else {
+            if ("shadow".equals(passName)) {
                 System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created pass=" + passName
                         + " drawIndirectCount=" + context.drawIndirectCountEnabled()
                         + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
                         + " mode=shadow-generation+issuance (E10 shadow issuance: issued on the GLSM region-table route, generation-only otherwise)");
+            } else {
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created pass=" + passName
+                        + " drawIndirectCount=" + context.drawIndirectCountEnabled()
+                        + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
+                        + " mode=" + (ordered ? "gpu-draw-ordered" : "gpu-draw")
+                        + " (E10-b: " + passName + " pass, previous-frame generation)");
             }
         }
     }
@@ -352,7 +355,7 @@ final class VulkanGpuTerrainDraw {
                 this.fallbackEmpty++;
                 this.ready = null;
             } else if (GpuTerrainCulling.capabilityGate(
-                    this.context.drawIndirectCountEnabled(), budgetActive)
+                    this.ordered || this.context.drawIndirectCountEnabled(), budgetActive)
                     != GpuTerrainCulling.GateReason.NONE) {
                 // A configuration-level gate (no drawIndirectCount, or a frame budget cap
                 // is in force): the collection is kept, as the gate is a property of the
@@ -392,7 +395,8 @@ final class VulkanGpuTerrainDraw {
                 armedNow = true;
             }
             if (this.passHeads % PRINT_EVERY_PASS_HEADS == 0) {
-                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW passHeads=" + this.passHeads
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
+                        + " passHeads=" + this.passHeads
                         + " armed=" + this.framesArmed
                         + " armedCommands=" + this.armedCommands
                         + " fallbacks=[noReady=" + this.fallbackNoReady
@@ -453,7 +457,7 @@ final class VulkanGpuTerrainDraw {
                 this.fallbackTainted++;
                 this.ready = null;
             } else if (GpuTerrainCulling.capabilityGate(
-                    this.context.drawIndirectCountEnabled(), budgetActive)
+                    this.ordered || this.context.drawIndirectCountEnabled(), budgetActive)
                     != GpuTerrainCulling.GateReason.NONE) {
                 this.fallbackGate++;
             } else if (GpuTerrainDrawTable.frameGate(this.ready.table,
@@ -553,8 +557,13 @@ final class VulkanGpuTerrainDraw {
             return false;
         }
         Slot slot = this.slots[this.armedSlot];
-        VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.out.buffer(), 0L,
-                slot.counts.buffer(), 0L, this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        if (this.ordered) {
+            vkCmdDrawIndexedIndirect(commandBuffer, slot.out.buffer(), 0L,
+                    this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        } else {
+            VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.out.buffer(), 0L,
+                    slot.counts.buffer(), 0L, this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        }
         this.framesIssued++;
         return true;
     }
@@ -633,7 +642,7 @@ final class VulkanGpuTerrainDraw {
             push.putInt(128, 0);
             push.putInt(132, 0);
             push.putInt(136, entries);
-            push.putInt(140, 0);
+            push.putInt(140, this.ordered ? 1 : 0);
             push.clear();
             vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
             vkCmdDispatch(commandBuffer, (entries + WORKGROUP - 1) / WORKGROUP, 1, 1);
@@ -655,7 +664,8 @@ final class VulkanGpuTerrainDraw {
             // the design's section 3.5 requirement for this buffer.
             slot.out = new VulkanHostBuffer(this.context, Math.max(20L, (long) entries
                     * GpuTerrainDrawTable.COMMAND_BYTES), storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-            slot.counts = new VulkanHostBuffer(this.context, 4L, storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            slot.counts = new VulkanHostBuffer(this.context, 4L,
+                    storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         } else {
             slot.table.ensureCapacity((long) entries * GpuTerrainDrawTable.ENTRY_BYTES);
             slot.remap.ensureCapacity(Math.max(4L, (long) remapCount * 4L));

@@ -32,7 +32,7 @@ layout(push_constant) uniform Push {
     vec4 planes[6];
     vec4 camera;      // xyz: camera position in blocks; w: max distance in blocks
     ivec4 params;     // x: entry start, y: entry count, z: count slot, w: remap base
-    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: unused
+    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: ordered (0=compact, 1=preserve order via instanceCount=0)
 } push;
 
 void main() {
@@ -49,42 +49,75 @@ void main() {
     ivec3 section = ivec3(int(tableData[base + 4u]), int(tableData[base + 5u]), int(tableData[base + 6u]));
     uint flags = tableData[base + 7u];
 
+    bool visible = true;
+    int frameIndex = -1;
     if (dictIndex < 0) {
-        return;
-    }
-    int frameIndex = remapData[push.params.w + dictIndex];
-    if (frameIndex < 0) {
-        return;
-    }
-    // The mask segment opens with a six-word header: the lattice window's base section
-    // coordinates and dimensions, as int bit patterns. Zero dimensions mark the E10-a
-    // dictionary form (the bit is the dictionary index, past the header); otherwise the
-    // bit is the entry section's lattice index, interior cells only. Both readings are
-    // GpuTerrainDrawTable's reference mask test, word for word.
-    int maskBase = push.params2.y;
-    ivec3 maskDims = ivec3(int(maskData[maskBase + 3]), int(maskData[maskBase + 4]), int(maskData[maskBase + 5]));
-    if (maskDims.x == 0) {
-        uint maskWord = maskData[maskBase + 6 + (dictIndex >> 5)];
-        if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
-            return;
-        }
+        visible = false;
     } else {
-        ivec3 maskOrigin = ivec3(int(maskData[maskBase + 0]), int(maskData[maskBase + 1]), int(maskData[maskBase + 2]));
-        ivec3 cell = section - maskOrigin;
-        if (any(lessThan(cell, ivec3(1))) || any(greaterThan(cell, maskDims - 2))) {
-            return;
-        }
-        uint lattice = uint((cell.x * maskDims.z + cell.z) * maskDims.y + cell.y);
-        uint maskWord = maskData[maskBase + 6 + int(lattice >> 5)];
-        if ((maskWord & (1u << (lattice & 31u))) == 0u) {
-            return;
+        frameIndex = remapData[push.params.w + dictIndex];
+        if (frameIndex < 0) {
+            visible = false;
         }
     }
-    // Flag bit 1 (GpuTerrainDrawTable.FLAG_SECTION_BOX): the entry names its own section
-    // and is culled by that section's box; without it the box is the whole region's.
-    vec3 boxMin = vec3(section * 16);
-    vec3 boxSize = (flags & 2u) != 0u ? vec3(16.0) : vec3(CELTIUM_REGION_SIZE_BLOCKS);
-    if (!celtiumBoxVisible(boxMin, boxSize, push.planes, push.camera.xyz, push.camera.w)) {
+    if (visible) {
+        // The mask segment opens with a six-word header: the lattice window's base section
+        // coordinates and dimensions, as int bit patterns. Zero dimensions mark the E10-a
+        // dictionary form (the bit is the dictionary index, past the header); otherwise the
+        // bit is the entry section's lattice index, interior cells only. Both readings are
+        // GpuTerrainDrawTable's reference mask test, word for word.
+        int maskBase = push.params2.y;
+        ivec3 maskDims = ivec3(int(maskData[maskBase + 3]), int(maskData[maskBase + 4]), int(maskData[maskBase + 5]));
+        if (maskDims.x == 0) {
+            uint maskWord = maskData[maskBase + 6 + (dictIndex >> 5)];
+            if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
+                visible = false;
+            }
+        } else {
+            ivec3 maskOrigin = ivec3(int(maskData[maskBase + 0]), int(maskData[maskBase + 1]), int(maskData[maskBase + 2]));
+            ivec3 cell = section - maskOrigin;
+            if (any(lessThan(cell, ivec3(1))) || any(greaterThan(cell, maskDims - 2))) {
+                visible = false;
+            } else {
+                uint lattice = uint((cell.x * maskDims.z + cell.z) * maskDims.y + cell.y);
+                uint maskWord = maskData[maskBase + 6 + int(lattice >> 5)];
+                if ((maskWord & (1u << (lattice & 31u))) == 0u) {
+                    visible = false;
+                }
+            }
+        }
+    }
+    if (visible) {
+        // Flag bit 1 (GpuTerrainDrawTable.FLAG_SECTION_BOX): the entry names its own section
+        // and is culled by that section's box; without it the box is the whole region's.
+        vec3 boxMin = vec3(section * 16);
+        vec3 boxSize = (flags & 2u) != 0u ? vec3(16.0) : vec3(CELTIUM_REGION_SIZE_BLOCKS);
+        if (!celtiumBoxVisible(boxMin, boxSize, push.planes, push.camera.xyz, push.camera.w)) {
+            visible = false;
+        }
+    }
+    if (push.params2.w != 0) {
+        // Ordered mode (E10 translucent pass): preserve input draw order 1:1 by emitting
+        // instanceCount=0 for culled entries so back-to-front blending semantics stay exact.
+        if (local >= uint(push.params2.z)) {
+            return;
+        }
+        uint outBase = (uint(push.params2.x) + local) * 5u;
+        if (visible) {
+            outData[outBase + 0u] = indexCount;
+            outData[outBase + 1u] = 1u;
+            outData[outBase + 2u] = firstIndex;
+            outData[outBase + 3u] = uint(vertexOffset);
+            outData[outBase + 4u] = uint(frameIndex);
+        } else {
+            outData[outBase + 0u] = 0u;
+            outData[outBase + 1u] = 0u;
+            outData[outBase + 2u] = 0u;
+            outData[outBase + 3u] = 0u;
+            outData[outBase + 4u] = 0u;
+        }
+        return;
+    }
+    if (!visible) {
         return;
     }
     uint slot = atomicAdd(countData[push.params.z], 1u);

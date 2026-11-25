@@ -2791,15 +2791,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private float[] gpuTerrainCensusVp;
     private long gpuTerrainCensusVpFrame = -1L;
     /**
-     * E10-b's drawing executor (item 723, {@link VulkanGpuTerrainDraw}): created lazily on
-     * the first SOLID pass under {@code celtium.vulkan.gpuTerrainCulling}, never when the
-     * flag is off — the off path allocates, binds and records nothing for it.
+     * E10-b drawing executors (item 723, {@link VulkanGpuTerrainDraw}): one per vanilla terrain pass
+     * (0=solid, 1=cutout_mipped, 2=cutout, 3=translucent-ordered), created lazily under
+     * {@code celtium.vulkan.gpuTerrainCulling}, never when the flag is off.
      */
-    private VulkanGpuTerrainDraw gpuTerrainDraw;
-    /** Set when executor creation or its pass head failed once: it stays off rather than retrying per frame. */
-    private boolean gpuTerrainDrawFailed;
-    /** The last frame the executor's pass head ran for; the pass head is once per frame, not per pass. */
-    private long gpuTerrainDrawFrame = -1L;
+    private static final int GPU_TERRAIN_DRAW_PASSES = 4;
+    private final VulkanGpuTerrainDraw[] gpuTerrainDraws = new VulkanGpuTerrainDraw[GPU_TERRAIN_DRAW_PASSES];
+    /** Per-pass failure latch so a failed executor stays off rather than retrying per frame. */
+    private final boolean[] gpuTerrainDrawFailed = new boolean[GPU_TERRAIN_DRAW_PASSES];
+    /** Last frame each pass's executor pass head ran for; once per frame per pass. */
+    private final long[] gpuTerrainDrawFrames = new long[] {-1L, -1L, -1L, -1L};
     /**
      * The shadow stage's own E10 census stream (E10 shadow preparation): a second
      * {@link VulkanGpuTerrainCensus} fed from the pack route's shadow stage. The shadow
@@ -17210,9 +17211,11 @@ this.frameBufferOpen = false;
                 this.gpuTerrainCensus.delete();
                 this.gpuTerrainCensus = null;
             }
-            if (this.gpuTerrainDraw != null) {
-                this.gpuTerrainDraw.delete();
-                this.gpuTerrainDraw = null;
+            for (int i = 0; i < this.gpuTerrainDraws.length; i++) {
+                if (this.gpuTerrainDraws[i] != null) {
+                    this.gpuTerrainDraws[i].delete();
+                    this.gpuTerrainDraws[i] = null;
+                }
             }
             if (this.shadowGpuTerrainCensus != null) {
                 this.shadowGpuTerrainCensus.delete();
@@ -19382,51 +19385,75 @@ this.frameBufferOpen = false;
         return this.gpuTerrainCensusVp;
     }
 
-    /** Whether this pass is E10-b's target: the vanilla SOLID pass (the design's first shape, section 2.5). */
-    private static boolean celtium$gpuTerrainDrawTarget(TerrainRenderPass pass) {
-        return !pass.isSorted() && !pass.supportsFragmentDiscard() && "solid".equals(pass.name());
+    /**
+     * Maps a vanilla terrain pass to its E10-b executor slot (0=solid, 1=cutout_mipped, 2=cutout,
+     * 3=translucent ordered), or -1 if this pass is outside E10-b's scope.
+     */
+    private static int celtium$gpuTerrainDrawSlot(TerrainRenderPass pass) {
+        String name = pass.name();
+        if (!pass.isSorted()) {
+            if (!pass.supportsFragmentDiscard() && "solid".equals(name)) {
+                return 0;
+            }
+            if ("cutout_mipped".equals(name)) {
+                return 1;
+            }
+            if ("cutout".equals(name)) {
+                return 2;
+            }
+            return -1;
+        }
+        if (GpuTerrainCulling.TRANSLUCENT_ORDERED && "translucent".equals(name)) {
+            return 3;
+        }
+        return -1;
+    }
+
+    private static String celtium$gpuTerrainDrawName(int slot) {
+        switch (slot) {
+            case 0: return "solid";
+            case 1: return "cutout_mipped";
+            case 2: return "cutout";
+            case 3: return "translucent";
+            default: return "pass" + slot;
+        }
     }
 
     /**
-     * E10-b pass head (item 723): at the SOLID pass' head — after the pack route has refused
-     * the pass and before its render pass opens — the previous frame's collection is
-     * finalized and this frame's region population is pre-enumerated; when the two agree
-     * exactly, the executor records the generation dispatch here (outside the render pass,
-     * as the design's section 4.3 order requires) and the pass' region loop records no
-     * per-batch draws, ending with the executor's one IndirectCount draw instead. Any doubt
-     * at all — no collection, a capability gate, a population that does not reproduce —
-     * leaves the pass on the current path, with the reason counted by the executor rather
-     * than silent.
+     * E10-b pass head (item 723): runs for SOLID, CUTOUT_MIPPED, CUTOUT, and (ordered) TRANSLUCENT
+     * after the pack route has refused the pass and before its render pass opens.
      *
      * @return whether the pass' draws are GPU-generated this frame
      */
-    private boolean celtium$gpuTerrainDrawPassHead(TerrainRenderPass pass, ChunkRenderListIterable renderLists,
+    private boolean celtium$gpuTerrainDrawPassHead(int slot, TerrainRenderPass pass, ChunkRenderListIterable renderLists,
             ChunkRenderMatrices matrices, CameraTransform occlusionCamera, boolean useBlockFaceCulling,
             Object view) {
-        if (!GpuTerrainCulling.ENABLED || this.gpuTerrainDrawFailed || this.commandBuffer == null) {
+        if (!GpuTerrainCulling.ENABLED || slot < 0 || this.gpuTerrainDrawFailed[slot] || this.commandBuffer == null) {
             return false;
         }
-        if (!celtium$gpuTerrainDrawTarget(pass)) {
+        if (this.gpuTerrainDrawFrames[slot] == this.frameId) {
             return false;
         }
-        if (this.gpuTerrainDrawFrame == this.frameId) {
-            return false;
-        }
-        this.gpuTerrainDrawFrame = this.frameId;
+        this.gpuTerrainDrawFrames[slot] = this.frameId;
         try {
-            if (this.gpuTerrainDraw == null) {
-                this.gpuTerrainDraw = new VulkanGpuTerrainDraw(this.context);
+            VulkanGpuTerrainDraw draw = this.gpuTerrainDraws[slot];
+            if (draw == null) {
+                boolean ordered = (slot == 3);
+                int ordinal = ordered ? 4 : slot;
+                draw = new VulkanGpuTerrainDraw(this.context, ordinal, celtium$gpuTerrainDrawName(slot), ordered);
+                this.gpuTerrainDraws[slot] = draw;
             }
             List<VulkanGpuTerrainDraw.Visit> visits = celtium$gpuTerrainVisitList(
                     renderLists, pass, useBlockFaceCulling, view, occlusionCamera);
-            return this.gpuTerrainDraw.passHead(this.commandBuffer, this.frameSlot, visits,
+            return draw.passHead(this.commandBuffer, this.frameSlot, visits,
                     this.terrain.regionOffsetWriteCursor(),
                     celtium$gpuTerrainCensusVp(matrices),
                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                     this.terrainBudget.drawCapsActive());
         } catch (RuntimeException | LinkageError error) {
-            this.gpuTerrainDrawFailed = true;
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=passHead reason=" + error);
+            this.gpuTerrainDrawFailed[slot] = true;
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=passHead pass="
+                    + celtium$gpuTerrainDrawName(slot) + " reason=" + error);
             return false;
         }
     }
@@ -19509,9 +19536,9 @@ this.frameBufferOpen = false;
         // collection gate is the same target test the pass head applies, kept as a local so
         // the loop's collection and the pass head's arming can never disagree about which
         // pass is SOLID.
-        boolean gpuDrawTargetPass = GpuTerrainCulling.ENABLED && celtium$gpuTerrainDrawTarget(pass);
-        boolean gpuDrawArmed = celtium$gpuTerrainDrawPassHead(pass, renderLists, matrices, occlusionCamera,
-                useBlockFaceCulling, view);
+        int gpuDrawSlot = GpuTerrainCulling.ENABLED ? celtium$gpuTerrainDrawSlot(pass) : -1;
+        boolean gpuDrawArmed = gpuDrawSlot >= 0 && celtium$gpuTerrainDrawPassHead(gpuDrawSlot, pass, renderLists,
+                matrices, occlusionCamera, useBlockFaceCulling, view);
         int gpuDrawVisited = 0;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
@@ -20045,11 +20072,10 @@ this.frameBufferOpen = false;
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
             }
-            // E10-b collection (item 723): the same population, kept by the drawing executor
-            // as the next frame's generation source. SOLID only — the executor's first
-            // shape — and only under the main flag; the census above is independent of it.
-            if (gpuDrawTargetPass && this.gpuTerrainDraw != null) {
-                this.gpuTerrainDraw.collect(this.frameId,
+            // E10-b collection (item 723): kept per pass (solid, cutout_mipped, cutout, translucent-ordered)
+            // as the next frame's generation source when the main E10 flag is on.
+            if (gpuDrawSlot >= 0 && this.gpuTerrainDraws[gpuDrawSlot] != null) {
+                this.gpuTerrainDraws[gpuDrawSlot].collect(this.frameId,
                         celtium$gpuTerrainCensusVp(matrices),
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
@@ -20186,13 +20212,11 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recPassTail");
         // The pass' last chained run is recorded before the pass' tail (the immediate groups below draw
         // into this same pass and must follow the terrain), and before the render pass ends.
-        if (gpuDrawArmed && this.gpuTerrainDraw != null) {
+        if (gpuDrawArmed && gpuDrawSlot >= 0 && this.gpuTerrainDraws[gpuDrawSlot] != null) {
             // E10-b: the pass' terrain draws, generated on the GPU at the pass head, are
-            // issued here as one IndirectCount draw. The generated commands' only index
-            // source is the shared quad buffer by construction of the collection, so it is
-            // bound explicitly — in an armed pass no chain flush has bound anything.
+            // issued here as one IndirectCount (or ordered Indirect) draw.
             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-            this.gpuTerrainDraw.recordDraw(this.commandBuffer, gpuDrawVisited);
+            this.gpuTerrainDraws[gpuDrawSlot].recordDraw(this.commandBuffer, gpuDrawVisited);
         }
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
