@@ -59,6 +59,15 @@ public final class VulkanFrameArena {
     private static final long MAX_VERTEX_BYTES = 16L << 20;
     private static final long MAX_INDEX_BYTES = 4L << 20;
 
+    /**
+     * The ring reservation decision point's fallback counters (Stage 2): every {@code FrameLinearRing}
+     * slice reservation a {@link RingRegion} makes is one attempt, served by the ring (fast) or refused
+     * with {@code -1} so the mesh promotes to buffers it owns (fallback). Counting only - a refused
+     * reservation answers 0 exactly as before.
+     */
+    private static final FallbackPaths.Handle RING_ALLOC_PATH =
+            FallbackPaths.register(FallbackPaths.RING_ALLOC);
+
     private final VulkanContext context;
     private final Slot[] slots = new Slot[SLOT_COUNT];
     private Slot activeSlot;
@@ -537,7 +546,9 @@ public final class VulkanFrameArena {
             }
             if (this.vertexSlice < 0L) {
                 long size = Math.max(byteOffset + length, MIN_VERTEX_SLICE_BYTES);
+                RING_ALLOC_PATH.attempt();
                 long offset = this.ring.alloc(this.ringSlot, size, alignment);
+                RING_ALLOC_PATH.verdict(offset >= 0L);
                 if (offset < 0L) {
                     return 0L;
                 }
@@ -561,7 +572,9 @@ public final class VulkanFrameArena {
             }
             if (this.indexSlice < 0L) {
                 long size = Math.max(byteOffset + length, MIN_INDEX_SLICE_BYTES);
+                RING_ALLOC_PATH.attempt();
                 long offset = this.ring.alloc(this.ringSlot, size, SLICE_ALIGNMENT);
+                RING_ALLOC_PATH.verdict(offset >= 0L);
                 if (offset < 0L) {
                     return 0L;
                 }

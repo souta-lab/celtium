@@ -48,6 +48,10 @@ public final class FallbackPaths {
     public static final String TERRAIN_ENGINE = "terrain.engine";
     /** Stage 5: GL state is captured deferred/async (fast) or forces a full synchronisation (fallback). */
     public static final String GLSM_ASYNC = "glsm.async";
+    /** Stage 2: a frame slot's completion is confirmed by one wait on the timeline semaphore (fast) or by a fence wait (fallback). */
+    public static final String SYNC_TIMELINE = "sync.timeline";
+    /** Stage 2: a frame ring slice reservation is served by the frame linear ring (fast) or the mesh promotes to buffers it owns (fallback). */
+    public static final String RING_ALLOC = "ring.alloc";
 
     /** The shared handle per path; a handle owns its counts, so registration is the only map. */
     private static final Map<String, Handle> HANDLES = new ConcurrentHashMap<String, Handle>();

@@ -73,6 +73,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final int MIN_UNIFORM_ALIGNMENT = 256;
 
     /**
+     * The slot-wait decision point's fallback counters (Stage 2): every {@code waitForSlot} call that
+     * actually waits on a pending submission is one attempt, confirmed by the timeline wait (fast) or
+     * by the fence wait it falls through to (fallback). Counting only - rendering behaviour is unchanged.
+     */
+    private static final FallbackPaths.Handle TIMELINE_WAIT_PATH =
+            FallbackPaths.register(FallbackPaths.SYNC_TIMELINE);
+
+    /**
      * Bytes per dynamic uniform block. Mirrors {@code CeltiumSolidUniforms} in
      * {@code celtium-vulkan/src/main/shaders/terrain_solid.vert}: region offset, fog colour and parameters,
      * material flags and the (currently unused) chunk fade parameters.
@@ -24806,6 +24814,11 @@ this.frameBufferOpen = false;
             }
             return true;
         }
+        // A wait decision is actually being made for a pending submission: count the attempt here so
+        // the early return above (nothing in flight, no wait at all) stays invisible, and give the
+        // attempt exactly one verdict below - fast when the timeline wait confirms the slot, fallback
+        // when the fence wait is what confirms it.
+        TIMELINE_WAIT_PATH.attempt();
         long deferredFence = this.slotDeferredFences[slot];
         if (deferredFence != 0) {
             // The slot's submission is still queued in the batched list: its fence arms only when that list submits,
@@ -24825,6 +24838,7 @@ this.frameBufferOpen = false;
                 boolean reached = timeline.awaitValue(timelineValue, IDLE_TIMEOUT_NANOS);
                 this.celtium$recordFrameWait(started);
                 if (reached) {
+                    TIMELINE_WAIT_PATH.fast();
                     this.scheduler.noteSlotWait(true);
                     // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the
                     // reclaim's callback, once, rather than here - polling also frees every earlier entry
@@ -24835,6 +24849,9 @@ this.frameBufferOpen = false;
                 }
             }
         }
+        // The timeline wait did not confirm this slot (unavailable, skipped under fault injection, or
+        // timed out): the fence wait below is the attempt's verdict.
+        TIMELINE_WAIT_PATH.fallback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
             fences.put(0, deferredFence != 0 ? deferredFence : this.slotFences[slot]);
