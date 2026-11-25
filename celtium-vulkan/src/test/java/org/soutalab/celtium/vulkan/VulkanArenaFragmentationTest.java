@@ -171,7 +171,7 @@ class VulkanArenaFragmentationTest {
                 new boolean[]{false, true, false, true, false, true});
 
         assertEquals("CELTIUM_ARENA_FRAGMENTATION capacity=100 used=60 holes=2 holeBytes=20 "
-                + "largestHole=10 tailBytes=20", reading.line());
+                + "largestHole=10 tailBytes=20 largestFreeRun=20", reading.line());
     }
 
     @Test

@@ -92,6 +92,9 @@ dependencies {
     testImplementation 'org.lwjgl:lwjgl-shaderc'
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':' + lwjglNativesClassifier
     testImplementation 'com.google.code.gson:gson:2.10.1'
+    // The common modJar is consumed non-transitively, so the log4j-api that common's
+    // classes link against statically (e.g. NativeBuffer's logger) must be named here.
+    testImplementation 'org.apache.logging.log4j:log4j-api:2.0-beta9'
     // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the
     // mod still gets joml from the installation (compileOnly above) and nothing is bundled by this.
     testImplementation 'org.joml:joml:1.10.5'
