@@ -55,7 +55,7 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * ({@link #FIXED_SLAB_INDEX_BASE}) so an index never collides with an ordinary or oversized slab index.
  * <p>
  * <b>Memory accounting:</b> every allocation goes through
- * {@link VulkanContext#allocateMemory(VkDevice, VkMemoryAllocateInfo, LongBuffer)} and every free through
+ * {@link VulkanContext#allocateMemory(VkDevice, VkMemoryAllocateInfo, LongBuffer, String)} and every free through
  * {@link VulkanContext#freeMemory(VkDevice, long)}, never the raw {@code vkAllocateMemory}/{@code vkFreeMemory}, so
  * each slab is counted in the context's live-allocation census - the count a frame pays for on submit.
  * <p>
@@ -502,7 +502,7 @@ public final class SlabAllocator {
                     .allocationSize(sizeBytes)
                     .memoryTypeIndex(this.memoryTypeIndex);
             LongBuffer memoryHandle = stack.mallocLong(1);
-            check(VulkanContext.allocateMemory(device, allocateInfo, memoryHandle),
+            check(VulkanContext.allocateMemory(device, allocateInfo, memoryHandle, "slab"),
                     "vkAllocateMemory(slab of " + sizeBytes + " bytes, memory type " + this.memoryTypeIndex + ")");
             memory = memoryHandle.get(0);
             if (this.hostVisible) {
