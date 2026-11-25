@@ -135,16 +135,17 @@ final class TerrainEngineA {
     }
 
     /**
-     * The timeline value slab releases are stamped with. A-&gt;B overhaul note
-     * (Stage 4 ahead of Stage 2): the experimental tree stamps the frame
-     * timeline's last allocated value, so collection waits for real GPU
-     * completion; this branch's context has no frame timeline yet, so releases
-     * are stamped 0 and the allocator's teardown (its delete frees live slabs
-     * outright) is what retires slab memory in practice — slab buffers live for
-     * the engine's lifetime. Stage 2's landing restores the timeline value.
+     * The completion value slab releases are stamped with: the context's slab
+     * release value ({@link VulkanContext#celtium$slabReleaseValue()}), which
+     * on a timeline device is the frame timeline's last allocated value, so
+     * collection waits for real GPU completion, and off a timeline device is
+     * the drain serial. Until Stage 2 landed this branch stamped 0 and the
+     * allocator's teardown (its delete frees live slabs outright) was what
+     * retired slab memory in practice; the Stage 3 currency keying is what the
+     * release waits on now.
      */
-    private static long slabReleaseValue() {
-        return 0L;
+    private long slabReleaseValue() {
+        return this.context.celtium$slabReleaseValue();
     }
 
     private void disable(String what, RuntimeException error) {
@@ -586,21 +587,15 @@ final class TerrainEngineA {
                 return;
             }
             if (TerrainEngineA.this.context.celtium$recordingOpen()) {
-                // A->B overhaul note: the experimental tree's dedicated
-                // celtium$retireSlabBuffer does not exist on this branch; the
-                // context's retired-cleanup list is the same deferral in the shape
-                // main already has — the destroy and the allocation release run
-                // once the recording that could name the buffer has completed.
+                // An open recording may name this buffer; hand the destroy and
+                // the slab release to the context's slab retire list, the same
+                // deferral every other slab-backed buffer uses.
                 long handle = this.handle;
                 SlabAllocator.SlabAllocation allocation = this.allocation;
-                TerrainEngineA.this.context.celtium$retireCleanup("terrain-a.slabBuffer.delete", () -> {
-                    vkDestroyBuffer(TerrainEngineA.this.context.device(), handle, null);
-                    if (allocation != null) {
-                        allocation.owner().release(allocation, slabReleaseValue());
-                    }
-                });
                 this.handle = VK_NULL_HANDLE;
                 this.allocation = null;
+                TerrainEngineA.this.context.celtium$retireSlabBuffer(handle, allocation,
+                        "terrain-a.slabBuffer.delete");
                 return;
             }
             vkDestroyBuffer(TerrainEngineA.this.context.device(), this.handle, null);

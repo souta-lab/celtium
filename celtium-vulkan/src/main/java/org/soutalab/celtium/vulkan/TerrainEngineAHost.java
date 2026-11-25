@@ -28,10 +28,14 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
  * deleted here, after every engine, because the allocator's slabs are the
  * engines' slab buffers' memory.
  * <p>
- * Deferred arena releases are collected against the host's own generation counter
- * with a two-generation lag — an interim completion rule that approximates the
- * frames-in-flight depth until the frame timeline (design section 2.3) lands and
- * drives collection with real GPU completion values.
+ * Deferred arena releases are stamped and collected in the context's slab
+ * completion currency ({@link VulkanContext#celtium$slabReleaseValue()} /
+ * {@link VulkanContext#celtium$slabCompletedValue()}): on a timeline device
+ * collection waits for real GPU completion, off one it waits for a later
+ * drain. Until Stage 2/3 landed, the stamps were the host's own generation
+ * counter with a two-generation lag — an interim rule approximating the
+ * frames-in-flight depth; the counter remains, but only as the registration
+ * counter written into each section desc, no longer as a completion proof.
  */
 final class TerrainEngineAHost {
     // Tier-A is the default terrain route (wave-2 cutover, 2026-11-25): the property
@@ -50,6 +54,7 @@ final class TerrainEngineAHost {
     private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
     private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
     private long generation;
+    private VulkanContext context;
     private SlabAllocator geometrySlabAllocator;
     private VulkanHostBuffer sharedIndexBuffer;
 
@@ -96,6 +101,7 @@ final class TerrainEngineAHost {
     }
 
     TerrainEngineA engineFor(VulkanContext context, TerrainRenderPass pass) {
+        this.context = context;
         TerrainEngineA engine = this.engines.get(pass);
         if (engine == null) {
             engine = new TerrainEngineA(context, ordinalFor(pass),
@@ -146,6 +152,26 @@ final class TerrainEngineAHost {
         return this.sharedIndexBuffer;
     }
 
+    /**
+     * The value deferred store releases are stamped with: the context's slab
+     * release value once an engine has been created against one. Before that
+     * no section can be registered, so the generation counter the interim
+     * rule used is a safe stand-in.
+     */
+    private long releaseStamp() {
+        return this.context != null ? this.context.celtium$slabReleaseValue() : this.generation;
+    }
+
+    /**
+     * The value store collection may proceed up to: the context's slab
+     * completed value, or — before any engine exists, when nothing is
+     * registered — the interim rule's two-generation lag.
+     */
+    private long completedStamp() {
+        return this.context != null ? this.context.celtium$slabCompletedValue()
+                : Math.max(0, this.generation - 2);
+    }
+
     /** Re-uploads one pass' sorted indices for a section after a translucent re-sort. */
     void updateSortedSection(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass,
                              org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
@@ -156,18 +182,18 @@ final class TerrainEngineAHost {
         TerrainEngineA engine = this.engines.get(pass);
         if (engine != null) {
             engine.updateSorted(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
-                    indices, this.generation);
+                    indices, releaseStamp());
         }
     }
 
-    /** Removes every pass' record of one section, deferred against the generation lag. */
+    /** Removes every pass' record of one section, deferred against the completion currency. */
     void unregisterSection(int sectionX, int sectionY, int sectionZ) {
         for (int ordinal : this.ordinals.values()) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
-            this.store.unregister(key, this.generation);
+            this.store.unregister(key, releaseStamp());
             this.residencyGate.forget(key);
         }
-        this.store.collectReleased(Math.max(0, this.generation - 2));
+        this.store.collectReleased(completedStamp());
     }
 
     void delete(VulkanContext context) {
