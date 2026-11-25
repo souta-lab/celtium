@@ -4154,6 +4154,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean RETAINED_INDEX_FLUSH_EXEMPT =
             Boolean.getBoolean("celtium.vulkan.retainedIndexFlushExempt");
     /**
+     * Off by default: skip {@link #settleGpu} ({@code vkDeviceWaitIdle}) on region eviction in
+     * {@link #updateRegions()}. Since the shared-arena migration (agera-kpi-4), {@code RegionResources.delete()}
+     * only clears its Java reference to the shared index arena and destroys no Vulkan handles, while
+     * {@link VulkanArena#free} already defers segment reclamation until in-flight submissions complete.
+     */
+    private static final boolean EVICTION_SKIP_SETTLE =
+            Boolean.getBoolean("celtium.vulkan.evictionSkipSettle");
+    /**
+     * Off by default: bound {@link #ensureSharedIndexBuffer} to the largest uploaded single-section vertex size
+     * ({@link TerrainRenderer#maxSectionVertexBytes()}) with power-of-two headroom (min 16,384 primitives)
+     * instead of the entire shared vertex arena's capacity. Eliminates multi-megabyte mid-flight index-buffer
+     * regenerations whenever the shared vertex arena doubles. Direct-fallback run merging is capped to the
+     * shared index buffer's element capacity when enabled.
+     */
+    private static final boolean SHARED_INDEX_SECTION_BOUND =
+            Boolean.getBoolean("celtium.vulkan.sharedIndexSectionBound");
+    /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
      * a system-property lookup + boxing on every offered batch (~300/frame on a busy scene).
@@ -16406,15 +16423,23 @@ this.frameBufferOpen = false;
         while (iterator.hasNext()) {
             java.util.Map.Entry<RenderRegion, TerrainRenderer.RegionResources> entry = iterator.next();
             if (!live.contains(entry.getKey())) {
-                // Same rule as delete(): a region's buffers and pipeline are released only once the GPU has finished
-                // with them, because eviction happens while frames are being submitted.
-                if (!settleGpu("region eviction")) {
-                    // Stalled: the region stays for process exit rather than being released while the GPU may still
-                    // reference it. The loop's remaining entries are left alone for the same reason.
-                    break;
+                if (celtium$regionEvictionNeedsSettle(EVICTION_SKIP_SETTLE)) {
+                    // Same rule as delete(): a region's buffers and pipeline are released only once the GPU has finished
+                    // with them, because eviction happens while frames are being submitted.
+                    if (!settleGpu("region eviction")) {
+                        // Stalled: the region stays for process exit rather than being released while the GPU may still
+                        // reference it. The loop's remaining entries are left alone for the same reason.
+                        break;
+                    }
+                } else {
+                    if (this.gpuStalled) {
+                        break;
+                    }
+                    this.regionEvictionSettlesSkipped++;
                 }
                 entry.getValue().delete();
                 iterator.remove();
+                this.regionEvictions++;
             }
         }
     }
@@ -20192,6 +20217,7 @@ this.frameBufferOpen = false;
             // pass means both shared and on a sorted pass both arena), so the bound source is always the open
             // run's own when its draw is recorded.
             boolean arenaBound = false;
+            int sharedIndexMaxElements = SHARED_INDEX_SECTION_BOUND ? celtium$sharedIndexMaxElements(primitiveType) : 0;
             int command = 0;
             while (command < batch.size()) {
                 long byteOffset = batch.indexByteOffset(command);
@@ -20232,7 +20258,9 @@ this.frameBufferOpen = false;
                     int runVertices = (runElementCount / 6) * 4;
                     boolean vertexAdjacent = baseVertex == runBaseVertex + runVertices;
                     boolean indexAdjacent = runFirstIndex == 0 && firstIndex == 0;
-                    if (vertexAdjacent && indexAdjacent) {
+                    if (vertexAdjacent && indexAdjacent
+                            && celtium$directRunMergeFitsSharedIndex(runElementCount, elementCount,
+                                    sharedIndexMaxElements, SHARED_INDEX_SECTION_BOUND)) {
                         runElementCount += elementCount;
                         this.terrainStatistics.noteLastDrawCommandsMerged();
                         command++;
@@ -24988,6 +25016,51 @@ this.frameBufferOpen = false;
 
     /** How many times the shared index buffer was regenerated; printed on the stats line. */
     long sharedIndexRegenerations;
+    /** Largest primitive capacity allocated for the shared index buffer; printed on the stats line. */
+    long sharedIndexMaxPrimitives;
+    /** Regions evicted in {@link #updateRegions()} and how many skipped {@link #settleGpu}. */
+    long regionEvictions;
+    long regionEvictionSettlesSkipped;
+
+    static boolean celtium$regionEvictionNeedsSettle(boolean skipSettle) {
+        return !skipSettle;
+    }
+
+    static int celtium$sharedIndexRequiredPrimitives(long maxSectionVertexBytes, int commonVertexStride,
+            int verticesPerPrimitive, long sharedArenaBytes, boolean sectionBound) {
+        long sourceBytes = sectionBound ? maxSectionVertexBytes : sharedArenaBytes;
+        int maxVertices = sourceBytes > 0L && commonVertexStride > 0
+                ? (int) Math.min(Integer.MAX_VALUE, sourceBytes / commonVertexStride)
+                : 0;
+        return (maxVertices / verticesPerPrimitive) + 1;
+    }
+
+    static int celtium$sharedIndexPrimitiveCapacity(int requiredPrimitives, boolean sectionBound) {
+        if (!sectionBound) {
+            return Math.max(requiredPrimitives, 1024);
+        }
+        int floored = Math.max(requiredPrimitives, 16384);
+        int cap = Integer.highestOneBit(floored);
+        if (cap < floored && cap < (1 << 30)) {
+            cap <<= 1;
+        }
+        return Math.max(cap, floored);
+    }
+
+    static boolean celtium$directRunMergeFitsSharedIndex(int runElementCount, int nextElementCount,
+            int sharedIndexMaxElements, boolean sectionBound) {
+        return !sectionBound || sharedIndexMaxElements <= 0
+                || ((long) runElementCount + (long) nextElementCount) <= sharedIndexMaxElements;
+    }
+
+    private int celtium$sharedIndexMaxElements(ChunkPrimitiveType primitiveType) {
+        Integer primitives = this.sharedIndexPrimitives.get(primitiveType);
+        if (primitives == null || primitives.intValue() <= 0) {
+            return 0;
+        }
+        long elements = (long) primitives.intValue() * (long) primitiveType.getIndexBufferElementsPerPrimitive();
+        return elements > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) elements;
+    }
 
     /**
      * The shared index buffer holds the repeating primitive pattern the OpenGL backend also uses for unsorted
@@ -24995,22 +25068,16 @@ this.frameBufferOpen = false;
      * paths cannot drift apart on element order or count.
      */
     private void ensureSharedIndexBuffer(ChunkPrimitiveType primitiveType) {
-        int maxVertices = 0;
-        // The bound used to be the largest region arena's capacity - a loose upper bound for the largest
-        // single draw, since a section cannot outgrow the arena holding it. With one shared arena
-        // (agera-kpi-4) the same bound reads the shared arena's capacity; it is looser still, and the
-        // pattern buffer it sizes is one allocation, regenerated rarely.
         VulkanArena sharedVertex = this.terrain.sharedVertexArenaIfPresent();
-        if (sharedVertex != null) {
-            long bytes = sharedVertex.deviceAllocatedMemoryL();
-            maxVertices = Math.max(maxVertices, (int) (bytes / this.commonVertexStride));
-        }
-        int primitives = (maxVertices / primitiveType.getVerticesPerPrimitive()) + 1;
+        long sharedArenaBytes = sharedVertex != null ? sharedVertex.deviceAllocatedMemoryL() : 0L;
+        int primitives = celtium$sharedIndexRequiredPrimitives(this.terrain.maxSectionVertexBytes(),
+                this.commonVertexStride, primitiveType.getVerticesPerPrimitive(),
+                sharedArenaBytes, SHARED_INDEX_SECTION_BOUND);
         Integer existing = this.sharedIndexPrimitives.get(primitiveType);
         if (existing != null && existing >= primitives) {
             return;
         }
-        int capacity = Math.max(primitives, 1024);
+        int capacity = celtium$sharedIndexPrimitiveCapacity(primitives, SHARED_INDEX_SECTION_BOUND);
         this.sharedIndexRegenerations++;
         int bytes = primitiveType.getIndexBufferSize(capacity);
         ByteBuffer data = MemoryUtil.memAlloc(bytes);
@@ -25030,6 +25097,9 @@ this.frameBufferOpen = false;
             }
             VulkanBuffer previous = this.sharedIndexBuffers.put(primitiveType, buffer);
             this.sharedIndexPrimitives.put(primitiveType, capacity);
+            if (capacity > this.sharedIndexMaxPrimitives) {
+                this.sharedIndexMaxPrimitives = capacity;
+            }
             if (previous != null) {
                 VulkanRetireQueue.retire(this.context.device().address(), previous::delete);
             }

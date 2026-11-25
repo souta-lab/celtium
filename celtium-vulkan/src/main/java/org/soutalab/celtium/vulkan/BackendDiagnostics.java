@@ -249,6 +249,9 @@ final class BackendDiagnostics {
                 + " groupCreateCount=" + b.immediateStatistics.groupCreateCount() + " animatedUploadFlushes=" + b.animatedUploadFlushes
                 + " inWorldAnimMirror=" + b.inWorldAnimMirrorCalls + "/" + (b.inWorldAnimMirrorNanos / 1000L) + "us/worst"
                 + (b.inWorldAnimMirrorWorstNanos / 1000L) + "us" + " sharedIndexRegenerations=" + b.sharedIndexRegenerations
+                + " sharedIndexMaxPrimitives=" + b.sharedIndexMaxPrimitives
+                + " regionEvictions=" + b.regionEvictions
+                + " regionEvictionSettlesSkipped=" + b.regionEvictionSettlesSkipped
                 + " groupCreateMillis=" + (b.immediateStatistics.groupCreateNanos() / 1000000L)
                 + " appendCount=" + b.immediateStatistics.appendCount()
                 + " appendMillis=" + (b.immediateStatistics.appendNanos() / 1000000L)

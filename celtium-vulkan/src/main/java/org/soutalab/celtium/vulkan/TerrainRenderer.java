@@ -275,6 +275,7 @@ public final class TerrainRenderer {
             this.sharedIndexArena.delete();
             this.sharedIndexArena = null;
         }
+        this.maxSectionVertexBytes = 0L;
     }
 
     /**
@@ -1754,10 +1755,17 @@ public final class TerrainRenderer {
 
     /** The last region upload's byte count, which the acceptance reads. */
     private long lastUploadedBytes;
+    /** Largest single-section vertex upload seen since the last {@link #releaseAll()}. */
+    private long maxSectionVertexBytes;
 
     /** {@return the last region upload's byte count}. */
     long lastUploadedBytes() {
         return this.lastUploadedBytes;
+    }
+
+    /** {@return the largest single-section vertex byte count uploaded so far}. */
+    long maxSectionVertexBytes() {
+        return this.maxSectionVertexBytes;
     }
 
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
@@ -1920,6 +1928,9 @@ public final class TerrainRenderer {
                 }
                 long beforeAddress = MemoryUtil.memAddress(vertices);
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
+                if (vertexBytes > this.maxSectionVertexBytes) {
+                    this.maxSectionVertexBytes = vertexBytes;
+                }
                 resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);
                 if (beforeAfterLogged < 4) {
                     beforeAfterLogged++;
