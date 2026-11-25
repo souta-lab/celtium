@@ -6,16 +6,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FrameSubmissionProgressTest {
     @Test
-    void nativeTargetCanCloseItsPassWithoutSubmittingTheStillOpenFrameBuffer() {
-        assertTrue(FrameCoordinator.Submission.RECORDED.canCloseTarget(false));
-        assertTrue(FrameCoordinator.Submission.QUEUED.canCloseTarget(false));
-        assertFalse(FrameCoordinator.Submission.SKIPPED.canCloseTarget(false));
-    }
-
-    @Test
-    void externalSemaphoreOwnerStillRequiresAnAcceptedSubmissionPacket() {
-        assertFalse(FrameCoordinator.Submission.RECORDED.canCloseTarget(true));
-        assertFalse(FrameCoordinator.Submission.SKIPPED.canCloseTarget(true));
-        assertTrue(FrameCoordinator.Submission.QUEUED.canCloseTarget(true));
+    void aTargetClosesOnAnAcceptedRecordingOrAQueuedSubmissionButNotOnASkip() {
+        // Stage 2 submit unification: no target carries an external semaphore packet a close could owe,
+        // so the rule no longer branches on the target - RECORDED and QUEUED close, SKIPPED does not.
+        assertTrue(FrameCoordinator.Submission.RECORDED.canCloseTarget());
+        assertTrue(FrameCoordinator.Submission.QUEUED.canCloseTarget());
+        assertFalse(FrameCoordinator.Submission.SKIPPED.canCloseTarget());
     }
 }

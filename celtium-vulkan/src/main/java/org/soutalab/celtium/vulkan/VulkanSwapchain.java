@@ -64,13 +64,6 @@ public final class VulkanSwapchain {
 
     private long swapchain = VK_NULL_HANDLE;
     private long[] images = new long[0];
-    /** The GL-less frame target whose present-wait semaphores this swapchain must signal, or null. */
-    private FrameImageTarget bridgeTarget;
-
-    /** Sets the frame target the present path signals; the backend calls this once. */
-    public void setBridgeTarget(FrameImageTarget target) {
-        this.bridgeTarget = target;
-    }
     private long[] views = new long[0];
     private int format;
     private int colorSpace;
@@ -99,8 +92,8 @@ public final class VulkanSwapchain {
      * B2). Sized with {@link #images} when a generation's images are fixed and dropped with them in
      * {@link #delete()}; null means no generation has fixed its images yet. The lifetime is the swapchain
      * object's own - a rebuild is always a new object, so flags can never leak across generations. A flag is
-     * set only when the image's initialization-variant present blit has been submitted successfully (the
-     * synchronous path) or handed to the presenter (the async path) - never at recording time.
+     * set only when the image's initialization-variant present blit has been submitted successfully -
+     * never at recording time.
      */
     private boolean[] imageInitialized;
     /** Per-image record that the initialization-variant submission failed; a later present retries the variant. */
@@ -266,8 +259,7 @@ public final class VulkanSwapchain {
      * Whether this swapchain must be dropped and rebuilt before it can present again, and why.
      * <p>
      * Set by the verdicts that make the current swapchain unusable rather than merely stale: an out-of-date acquire
-     * or present, a surface extent the periodic capabilities check caught changing, the asynchronous presenter's
-     * failure, and an acquisition retired unpresented (whose image only a rebuild recovers, because core Vulkan has
+     * or present, a surface extent the periodic capabilities check caught changing, and an acquisition retired unpresented (whose image only a rebuild recovers, because core Vulkan has
      * no way to hand an acquired image back). A plain {@code VK_SUBOPTIMAL_KHR} whose frame still went out does not
      * set it: the backend's extent and present-mode checks already catch the persistent causes of suboptimality, and
      * rebuilding on every suboptimal verdict would recreate the swapchain every frame on a driver that reports it
@@ -364,8 +356,6 @@ public final class VulkanSwapchain {
     private boolean lastPresentSubmitDone;
     /** Whether the last present actually reached the presentation engine; GL's composite may only be cancelled then. */
     private boolean lastPresentSucceeded;
-    private long asyncPresents;
-    private long asyncPresentFailures;
     private float lastPresentedMean = -1.0f;
     /** The harness's {@code presentReadback} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = HarnessConfig.bool("presentReadback", true);
@@ -1324,11 +1314,12 @@ public final class VulkanSwapchain {
     /**
      * Presents an image that the GL-to-Vulkan bridge wrote, honouring the bridge's contract as well as the swapchain's.
      * <p>
-     * The frame target's contract is explicit: the caller's submission must wait {@code waitSemaphore()} - the shared
-     * image is only complete once GL has signalled it - and must signal {@code doneSemaphore()}, because {@code endFrame}
-     * makes GL wait on that one. Signalling only a render-finished semaphore leaves GL waiting for a submission that never
-     * signalled it, which is the deadlock the audit's item B describes. Both contracts are satisfied by the same
-     * submission here: it waits the acquire and the bridge, and signals its own semaphore and the bridge's.
+     * The caller may name one extra semaphore for the present submission to wait (the bridge's content-ready
+     * signal) and one for it to signal (the bridge's done signal); the same submission satisfies both
+     * contracts: it waits the acquire and the bridge wait, and signals its own render-finished semaphore and
+     * the bridge's done semaphore. Callers with no bridge pass null handles, which the submission compacts
+     * away. (The frame target's own wait/done pair is gone - Stage 2 submit unification - so nothing here
+     * asks the target for a semaphore any more.)
      */
     public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
             long bridgeDoneSemaphore) {
@@ -1397,10 +1388,7 @@ public final class VulkanSwapchain {
                 + " presentWorstMillis=" + (this.presentWorstNanos / 1000000L)
                 + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L)
                 + " preRecordedBlitPresents=" + this.preRecordedBlitPresents
-                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords
-                + " asyncPresents=" + this.asyncPresents + " asyncPresentFailures=" + this.asyncPresentFailures
-                + " presenterJoins=" + VulkanContext.presenterJoins
-                + " presenterJoinMicros=" + (VulkanContext.presenterJoinNanos / 1000L);
+                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords;
     }
 
     private void celtium$notePresentTime(long nanos) {
@@ -1426,26 +1414,6 @@ public final class VulkanSwapchain {
         // Reset rather than accumulated (audit S18): this describes the present that is about to happen. Left set, a single
         // out-of-date acquire would keep the caller rebuilding the swapchain for the rest of the session.
         this.outOfDate = false;
-        if (VulkanContext.ASYNC_PRESENT) {
-            // The acquire below needs the swapchain the worker may still be presenting to; the previous worker
-            // present's verdict is applied here, one frame late, which is the only state that path defers.
-            this.context.celtium$awaitPresenter();
-            int previous = this.context.celtium$presenterResult();
-            if (previous == VK_ERROR_SURFACE_LOST_KHR) {
-                // The worker's present met a dead surface; the recovery is the backend recreating both, which the
-                // surfaceLost flag keys (bughunt LANE-05 #5: the constant was classified nowhere).
-                this.surfaceLost = true;
-            } else if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
-                this.outOfDate = true;
-                if (previous == VK_ERROR_OUT_OF_DATE_KHR) {
-                    celtium$noteRebuildNeeded("the presenter reported the swapchain out of date");
-                }
-            } else if (previous != VK_SUCCESS) {
-                this.asyncPresentFailures++;
-                this.outOfDate = true;
-                celtium$noteRebuildNeeded("the presenter failed with result " + previous);
-            }
-        }
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -1579,8 +1547,8 @@ public final class VulkanSwapchain {
             // B1's separate one-shot clear at this point did exactly that and drew the acquire-semaphore
             // variant of UNASSIGNED-non-acquired-swapchain-image-used once per image (leg d515-b1), which is
             // the switch trigger design section 6.6 named. The variant is chosen below, where the recorded
-            // buffer is picked; the flag is set when that submission succeeds (synchronous) or is handed to
-            // the presenter (async). A bare present submits no buffer at all, so it cannot initialize: it
+            // buffer is picked; the flag is set when that submission succeeds. A bare present submits no
+            // buffer at all, so it cannot initialize: it
             // refuses an image that is not initialized yet instead of presenting undefined content
             // (guarantee (a)). An initialized image's bare present is unchanged.
             if (PRESENT_NO_RECORD) {
@@ -1623,43 +1591,16 @@ public final class VulkanSwapchain {
                 }
                 return "present image: could not record the blit command buffer";
             }
-            // The pre-recorded buffer goes to the queue directly - no vkEndCommandBuffer (recording closed at
-            // build time) and no fence or deferred reclaim (the buffer lives for the pool's life, so there is
-            // nothing to retire). The semaphore contract is the one the deferred path satisfied: waits on the
-            // acquire and the bridge, signals renderFinished and the bridge's done semaphore per image.
-            long bridgeDone = this.bridgeTarget != null
-                    ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
-            if (VulkanContext.ASYNC_PRESENT && this.bridgeTarget == null && bridgeWaitSemaphore == VK_NULL_HANDLE
-                    && bridgeDone == VK_NULL_HANDLE && !FLICKER_SAMPLE && !PRESENT_READBACK
-                    && this.pendingDumpPaths.isEmpty() && this.presentTraces >= 4) {
-                long asyncStartedNanos = System.nanoTime();
-                boolean handedToPresenter = this.context.celtium$presentAsync(recorded, acquire, renderFinished,
-                        this.swapchain, index.get(0));
-                presentSubmitNanos += System.nanoTime() - asyncStartedNanos;
-                if (handedToPresenter) {
-                    if (initVariant) {
-                        // Design section 3.6: on the async path the flag's confirmation point is the hand-off to
-                        // the presenter - the variant buffer is now the presenter's to submit, under the same
-                        // semaphore contract as any recorded present.
-                        markImageInitialized(index.get(0));
-                    }
-                    presentStageCalls++;
-                    this.asyncPresents++;
-                    this.lastPresentSubmitDone = true;
-                    this.lastPresentSucceeded = true;
-                    return "present image: blitted " + width + "x" + height + " onto image " + index.get(0)
-                            + " (queued to the presenter)";
-                }
-                // The presenter could not be started, so nothing was handed over (the contract celtium$presentAsync
-                // documents and now honours, bughunt LANE-05 #7): fall through to the synchronous submission below,
-                // which presents the same recorded buffer under the same semaphore contract instead of reporting a
-                // present that never happened.
-            }
+            // The pre-recorded buffer goes to the queue directly, on this thread - no vkEndCommandBuffer
+            // (recording closed at build time) and no fence or deferred reclaim (the buffer lives for the
+            // pool's life, so there is nothing to retire). The semaphore contract is the one the deferred
+            // path satisfied: waits on the acquire and the bridge, signals renderFinished and the bridge's
+            // done semaphore the caller named.
             long submitStartedNanos = System.nanoTime();
             this.presentWaitSemaphores[0] = acquire;
             this.presentWaitSemaphores[1] = bridgeWaitSemaphore;
             this.presentSignalSemaphores[0] = renderFinished;
-            this.presentSignalSemaphores[1] = bridgeDone;
+            this.presentSignalSemaphores[1] = bridgeDoneSemaphore;
             String submitError = submitPreRecorded(stack, recorded,
                     this.presentWaitSemaphores,
                     this.presentSignalSemaphores);
@@ -1679,9 +1620,6 @@ public final class VulkanSwapchain {
                 // submitPreRecorded's success - the variant's clear is part of that submission, so the image
                 // is defined from here on and later presents use the normal buffer.
                 markImageInitialized(index.get(0));
-            }
-            if (this.bridgeTarget != null && bridgeDone != 0L) {
-                this.bridgeTarget.noteDoneSignalled(bridgeDone);
             }
             this.lastPresentSubmitDone = true;
             this.lastPresentSucceeded = false;
@@ -2960,8 +2898,8 @@ public final class VulkanSwapchain {
      * the same rule at their first acquire ({@code GllessFrameTarget}'s {@code neverCleared}); the swapchain's
      * images were the ones without it.
      * <p>
-     * The flag is set only at the confirmation points design section 3.6 fixes - {@code submitPreRecorded}'s
-     * success on the synchronous path, the hand-off to the presenter on the async path - never at recording
+     * The flag is set only at the confirmation point design section 3.6 fixes - {@code submitPreRecorded}'s
+     * success - never at recording
      * time, so a recorded-but-unsubmitted variant cannot leave the flag claiming content the image does not
      * hold (the BH-26 lesson). The {@code CELTIUM_SWAPCHAIN_IMAGE_INIT} line is printed here, at confirmation,
      * so the V3 gate reconciliation counts exactly the images whose initialization is confirmed.

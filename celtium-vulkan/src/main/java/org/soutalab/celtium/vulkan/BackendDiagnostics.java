@@ -111,10 +111,6 @@ final class BackendDiagnostics {
                 + " stalledGeometryDroppedBatches=" + b.submissionStatistics.stalledGeometryDroppedBatches()
                 + " stallOrigin=" + (b.submissionStatistics.stallOrigin() == null ? "none" : b.submissionStatistics.stallOrigin().replace(' ', '_'))
                 + " windowFlushFailures=" + b.targetStatistics.windowFlushFailures()
-                // Printed, not just counted: a zero that never reaches the artifact is an absence rather than a
-                // measurement, and this number is the one that says whether the frame-close producer (the second
-                // producer of the done semaphore) ran at all - the path the per-image change could have broken.
-                + " signalOnlySubmissions=" + b.submissionStatistics.signalOnlySubmissions()
                 + " windowFlushFailureFrame=" + b.targetStatistics.windowFlushFailureFrame()
                 + " windowFlushDroppedBatches=" + b.targetStatistics.windowFlushDroppedBatches()
                 + " groupViewportSets=" + b.immediateStatistics.groupViewportSets()
