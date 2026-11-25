@@ -2655,10 +2655,33 @@ public final class VulkanContext {
      */
     public static int allocateMemory(org.lwjgl.vulkan.VkDevice device, org.lwjgl.vulkan.VkMemoryAllocateInfo info,
             java.nio.LongBuffer memory) {
+        return allocateMemory(device, info, memory, "unspecified");
+    }
+
+    /**
+     * {@link #allocateMemory} with the allocating site named, so the census can attribute its
+     * live and peak counts per site (arch-phase1-fix). The Phase 1 gate leg measured a live
+     * peak of 19,630 against a limit of 24 on the new architecture — whose device-local buffers
+     * already sub-allocate from fixed slabs — but the single aggregate number could not say
+     * which of the remaining direct {@code vkAllocateMemory} paths (mirrored textures, host
+     * buffers, uniform buffers, readback staging, frame targets, the post chain) scaled with
+     * the world. The per-site peaks in {@link #memoryAllocationSummary()} are that measurement.
+     */
+    public static int allocateMemory(org.lwjgl.vulkan.VkDevice device, org.lwjgl.vulkan.VkMemoryAllocateInfo info,
+            java.nio.LongBuffer memory, String site) {
         int result = vkAllocateMemory(device, info, null, memory);
         if (result == VK_SUCCESS) {
             long size = info.allocationSize();
-            LIVE_ALLOCATIONS.put(Long.valueOf(memory.get(memory.position())), Long.valueOf(size));
+            Long handle = Long.valueOf(memory.get(memory.position()));
+            LIVE_ALLOCATIONS.put(handle, Long.valueOf(size));
+            ALLOCATION_SITES.put(handle, site);
+            long[] counts = SITE_ALLOCATION_COUNTS.computeIfAbsent(site, key -> new long[2]);
+            synchronized (counts) {
+                counts[0]++;
+                if (counts[0] > counts[1]) {
+                    counts[1] = counts[0];
+                }
+            }
             long live = LIVE_ALLOCATIONS.size();
             if (live > peakAllocations) {
                 peakAllocations = live;
@@ -2687,6 +2710,15 @@ public final class VulkanContext {
         Long size = null;
         if (memory != VK_NULL_HANDLE) {
             size = LIVE_ALLOCATIONS.remove(Long.valueOf(memory));
+            String site = ALLOCATION_SITES.remove(Long.valueOf(memory));
+            if (site != null) {
+                long[] counts = SITE_ALLOCATION_COUNTS.get(site);
+                if (counts != null) {
+                    synchronized (counts) {
+                        counts[0]--;
+                    }
+                }
+            }
         }
         long started = System.nanoTime();
         vkFreeMemory(device, memory, null);
@@ -2711,8 +2743,32 @@ public final class VulkanContext {
         for (Long size : LIVE_ALLOCATIONS.values()) {
             bytes += size.longValue();
         }
-        return "memoryAllocationsLive=" + LIVE_ALLOCATIONS.size() + " memoryAllocationsPeak=" + peakAllocations
-                + " memoryAllocationsMade=" + allocationsMade + " memoryLiveMiB=" + (bytes >> 20);
+        StringBuilder summary = new StringBuilder();
+        summary.append("memoryAllocationsLive=").append(LIVE_ALLOCATIONS.size())
+                .append(" memoryAllocationsPeak=").append(peakAllocations)
+                .append(" memoryAllocationsMade=").append(allocationsMade)
+                .append(" memoryLiveMiB=").append(bytes >> 20)
+                .append(" memoryAllocationsBySite=[");
+        java.util.List<java.util.Map.Entry<String, long[]>> sites =
+                new java.util.ArrayList<java.util.Map.Entry<String, long[]>>(SITE_ALLOCATION_COUNTS.entrySet());
+        sites.sort((left, right) -> Long.compare(right.getValue()[1], left.getValue()[1]));
+        boolean first = true;
+        for (java.util.Map.Entry<String, long[]> site : sites) {
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            long[] counts = site.getValue();
+            long live;
+            long peak;
+            synchronized (counts) {
+                live = counts[0];
+                peak = counts[1];
+            }
+            summary.append(site.getKey()).append(":live=").append(live).append(",peak=").append(peak);
+        }
+        summary.append(']');
+        return summary.toString();
     }
 
     /**
@@ -2743,6 +2799,12 @@ public final class VulkanContext {
 
     private static final java.util.Map<Long, Long> LIVE_ALLOCATIONS =
             new java.util.concurrent.ConcurrentHashMap<Long, Long>();
+    /** The site label of each live allocation, for the per-site census (arch-phase1-fix). */
+    private static final java.util.Map<Long, String> ALLOCATION_SITES =
+            new java.util.concurrent.ConcurrentHashMap<Long, String>();
+    /** Per-site {live, peak} counts, guarded by synchronizing on the array itself. */
+    private static final java.util.Map<String, long[]> SITE_ALLOCATION_COUNTS =
+            new java.util.concurrent.ConcurrentHashMap<String, long[]>();
     private static volatile long peakAllocations;
     private static volatile long allocationsMade;
 
@@ -3607,6 +3669,34 @@ public final class VulkanContext {
             // drawIndirectCount in one respect: it is required, not reported-and-optional, because every
             // submission path synchronizes through the frame timeline now - a device without it is refused
             // here, by name, rather than discovered later by a failing renderer.
+            // The descriptor-indexing query runs BEFORE the Vulkan 1.2 block below, not after it
+            // (arch-phase1-fix): VUID-VkDeviceCreateInfo-pNext-02830 forbids a pNext chain that
+            // holds both VkPhysicalDeviceVulkan12Features and the standalone
+            // VkPhysicalDeviceDescriptorIndexingFeatures - on a 1.2+ device the indexing fields
+            // are promoted into the Vulkan12 struct, so they are queried here and folded into
+            // that one struct below. The Phase 1 gate leg (2026-11-25, UHD 630) failed device
+            // creation validation with exactly this VUID because the chain carried both.
+            boolean indexingNonUniform;
+            boolean indexingRuntimeArray;
+            boolean indexingAfterBind;
+            boolean indexingPartiallyBound;
+            boolean indexingUnusedWhilePending;
+            {
+                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures supported =
+                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+                        .calloc(stack).sType$Default().pNext(supported.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
+                indexingNonUniform = supported.shaderSampledImageArrayNonUniformIndexing();
+                indexingRuntimeArray = supported.runtimeDescriptorArray();
+                indexingAfterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
+                indexingPartiallyBound = supported.descriptorBindingPartiallyBound();
+                // Writing a new array index while earlier frames that bound the set are still executing is only legal
+                // with UPDATE_UNUSED_WHILE_PENDING; the model instances register textures at exactly that time.
+                indexingUnusedWhilePending = supported.descriptorBindingUpdateUnusedWhilePending();
+                this.textureArraySupported = indexingNonUniform && indexingRuntimeArray && indexingAfterBind
+                        && indexingPartiallyBound && indexingUnusedWhilePending;
+            }
             boolean askIndirectCount = deviceProperties.apiVersion() >= org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
             if (askIndirectCount) {
                 org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features supported12 =
@@ -3622,12 +3712,22 @@ public final class VulkanContext {
                             + " architecture synchronizes exclusively through one timeline semaphore, so this"
                             + " device cannot run the renderer.");
                 }
-                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported) {
+                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported
+                        || this.textureArraySupported) {
                     org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features vulkan12Features =
                             org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
                                     .sType$Default()
                                     .drawIndirectCount(this.drawIndirectCountSupported)
-                                    .timelineSemaphore(this.timelineSemaphoreSupported);
+                                    .timelineSemaphore(this.timelineSemaphoreSupported)
+                                    // Promoted descriptor-indexing fields (VUID-02830): on a
+                                    // 1.2+ device these live on this struct, never on a second
+                                    // standalone indexing struct in the same chain.
+                                    .shaderSampledImageArrayNonUniformIndexing(this.textureArraySupported)
+                                    .runtimeDescriptorArray(this.textureArraySupported)
+                                    .descriptorBindingSampledImageUpdateAfterBind(this.textureArraySupported)
+                                    .descriptorBindingPartiallyBound(this.textureArraySupported)
+                                    .descriptorBindingUpdateUnusedWhilePending(this.textureArraySupported)
+                                    .descriptorBindingVariableDescriptorCount(this.textureArraySupported);
                     if (createInfo.pNext() != 0L) {
                         org.lwjgl.system.MemoryUtil.memPutLong(vulkan12Features.address() + 8L, createInfo.pNext());
                     }
@@ -3656,21 +3756,12 @@ public final class VulkanContext {
             // asked for separately and reported; a device without them keeps the per-group sets.
             org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures = null;
             {
-                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures supported =
-                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
-                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
-                        .calloc(stack).sType$Default().pNext(supported.address());
-                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
-                boolean nonUniform = supported.shaderSampledImageArrayNonUniformIndexing();
-                boolean runtimeArray = supported.runtimeDescriptorArray();
-                boolean afterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
-                boolean partiallyBound = supported.descriptorBindingPartiallyBound();
-                // Writing a new array index while earlier frames that bound the set are still executing is only legal
-                // with UPDATE_UNUSED_WHILE_PENDING; the model instances register textures at exactly that time.
-                boolean unusedWhilePending = supported.descriptorBindingUpdateUnusedWhilePending();
-                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound
-                        && unusedWhilePending;
-                if (this.textureArraySupported) {
+                // The query itself moved above the Vulkan 1.2 block (arch-phase1-fix,
+                // VUID-VkDeviceCreateInfo-pNext-02830). Only a pre-1.2 device still gets the
+                // standalone struct: on 1.2+ the fields were folded into the single
+                // VkPhysicalDeviceVulkan12Features above, and a second struct is the exact
+                // chain the validation layer rejects.
+                if (!askIndirectCount && this.textureArraySupported) {
                     indexingFeatures = org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack)
                             .sType$Default()
                             .shaderSampledImageArrayNonUniformIndexing(true)
@@ -3845,7 +3936,7 @@ public final class VulkanContext {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanContext:883")) {
                 throw new IllegalStateException("injected allocation failure: VulkanContext:883");
             }
-            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle, "contextStaging"),
                     "vkAllocateMemory(staging, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             check(vkBindBufferMemory(this.device, buffer, memory, 0), "vkBindBufferMemory(staging)");
@@ -4067,7 +4158,7 @@ public final class VulkanContext {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
-            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle, "uploadRing"),
                     "vkAllocateMemory(upload ring, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             if (vkBindBufferMemory(this.device, buffer, memory, 0L) != VK_SUCCESS) {

@@ -127,7 +127,7 @@ final class VulkanOpaqueCopy {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size()).memoryTypeIndex(this.context.memoryTypeIndex(
                             requirements.memoryTypeBits(), VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "opaque-copy image"));
-            check(VulkanContext.allocateMemory(device, allocate, handle), "allocate opaque-copy image");
+            check(VulkanContext.allocateMemory(device, allocate, handle, "opaqueCopy"), "allocate opaque-copy image");
             next.memory = handle.get(0);
             check(vkBindImageMemory(device, next.image, next.memory, 0), "bind opaque-copy image");
             VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default().image(next.image)

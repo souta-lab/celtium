@@ -1809,12 +1809,21 @@ public final class TerrainRenderer {
                     pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
                             meshResources.sectionFirstColor, meshResources));
                     if (this.terrainAHost != null
-                            && vertexStride() == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
+                            && meshEntry.getKey().vertexType().getVertexFormat().getStride()
+                                    == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
                         registerTierA(build, meshEntry.getKey(), mesh);
                     } else if (this.terrainAHost != null) {
                         // Stride gate (order (i)): this section never reaches
                         // registerTierA while the stride differs — count it as
                         // a permanent leak instead of leaving it invisible.
+                        // The comparison is against the PASS' own vertex format
+                        // (arch-phase1-fix): the gate used to compare
+                        // vertexStride(), which the backend sets to the
+                        // configuration's common (primitive-aligned LCM) stride
+                        // — 64 for a TerrainVertex16-only configuration — so it
+                        // never equalled 16, registerTierA was never called, the
+                        // resident store stayed empty and Tier-A drew nothing
+                        // (Phase 1 gate leg 2026-11-25: no terrain at all).
                         this.terrainAHost.noteStrideGate(build.render.getChunkX(), build.render.getChunkY(),
                                 build.render.getChunkZ(), meshEntry.getKey());
                     }

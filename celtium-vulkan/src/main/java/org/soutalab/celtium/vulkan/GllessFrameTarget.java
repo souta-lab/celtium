@@ -351,7 +351,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(findMemoryType(requirements.memoryTypeBits()));
-            if (VulkanContext.allocateMemory(device, allocate, handle) != VK_SUCCESS) {
+            if (VulkanContext.allocateMemory(device, allocate, handle, "frameTarget") != VK_SUCCESS) {
                 throw new IllegalStateException("vkAllocateMemory(glless " + (color ? "colour" : "depth") + ") failed");
             }
             memory = handle.get(0);

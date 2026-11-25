@@ -222,7 +222,7 @@ public final class VulkanHostBuffer {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanHostBuffer:126")) {
                 throw new IllegalStateException("injected allocation failure: VulkanHostBuffer:126");
             }
-            check(VulkanContext.allocateMemory(device, allocate, memoryHandle), "vkAllocateMemory(host buffer, "
+            check(VulkanContext.allocateMemory(device, allocate, memoryHandle, "hostBuffer"), "vkAllocateMemory(host buffer, "
                     + requirements.size() + " bytes, memory type " + memoryType + ")");
             this.memory = memoryHandle.get(0);
             check(vkBindBufferMemory(device, this.handle, this.memory, 0L), "vkBindBufferMemory(host buffer)");

@@ -281,7 +281,7 @@ public final class SlabAllocator {
                     .allocationSize(sizeBytes)
                     .memoryTypeIndex(this.memoryTypeIndex);
             LongBuffer memoryHandle = stack.mallocLong(1);
-            check(VulkanContext.allocateMemory(device, allocateInfo, memoryHandle),
+            check(VulkanContext.allocateMemory(device, allocateInfo, memoryHandle, "slab"),
                     "vkAllocateMemory(slab of " + sizeBytes + " bytes, memory type " + this.memoryTypeIndex + ")");
             memory = memoryHandle.get(0);
             if (this.hostVisible) {
