@@ -204,9 +204,11 @@ public final class VulkanHostBuffer {
         }
         if (this.allocation != null) {
             // The slab range goes back as a deferred release keyed on the context's current slab release
-            // value: a frame still in flight may read this buffer, and the range may only be reused once a
-            // retired-buffer drain has completed after the release. There is no vkFreeMemory - the slab is
-            // not this buffer's to free, and no vkUnmapMemory - the slab stays mapped for its whole life.
+            // value: a frame still in flight may read this buffer, and the range may only be reused once
+            // the completion currency passes the keyed value (the frame timeline's counter on a timeline
+            // device, a later retired-buffer drain where there is none). There is no vkFreeMemory - the
+            // slab is not this buffer's to free, and no vkUnmapMemory - the slab stays mapped for its whole
+            // life.
             SlabAllocator.SlabAllocation oldAllocation = this.allocation;
             this.allocation = null;
             oldAllocation.owner().release(oldAllocation,

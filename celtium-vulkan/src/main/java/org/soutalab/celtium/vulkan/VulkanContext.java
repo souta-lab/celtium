@@ -4624,14 +4624,17 @@ public final class VulkanContext {
     /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}: (handle, allocation). */
     private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
     /**
-     * The slab completion currency on this branch: a serial counting retired-buffer drains. A deferred slab
-     * release is keyed on the serial current when the release is recorded
-     * ({@link #celtium$slabReleaseValue()}); it becomes reusable once a later drain has completed, because the
-     * drain's only call site runs where the queue is idle - the GPU has finished everything submitted - which
-     * is the completion fact a release needs. {@link #celtium$slabCompletedValue()} is the value collection
-     * may use: one behind the release serial, so a range is never collected by the same drain cycle that
-     * recorded it. The Stage 2 integration re-keys this currency on the frame timeline (the ledgers take a
-     * monotone {@code long} and do not change).
+     * The fallback slab completion currency, for a device without a frame timeline. The primary currency is
+     * the frame timeline (Stage 2): a deferred slab release is keyed on the timeline's last allocated value
+     * when the release is recorded ({@link #celtium$slabReleaseValue()}), and collection reads the timeline's
+     * GPU-confirmed counter ({@link #celtium$slabCompletedValue()}). A device that did not report
+     * {@code timelineSemaphore} has no timeline - Stage 2 keeps the fence behaviour there - so this serial
+     * counts retired-buffer drains instead: a release keyed on the serial becomes reusable once a later drain
+     * has completed, because the drain's only call site runs where the queue is idle - the GPU has finished
+     * everything submitted - which is the completion fact a release needs. Collection uses one behind the
+     * release serial, so a range is never collected by the same drain cycle that recorded it. Which currency
+     * a context runs on is fixed at device creation (the timeline is born with the device); the ledgers take
+     * a monotone {@code long} and do not change either way.
      */
     private long slabReleaseSerial = 1L;
 
@@ -4683,10 +4686,10 @@ public final class VulkanContext {
         }
         this.retiredBuffers.clear();
         // The slab form: destroy the buffer, then hand the sub-allocation back to its pool as a deferred
-        // release keyed on the current drain serial. This drain point is where nothing can be recording and
-        // the queue is idle, and the release itself only becomes reusable once a later drain has completed -
-        // the same completion fact the raw path's vkFreeMemory here relied on, stated through the serial
-        // instead (see slabReleaseSerial).
+        // release keyed on the current completion currency. This drain point is where nothing can be
+        // recording and the queue is idle, and the release itself only becomes reusable once the currency
+        // passes the keyed value - the same completion fact the raw path's vkFreeMemory here relied on,
+        // stated through the currency instead (see slabReleaseSerial).
         for (int i = 0; i < this.retiredSlabBuffers.size(); i++) {
             Object[] entry = this.retiredSlabBuffers.get(i);
             long handle = ((Long) entry[0]).longValue();
@@ -4702,7 +4705,9 @@ public final class VulkanContext {
         this.retiredBuffersOutstanding = 0;
         // The drain ran under the caller's queue-idle guarantee, so every release keyed on the current
         // serial is provably GPU-dead from here on: advancing the serial is what lets the next collection
-        // (the next drain, or an allocator's collect-on-allocate retry) reuse those ranges.
+        // (the next drain, or an allocator's collect-on-allocate retry) reuse those ranges. On a timeline
+        // device the serial is never read - the timeline counter is the currency - and this advance is
+        // inert bookkeeping for the fallback path only.
         this.slabReleaseSerial++;
         return freed;
     }
@@ -4831,25 +4836,29 @@ public final class VulkanContext {
     }
 
     /**
-     * {@return the value a deferred slab release recorded now must be keyed on}: the current drain serial.
-     * The release becomes collectable once a retired-buffer drain has completed after this call (see
+     * {@return the value a deferred slab release recorded now must be keyed on}: on a timeline device, the
+     * frame timeline's last allocated value - every submission that could still reference the released range
+     * carries a value at or below it, and the timeline counter passing it is exactly the fact that those
+     * submissions have completed. On a device without a timeline, the current drain serial (see
      * {@link #slabReleaseSerial}).
      */
     public long celtium$slabReleaseValue() {
-        return this.slabReleaseSerial;
+        return this.frameTimeline != null ? this.frameTimeline.lastAllocatedValue() : this.slabReleaseSerial;
     }
 
     /**
-     * {@return the value slab collection may use now}: one behind the release serial, so a release is only
-     * collected after a drain that ran later than the release's own recording has completed.
+     * {@return the value slab collection may use now}: on a timeline device, the timeline's GPU-confirmed
+     * counter, so a release is only collected once the GPU has completed the submissions it was keyed
+     * against. On a device without a timeline, one behind the release serial, so a release is only collected
+     * after a drain that ran later than the release's own recording has completed.
      */
     public long celtium$slabCompletedValue() {
-        return this.slabReleaseSerial - 1L;
+        return this.frameTimeline != null ? this.frameTimeline.completedValue() : this.slabReleaseSerial - 1L;
     }
 
     /**
-     * Makes slab ranges whose deferred releases the drain serial has already passed reusable again, by
-     * asking every pool to collect against {@link #celtium$slabCompletedValue()}. Two drive points: the
+     * Makes slab ranges whose deferred releases the completion currency has already passed reusable again,
+     * by asking every pool to collect against {@link #celtium$slabCompletedValue()}. Two drive points: the
      * retired buffer drain ({@link #celtium$destroyRetiredBuffers()}) and the allocators' collect-on-allocate
      * retry, because collection that only runs when a retired buffer happens to drain lets per-frame staging
      * churn hold whole slabs hostage for as long as the drain stays uncalled.

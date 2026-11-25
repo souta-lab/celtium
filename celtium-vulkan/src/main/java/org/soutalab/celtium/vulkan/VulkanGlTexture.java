@@ -3307,9 +3307,10 @@ public final class VulkanGlTexture {
         }
         if (imageAllocation != null) {
             // The slab range goes back as a deferred release keyed on the context's current slab release
-            // value: a frame still in flight may sample this image, and the range may only be reused once a
-            // retired-buffer drain has completed after the release. There is no vkFreeMemory - the slab is
-            // not this texture's to free (the VulkanBuffer/VulkanHostBuffer release shape).
+            // value: a frame still in flight may sample this image, and the range may only be reused once
+            // the completion currency passes the keyed value (the frame timeline's counter on a timeline
+            // device, a later retired-buffer drain where there is none). There is no vkFreeMemory - the
+            // slab is not this texture's to free (the VulkanBuffer/VulkanHostBuffer release shape).
             SlabAllocator.SlabAllocation retiredAllocation = imageAllocation;
             imageAllocation = null;
             retiredAllocation.owner().release(retiredAllocation,

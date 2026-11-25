@@ -62,11 +62,13 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * <b>Release:</b> there is deliberately no immediate release. {@link #release(SlabAllocation, long)} defers to a
  * completion value through the ledger, because a buffer or image bound from a slab may still be read by an
  * in-flight submission; {@link #collectCompleted(long)} is what makes the bytes reusable, once the completion
- * currency proves the GPU is done with them. On this branch the currency is the context's slab drain serial
- * ({@link VulkanContext#celtium$slabReleaseValue()} / {@link VulkanContext#celtium$slabCompletedValue()}): a
- * release keyed on serial {@code S} becomes reusable once a retired-buffer drain has completed with the queue
- * idle after the release was recorded. The ledger itself is currency-agnostic (a monotone {@code long}), so the
- * Stage 2 integration can re-key releases on the frame timeline without touching this class.
+ * currency proves the GPU is done with them. The currency is the context's slab completion value
+ * ({@link VulkanContext#celtium$slabReleaseValue()} / {@link VulkanContext#celtium$slabCompletedValue()}): on a
+ * timeline device it is the frame timeline - a release keyed on value {@code V} becomes reusable once the
+ * timeline's GPU-confirmed counter passes {@code V} - and where the device has no timeline it is the drain
+ * serial, under which a release keyed on serial {@code S} becomes reusable once a retired-buffer drain has
+ * completed with the queue idle after the release was recorded. The ledger itself is currency-agnostic (a
+ * monotone {@code long}), so the re-keying touched only the context's two value methods, not this class.
  * <p>
  * <b>Pool naming and OOM identification (r10 follow-up):</b> every allocator carries a {@link #name()} given by
  * its factory (the context pools are {@code deviceLocal}, {@code hostVisible} and {@code deviceLocalImage} per
