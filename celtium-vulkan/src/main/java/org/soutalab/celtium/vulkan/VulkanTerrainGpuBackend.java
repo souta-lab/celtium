@@ -12777,7 +12777,20 @@ this.frameBufferOpen = false;
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing is batched.
-            this.context.celtium$flushBatchedSubmits();
+            // S5-D1 (change B): while the frame target holds a live present borrow and the present is not
+            // skipped, this flush is held instead - the batch stays pending and the direct present's own
+            // flush submits the frame's entries and the final transition as one vkQueueSubmit. The two
+            // calls are consecutive in the same mixin hook, so nothing observes the batch in between; a
+            // present that is then gated off leaves the batch for the next natural flush point, and every
+            // observer of a submission flushes first. Swapchain destruction flushes before it drains
+            // (VulkanSwapchain.delete), so a held batch never outlives the images it names. The retired
+            // cleanups below keep their order: their firing is sequence-gated, not flush-gated.
+            boolean holdBatchForPresent = !SKIP_PRESENT
+                    && this.frameTarget instanceof GllessFrameTarget gllessTarget
+                    && gllessTarget.hasLivePresentBorrow();
+            if (!holdBatchForPresent) {
+                this.context.celtium$flushBatchedSubmits();
+            }
             // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
             // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
             // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline

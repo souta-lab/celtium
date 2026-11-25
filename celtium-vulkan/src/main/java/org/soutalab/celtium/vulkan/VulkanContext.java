@@ -381,6 +381,15 @@ public final class VulkanContext {
          */
         private int frameSlot = -1;
         /**
+         * Marks a buffer this context does not own (S5-D1): the direct present's pre-recorded transition,
+         * allocated from the swapchain's own command pool and persistent for that pool's whole life.
+         * Reclaim keeps the entry's completion bookkeeping (the batch count, the shared fence) but never
+         * recycles the buffer, and the failure paths never quarantine it - freeing another pool's buffer
+         * is VUID-vkFreeCommandBuffers-pCommandBuffers-00048, and a use-after-free once the owning pool
+         * is destroyed.
+         */
+        private boolean externalBuffer;
+        /**
          * Runs at reclaim (and at batched-submit failure) with the lost-device flag, exactly once, instead of the
          * pool free: the caller's per-slot confirmation - the thing the armed slot fence used to stand for.
          */
@@ -1101,6 +1110,20 @@ public final class VulkanContext {
         QUARANTINED_COUNTS[1] = this.quarantinedFences.size();
     }
 
+    /**
+     * Holds only a fence whose submission may still be executing (S5-D1): an external entry's command
+     * buffer belongs to its owner's pool, and quarantining it would free another pool's buffer at
+     * {@link #delete()} - VUID-vkFreeCommandBuffers-pCommandBuffers-00048, and a use-after-free once
+     * the owning pool is destroyed first.
+     */
+    private void quarantineFence(long fence) {
+        if (fence != VK_NULL_HANDLE) {
+            this.quarantinedFences.add(Long.valueOf(fence));
+        }
+        QUARANTINED_COUNTS[0] = this.quarantinedCommandBuffers.size();
+        QUARANTINED_COUNTS[1] = this.quarantinedFences.size();
+    }
+
     /** {@return the quarantined command buffers and fences still held, for the report}. */
     public static int[] quarantinedResourceCounts() {
         return new int[] {QUARANTINED_COUNTS[0], QUARANTINED_COUNTS[1]};
@@ -1276,6 +1299,7 @@ public final class VulkanContext {
         check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer (deferred)");
         DeferredSubmit entry = takeDeferredEntry();
         entry.commandBuffer = commandBuffer;
+        entry.externalBuffer = false;
         entry.uploadSlotMask = uploadSlotMask;
         entry.batch = celtium$currentBatch();
         entry.batch.pending++;
@@ -1314,6 +1338,7 @@ public final class VulkanContext {
         requireUsable();
         DeferredSubmit entry = takeDeferredEntry();
         entry.commandBuffer = commandBuffer;
+        entry.externalBuffer = false;
         entry.batch = celtium$currentBatch();
         entry.batch.pending++;
         entry.fence = entry.batch.fence;
@@ -1329,6 +1354,94 @@ public final class VulkanContext {
             this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
         }
         return entry.fence;
+    }
+
+    /**
+     * Queues an ALREADY-ENDED command buffer this context does not own into the batched-submit list,
+     * carrying the caller's wait/signal semaphores - the direct present's pre-recorded final transition
+     * (S5-D1). {@return whether the entry joined a batch that already held entries}, the caller's
+     * census of whether the transition rode the frame's own submission or flushed alone.
+     * <p>
+     * The buffer is never ended here (its owner recorded it once, with SIMULTANEOUS_USE), never
+     * recycled at reclaim and never quarantined on failure: it belongs to the owner's pool for that
+     * pool's whole life, and the deferred machinery only borrows it for one submission. The entry
+     * otherwise behaves exactly like a frame entry: it joins the current batch, shares the batch
+     * fence and is confirmed by the same poll, and its completion bookkeeping runs unchanged.
+     * <p>
+     * Compact contract: null semaphore handles are dropped here, the same rule
+     * {@code VulkanSwapchain.submitPreRecorded} applied - {@link #submitChunk} passes the arrays
+     * through untouched, so a {@code VK_NULL_HANDLE} wait would reach the driver. A wait list that
+     * compacts to nothing is passed on as {@code null}/{@code null}.
+     * <p>
+     * Render thread only.
+     */
+    public boolean celtium$submitDeferredExternal(VkCommandBuffer commandBuffer, long[] waitSemaphores,
+            int[] waitStages, long[] signalSemaphores) {
+        if (commandBuffer == null) {
+            throw new IllegalArgumentException("commandBuffer must not be null");
+        }
+        requireUsable();
+        long[] waits = null;
+        int[] stages = null;
+        if (waitSemaphores != null) {
+            int kept = 0;
+            for (long semaphore : waitSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    kept++;
+                }
+            }
+            if (kept > 0) {
+                waits = new long[kept];
+                stages = new int[kept];
+                int slot = 0;
+                for (int i = 0; i < waitSemaphores.length; i++) {
+                    if (waitSemaphores[i] != VK_NULL_HANDLE) {
+                        waits[slot] = waitSemaphores[i];
+                        stages[slot] = waitStages != null && i < waitStages.length
+                                ? waitStages[i] : org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                        slot++;
+                    }
+                }
+            }
+        }
+        long[] signals = null;
+        if (signalSemaphores != null) {
+            int kept = 0;
+            for (long semaphore : signalSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    kept++;
+                }
+            }
+            if (kept > 0) {
+                signals = new long[kept];
+                int slot = 0;
+                for (long semaphore : signalSemaphores) {
+                    if (semaphore != VK_NULL_HANDLE) {
+                        signals[slot++] = semaphore;
+                    }
+                }
+            }
+        }
+        boolean joined = !this.pendingBatchedSubmits.isEmpty();
+        DeferredSubmit entry = takeDeferredEntry();
+        entry.commandBuffer = commandBuffer;
+        entry.externalBuffer = true;
+        entry.uploadSlotMask = 0L;
+        entry.frameSlot = -1;
+        entry.slotReclaim = null;
+        entry.waitSemaphores = waits;
+        entry.waitStages = stages;
+        entry.signalSemaphores = signals;
+        entry.batch = celtium$currentBatch();
+        entry.batch.pending++;
+        entry.fence = entry.batch.fence;
+        this.pendingBatchedSubmits.add(entry);
+        this.deferredSubmits.add(entry);
+        this.deferredSubmitsOutstanding++;
+        if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
+            this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
+        }
+        return joined;
     }
 
     /**
@@ -1349,9 +1462,12 @@ public final class VulkanContext {
             if (entry.slotReclaim != null) {
                 entry.slotReclaim.accept(Boolean.valueOf(lostDevice));
             }
-        } else {
+        } else if (!entry.externalBuffer) {
             celtium$recycleCommandBuffer(entry.commandBuffer);
         }
+        // An external buffer (S5-D1) is not recycled either: its owner's pool keeps it for the pool's
+        // whole life and this entry only borrowed it for one submission. The batch count and fence
+        // handling below are the entry's completion bookkeeping and run unchanged.
         entry.commandBuffer = null;
         entry.slotReclaim = null;
         if (entry.batch != null) {
@@ -1413,6 +1529,7 @@ public final class VulkanContext {
         entry.batch = null;
         entry.slotReclaim = null;
         entry.frameSlot = -1;
+        entry.externalBuffer = false;
         if (this.deferredEntryPool.size() < DEFERRED_ENTRY_POOL_CAP) {
             this.deferredEntryPool.addLast(entry);
         }
@@ -1493,7 +1610,9 @@ public final class VulkanContext {
             // Some chunks may already be executing, and this failure might be
             // VK_ERROR_DEVICE_LOST. Freeing their buffers/fence is unsafe.
             for (DeferredSubmit entry : entries) {
-                if (entry.commandBuffer != null) {
+                // An external entry (S5-D1) carries no GL layout recording - its owner recorded the
+                // transitions itself - so there is nothing to abandon for it.
+                if (entry.commandBuffer != null && !entry.externalBuffer) {
                     VulkanGlTexture.abandonLayoutRecording(entry.commandBuffer,
                             "the batched submit failed; the recording is dropped with the batch");
                 }
@@ -1510,7 +1629,8 @@ public final class VulkanContext {
         // second commit is a no-op; one-shot entries queued through celtium$submitDeferred are committed here,
         // at the one point their submission is known accepted (their recording was opened in beginCommands).
         for (DeferredSubmit entry : entries) {
-            if (entry.commandBuffer != null) {
+            // External entries (S5-D1) are skipped for the same reason as on the failure path above.
+            if (entry.commandBuffer != null && !entry.externalBuffer) {
                 VulkanGlTexture.commitLayoutRecording(entry.commandBuffer);
             }
         }
@@ -1715,7 +1835,9 @@ public final class VulkanContext {
         for (DeferredSubmit entry : entries) {
             this.deferredSubmits.remove(entry);
             this.deferredSubmitsOutstanding--;
-            if (entry.commandBuffer != null && entry.frameSlot < 0) {
+            // External entries (S5-D1) are excluded: their buffer is the owner's pool's, and the batch
+            // fence above already carries the quarantine for the whole submission.
+            if (entry.commandBuffer != null && entry.frameSlot < 0 && !entry.externalBuffer) {
                 this.quarantinedCommandBuffers.add(entry.commandBuffer);
             }
             entry.commandBuffer = null;
@@ -1982,7 +2104,13 @@ public final class VulkanContext {
         this.usable = false;
         this.deferredSubmits.remove(entry);
         this.deferredSubmitsOutstanding--;
-        quarantine(entry.commandBuffer, entry.fence);
+        if (entry.externalBuffer) {
+            // S5-D1: only the fence is quarantined - the buffer is the owner's pool's and must never
+            // reach the quarantine set this context frees at teardown.
+            quarantineFence(entry.fence);
+        } else {
+            quarantine(entry.commandBuffer, entry.fence);
+        }
         if (entry.batch != null) {
             // This entry never reclaims, so its share of the batch count leaves with it: the count then names
             // only entries that can still reclaim. The fence itself stays the quarantine set's property -
