@@ -137,8 +137,19 @@ public final class ChunkBuildBuffers {
             mergedIndexBuffer = null;
         }
 
+        // The correction-factor side stream follows the same facing order as the merged
+        // vertex buffer above, so factor i belongs to quad i of the merged data. Builders
+        // whose encoder does not capture a side stream contribute nothing and the result
+        // stays null.
+        int[] rdhFactors = builder.rdhFactors(facingsToUpload);
+        if (rdhFactors != null && rdhFactors.length != vertexCount / 4) {
+            // A capture that disagrees with the merged quad count cannot be trusted to
+            // line up with the vertices; drop it rather than ship a shifted stream.
+            rdhFactors = null;
+        }
+
         // Uncompacted: the consumer needs the sorting level before it throws away the data behind it.
-        return new BuiltSectionMeshParts(mergedBuffer, mergedIndexBuffer, sortState, vertexRanges);
+        return new BuiltSectionMeshParts(mergedBuffer, mergedIndexBuffer, sortState, vertexRanges, rdhFactors);
     }
 
     public void destroy() {
