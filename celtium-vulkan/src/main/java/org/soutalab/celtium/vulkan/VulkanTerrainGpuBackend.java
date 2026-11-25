@@ -1568,6 +1568,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // that has no other name; it gets split further once it is visible.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPrep");
         boolean terrainPrepClosed = false;
+        if (NullRenderer.ENABLED) {
+            // Null-renderer measurement mode (Stage 0): the pass is refused at the same point as
+            // the isolation switch below, so the frame keeps every bracket and handoff and only
+            // the draw work is gone. See NullRenderer for what the mode does and does not stop.
+            NullRenderer.noteTerrainPassDropped();
+            return;
+        }
         if (REFUSE_TERRAIN_PASS) {
             // Isolation switch: with the terrain pass out of the frame, whatever is still wrong in the picture
             // belongs to the immediate path, and the other way round.
@@ -9328,6 +9335,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // through this entry, so the commit is counted here, once per submission.
         org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
                 .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.IMMEDIATE_RUN);
+        if (NullRenderer.ENABLED) {
+            // Null-renderer measurement mode (Stage 0): the batch is accepted and dropped. The
+            // vertex memory is the caller's scratch, so nothing is owed for it; see NullRenderer.
+            NullRenderer.noteImmediateBatchDropped(vertexCount);
+            return true;
+        }
         return submitGeometryBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode, null);
     }
 
@@ -9343,6 +9356,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
     public boolean submitRetainedGeometry(NativeGeometryBuffer geometry, int drawMode) {
         if (geometry.vertexCount() == 0) {
+            return true;
+        }
+        if (NullRenderer.ENABLED) {
+            // Null-renderer measurement mode (Stage 0): accepted and dropped. Retained geometry
+            // is pooled and found by id, not consumed by the submit, so nothing is owed; see
+            // NullRenderer.
+            NullRenderer.noteRetainedBatchDropped(geometry.vertexCount());
             return true;
         }
         return submitGeometryBatch(null, geometry.stride(), geometry.formatId(), geometry.address(),
