@@ -14271,23 +14271,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * One prepared-material cache slot: the six inputs the answer depends on, plus the answer.
-     * <p>
-     * A plain mutable holder rather than a record: the table is direct-mapped and a slot is overwritten in place, so
-     * the point is that the six comparisons and the value share one object instead of seven arrays. The fields are
-     * package-private and the class is static and final so the JIT sees plain field loads with no accessor calls.
-     */
-    static final class PrepareCacheEntry {
-        Object pass;
-        int format;
-        int textureId;
-        long key;
-        long textureKey;
-        long lightKey;
-        PreparedImmediate value;
-    }
-
-    /**
      * Whether a slot answers exactly this question - all six inputs equal, and a value to return.
      * <p>
      * Extracted so the predicate can be exercised without a device, the same shape as
