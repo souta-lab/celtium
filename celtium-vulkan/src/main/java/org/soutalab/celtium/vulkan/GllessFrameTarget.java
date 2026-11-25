@@ -178,26 +178,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private boolean neverCleared = true;
 
     /**
-     * The clear the game issued while <em>its own main framebuffer</em> was bound, latched by
-     * {@code VulkanTerrainGpuBackend.bindFramebuffer} at the binding change that ends it.
-     * <p>
-     * The game clears three different framebuffers and only one of them is this image: its own main framebuffer is
-     * the delivered frame, the entity-outline framebuffer is {@link #chainPairs} and the default framebuffer is
-     * {@link #defaultPair}. The stub records a clear's buffer mask and the colour it would use, but neither says
-     * <em>which</em> framebuffer was bound when the game asked for it, and the request is consumed at the next
-     * frame's acquire - by which time the previous frame's last {@code glClearColor} is the outline framebuffer's
-     * transparent black. Applying that request here cleared the whole delivered image black once per glow frame, and
-     * the sky kept that black wherever nothing drew over it (measured: {@code presentedBlackFraction=0.18984}, run
-     * {@code glow688}). The latch is taken where both facts are still true, and is the only clear this image is
-     * cleared with while one is held.
+     * The clear the game issued while its own main framebuffer was bound, latched for the delivered
+     * image. The latch's state and rules live in {@link org.soutalab.celtium.vulkan.hal.GameClearLatch};
+     * this target only holds it and applies what it holds.
      */
-    private boolean gameClearLatched;
-    private int gameClearLatchedMask;
-    private float gameClearLatchedRed;
-    private float gameClearLatchedGreen;
-    private float gameClearLatchedBlue;
-    private float gameClearLatchedAlpha;
-    private double gameClearLatchedDepth = 1.0D;
+    private final org.soutalab.celtium.vulkan.hal.GameClearLatch gameClearLatch =
+            new org.soutalab.celtium.vulkan.hal.GameClearLatch();
     /**
      * GLSM stage 2 (S2-2): the shared frame state this target's frame latch moves into on the
      * stage-2 route, attached by the backend at creation. The frame identity is resolved
@@ -622,13 +608,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.neverCleared = this.neverCleared;
         snapshot.colorImageLayout = this.colorImageLayout;
         snapshot.depthImageLayout = this.depthImageLayout;
-        snapshot.gameClearLatched = this.gameClearLatched;
-        snapshot.gameClearLatchedMask = this.gameClearLatchedMask;
-        snapshot.latchedRed = this.gameClearLatchedRed;
-        snapshot.latchedGreen = this.gameClearLatchedGreen;
-        snapshot.latchedBlue = this.gameClearLatchedBlue;
-        snapshot.latchedAlpha = this.gameClearLatchedAlpha;
-        snapshot.latchedDepth = this.gameClearLatchedDepth;
+        snapshot.gameClearLatched = this.gameClearLatch.latched();
+        snapshot.gameClearLatchedMask = this.gameClearLatch.mask();
+        snapshot.latchedRed = this.gameClearLatch.red();
+        snapshot.latchedGreen = this.gameClearLatch.green();
+        snapshot.latchedBlue = this.gameClearLatch.blue();
+        snapshot.latchedAlpha = this.gameClearLatch.alpha();
+        snapshot.latchedDepth = this.gameClearLatch.depth();
         if (GlsmFrameState.ENABLED && this.glsmFrameState != null) {
             snapshot.glsmLatched = this.glsmFrameState.clearState()
                     .peek(this.glsmFrameIdentity.getAsLong());
@@ -672,13 +658,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.neverCleared = snapshot.neverCleared;
         this.colorImageLayout = snapshot.colorImageLayout;
         this.depthImageLayout = snapshot.depthImageLayout;
-        this.gameClearLatched = snapshot.gameClearLatched;
-        this.gameClearLatchedMask = snapshot.gameClearLatchedMask;
-        this.gameClearLatchedRed = snapshot.latchedRed;
-        this.gameClearLatchedGreen = snapshot.latchedGreen;
-        this.gameClearLatchedBlue = snapshot.latchedBlue;
-        this.gameClearLatchedAlpha = snapshot.latchedAlpha;
-        this.gameClearLatchedDepth = snapshot.latchedDepth;
+        this.gameClearLatch.restore(snapshot.gameClearLatched, snapshot.gameClearLatchedMask,
+                snapshot.latchedRed, snapshot.latchedGreen, snapshot.latchedBlue, snapshot.latchedAlpha,
+                snapshot.latchedDepth);
         if (snapshot.glsmSnapshot && this.glsmFrameState != null) {
             this.glsmFrameState.clearState().restore(this.glsmFrameIdentity.getAsLong(),
                     snapshot.glsmLatched);
@@ -717,18 +699,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * @param depth the depth value in effect when the clear was issued
      */
     public void noteGameClear(int mask, float red, float green, float blue, float alpha, double depth) {
-        this.gameClearLatched = true;
-        this.gameClearLatchedMask = mask;
-        this.gameClearLatchedRed = red;
-        this.gameClearLatchedGreen = green;
-        this.gameClearLatchedBlue = blue;
-        this.gameClearLatchedAlpha = alpha;
-        this.gameClearLatchedDepth = depth;
+        this.gameClearLatch.note(mask, red, green, blue, alpha, depth);
     }
 
     /** {@return whether a clear addressed to this image is waiting to be recorded}, consuming nothing. */
     public boolean gameClearLatched() {
-        return this.gameClearLatched;
+        return this.gameClearLatch.latched();
     }
 
     /** Clears dropped because they named one of the game's own framebuffers rather than the delivered frame. */
@@ -776,7 +752,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             stateLatched = this.glsmFrameState.clearState()
                     .consume(this.glsmFrameIdentity.getAsLong());
         }
-        boolean latched = stateLatched != null || this.gameClearLatched;
+        boolean latched = stateLatched != null || this.gameClearLatch.latched();
         boolean initializeOnly = false;
         int clears;
         float latchedRed = 0.0F;
@@ -793,13 +769,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 latchedAlpha = stateLatched.alpha;
                 latchedDepth = stateLatched.depth;
             } else {
-                clears = this.gameClearLatchedMask;
-                latchedRed = this.gameClearLatchedRed;
-                latchedGreen = this.gameClearLatchedGreen;
-                latchedBlue = this.gameClearLatchedBlue;
-                latchedAlpha = this.gameClearLatchedAlpha;
-                latchedDepth = this.gameClearLatchedDepth;
-                this.gameClearLatched = false;
+                clears = this.gameClearLatch.mask();
+                latchedRed = this.gameClearLatch.red();
+                latchedGreen = this.gameClearLatch.green();
+                latchedBlue = this.gameClearLatch.blue();
+                latchedAlpha = this.gameClearLatch.alpha();
+                latchedDepth = this.gameClearLatch.depth();
+                this.gameClearLatch.consume();
             }
         } else {
             int owner = org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearDrawFbo();
