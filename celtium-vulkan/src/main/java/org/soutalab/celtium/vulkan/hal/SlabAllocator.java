@@ -59,10 +59,16 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * {@link VulkanContext#freeMemory(VkDevice, long)}, never the raw {@code vkAllocateMemory}/{@code vkFreeMemory}, so
  * each slab is counted in the context's live-allocation census - the count a frame pays for on submit.
  * <p>
- * <b>Release:</b> there is deliberately no immediate release. {@link #release(SlabAllocation, long)} defers to the
- * timeline through the ledger, because a buffer or image bound from a slab may still be read by an in-flight
- * submission; {@link #collectCompleted(long)} is what makes the bytes reusable, once the timeline proves the GPU is
- * done with them.
+ * <b>Release:</b> there is deliberately no immediate release. {@link #release(SlabAllocation, long)} defers to a
+ * completion value through the ledger, because a buffer or image bound from a slab may still be read by an
+ * in-flight submission; {@link #collectCompleted(long)} is what makes the bytes reusable, once the completion
+ * currency proves the GPU is done with them. The currency is the context's slab completion value
+ * ({@link VulkanContext#celtium$slabReleaseValue()} / {@link VulkanContext#celtium$slabCompletedValue()}): on a
+ * timeline device it is the frame timeline - a release keyed on value {@code V} becomes reusable once the
+ * timeline's GPU-confirmed counter passes {@code V} - and where the device has no timeline it is the drain
+ * serial, under which a release keyed on serial {@code S} becomes reusable once a retired-buffer drain has
+ * completed with the queue idle after the release was recorded. The ledger itself is currency-agnostic (a
+ * monotone {@code long}), so the re-keying touched only the context's two value methods, not this class.
  * <p>
  * <b>Pool naming and OOM identification (r10 follow-up):</b> every allocator carries a {@link #name()} given by
  * its factory (the context pools are {@code deviceLocal}, {@code hostVisible} and {@code deviceLocalImage} per
@@ -164,7 +170,7 @@ public final class SlabAllocator {
      * <p>
      * When the ledger refuses a request, the refusal is not reported at once: deferred releases nobody has
      * collected yet are the refusal's common cause (a per-frame staging churn can hold a whole pool hostage
-     * between two collection drive points), so one collection against the frame timeline's current completed
+     * between two collection drive points), so one collection against the context's current slab completed
      * value runs first and the ledger is retried. Only a refusal that survives that retry is real.
      *
      * @throws IllegalStateException when the ledger has no room and its slab cap has been reached, when the device
@@ -244,9 +250,9 @@ public final class SlabAllocator {
     }
 
     /**
-     * Releases an allocation once the timeline reaches {@code timelineValue}. The bytes stay reserved - and keep
-     * counting as used - until {@link #collectCompleted(long)} collects the release; see the class documentation for
-     * why reuse waits for the timeline rather than for this call.
+     * Releases an allocation once the completion currency reaches {@code timelineValue}. The bytes stay
+     * reserved - and keep counting as used - until {@link #collectCompleted(long)} collects the release; see the
+     * class documentation for why reuse waits for the completion proof rather than for this call.
      *
      * @throws IllegalStateException when the allocation was already released
      */
@@ -428,8 +434,8 @@ public final class SlabAllocator {
     /**
      * Serves one fixed-page-class request from the fixed pool, with the same collect-on-allocate retry the
      * ordinary path gets: a refusal whose cause is uncollected deferred releases is retried once after a
-     * collection against the frame timeline. Returns {@code null} when the fixed pool still cannot serve, and
-     * the caller falls back to the ordinary pool.
+     * collection against the context's slab completed value. Returns {@code null} when the fixed pool still
+     * cannot serve, and the caller falls back to the ordinary pool.
      */
     private SlabAllocation allocateFixedPage(long sizeBytes, long alignment) {
         FixedPagePool.Allocation fixed = this.fixedPool.allocate(sizeBytes, alignment);
@@ -449,36 +455,16 @@ public final class SlabAllocator {
         return new SlabAllocation(this, this.fixedSlabs.get(fixed.slab()), null, fixed);
     }
 
-    /**
-     * The frame timeline's completed value, or {@code null} when there is none to read.
-     * A-&gt;B overhaul note (Stage 4 ahead of Stage 2): on this branch the context has
-     * no frame timeline yet, so this returns {@code null} and the collect-on-allocate
-     * retries below defer collection to the next drive point — the same disposition
-     * the experimental tree takes for a null or unreadable timeline. Stage 2's landing
-     * (FrameTimeline on the context) restores the real read here.
-     */
-    private Long completedTimelineValue() {
-        return null;
-    }
-
     /** Collection half of the fixed-page retry; mirrors {@link #collectAndRetry} without the ledger retry. */
     private void collectAndRetryFixed() {
-        Long completed = completedTimelineValue();
-        if (completed == null) {
-            return;
-        }
-        collectCompleted(completed);
+        collectCompleted(this.context.celtium$slabCompletedValue());
     }
 
     private SlabPool.Allocation collectAndRetry(long sizeBytes, long alignment) {
         if (this.pool.pendingDeferredCount() == 0 && this.pendingOversized.isEmpty()) {
             return null;
         }
-        Long completed = completedTimelineValue();
-        if (completed == null) {
-            return null;
-        }
-        collectCompleted(completed);
+        collectCompleted(this.context.celtium$slabCompletedValue());
         return this.pool.allocate(sizeBytes, alignment);
     }
 
