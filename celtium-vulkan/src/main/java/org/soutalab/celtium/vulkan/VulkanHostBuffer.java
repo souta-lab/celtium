@@ -4,19 +4,32 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkDevice;
-import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 
 import java.nio.LongBuffer;
 
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
- * A host-visible, persistently mapped Vulkan buffer.
+ * A host-visible, persistently mapped Vulkan buffer, backed by a sub-allocation of a fixed host-visible
+ * slab (see {@link SlabAllocator}).
  * <p>
  * Some data is produced on the CPU for every frame and consumed by the GPU immediately - indirect draw commands in
  * particular - and copying it through a staging buffer would cost more than the draw itself. This class owns such a
  * buffer together with its mapped address, so callers write straight into device-visible memory.
+ * <p>
+ * The buffer owns no {@code VkDeviceMemory} of its own: its bytes live inside one of the context's 64 MiB
+ * host-visible slabs, bound at the sub-allocation's offset, and the mapped address is the slab's mapping plus
+ * that offset (slabs are mapped once for their whole life, so there is no per-buffer {@code vkMapMemory}).
+ * That is the new architecture's memory contract - the live {@code VkDeviceMemory} count is the slab count,
+ * not the buffer count. Before this migration every host buffer paid its own {@code vkAllocateMemory}
+ * (site {@code "hostBuffer"}), and the Phase 1 census leg (r3, 2026-11-25) measured that site at
+ * 16,641 of 16,711 live allocations (99.6%). The host-visible pools are capped at 8 ordinary slabs per
+ * memory type, so the live allocation count for all host buffers combined is bounded by that cap (plus one
+ * dedicated slab per live oversized &gt;64 MiB request, which the allocator frees once it empties), however
+ * many host buffers exist. Deletion hands the sub-allocation back to its pool as a timeline-deferred release
+ * instead of calling {@code vkFreeMemory}.
  * <p>
  * <b>Handles:</b> LWJGL represents non-dispatchable handles as plain {@code long} values, so {@link #buffer()}
  * returns the raw {@code VkBuffer}. Render thread only, like the rest of the backend.
@@ -28,6 +41,8 @@ public final class VulkanHostBuffer {
      * OPT-05's acceptance is "no vkAllocateMemory proportional to the group count after warm-up", and that is a
      * property of how many times this class allocated, not of a frame time. Counting it here - at the only place a
      * host buffer's memory is allocated - keeps the statement in the report instead of in a source reading.
+     * Since the slab migration this counts buffers, not device allocations: the device-allocation side is the
+     * {@code "slab"} site in {@link VulkanContext#memoryAllocationSummary()}.
      */
     private static final java.util.concurrent.atomic.AtomicLong ALLOCATIONS =
             new java.util.concurrent.atomic.AtomicLong();
@@ -62,7 +77,7 @@ public final class VulkanHostBuffer {
     private final boolean arenaOwned;
 
     private long handle = VK_NULL_HANDLE;
-    private long memory = VK_NULL_HANDLE;
+    private SlabAllocator.SlabAllocation allocation;
     private long mapped = 0L;
     private long size;
 
@@ -70,7 +85,7 @@ public final class VulkanHostBuffer {
      * @param context    owning context; the buffer must be deleted before the context is
      * @param sizeBytes  requested size, rounded up to a multiple of 4; must be positive
      * @param usageFlags extra {@code VK_BUFFER_USAGE_*} flags
-     * @throws IllegalStateException when the buffer, its memory, the binding or the mapping cannot be created, or
+     * @throws IllegalStateException when the buffer, its slab allocation or the binding cannot be created, or
      *                               when the device has no host-visible coherent memory type
      */
     public VulkanHostBuffer(VulkanContext context, long sizeBytes, int usageFlags) {
@@ -103,7 +118,7 @@ public final class VulkanHostBuffer {
         return this.handle;
     }
 
-    /** Address of the mapped memory, valid until the buffer is grown or deleted. */
+    /** Address of the mapped memory (slab mapping plus this allocation's offset), valid until grown or deleted. */
     public long mappedAddress() {
         return this.mapped;
     }
@@ -132,53 +147,70 @@ public final class VulkanHostBuffer {
                 ? requiredBytes : Math.max(requiredBytes, this.size * 2L);
         VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, grown, this.usageFlags,
                 this.arenaOwned);
-        if (this.size > 0L) {
+        if (this.size > 0L && this.mapped != 0L) {
             MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
         }
         // Growth keeps the old handles alive until no recording can name them, instead of deleting into a possibly
-        // open recording (same lifetime rule as the arena and the uniform buffer).
+        // open recording (same lifetime rule as the arena and the uniform buffer). The old slab range goes back
+        // through the same deferred list: the drain destroys the buffer and releases the sub-allocation keyed on
+        // the timeline, so no vkFreeMemory ever names slab memory.
         long oldHandle = this.handle;
-        long oldMemory = this.memory;
-        if (this.mapped != 0L) {
-            vkUnmapMemory(this.context.device(), oldMemory);
-            this.mapped = 0L;
-        }
-        this.handle = VK_NULL_HANDLE;
-        this.memory = VK_NULL_HANDLE;
-        noteDeleted();
-        this.context.celtium$retireBuffer(oldHandle, oldMemory);
+        SlabAllocator.SlabAllocation oldAllocation = this.allocation;
         this.handle = replacement.handle;
-        this.memory = replacement.memory;
+        this.allocation = replacement.allocation;
         this.mapped = replacement.mapped;
         this.size = replacement.size;
+        // The replacement object is only a vehicle: its ownership has moved into this buffer, so detach it
+        // before it goes out of scope (nothing ever calls its delete(), and it must not look live if it did).
+        replacement.handle = VK_NULL_HANDLE;
+        replacement.allocation = null;
+        replacement.mapped = 0L;
+        if (oldHandle != VK_NULL_HANDLE) {
+            noteDeleted();
+            this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "hostBuffer.growth");
+        }
     }
 
     public void delete() {
-        if (this.mapped != 0L) {
-            vkUnmapMemory(this.context.device(), this.memory);
-            this.mapped = 0L;
+        this.mapped = 0L;
+        if (this.handle == VK_NULL_HANDLE && this.allocation == null) {
+            return;
         }
-        if (this.handle == VK_NULL_HANDLE && this.memory == VK_NULL_HANDLE) {
+        VkDevice device = this.context.device();
+        if (device == null) {
+            // The context is gone: destroying the logical device freed its children implicitly, and the slab
+            // allocator's own teardown frees the slab memory. Nothing is left to release here.
+            this.handle = VK_NULL_HANDLE;
+            this.allocation = null;
             return;
         }
         if (this.context.celtium$recordingOpen()) {
-            // An open recording may name this buffer; defer the free to the context's list.
-            this.context.celtium$retireBuffer(this.handle, this.memory, "hostBuffer.delete");
-            if (this.handle != VK_NULL_HANDLE) {
+            // An open recording may name this buffer; defer the destroy and the slab release to the context's list.
+            long oldHandle = this.handle;
+            SlabAllocator.SlabAllocation oldAllocation = this.allocation;
+            this.handle = VK_NULL_HANDLE;
+            this.allocation = null;
+            if (oldHandle != VK_NULL_HANDLE) {
                 noteDeleted();
             }
-            this.handle = VK_NULL_HANDLE;
-            this.memory = VK_NULL_HANDLE;
+            this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "hostBuffer.delete");
             return;
         }
         if (this.handle != VK_NULL_HANDLE) {
-            vkDestroyBuffer(this.context.device(), this.handle, null);
+            vkDestroyBuffer(device, this.handle, null);
             this.handle = VK_NULL_HANDLE;
             noteDeleted();
         }
-        if (this.memory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(this.context.device(), this.memory);
-            this.memory = VK_NULL_HANDLE;
+        if (this.allocation != null) {
+            // The slab range goes back as a deferred release keyed on the newest timeline value: a frame still
+            // in flight may read this buffer, and the range may only be reused once the timeline passes every
+            // submission that could name it. There is no vkFreeMemory - the slab is not this buffer's to free,
+            // and no vkUnmapMemory - the slab stays mapped for its whole life.
+            SlabAllocator.SlabAllocation oldAllocation = this.allocation;
+            this.allocation = null;
+            oldAllocation.owner().release(oldAllocation,
+                    this.context.frameTimeline() == null ? 0L
+                            : this.context.frameTimeline().lastAllocatedValue());
         }
     }
 
@@ -187,10 +219,10 @@ public final class VulkanHostBuffer {
         try {
             celtium$create(device);
         } catch (RuntimeException | Error error) {
-            // The allocations happen in order - buffer, memory, bind, map - so a failure part way through leaves the
-            // earlier ones alive: the fault injection before vkAllocateMemory is exactly that case, a buffer created
-            // with no memory behind it. delete() releases whatever exists and is idempotent, so the partial state is
-            // released here rather than leaked (audit ownership gap).
+            // The allocations happen in order - buffer, slab allocation, bind - so a failure part way through
+            // leaves the earlier ones alive: the fault injection before the slab allocation is exactly that
+            // case, a buffer created with no memory behind it. delete() releases whatever exists and is
+            // idempotent, so the partial state is released here rather than leaked (audit ownership gap).
             delete();
             throw error;
         }
@@ -212,24 +244,17 @@ public final class VulkanHostBuffer {
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, this.handle, requirements);
-            int memoryType = this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    "a host-visible buffer of " + this.size + " bytes");
-            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(memoryType);
-            LongBuffer memoryHandle = stack.mallocLong(1);
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanHostBuffer:126")) {
                 throw new IllegalStateException("injected allocation failure: VulkanHostBuffer:126");
             }
-            check(VulkanContext.allocateMemory(device, allocate, memoryHandle, "hostBuffer"), "vkAllocateMemory(host buffer, "
-                    + requirements.size() + " bytes, memory type " + memoryType + ")");
-            this.memory = memoryHandle.get(0);
-            check(vkBindBufferMemory(device, this.handle, this.memory, 0L), "vkBindBufferMemory(host buffer)");
-
-            org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
-            check(vkMapMemory(device, this.memory, 0L, this.size, 0, pointer), "vkMapMemory(host buffer)");
-            this.mapped = pointer.get(0);
+            // The memory comes from the host-visible slab pool the context keys by the memory type this
+            // buffer's own requirement bits select, and the bind goes through the allocator, so the slab
+            // offset arithmetic lives in exactly one place - the same shape VulkanBuffer uses for its
+            // device-local slabs. The mapped address is the slab's persistent mapping plus the offset.
+            SlabAllocator allocator = this.context.celtium$hostVisibleSlabs(requirements.memoryTypeBits());
+            this.allocation = allocator.allocate(requirements.size(), requirements.alignment());
+            allocator.bindBuffer(this.handle, this.allocation);
+            this.mapped = allocator.mappedAddress(this.allocation);
         }
     }
 
