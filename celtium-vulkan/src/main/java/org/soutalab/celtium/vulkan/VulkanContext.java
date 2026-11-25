@@ -3163,8 +3163,8 @@ public final class VulkanContext {
      * Item 652, stage 0: an optional capability in the same shape as
      * {@link #drawIndirectCountEnabled()}. The gate is the pair of features, not the extension
      * alone, because the design's stage-2 form issues through task shaders; a device reporting
-     * only the mesh half keeps the indirect path as its only terrain route. Stage 1's proof path
-     * ({@code VulkanMeshTerrain}) gates on this answer, and so will stage 2.
+     * only the mesh half keeps the indirect path as its only terrain route. The Tier-B issuance
+     * stage ({@code org.soutalab.celtium.vulkan.meshb.MeshTerrainExecutor}) gates on this answer.
      */
     public boolean meshShaderEnabled() {
         return this.meshShaderSupported;

@@ -41,8 +41,7 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
  * The Tier-B terrain issuance stage of the new rendering architecture (design
  * sections 2.2 and 3, Phase 2): on mesh-shader hardware (RX 6400 / GTX 1650 Ti) this
  * executor replaces the Tier-A compute-cull + indirect-draw issuance for terrain, and
- * supersedes the stage-1/2 proof code ({@code VulkanMeshTerrain},
- * {@code VulkanMeshTaskDraw}, {@code VulkanMeshStage2Pipeline}), which read a per-draw
+ * supersedes the stage-1/2 proof code, which read a per-draw
  * table and re-issued indexed draws of the 24-byte format. Here the inputs are the
  * GPU-resident {@link MeshTerrainLayout} SectionDesc arrays (the canonical layout of
  * the Tier-A spec, one record per (section, pass), bucket counts packed in the record

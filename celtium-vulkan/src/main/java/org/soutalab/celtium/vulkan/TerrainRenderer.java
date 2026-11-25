@@ -457,10 +457,6 @@ public final class TerrainRenderer {
 
     /** Releases every terrain pipeline and forgets them, the remembered creation failures included. */
     void releasePipelines() {
-        if (this.meshTerrain != null) {
-            this.meshTerrain.release();
-            this.meshTerrain = null;
-        }
         for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
             if (pipeline != null) {
                 pipeline.delete();
@@ -699,12 +695,6 @@ public final class TerrainRenderer {
         return true;
     }
 
-    /**
-     * The mesh-shader proof path (item 652, stage 1). Created on the first armed offer;
-     * null in every build that never arms it, so the unarmed path allocates nothing.
-     */
-    private VulkanMeshTerrain meshTerrain;
-
     /** The index buffer the last successful {@link #prepareIndirectPackets} decided its batch reads. */
     private VulkanBuffer preparedIndexBuffer;
     /** The device draw-count limit the last successful preparation read, for the draw loop's clamping. */
@@ -894,36 +884,6 @@ public final class TerrainRenderer {
             this.indirectBatchNanos += System.nanoTime() - batchStarted;
             return false;
         }
-        // Item 652, stage 1: an unsorted batch may be drawn by the mesh proof path instead of
-        // joining the chain, when the flag arms it and the device was created with the mesh
-        // capability. The open run precedes this batch in the pass' order, so it is flushed
-        // before the mesh draws are recorded in the batch's place - the same discipline the
-        // direct fallback observes. A refusal after the flush simply starts the fresh run
-        // below, so the recorded order is the offer order on every path. The flag test comes
-        // first: an unarmed build records nothing extra here.
-        if (!sortedPass && VulkanMeshTerrain.available(context)) {
-            if (this.meshTerrain == null) {
-                this.meshTerrain = new VulkanMeshTerrain(context);
-            }
-            VulkanArena vertexArena = sharedVertexArenaIfPresent();
-            if (vertexArena != null) {
-                flushTerrainChain(commandBuffer);
-                boolean drawn;
-                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                    drawn = this.meshTerrain.recordBatch(stack, commandBuffer, pipeline,
-                            vertexArena.buffer(), this.preparedIndexBuffer,
-                            this.indirectBuffer.mappedAddress() + this.indirectBatchOffset,
-                            batch.size(), this.indirectRecordingSlot);
-                }
-                if (drawn) {
-                    if (this.statistics != null) {
-                        this.statistics.addLastDrawCommands(batch.size());
-                    }
-                    this.indirectBatchNanos += System.nanoTime() - batchStarted;
-                    return true;
-                }
-            }
-        }
         boolean contiguous = this.chainOpen && this.chainCount > 0
                 && this.chainPage == this.indirectBuffer
                 && this.chainStartOffset + (long) this.chainCount * INDIRECT_COMMAND_BYTES == this.indirectBatchOffset
@@ -983,9 +943,6 @@ public final class TerrainRenderer {
         this.chainPage = null;
         this.chainCount = 0;
         this.chainIndexBuffer = null;
-        if (this.meshTerrain != null) {
-            this.meshTerrain.beginSlot(slot);
-        }
         while (this.indirectSlotPages.size() <= slot) {
             this.indirectSlotPages.add(new ArrayList<>());
         }
