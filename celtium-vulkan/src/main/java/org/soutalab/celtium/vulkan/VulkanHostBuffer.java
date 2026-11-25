@@ -76,6 +76,13 @@ public final class VulkanHostBuffer {
     private final int usageFlags;
     /** Whether this buffer belongs to the frame arena (the census separates its growth from per-group buffers). */
     private final boolean arenaOwned;
+    /**
+     * Whether growth keeps the superseded buffers alive until {@link #delete()} instead of retiring them.
+     * Off by default; see {@link #retainSupersededBuffers()}.
+     */
+    private boolean retainSuperseded;
+    /** Buffers this one grew away from while retention was on; destroyed by {@link #delete()}, never before. */
+    private final SupersededBuffers superseded = new SupersededBuffers();
 
     private long handle = VK_NULL_HANDLE;
     private SlabAllocator.SlabAllocation allocation;
@@ -117,6 +124,27 @@ public final class VulkanHostBuffer {
     /** The raw {@code VkBuffer} handle, or {@code VK_NULL_HANDLE} once deleted. */
     public long buffer() {
         return this.handle;
+    }
+
+    /**
+     * Opts this buffer into superseded-buffer retention: every buffer it later grows away from stays alive
+     * until {@link #delete()} destroys it, instead of being handed to the context's retired-buffer drain at
+     * growth time.
+     * <p>
+     * The drain destroys retired buffers once no recording is open, but it cannot see host-side state that
+     * still names the old handle. A descriptor set is exactly that: TerrainEngineA's section-descriptor and
+     * factor-base buffers (Tier-A bindings 6 and 7) are named by sets that are only rewritten at a pass head,
+     * under conditions, for the current frame slot - so a set written before a growth could keep naming the
+     * grown-away handle after the drain destroyed it, which is the VUID-vkCmdDrawIndexedIndirect-None-08114
+     * window the 2026-11-26 diagnosis pinned. Retention closes the window for the buffers that opt in: the
+     * old handle is never destroyed while any set could still name it, because {@code delete()} runs only at
+     * engine teardown, after the sets are gone.
+     * <p>
+     * Only small, geometrically growing buffers should opt in - the retained count is one per growth, so it
+     * is logarithmic in the final size. Call before the first growth; the flag is read at growth time.
+     */
+    public void retainSupersededBuffers() {
+        this.retainSuperseded = true;
     }
 
     /** Address of the mapped memory (slab mapping plus this allocation's offset), valid until grown or deleted. */
@@ -167,52 +195,117 @@ public final class VulkanHostBuffer {
         replacement.allocation = null;
         replacement.mapped = 0L;
         if (oldHandle != VK_NULL_HANDLE) {
-            noteDeleted();
-            this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "hostBuffer.growth");
+            if (this.retainSuperseded) {
+                // Retention (see retainSupersededBuffers()): the old buffer stays alive and stays counted
+                // live - no retire, no deletion count yet. delete() destroys it at teardown, the first
+                // moment nothing can still name it.
+                this.superseded.retain(oldHandle, oldAllocation);
+            } else {
+                noteDeleted();
+                this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "hostBuffer.growth");
+            }
         }
     }
 
     public void delete() {
         this.mapped = 0L;
-        if (this.handle == VK_NULL_HANDLE && this.allocation == null) {
+        if (this.handle == VK_NULL_HANDLE && this.allocation == null && this.superseded.isEmpty()) {
             return;
         }
         VkDevice device = this.context.device();
         if (device == null) {
             // The context is gone: destroying the logical device freed its children implicitly, and the slab
-            // allocator's own teardown frees the slab memory. Nothing is left to release here.
+            // allocator's own teardown frees the slab memory. Nothing is left to release here - the retained
+            // superseded buffers are the device's children too, so the list is simply dropped with the rest.
             this.handle = VK_NULL_HANDLE;
             this.allocation = null;
+            this.superseded.clear();
             return;
         }
+        long currentHandle = this.handle;
+        SlabAllocator.SlabAllocation currentAllocation = this.allocation;
+        this.handle = VK_NULL_HANDLE;
+        this.allocation = null;
+        java.util.List<SupersededBuffer> retained = this.superseded.drain();
         if (this.context.celtium$recordingOpen()) {
             // An open recording may name this buffer; defer the destroy and the slab release to the context's list.
-            long oldHandle = this.handle;
-            SlabAllocator.SlabAllocation oldAllocation = this.allocation;
-            this.handle = VK_NULL_HANDLE;
-            this.allocation = null;
-            if (oldHandle != VK_NULL_HANDLE) {
+            if (currentHandle != VK_NULL_HANDLE) {
                 noteDeleted();
             }
-            this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "hostBuffer.delete");
+            this.context.celtium$retireSlabBuffer(currentHandle, currentAllocation, "hostBuffer.delete");
+            // A retained superseded buffer takes the same deferred route: a descriptor set written before
+            // the growth that superseded it may still name it, which is the whole reason it was retained.
+            for (SupersededBuffer old : retained) {
+                noteDeleted();
+                this.context.celtium$retireSlabBuffer(old.handle, old.allocation, "hostBuffer.delete");
+            }
             return;
         }
-        if (this.handle != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device, this.handle, null);
-            this.handle = VK_NULL_HANDLE;
+        destroyAndRelease(device, currentHandle, currentAllocation);
+        for (SupersededBuffer old : retained) {
+            destroyAndRelease(device, old.handle, old.allocation);
+        }
+    }
+
+    /**
+     * Destroys one buffer and hands its slab range back as a deferred release keyed on the context's
+     * current slab release value: a frame still in flight may read the buffer, and the range may only be
+     * reused once the completion currency passes the keyed value (the frame timeline's counter on a
+     * timeline device, a later retired-buffer drain where there is none). There is no vkFreeMemory - the
+     * slab is not this buffer's to free, and no vkUnmapMemory - the slab stays mapped for its whole life.
+     */
+    private void destroyAndRelease(VkDevice device, long handle, SlabAllocator.SlabAllocation allocation) {
+        if (handle != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, handle, null);
             noteDeleted();
         }
-        if (this.allocation != null) {
-            // The slab range goes back as a deferred release keyed on the context's current slab release
-            // value: a frame still in flight may read this buffer, and the range may only be reused once
-            // the completion currency passes the keyed value (the frame timeline's counter on a timeline
-            // device, a later retired-buffer drain where there is none). There is no vkFreeMemory - the
-            // slab is not this buffer's to free, and no vkUnmapMemory - the slab stays mapped for its whole
-            // life.
-            SlabAllocator.SlabAllocation oldAllocation = this.allocation;
-            this.allocation = null;
-            oldAllocation.owner().release(oldAllocation,
-                    this.context.celtium$slabReleaseValue());
+        if (allocation != null) {
+            allocation.owner().release(allocation, this.context.celtium$slabReleaseValue());
+        }
+    }
+
+    /** One buffer a {@link VulkanHostBuffer} grew away from while retention was on: a handle and its slab range. */
+    static final class SupersededBuffer {
+        final long handle;
+        final SlabAllocator.SlabAllocation allocation;
+
+        SupersededBuffer(long handle, SlabAllocator.SlabAllocation allocation) {
+            this.handle = handle;
+            this.allocation = allocation;
+        }
+    }
+
+    /**
+     * The bookkeeping of superseded-buffer retention, kept free of device calls so the growth → retain →
+     * delete sequence can be pinned by a CPU test. Pairs are handed off exactly once, by {@link #drain()}:
+     * whatever a drain returns is the delete path's to destroy, and a second drain returns nothing, so a
+     * repeated {@code delete()} cannot double-destroy a retained buffer.
+     */
+    static final class SupersededBuffers {
+        private final java.util.ArrayList<SupersededBuffer> retained = new java.util.ArrayList<>();
+
+        void retain(long handle, SlabAllocator.SlabAllocation allocation) {
+            this.retained.add(new SupersededBuffer(handle, allocation));
+        }
+
+        int size() {
+            return this.retained.size();
+        }
+
+        boolean isEmpty() {
+            return this.retained.isEmpty();
+        }
+
+        /** Hands every retained pair off in growth order and leaves the store empty. */
+        java.util.List<SupersededBuffer> drain() {
+            java.util.List<SupersededBuffer> drained = new java.util.ArrayList<>(this.retained);
+            this.retained.clear();
+            return drained;
+        }
+
+        /** Drops every retained pair without handing it off (the context is already gone). */
+        void clear() {
+            this.retained.clear();
         }
     }
 

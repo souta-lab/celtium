@@ -485,6 +485,15 @@ final class TerrainEngineA {
             this.descBuffer = new VulkanHostBuffer(this.context, descBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             this.factorBaseBuffer = new VulkanHostBuffer(this.context, Math.max(4L, (long) factorBaseImage.length * 4L),
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            // These two buffers are named by Tier-A descriptor sets (bindings 6 and 7) that are only
+            // rewritten at a pass head, under conditions, for the current frame slot - so a set can keep
+            // naming a grown-away handle long after the growth. Retiring the old handle at growth let the
+            // context's retired-buffer drain destroy a buffer a live set still named (VUID-08114,
+            // diagnosed 2026-11-26). Both buffers are small (sections x 48B / x 4B) and growth is
+            // geometric, so keeping every superseded buffer until delete() costs a bounded, negligible
+            // amount of slab space; delete() below destroys them all at engine teardown.
+            this.descBuffer.retainSupersededBuffers();
+            this.factorBaseBuffer.retainSupersededBuffers();
         } else {
             this.descBuffer.ensureCapacity(descBytes);
             this.factorBaseBuffer.ensureCapacity(Math.max(4L, (long) factorBaseImage.length * 4L));
