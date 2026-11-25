@@ -456,7 +456,7 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                 }
             } finally {
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
+                org.soutalab.celtium.vulkan.DrawCounters.batchCallCount++;
                 if (batchTimed) {
                     long batchCallTook = System.nanoTime() - batchCallStarted;
                     long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();

@@ -200,7 +200,7 @@ final class BackendDiagnostics {
                 + " lastOrderingFlushFailure=" + (b.lastOrderingFlushFailure == null ? "none"
                         : b.lastOrderingFlushFailure.replace(' ', '_').substring(0,
                                 Math.min(200, b.lastOrderingFlushFailure.length())))
-                + " batchCallCount=" + b.batchCallCount
+                + " batchCallCount=" + DrawCounters.batchCallCount
                 + " batchCallMillis=" + (b.batchCallNanos / 1000000L)
                 + " batchCallWorstMillis=" + (b.batchCallWorstNanos / 1000000L)
                 + " batchCallOpeningMillis=" + (b.batchCallOpeningNanos / 1000000L)

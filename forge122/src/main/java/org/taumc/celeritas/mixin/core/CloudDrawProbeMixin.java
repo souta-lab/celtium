@@ -57,7 +57,7 @@ public abstract class CloudDrawProbeMixin {
         }
         long calls = celtium$probeCloudCalls.incrementAndGet();
         celtium$probeCloudUploaderAtHead =
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount;
+                org.soutalab.celtium.vulkan.DrawCounters.batchCallCount;
         if (calls > 3 && (celtium$PROBE_EVERY <= 0 || calls % celtium$PROBE_EVERY != 0)) {
             return;
         }
@@ -97,7 +97,7 @@ public abstract class CloudDrawProbeMixin {
         if (calls > 3 && (celtium$PROBE_EVERY <= 0 || calls % celtium$PROBE_EVERY != 0)) {
             return;
         }
-        long delta = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount
+        long delta = org.soutalab.celtium.vulkan.DrawCounters.batchCallCount
                 - celtium$probeCloudUploaderAtHead;
         celtium$probeCloudUploaderDeltas.addAndGet(delta);
         System.out.println("[Celtium] CELTIUM_CLOUD_UPLOADER calls=" + calls
@@ -114,7 +114,7 @@ public abstract class CloudDrawProbeMixin {
         }
         long calls = celtium$probeFancyCalls.incrementAndGet();
         celtium$probeFancyUploaderAtHead =
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount;
+                org.soutalab.celtium.vulkan.DrawCounters.batchCallCount;
         if (calls > 3 && (celtium$PROBE_EVERY <= 0 || calls % celtium$PROBE_EVERY != 0)) {
             return;
         }
