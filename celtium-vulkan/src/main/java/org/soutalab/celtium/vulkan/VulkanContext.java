@@ -89,8 +89,6 @@ public final class VulkanContext {
     /** Startup constants read once: every use site then pays no lookup. */
     private static final boolean VALIDATION_REQUESTED = HarnessConfig.bool("vulkanValidation", true);
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
-    private static final boolean PRESENT_FROM_COMPOSITE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     private static final boolean HIDE_FD_EXTENSIONS =
             Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
@@ -2884,11 +2882,11 @@ public final class VulkanContext {
                     .pApplicationInfo(application);
             // The platform surface extensions are instance extensions, so they have to be enabled here.
             List<String> enabledInstanceExtensions = new ArrayList<String>();
-            // Enabled unconditionally: the window-backend present path creates a swapchain whether or not the
-            // frame is presented from the composite, so the surface extensions cannot be gated on the probe or
-            // on presentFromComposite. That gate is what made presentFromComposite=false unstartable - the
-            // present path retried swapchain creation against a device created without VK_KHR_swapchain until
-            // the bounded escalation crashed the run. The selection itself stays capability-checked:
+            // Enabled unconditionally: the window-backend present path always creates a swapchain - the
+            // swapchain is the only present route - so the surface extensions cannot be gated on the probe.
+            // Gating them on a route switch is what once made the direct route unstartable: the present path
+            // retried swapchain creation against a device created without VK_KHR_swapchain until the bounded
+            // escalation crashed the run. The selection itself stays capability-checked:
             // presentationInstanceExtensions only returns extensions the instance advertises.
             java.util.Set<String> available = instanceExtensionNames(stack);
             enabledInstanceExtensions.addAll(presentationInstanceExtensions(available));
@@ -3467,10 +3465,9 @@ public final class VulkanContext {
             // The swapchain functions live in a device extension, so a surface alone is not enough: without it
             // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
-            // Enabled whenever the device advertises it, independently of the probe and of
-            // presentFromComposite: the window-backend present path creates a swapchain on either setting of
-            // that flag, so gating the extension on it left presentFromComposite=false with a present path
-            // that could never create its swapchain.
+            // Enabled whenever the device advertises it, independently of the probe: the window-backend
+            // present path always creates a swapchain, so gating the extension on anything else would leave
+            // the only present path unable to create its swapchain.
             Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
             if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                 deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);

@@ -3,8 +3,8 @@ package org.soutalab.celtium.vulkan.graph;
 /**
  * The standard vanilla frame as a compiled graph (design section 2.2A): uploads, GPU terrain
  * culling, one forward pass that draws <em>directly into the swapchain image</em>, Hi-Z build
- * for the next frame, present. This is the replacement for the offscreen-composite route
- * ({@code presentFromComposite}); the swapchain image is an imported resource whose handle the
+ * for the next frame, present. This is the replacement for the offscreen-composite route; the
+ * swapchain image is an imported resource whose handle the
  * executor binds per frame, so the same compiled graph serves every swapchain recreation.
  *
  * <p>Barrier shape, for the record: the design names three inter-pass synchronisation points

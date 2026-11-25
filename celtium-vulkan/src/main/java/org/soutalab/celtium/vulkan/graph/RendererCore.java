@@ -18,8 +18,8 @@ import org.soutalab.celtium.vulkan.bindless.BindlessTextureTable;
  * {@link GraphExecutor#execute} with the HAL's barrier sink and per-pass recorders that issue
  * the terrain indirect draws and the batch plan inside {@code MainForwardPass}. The swapchain
  * image the graph imports is bound by the HAL's present engine at acquire time. The composite
- * route this replaces is deleted in the same integration that gates this path, per the
- * migration's no-permanent-flag rule.
+ * route this replaces has been deleted (the route switch is gone; the swapchain is the only
+ * present route), per the migration's no-permanent-flag rule.
  */
 public final class RendererCore {
 
