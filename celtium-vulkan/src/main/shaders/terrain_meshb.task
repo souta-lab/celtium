@@ -1,0 +1,151 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "terrain_cull.glsl"
+
+// ============================================================================================
+// Celtium - new rendering architecture - terrain Tier-B TASK stage (MeshTerrainExecutor).
+//
+// One task workgroup per record of one pass' SectionDesc array (the canonical layout of
+// SECTION-DESC-SPEC-2026-11-25.md: one record per (section, pass), bucket counts packed
+// in the record, bucket starts derived by prefix sum). A workgroup runs the same
+// judgement chain the Tier-A compute cull runs - frustum and distance (the shared
+// fragment in terrain_cull.glsl, never a second copy), previous-frame Hi-Z, and
+// per-bucket facing - restricted to one slab (the executor binds one slab vertex buffer
+// per record call, so records of other slabs emit zero here and are issued by the call
+// for their own slab). For a surviving record it emits one mesh workgroup per 64-quad
+// meshlet of its visible buckets.
+//
+// Records the producer marked OVERSIZE (a bucket count exceeded u16) are ineligible for
+// the GPU-resident path entirely and stay with the legacy route; they emit zero here.
+//
+// The payload is the only channel to the mesh stage: the record index, the visible
+// bucket mask (bit b = bucket b emits), and this workgroup's own id - a mesh workgroup's
+// gl_WorkGroupID.x is this id plus its in-group offset, so the mesh side recovers its
+// meshlet index from the difference (the stage-2 form's proven mechanism).
+//
+// Descriptor set 0 is owned by MeshTerrainExecutor; the layout contract is
+// terrain_meshb_layout.glsl.
+// ============================================================================================
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer CeltiumSectionDescs {
+    uint celtiumDescData[];
+};
+layout(set = 0, binding = 3) uniform sampler2D celtiumHizTexture;
+
+// The per-pass frame block: world-space matrices and camera (the wiring builds the
+// view-projection from the pass' camera - the main camera, or the light camera for the
+// shadow pass, which is what lets this same issuance stage serve shadow). params.x is
+// the maximum view distance in blocks; params.y is the Hi-Z pyramid's mip count.
+layout(set = 0, binding = 4, std140) uniform CeltiumMeshFrame {
+    mat4 viewProj;
+    mat4 view;
+    vec4 cameraPos;
+    vec4 planes[6];
+    vec4 params;
+} frame;
+
+#include "terrain_meshb_layout.glsl"
+
+// Push block (32 bytes, task + mesh stages): x = pass ordinal the record array belongs
+// to, y = slab id this call issues for, z = record count, w = flags (bit 0: Hi-Z test
+// enabled, bit 1: per-quad RDH stream bound - read by the mesh stage).
+layout(push_constant) uniform Push {
+    int passOrdinal;
+    uint slabId;
+    uint recordCount;
+    uint flags;
+} push;
+
+struct CeltiumMeshbTaskPayload {
+    uint recordIndex;
+    uint bucketMask;
+    uint taskWorkGroupX;
+};
+
+taskPayloadSharedEXT CeltiumMeshbTaskPayload celtiumPayload;
+
+// Previous-frame Hi-Z occlusion test, deliberately conservative: any doubt (a corner
+// behind the camera, a degenerate projection, a zero-size pyramid) answers "visible".
+// The stored pyramid holds the farthest depth per texel; the section is occluded only
+// when its nearest depth is beyond the farthest stored depth over its whole footprint,
+// with a depth bias, erring toward keeping the section.
+bool celtiumHizOccluded(vec3 boxMin, vec3 boxMax) {
+    ivec2 size = textureSize(celtiumHizTexture, 0);
+    if (size.x <= 0 || size.y <= 0) {
+        return false;
+    }
+    vec2 ndcMin = vec2(2.0);
+    vec2 ndcMax = vec2(-2.0);
+    float nearest = 1.0;
+    for (int i = 0; i < 8; i++) {
+        vec3 corner = vec3((i & 1) != 0 ? boxMax.x : boxMin.x,
+                (i & 2) != 0 ? boxMax.y : boxMin.y,
+                (i & 4) != 0 ? boxMax.z : boxMin.z);
+        vec4 clip = frame.viewProj * vec4(corner, 1.0);
+        if (clip.w <= 0.0) {
+            return false;
+        }
+        vec3 ndc = clip.xyz / clip.w;
+        ndcMin = min(ndcMin, ndc.xy);
+        ndcMax = max(ndcMax, ndc.xy);
+        nearest = min(nearest, ndc.z);
+    }
+    if (ndcMax.x < -1.0 || ndcMin.x > 1.0 || ndcMax.y < -1.0 || ndcMin.y > 1.0
+            || nearest > 1.0) {
+        // Outside the frustum's image (the plane test already decided) or beyond the far
+        // plane: not an occlusion answer.
+        return false;
+    }
+    vec2 uvMin = clamp(ndcMin * 0.5 + 0.5, 0.0, 1.0);
+    vec2 uvMax = clamp(ndcMax * 0.5 + 0.5, 0.0, 1.0);
+    vec2 footprint = (uvMax - uvMin) * vec2(size);
+    float mip = ceil(log2(max(max(footprint.x, footprint.y), 1.0)));
+    mip = clamp(mip, 0.0, max(frame.params.y - 1.0, 0.0));
+    float farthest = 0.0;
+    farthest = max(farthest, textureLod(celtiumHizTexture, uvMin, mip).x);
+    farthest = max(farthest, textureLod(celtiumHizTexture, uvMax, mip).x);
+    farthest = max(farthest, textureLod(celtiumHizTexture,
+            vec2(uvMin.x, uvMax.y), mip).x);
+    farthest = max(farthest, textureLod(celtiumHizTexture,
+            vec2(uvMax.x, uvMin.y), mip).x);
+    return nearest > farthest + (1.0 / 256.0);
+}
+
+void main() {
+    uint recordIndex = gl_WorkGroupID.x;
+    uint groups = 0u;
+    uint bucketMask = 0u;
+    if (recordIndex < push.recordCount
+            && celtiumDescSlabId(recordIndex) == push.slabId
+            && celtiumDescPassOrdinal(recordIndex) == uint(push.passOrdinal)
+            && (celtiumDescFlags(recordIndex) & CELTIUM_DESC_FLAG_OVERSIZE) == 0u
+            && celtiumDescTotalQuads(recordIndex) > 0u) {
+        ivec3 section = celtiumDescSectionPos(recordIndex);
+        vec3 boxMin = vec3(section * 16);
+        vec3 boxMax = boxMin + vec3(16.0);
+        if (celtiumBoxVisible(boxMin, vec3(16.0), frame.planes, frame.cameraPos.xyz,
+                frame.params.x)
+                && ((push.flags & 1u) == 0u || !celtiumHizOccluded(boxMin, boxMax))) {
+            for (uint bucket = 0u; bucket < CELTIUM_MESHB_BUCKETS_PER_SECTION; bucket++) {
+                uint count = celtiumDescBucketCount(recordIndex, bucket);
+                if (count > 0u && celtiumBucketFacingVisible(bucket, boxMin, boxMax,
+                        frame.cameraPos.xyz)) {
+                    bucketMask |= 1u << bucket;
+                    groups += celtiumMeshletsForCount(count);
+                }
+            }
+        }
+    }
+    if (groups > 0u) {
+        celtiumPayload.recordIndex = recordIndex;
+        celtiumPayload.bucketMask = bucketMask;
+        celtiumPayload.taskWorkGroupX = recordIndex;
+    }
+    // Exactly one emit on every path: a culled record emits zero groups rather than
+    // leaving the emit unexecuted.
+    EmitMeshTasksEXT(groups, 1u, 1u);
+}
