@@ -33,7 +33,7 @@ class FontBatchRetainedOrderTest {
     @Test
     void theOpenRunQueuesBehindARetainedRunForItsTarget() throws IOException {
         String body = methodSlice(fontBatchSource(),
-                "public void celtium$flushPendingFontBatch(String how) {", 5200);
+                "private void celtium$flushPendingFontBatchBody(String how) {", 5200);
         assertTrue(body.contains("if (retainedFor(run.targetIdentity) || !offer(run, target)) {"),
                 "the open run is retained without an offer while an older run for its target waits");
         int offered = body.indexOf("offerRetained(view, target);");
