@@ -1,0 +1,249 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : require
+
+// ============================================================================================
+// Celtium - new rendering architecture - terrain Tier-B MESH stage (MeshTerrainExecutor).
+//
+// The mesh side of terrain_meshb.task: one mesh workgroup re-issues one meshlet of at
+// most 64 quads from one bucket of one (section, pass) record of the GPU-resident
+// SectionDesc array (canonical layout: SECTION-DESC-SPEC-2026-11-25.md), reading the
+// record's TerrainVertex16 vertices from the bound slab as storage and generating the
+// two triangles per quad procedurally - no index buffer is read (the triangulation
+// pattern (0, 1, 2) / (2, 3, 0) is the Celeritas QuadPrimitiveType.TRIANGULATED pattern
+// the mesher's corner order is built against). 64 quads x 4 vertices = 256 vertices and
+// 128 primitives sit inside the measured mesh output limits of both target families
+// (RADV: maxMeshOutputVertices / maxMeshOutputPrimitives = 256 / 256, mesh-shader-652
+// section 1.1); the executor refuses to arm on a device reporting less.
+//
+// Work distribution: 64 invocations, one quad each. The meshlet index inside the record
+// is gl_WorkGroupID.x - payload.taskWorkGroupX; the (bucket, meshlet-in-bucket) pair is
+// recovered by walking the record's buckets in fixed order and prefix-summing both
+// their meshlet counts (to find the bucket) and their quad counts (to find the quad
+// start) - seven iterations, no atomics, no second cull buffer.
+//
+// Per-vertex outputs mirror terrain_solid.frag's inputs (the pass fragment this
+// issuance stage feeds at integration). The bilinear colour correction factor is not
+// part of TerrainVertex16; it arrives through the per-quad RDH stream (binding 5,
+// addressed by slab quad id) when the record call's flag says the stream is bound, and
+// is zero otherwise - the value the encoder itself writes for uniform-colour quads.
+// ============================================================================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 256, max_primitives = 128) out;
+
+layout(set = 0, binding = 0, std430) readonly buffer CeltiumSectionDescs {
+    uint celtiumDescData[];
+};
+layout(set = 0, binding = 2, std430) readonly buffer CeltiumSlabVertices {
+    uvec4 celtiumSlabVertexData[];
+};
+layout(set = 0, binding = 5, std430) readonly buffer CeltiumQuadRdh {
+    uint celtiumQuadRdhData[];
+};
+layout(set = 0, binding = 4, std140) uniform CeltiumMeshFrame {
+    mat4 viewProj;
+    mat4 view;
+    vec4 cameraPos;
+    vec4 planes[6];
+    vec4 params;
+} frame;
+
+#include "terrain_meshb_layout.glsl"
+
+// --------------------------------------------------------------------------------------------
+// Descriptor set 1 - the terrain pass' own set, declarations identical to
+// terrain_section.mesh's set 1 (the executor's pipeline layout takes the pass' layout as
+// its second set; only the bindings this stage reads are declared).
+// --------------------------------------------------------------------------------------------
+layout(std140, set = 1, binding = 0) uniform CeltiumSolidUniforms {
+    vec4  u_RegionOffset;           // offset  0 (unused here; layout parity with the pass)
+    vec4  u_FogColor;               // offset 16
+    float u_FogDensity;             // offset 32
+    float u_FogStart;               // offset 36
+    float u_FogEnd;                 // offset 40
+    float u_MipBiasAdd;             // offset 44
+    int   u_FogMode;                // offset 48
+    int   u_FogShape;               // offset 52
+    int   u_FragmentDiscardEnabled; // offset 56
+    int   u_ChunkFadeEnabled;       // offset 60
+    vec4  u_ChunkFadeParams;        // offset 64
+    int   u_SolidTerrain;           // offset 80 (fragment stage only)
+    int   u_ShadowEnabled;          // offset 84
+    float u_ShadowDarkness;         // offset 88
+    mat4  u_ShadowMatrix;           // offset 96
+} celtium;
+
+layout(set = 1, binding = 1) uniform sampler2D u_LightTex;
+
+layout(std140, set = 1, binding = 3) uniform CeltiumDynamicLights {
+    vec4 u_DynamicLightInfo;  // offset  0: x = live source count (0..32), yzw = camera position (world)
+    vec4 u_DynamicLights[32]; // offset 16: xyz = camera-relative position, w = light level 0..15
+} dynLights;
+
+// Push block: the same 32 bytes the task stage reads; the mesh stage needs the flags
+// (bit 1: the per-quad RDH stream is bound and live).
+layout(push_constant) uniform Push {
+    int passOrdinal;
+    uint slabId;
+    uint recordCount;
+    uint flags;
+} push;
+
+struct CeltiumMeshbTaskPayload {
+    uint recordIndex;
+    uint bucketMask;
+    uint taskWorkGroupX;
+};
+
+taskPayloadSharedEXT CeltiumMeshbTaskPayload celtiumPayload;
+
+// --------------------------------------------------------------------------------------------
+// Varyings - locations and types match terrain_solid.frag's inputs.
+// --------------------------------------------------------------------------------------------
+layout(location = 0) out vec4 v_Color[256];
+layout(location = 1) out vec4 v_RdhFactor[256];
+layout(location = 2) out vec2 v_QuadCoord[256];
+layout(location = 3) out vec2 v_TexCoord[256];
+layout(location = 4) out float v_FragDistance[256];
+layout(location = 5) flat out float v_MaterialMipBias[256];
+layout(location = 6) flat out float v_MaterialAlphaCutoff[256];
+layout(location = 7) out vec4 v_ShadowPos[256];
+layout(location = 8) out vec4 v_ShadowColor[256];
+
+const int FOG_SHAPE_SPHERICAL = 0;
+const int FOG_SHAPE_CYLINDRICAL = 1;
+const int FOG_SHAPE_PLANAR = 2;
+
+float getFragDistance(int fogShape, vec3 position) {
+    // The terrain vertex family's own form (terrain_solid.vert): position is the
+    // camera-relative offset in world axes.
+    if (fogShape == FOG_SHAPE_CYLINDRICAL) {
+        return max(length(position.xz), abs(position.y));
+    } else {
+        return length(position);
+    }
+}
+
+vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
+    // The vertex family's explicit-LOD form (a mesh stage has no implicit derivatives):
+    // the half-texel centre expression is the vertex stage's own. The 16-byte format's
+    // light components are already texel coordinates, as in the COMPACT format.
+    return textureLod(lightMap, clamp((vec2(uv) + 8.0) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)), 0.0);
+}
+
+float _dynamic_block_light(vec3 relativePosition) {
+    float level = 0.0;
+    int count = int(dynLights.u_DynamicLightInfo.x + 0.5);
+    for (int i = 0; i < 32; i++) {
+        if (i >= count) {
+            break;
+        }
+        vec4 source = dynLights.u_DynamicLights[i];
+        level = max(level, source.w - distance(relativePosition, source.xyz));
+    }
+    return level;
+}
+
+// One vertex of TerrainVertex16. relativePosition is the camera-relative world offset
+// (world axes), the space the pass' fog, dynamic-light and shadow inputs are defined
+// in; gl_Position uses the frame block's world-space view-projection. rdhFactor is the
+// quad's bilinear correction, already scaled by 2 as the vertex family emits it.
+void emitVertex(int slot, uvec4 words, vec3 sectionOrigin, vec4 rdhFactor) {
+    vec3 localPos;
+    vec4 color;
+    vec2 uv;
+    vec2 light;
+    uint normalId;
+    uint material;
+    celtiumArchUnpackVertex(words, localPos, color, uv, light, normalId, material);
+
+    vec3 worldPosition = sectionOrigin + localPos;
+    vec3 relativePosition = worldPosition - frame.cameraPos.xyz;
+
+    v_FragDistance[slot] = getFragDistance(celtium.u_FogShape, relativePosition);
+    gl_MeshVerticesEXT[slot].gl_Position = frame.viewProj * vec4(worldPosition, 1.0);
+
+    vec2 lightCoord = light;
+    float dynamicLevel = _dynamic_block_light(relativePosition);
+    if (dynamicLevel > 0.0) {
+        lightCoord.x = max(lightCoord.x, min(dynamicLevel, 15.0) * 16.0);
+    }
+    vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
+    v_Color[slot] = color * lightColor;
+    v_RdhFactor[slot] = rdhFactor;
+    v_RdhFactor[slot].rgb *= lightColor.rgb;
+    if (celtium.u_ShadowEnabled != 0) {
+        v_ShadowPos[slot] = celtium.u_ShadowMatrix * vec4(relativePosition, 1.0);
+        vec2 shadowedCoord = vec2(lightCoord.x, lightCoord.y * (1.0 - celtium.u_ShadowDarkness));
+        v_ShadowColor[slot] = color * _sample_lightmap(u_LightTex, shadowedCoord);
+    } else {
+        v_ShadowPos[slot] = vec4(0.0);
+        v_ShadowColor[slot] = v_Color[slot];
+    }
+    v_TexCoord[slot] = uv;
+    v_MaterialMipBias[slot] = celtiumMaterialMipBias(material) + celtium.u_MipBiasAdd;
+    v_MaterialAlphaCutoff[slot] = celtiumMaterialAlphaCutoff(material);
+}
+
+void main() {
+    uint recordIndex = celtiumPayload.recordIndex;
+    uint meshletIndex = gl_WorkGroupID.x - celtiumPayload.taskWorkGroupX;
+
+    // Decode the flattened meshlet index into (bucket, quad start, quad count) by
+    // walking the visible buckets in fixed order. A mask/count disagreement (the inputs
+    // changed under the dispatch) lands past the last bucket and emits nothing rather
+    // than garbage - the task stage's mask is the authority, counts are re-read here.
+    uint quadStartInSection = 0u;
+    uint quadCount = 0u;
+    uint accumulatedMeshlets = 0u;
+    for (uint bucket = 0u; bucket < CELTIUM_MESHB_BUCKETS_PER_SECTION; bucket++) {
+        uint count = celtiumDescBucketCount(recordIndex, bucket);
+        if ((celtiumPayload.bucketMask & (1u << bucket)) == 0u) {
+            quadStartInSection += count;
+            continue;
+        }
+        uint meshlets = celtiumMeshletsForCount(count);
+        if (meshletIndex < accumulatedMeshlets + meshlets) {
+            uint inBucket = (meshletIndex - accumulatedMeshlets)
+                    * CELTIUM_MESHB_QUADS_PER_MESHLET;
+            quadStartInSection += inBucket;
+            quadCount = min(CELTIUM_MESHB_QUADS_PER_MESHLET, count - inBucket);
+            break;
+        }
+        accumulatedMeshlets += meshlets;
+        quadStartInSection += count;
+    }
+    SetMeshOutputsEXT(quadCount * 4u, quadCount * 2u);
+    if (quadCount == 0u) {
+        return;
+    }
+
+    uint thread = gl_LocalInvocationIndex;
+    if (thread >= quadCount) {
+        return;
+    }
+    uint quadInSection = quadStartInSection + thread;
+    vec4 rdhFactor = vec4(0.0);
+    if ((push.flags & 2u) != 0u) {
+        uint slabQuad = celtiumDescQuadStart(recordIndex) + quadInSection;
+        rdhFactor = unpackSnorm4x8(celtiumQuadRdhData[slabQuad]) * 2.0;
+    }
+    vec3 sectionOrigin = vec3(celtiumDescSectionPos(recordIndex) * 16);
+    uint vertexBase = celtiumDescVertexOffset(recordIndex)
+            + quadInSection * CELTIUM_MESHB_VERTICES_PER_QUAD;
+    int slotBase = int(thread * 4u);
+    for (int corner = 0; corner < 4; corner++) {
+        int slot = slotBase + corner;
+        emitVertex(slot, celtiumSlabVertexData[vertexBase + uint(corner)], sectionOrigin,
+                rdhFactor);
+        // The corner selector of the vertex family: corner = vertex index & 3, mapped to
+        // the quad's (0,0) (0,1) (1,1) (1,0) parameterisation.
+        v_QuadCoord[slot] = vec2(corner >= 2 ? 1.0 : 0.0,
+                corner == 1 || corner == 2 ? 1.0 : 0.0);
+    }
+    gl_PrimitiveTriangleIndicesEXT[thread * 2u] =
+            uvec3(thread * 4u, thread * 4u + 1u, thread * 4u + 2u);
+    gl_PrimitiveTriangleIndicesEXT[thread * 2u + 1u] =
+            uvec3(thread * 4u + 2u, thread * 4u + 3u, thread * 4u);
+}
