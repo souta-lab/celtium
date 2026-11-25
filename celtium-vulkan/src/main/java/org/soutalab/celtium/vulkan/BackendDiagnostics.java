@@ -541,6 +541,8 @@ final class BackendDiagnostics {
                 + b.celtium$arenaUploadedBytes()
                 + " arenaCreateCalls=" + org.soutalab.celtium.vulkan.VulkanArena.arenaCreateCalls
                 + " arenaCreateMillis=" + (org.soutalab.celtium.vulkan.VulkanArena.arenaCreateNanos / 1000000L)
+                + " arenaGrowthCopies=" + b.celtium$arenaGrowthCopies()
+                + " arenaPages=" + b.celtium$arenaPageCount()
                 + " textureDiagnostics=" + b.TEXTURE_DIAGNOSTICS + " diagnosed=" + b.diagnosedTextures.size()
                 + " blendObserved=" + b.immediateStatistics.blendObserved() + "(" + b.observedBlendSrc + "," + b.observedBlendDst + ")"
                 + " blendPairs=" + b.blendPairs + " blendFuncIgnored=" + b.immediateStatistics.blendFuncIgnored()

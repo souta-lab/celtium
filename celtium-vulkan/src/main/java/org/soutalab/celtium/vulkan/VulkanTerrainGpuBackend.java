@@ -12505,6 +12505,38 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return the growth copies the shared arenas have performed} (S3R-2): structurally zero
+     * since growth appends pages instead of copying the buffer - the counter exists so a census
+     * line proves the copy path stayed gone rather than merely unmeasured.
+     */
+    long celtium$arenaGrowthCopies() {
+        long total = 0;
+        VulkanArena vertex = this.terrain.sharedVertexArenaIfPresent();
+        if (vertex != null) {
+            total += vertex.growthCopies();
+        }
+        VulkanArena index = this.terrain.sharedIndexArenaIfPresent();
+        if (index != null) {
+            total += index.growthCopies();
+        }
+        return total;
+    }
+
+    /** {@return how many pages the shared arenas currently hold between them} (S3R-2). */
+    long celtium$arenaPageCount() {
+        long total = 0;
+        VulkanArena vertex = this.terrain.sharedVertexArenaIfPresent();
+        if (vertex != null) {
+            total += vertex.pageCount();
+        }
+        VulkanArena index = this.terrain.sharedIndexArenaIfPresent();
+        if (index != null) {
+            total += index.pageCount();
+        }
+        return total;
+    }
+
+    /**
      * {@return one line of the descriptor-set census, with an entry per immediate family}.
      * <p>
      * Audit B11: this used to sum only the block and particle caches and print a single number, so the textured and
@@ -18975,32 +19007,64 @@ this.frameBufferOpen = false;
                                             int firstInstance) {
         int drawn = 0;
         boolean arenaBound = false;
-        for (int cmd = 0; cmd < batch.size(); cmd++) {
-            long byteOffset = batch.indexByteOffset(cmd);
-            boolean arena;
-            int firstIndex;
-            if (sortedPass) {
-                if (resources.indexArena == null) continue;
-                arena = true;
-                firstIndex = (int) (byteOffset / 4);
-            } else if (byteOffset == 0) {
-                arena = false;
-                firstIndex = 0;
-            } else if (resources.indexArena != null) {
-                arena = true;
-                firstIndex = (int) (byteOffset / 4);
-            } else {
-                continue;
+        int boundIndexPage = 0;
+        // S3R-2: the pass head bound page 0 of the shared vertex arena; a command whose vertices
+        // live in a later page rebinds that page and draws with a page-local base vertex, and a
+        // command reading a later page of the region index arena does the same for its first
+        // index. Single-page arenas - every arena before it outgrows its first page - take exactly
+        // the binds and values this loop always recorded.
+        VulkanArena vertexArena = this.terrain.sharedVertexArenaIfPresent();
+        int boundVertexPage = 0;
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            java.nio.LongBuffer vertexBuffers = stack.mallocLong(1);
+            java.nio.LongBuffer vertexOffsets = stack.mallocLong(1);
+            vertexOffsets.put(0, 0L);
+            for (int cmd = 0; cmd < batch.size(); cmd++) {
+                long byteOffset = batch.indexByteOffset(cmd);
+                boolean arena;
+                int firstIndex;
+                if (sortedPass) {
+                    if (resources.indexArena == null) continue;
+                    arena = true;
+                    firstIndex = (int) (byteOffset / 4);
+                } else if (byteOffset == 0) {
+                    arena = false;
+                    firstIndex = 0;
+                } else if (resources.indexArena != null) {
+                    arena = true;
+                    firstIndex = (int) (byteOffset / 4);
+                } else {
+                    continue;
+                }
+                int indexPage = arena ? resources.indexArena.pageIndexForByteOffset((int) byteOffset) : 0;
+                if (arena != arenaBound || indexPage != boundIndexPage) {
+                    this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                            ? resources.indexArena.pageBuffer(indexPage)
+                            : this.sharedIndexBuffers.get(primitiveType));
+                    arenaBound = arena;
+                    boundIndexPage = indexPage;
+                }
+                if (arena) {
+                    firstIndex -= resources.indexArena.pageBaseBytes(indexPage) / 4;
+                }
+                int baseVertex = batch.baseVertex(cmd);
+                if (vertexArena != null) {
+                    int vertexPage = vertexArena.pageIndexForElementOffset(baseVertex);
+                    if (vertexPage != boundVertexPage) {
+                        this.terrain.bindVertexBufferPage(this.commandBuffer, vertexBuffers,
+                                vertexOffsets, vertexArena, vertexPage);
+                        boundVertexPage = vertexPage;
+                    }
+                    baseVertex -= vertexArena.pageBaseElements(vertexPage);
+                }
+                vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                        baseVertex, firstInstance);
+                drawn++;
             }
-            if (arena != arenaBound) {
-                this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                        ? resources.indexArena.buffer()
-                        : this.sharedIndexBuffers.get(primitiveType));
-                arenaBound = arena;
+            if (boundVertexPage != 0 && vertexArena != null) {
+                this.terrain.bindVertexBufferPage(this.commandBuffer, vertexBuffers,
+                        vertexOffsets, vertexArena, 0);
             }
-            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                    batch.baseVertex(cmd), firstInstance);
-            drawn++;
         }
         if (arenaBound) {
             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
@@ -19420,6 +19484,12 @@ this.frameBufferOpen = false;
             if (vertexArena == null) {
                 return celtium$meshCoverageMiss(pass);
             }
+            // S3R-2: the mesh table addresses the arena as one buffer with global base
+            // vertices, so a multi-page arena is a coverage miss like any other shape the
+            // stage cannot express; the direct path below draws those batches page-exactly.
+            if (vertexArena.pageCount() > 1) {
+                return celtium$meshCoverageMiss(pass);
+            }
             if (this.celtium$meshStage2 == null) {
                 this.celtium$meshStage2 = new VulkanMeshStage2Pipeline(this.context,
                         new VulkanMeshTaskDraw(this.context));
@@ -19475,7 +19545,7 @@ this.frameBufferOpen = false;
                     : GpuTerrainCulling.MAX_DISTANCE_BLOCKS;
             VulkanMeshTaskDraw.GateReason verdict = this.celtium$meshStage2.recordPassHead(
                     stack, this.commandBuffer, this.frameSlot, pipeline,
-                    pipeline.descriptorSetHandle(this.frameSlot), vertexArena.buffer(),
+                    pipeline.descriptorSetHandle(this.frameSlot), vertexArena.pageBuffer(0),
                     this.sharedIndexBuffers.get(primitiveType), tableBuffer.buffer(),
                     table, planes, (float) occlusionCamera.x, (float) occlusionCamera.y,
                     (float) occlusionCamera.z, maxDistance, collected.ordinal, 0,
@@ -20322,6 +20392,14 @@ this.frameBufferOpen = false;
             // pass means both shared and on a sorted pass both arena), so the bound source is always the open
             // run's own when its draw is recorded.
             boolean arenaBound = false;
+            // S3R-2 page state: the pre-loop bind named page 0 of the region vertex arena and the
+            // shared index buffer. A run records against the pages its first command resolved; a
+            // command on another page closes the run (page-local draw values cannot span pages),
+            // and the binds below follow the open run's pages exactly as they followed its source.
+            int boundIndexPage = 0;
+            int boundVertexPage = 0;
+            int runVertexPage = 0;
+            int runIndexPage = -1;
             int command = 0;
             while (command < batch.size()) {
                 long byteOffset = batch.indexByteOffset(command);
@@ -20346,13 +20424,23 @@ this.frameBufferOpen = false;
                 }
                 int elementCount = batch.elementCount(command);
                 int baseVertex = batch.baseVertex(command);
+                int vertexPage = resources.vertexArena.pageIndexForElementOffset(baseVertex);
+                int indexPage = arena ? resources.indexArena.pageIndexForByteOffset((int) byteOffset) : -1;
                 if (runStart < 0) {
-                    if (arena != arenaBound) {
+                    if (arena != arenaBound || indexPage != boundIndexPage) {
                         this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                                ? resources.indexArena.pageBuffer(Math.max(indexPage, 0))
+                                : this.sharedIndexBuffers.get(primitiveType));
                         arenaBound = arena;
+                        boundIndexPage = indexPage;
+                    }
+                    if (vertexPage != boundVertexPage) {
+                        this.terrain.bindVertexBufferPage(this.commandBuffer, regionVertexBuf,
+                                regionVertexOffset, resources.vertexArena, vertexPage);
+                        boundVertexPage = vertexPage;
                     }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
+                    runVertexPage = vertexPage; runIndexPage = indexPage;
                 } else {
                     // Mergeable only on the shared index (firstIndex 0, the unsorted quad pattern): there an
                     // elementCount of N indexes N/6 quads = N*4/6 vertices, so "the next command's baseVertex is the
@@ -20362,7 +20450,8 @@ this.frameBufferOpen = false;
                     int runVertices = (runElementCount / 6) * 4;
                     boolean vertexAdjacent = baseVertex == runBaseVertex + runVertices;
                     boolean indexAdjacent = runFirstIndex == 0 && firstIndex == 0;
-                    if (vertexAdjacent && indexAdjacent) {
+                    boolean samePages = vertexPage == runVertexPage && indexPage == runIndexPage;
+                    if (vertexAdjacent && indexAdjacent && samePages) {
                         runElementCount += elementCount;
                         this.terrainStatistics.noteLastDrawCommandsMerged();
                         command++;
@@ -20370,18 +20459,28 @@ this.frameBufferOpen = false;
                     }
                     // The run ends: draw it while its own source is still the bound one, then open a new run
                     // at this command, binding this command's source first when it differs.
-                    celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex);
-                    if (arena != arenaBound) {
+                    celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex,
+                            runVertexPage, runIndexPage);
+                    if (arena != arenaBound || indexPage != boundIndexPage) {
                         this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                                ? resources.indexArena.pageBuffer(Math.max(indexPage, 0))
+                                : this.sharedIndexBuffers.get(primitiveType));
                         arenaBound = arena;
+                        boundIndexPage = indexPage;
+                    }
+                    if (vertexPage != boundVertexPage) {
+                        this.terrain.bindVertexBufferPage(this.commandBuffer, regionVertexBuf,
+                                regionVertexOffset, resources.vertexArena, vertexPage);
+                        boundVertexPage = vertexPage;
                     }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
+                    runVertexPage = vertexPage; runIndexPage = indexPage;
                 }
                 command++;
             }
             if (runStart >= 0) {
-                celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex);
+                celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex,
+                        runVertexPage, runIndexPage);
             }
             }
 
@@ -20510,8 +20609,15 @@ this.frameBufferOpen = false;
      * the one offset entry the indirect path would have stamped per command.
      */
     private void celtium$drawIndexedRun(long firstIndex, int baseVertex, int elementCount,
-            TerrainRenderer.RegionResources resources, int firstInstance) {
-        vkCmdDrawIndexed(this.commandBuffer, elementCount, 1, (int) firstIndex, baseVertex, firstInstance);
+            TerrainRenderer.RegionResources resources, int firstInstance,
+            int vertexPage, int indexPage) {
+        // S3R-2: the run was recorded against its pages' buffers, so the draw addresses them
+        // page-locally; the readback capture below keeps the arena-global baseVertex, which is
+        // the coordinate its copy source resolves. Page 0 makes both adjustments zero.
+        int drawFirstIndex = (int) firstIndex
+                - (indexPage > 0 ? resources.indexArena.pageBaseBytes(indexPage) / 4 : 0);
+        int drawBaseVertex = baseVertex - resources.vertexArena.pageBaseElements(vertexPage);
+        vkCmdDrawIndexed(this.commandBuffer, elementCount, 1, drawFirstIndex, drawBaseVertex, firstInstance);
         if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
             this.readbackOffsets[this.readbackSlots] = (long) baseVertex * this.commonVertexStride;
             this.readbackRegions[this.readbackSlots] = resources;
@@ -25271,9 +25377,13 @@ this.frameBufferOpen = false;
         ensureReadback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
-            region.get(0).srcOffset(sourceOffset).dstOffset((long) slot * READBACK_COPY_BYTES)
+            // S3R-2: the captured offset is arena-global; the copy reads the page that holds
+            // it, at the page-local offset.
+            int page = resources.vertexArena.pageIndexForByteOffset((int) sourceOffset);
+            region.get(0).srcOffset(sourceOffset - resources.vertexArena.pageBaseBytes(page))
+                    .dstOffset((long) slot * READBACK_COPY_BYTES)
                     .size(READBACK_COPY_BYTES);
-            vkCmdCopyBuffer(this.commandBuffer, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
+            vkCmdCopyBuffer(this.commandBuffer, resources.vertexArena.pageBuffer(page).buffer(), this.readbackBuffer, region);
             org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_HOST_READ_BIT);

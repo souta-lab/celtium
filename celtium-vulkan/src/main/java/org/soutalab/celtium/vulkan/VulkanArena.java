@@ -24,15 +24,17 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
  * Every size and offset is a byte count and a multiple of 4, because Vulkan requires 4-byte alignment for buffer
  * copies; {@link #allocate(int)} rounds a request up, which is what keeps {@link Segment#getOffset()} aligned.
  * <p>
- * <b>Growth contract.</b> When nothing fits, the arena grows its buffer (at least doubling, never below 512 KiB,
- * and always enough that the appended tail alone is a contiguous range of the requested size) and retries.
- * {@link VulkanBuffer#ensureCapacity(long)} copies the existing bytes into the larger buffer, so
- * <b>every live segment keeps its offset and length</b>: no segment is invalidated, no data has to be re-uploaded and
- * the byte ranges never move. What does change is the {@code VkBuffer} handle, so derived state that cached the
- * handle has to be rebuilt by the caller from the existing mod metadata - that is what
- * {@link #upload(Collection)}'s return value reports, and comparing {@link VulkanBuffer#buffer()} (the handle, not
- * the {@link VulkanBuffer} object, which survives a growth) across {@link #allocate(int)} calls gives the same
- * signal.
+ * <b>Growth contract (S3R-2: paged).</b> The arena is a list of pages, each page one {@link VulkanBuffer} of the
+ * arena's page unit (its initial capacity; a single request larger than the unit gets a page of its own size).
+ * When nothing fits, a new page is appended and the allocation retries there - <b>no existing byte is ever
+ * copied</b>, so every live segment keeps its offset, its length and its page's handle for its whole life: no
+ * segment is invalidated, no data has to be re-uploaded and the byte ranges never move. Segment offsets stay
+ * arena-global (a page's base plus the offset inside it), so the mod metadata that stores them is untouched;
+ * the page a segment lives on is resolved through {@link Segment#buffer()} / {@link Segment#pageByteOffset()}.
+ * What {@link #upload(Collection)}'s return value reports is now "a page was added during this call": derived
+ * state keyed on the arena's single handle has to be rebuilt then, exactly as it had to be on a growth before.
+ * The doubling growth this replaces copied the whole buffer into a larger one on every growth -
+ * a 64 MiB+ copy plus a queue drain, the largest single spike on the pack path.
  * <p>
  * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
  * {@link #delete()} must happen while the context is still alive.
@@ -54,8 +56,6 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
  * only walks its list, and no allocation path consults the result.
  */
 public final class VulkanArena {
-    /** Growth never asks for less than this, so small arenas do not grow on every other allocation. */
-    private static final int MINIMUM_GROWTH_BYTES = 512 * 1024;
 
     /**
      * One census line per upload burst (one frame). It used to be on by default "because it costs a counter and says
@@ -94,10 +94,15 @@ public final class VulkanArena {
     private final VulkanContext context;
     /** {@code VK_BUFFER_USAGE_*} flags, kept so a census line can name what the arena holds. */
     private final int usageFlags;
-    private VulkanBuffer buffer;
-    private Segment head;
-    private Segment tail;
-    private Segment freeHead;
+    /** The pages, in arena order; page {@code i} starts at {@link #pageBases}{@code [i]}. */
+    private final java.util.ArrayList<Page> pages = new java.util.ArrayList<>();
+    /** Global byte offset of each page's first byte, parallel to {@link #pages}; grown on page addition. */
+    private int[] pageBases = new int[4];
+    /** The page unit: the initial capacity, which every ordinary page is created at. */
+    private final int pageUnitBytes;
+    /** Growth events that copied existing bytes. Structurally zero since S3R-2: the only growth path left is
+     *  {@link #addPage(int)}, which copies nothing - the counter stays so the census keeps proving it. */
+    private long growthCopies;
     private int liveSegmentCount;
     /** Fragmentation census snapshot scratch (see {@link #fragmentation()}); grown to the segment count, never shrunk. */
     private int[] fragmentationOffsets;
@@ -184,34 +189,64 @@ public final class VulkanArena {
         this.usageFlags = usageFlags;
         this.stride = stride;
         this.alignUnit = lcm4And(stride);
-        this.capacity = alignUpTo(initialCapacityBytes, this.alignUnit);
+        this.pageUnitBytes = alignUpTo(initialCapacityBytes, this.alignUnit);
+        this.capacity = 0;
+        addPage(0);
+    }
+
+    /**
+     * Appends one page and returns it. The page's capacity is the page unit, or the request's own aligned
+     * size when a single allocation exceeds the unit - pages are never doubled and existing pages are never
+     * touched, which is the whole point: growth copies nothing.
+     */
+    private Page addPage(int neededBytes) {
+        long pageBytes = pageCapacityBytes(this.pageUnitBytes, neededBytes, this.alignUnit);
+        if (pageBytes > Integer.MAX_VALUE - (long) this.capacity) {
+            throw new OutOfMemoryError("The Vulkan arena '" + this.name + "' cannot grow beyond "
+                    + Integer.MAX_VALUE + " bytes (used " + this.used + " bytes, requested " + neededBytes
+                    + " bytes, largestFreeRun=" + largestFreeRun() + ").");
+        }
+        int pageCapacity = (int) pageBytes;
         long started = System.nanoTime();
-        this.buffer = new VulkanBuffer(context, this.capacity, usageFlags);
+        VulkanBuffer pageBuffer = new VulkanBuffer(this.context, pageCapacity, this.usageFlags);
         arenaCreateCalls++;
         arenaCreateNanos += System.nanoTime() - started;
-        this.head = new Segment(this, 0, this.capacity);
-        this.tail = this.head;
-        linkFree(this.head);
+        Page page = new Page(this.pages.size(), this.capacity, pageCapacity, pageBuffer);
+        if (this.pages.size() == this.pageBases.length) {
+            int[] grown = new int[this.pageBases.length * 2];
+            System.arraycopy(this.pageBases, 0, grown, 0, this.pageBases.length);
+            this.pageBases = grown;
+        }
+        this.pageBases[page.index] = page.base;
+        this.pages.add(page);
+        this.capacity += pageCapacity;
+        Segment whole = new Segment(this, page, page.base, pageCapacity);
+        page.head = whole;
+        page.tail = whole;
+        linkFree(whole);
+        return page;
     }
 
     private void linkFree(Segment segment) {
+        Page page = segment.page;
         segment.free = true;
         segment.prevFree = null;
-        segment.nextFree = this.freeHead;
-        if (this.freeHead != null) {
-            this.freeHead.prevFree = segment;
+        segment.nextFree = page.freeHead;
+        if (page.freeHead != null) {
+            page.freeHead.prevFree = segment;
         }
-        this.freeHead = segment;
+        page.freeHead = segment;
     }
 
     private void unlinkFree(Segment segment) {
+        Page page = segment.page;
         segment.free = false;
         Segment pf = segment.prevFree;
         Segment nf = segment.nextFree;
         if (pf != null) {
             pf.nextFree = nf;
-        } else if (this.freeHead == segment) {
-            this.freeHead = nf;
+        } else if (page.freeHead == segment) {
+            page.freeHead = nf;
         }
         if (nf != null) {
             nf.prevFree = pf;
@@ -230,10 +265,11 @@ public final class VulkanArena {
      * Allocates a range of at least {@code byteSize} bytes. The returned range is a multiple of 4 bytes long and
      * starts at an offset that is a multiple of 4.
      * <p>
-     * The free list is searched first (best fit). When no free range fits, the buffer is grown and the search is
-     * repeated; growth preserves the contents and does not move existing segments. Render thread only.
+     * The free lists are searched first (best fit across every page; a segment never crosses a page boundary).
+     * When no free range fits, a page is appended and the search is repeated in it; appending copies nothing
+     * and does not move existing segments. Render thread only.
      *
-     * @throws IllegalStateException when the arena is deleted or the buffer cannot be grown
+     * @throws IllegalStateException when the arena is deleted or a page cannot be created
      */
     public Segment allocate(int byteSize) {
         requireLive();
@@ -245,20 +281,20 @@ public final class VulkanArena {
         int needed = alignUpTo(alignUp4Int(byteSize), this.alignUnit);
         Segment free = findFree(needed);
         if (free == null) {
-            grow(needed);
-            free = findFree(needed);
+            Page page = addPage(needed);
+            free = findFreeIn(page, needed);
             if (free == null) {
-                // Unreachable: growth always appends a free tail of at least `needed` bytes.
-                throw new IllegalStateException("The Vulkan arena '" + this.name + "' grew to " + this.capacity
-                        + " bytes but still has no contiguous free range of " + needed
-                        + " bytes (largestFreeRun=" + largestFreeRun() + ").");
+                // Unreachable: a fresh page is one free range of at least `needed` bytes.
+                throw new IllegalStateException("The Vulkan arena '" + this.name + "' holds " + this.capacity
+                        + " bytes across " + this.pages.size() + " pages but still has no contiguous free range of "
+                        + needed + " bytes (largestFreeRun=" + largestFreeRun() + ").");
             }
         }
         Segment result;
-        // The exact-fit branch may only hand out the range whole when its own start is on the alignment unit. A free
-        // tail appended by a grow starts at the previous capacity, and the buffer's real size is a multiple of the
-        // driver's alignment rather than of this arena's unit, so an unaligned start is reachable on a second grow; the
-        // split branch below then trims the range down to an aligned element instead of trusting its offset.
+        // The exact-fit branch may only hand out the range whole when its own start is on the alignment unit. A
+        // page's base is a sum of page capacities, each a multiple of the unit, so page starts are aligned; a
+        // free range inside a page can still start off the unit when a previous split left it so, and the split
+        // branch below then trims the range down to an aligned element instead of trusting its offset.
         if (free.length == needed && free.offset % this.alignUnit == 0) {
             unlinkFree(free);
             result = free;
@@ -270,13 +306,13 @@ public final class VulkanArena {
             // it - the vertices were then read one field out of step.
             int start = splitStart(free.offset, free.length, needed, this.alignUnit);
             int alignedNeeded = free.end() - start;
-            result = new Segment(this, start, alignedNeeded);
+            result = new Segment(this, free.page, start, alignedNeeded);
             result.prev = free;
             result.next = free.next;
             if (result.next != null) {
                 result.next.prev = result;
             } else {
-                this.tail = result;
+                free.page.tail = result;
             }
             free.length = start - free.offset;
             free.next = result;
@@ -326,7 +362,8 @@ public final class VulkanArena {
         if (length == 0) {
             return;
         }
-        this.buffer.write(offsetBytes, sourceAddress, length);
+        Page page = pageForRange(offsetBytes, length);
+        page.buffer.write(offsetBytes - page.base, sourceAddress, length);
         recordUpload(offsetBytes, length);
         if (VERIFY_ENABLED) {
             verifyRange(offsetBytes, sourceAddress, length);
@@ -350,7 +387,8 @@ public final class VulkanArena {
         if (length == 0) {
             return;
         }
-        this.context.uploadToBuffer(this.buffer, offsetBytes, source, 0);
+        Page page = pageForRange(offsetBytes, length);
+        this.context.uploadToBuffer(page.buffer, offsetBytes - page.base, source, 0);
         recordUpload(offsetBytes, length);
     }
 
@@ -360,18 +398,17 @@ public final class VulkanArena {
      * An upload with a null {@link Upload#segment} asks the arena to place it: the arena allocates a segment, stores
      * it in the upload and may have to grow the buffer to do so. Render thread only.
      *
-     * @return {@code true} when the underlying buffer was recreated (grown) during this call, so the caller has to
-     *         refresh state that cached the old {@code VkBuffer} handle; the segment offsets themselves stay valid
+     * @return {@code true} when a page was added during this call, so the caller has to refresh state that
+     *         cached the arena's buffer set; every existing segment keeps its page, offset and handle
      */
     public boolean upload(Collection<Upload> uploads) {
         requireLive();
         if (uploads == null) {
             throw new IllegalArgumentException("uploads must not be null");
         }
-        // Recording the handle before any work is what detects a reallocation. The VulkanBuffer object survives a
-        // growth (it recreates the VkBuffer inside itself), so the handle has to be compared, not the object.
-        VulkanBuffer beforeBuffer = this.buffer;
-        long beforeHandle = beforeBuffer.buffer();
+        // A page addition is the only event that changes the arena's buffer set now; existing pages' handles
+        // never change, so the page count is the whole signal.
+        int pagesBefore = this.pages.size();
         for (Upload upload : uploads) {
             if (upload == null) {
                 throw new IllegalArgumentException("uploads must not contain null elements");
@@ -392,13 +429,13 @@ public final class VulkanArena {
                 throw new IllegalArgumentException("An upload of " + upload.length
                         + " bytes does not fit its segment of " + segment.length + " bytes.");
             }
-            this.buffer.write(segment.offset, upload.sourceAddress, upload.length);
+            segment.page.buffer.write(segment.pageByteOffset(), upload.sourceAddress, upload.length);
             recordUpload(segment.offset, upload.length);
             if (VERIFY_ENABLED) {
                 verifyRange(segment.offset, upload.sourceAddress, upload.length);
             }
         }
-        return this.buffer != beforeBuffer || this.buffer.buffer() != beforeHandle;
+        return this.pages.size() != pagesBefore;
     }
 
     /** Bytes currently handed out to live segments. */
@@ -406,14 +443,24 @@ public final class VulkanArena {
         return this.used;
     }
 
-    /** Bytes currently allocated on the GPU, which is the current buffer size. */
+    /** Bytes currently allocated on the GPU, which is the sum of the page sizes. */
     public long deviceAllocatedMemoryL() {
         return this.capacity;
     }
 
-    /** Number of buffers the arena owns: one while it is alive, zero after {@link #delete()}. */
+    /** Number of buffers the arena owns: one per page while it is alive, zero after {@link #delete()}. */
     public int bufferCount() {
-        return this.deleted ? 0 : 1;
+        return this.deleted ? 0 : this.pages.size();
+    }
+
+    /** How many pages the arena currently holds. */
+    public int pageCount() {
+        return this.pages.size();
+    }
+
+    /** Growth events that copied existing bytes; structurally zero since the paged growth (see the field). */
+    public long growthCopies() {
+        return this.growthCopies;
     }
 
     /** Whether no live segment is allocated. */
@@ -430,9 +477,11 @@ public final class VulkanArena {
      */
     public long largestFreeRun() {
         long largest = 0L;
-        for (Segment segment = this.freeHead; segment != null; segment = segment.nextFree) {
-            if (segment.length > largest) {
-                largest = segment.length;
+        for (Page page : this.pages) {
+            for (Segment segment = page.freeHead; segment != null; segment = segment.nextFree) {
+                if (segment.length > largest) {
+                    largest = segment.length;
+                }
             }
         }
         return largest;
@@ -443,19 +492,88 @@ public final class VulkanArena {
     }
 
     /**
-     * The buffer the segments live in. Its handle changes on every growth, so callers that cache it must compare it
-     * across allocations.
-     * <p>
-     * This is the call the draw path makes immediately before it binds the arena, so it is also where the upload
-     * census is reported: whatever was written since the previous bind belongs to the frame that is starting, and the
-     * one line it prints is what says whether that frame's terrain upload was complete.
+     * The buffer of page {@code pageIndex}. Page handles never change once created - appending a page does
+     * not touch the existing ones - so a caller may cache a page's handle for as long as it re-resolves the
+     * page of the range it is about to address.
      *
      * @throws IllegalStateException when the arena has been deleted
      */
-    public VulkanBuffer buffer() {
+    public VulkanBuffer pageBuffer(int pageIndex) {
+        requireLive();
+        return this.pages.get(pageIndex).buffer;
+    }
+
+    /** The arena-global byte offset at which page {@code pageIndex} starts. */
+    public int pageBaseBytes(int pageIndex) {
+        return this.pageBases[pageIndex];
+    }
+
+    /** The page a byte offset falls in: the last page whose base is at or below the offset. */
+    public int pageIndexForByteOffset(int byteOffset) {
+        return pageIndexFor(this.pageBases, this.pages.size(), byteOffset);
+    }
+
+    /** The page the element at {@code elementOffset} (in this arena's stride units) falls in. */
+    public int pageIndexForElementOffset(int elementOffset) {
+        return pageIndexForByteOffset(elementOffset * this.stride);
+    }
+
+    /** The arena-global element offset at which page {@code pageIndex} starts. */
+    public int pageBaseElements(int pageIndex) {
+        return this.pageBases[pageIndex] / this.stride;
+    }
+
+    /** The buffer of the page a byte offset falls in. */
+    public VulkanBuffer bufferForByteOffset(int byteOffset) {
+        return pageBuffer(pageIndexForByteOffset(byteOffset));
+    }
+
+    /**
+     * The page containing the whole range {@code [offsetBytes, offsetBytes + length)}: writes and copies are
+     * page-confined because a segment never crosses a page boundary, so a range that straddles one names no
+     * single buffer and is refused rather than split silently.
+     */
+    private Page pageForRange(int offsetBytes, int length) {
+        int index = pageIndexForByteOffset(offsetBytes);
+        Page page = this.pages.get(index);
+        if (length > page.end() - offsetBytes) {
+            throw new IllegalArgumentException("A range of " + length + " bytes at offset " + offsetBytes
+                    + " crosses the end of arena page " + index + " (" + page.capacity + " bytes at base "
+                    + page.base + "); arena ranges never cross a page boundary.");
+        }
+        return page;
+    }
+
+    /**
+     * Which page an offset falls in, as a pure function of the page bases: the last base at or below the
+     * offset (bases are strictly increasing, one per page). An offset below the first base - impossible for
+     * arena offsets, which start at 0 - reads as page 0.
+     */
+    static int pageIndexFor(int[] pageBases, int pageCount, int byteOffset) {
+        int low = 0;
+        int high = pageCount - 1;
+        int result = 0;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            if (pageBases[mid] <= byteOffset) {
+                result = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Called by the draw path where it used to fetch the arena's one buffer: the upload census rides the
+     * bind, as it did when {@code buffer()} was that fetch - whatever was written since the previous bind
+     * belongs to the frame that is starting, and the one line it prints is what says whether that frame's
+     * terrain upload was complete.
+     */
+    public void noteBind() {
         requireLive();
         reportUploadCensus();
-        return this.buffer;
     }
 
     /** Writes uploaded since this arena was created. */
@@ -527,32 +645,39 @@ public final class VulkanArena {
      * tail. This walks the segment list once and changes nothing: no allocation path consults it.
      */
     public Fragmentation fragmentation() {
-        int count = 0;
-        for (Segment segment = this.head; segment != null; segment = segment.next) {
-            count++;
+        Fragmentation combined = null;
+        for (Page page : this.pages) {
+            int count = 0;
+            for (Segment segment = page.head; segment != null; segment = segment.next) {
+                count++;
+            }
+            fillFragmentationScratch(page, count);
+            Fragmentation reading = summarizeFragmentation(page.capacity, this.fragmentationOffsets,
+                    this.fragmentationLengths, this.fragmentationFree, count);
+            combined = combined == null ? reading : Fragmentation.combine(combined, reading);
         }
-        fillFragmentationScratch(count);
-        return summarizeFragmentation(this.capacity, this.fragmentationOffsets, this.fragmentationLengths,
-                this.fragmentationFree, count);
+        return combined == null
+                ? summarizeFragmentation(0, new int[0], new int[0], new boolean[0]) : combined;
     }
 
     /**
-     * Fills this arena's snapshot scratch with the first {@code count} segments, growing the arrays when
-     * the segment list outgrows them. The scratch replaces three fresh arrays per census call: the census
-     * runs from {@code buffer()} on the recording path whenever it is enabled, and the snapshot is consumed
+     * Fills this arena's snapshot scratch with one page's first {@code count} segments (offsets made
+     * page-local, which is the frame the aggregation's tail test reads), growing the arrays when the
+     * segment list outgrows them. The scratch replaces three fresh arrays per census call: the census
+     * runs from the bind on the recording path whenever it is enabled, and the snapshot is consumed
      * by {@code summarizeFragmentation} before {@link #fragmentation()} returns, so reuse cannot alias
      * anything live. Lifetime owner: this arena instance, confined to the same thread as the segment list
      * it snapshots (the list itself is unsynchronized).
      */
-    private void fillFragmentationScratch(int count) {
+    private void fillFragmentationScratch(Page page, int count) {
         if (this.fragmentationOffsets == null || this.fragmentationOffsets.length < count) {
             this.fragmentationOffsets = new int[count];
             this.fragmentationLengths = new int[count];
             this.fragmentationFree = new boolean[count];
         }
         int index = 0;
-        for (Segment segment = this.head; segment != null && index < count; segment = segment.next) {
-            this.fragmentationOffsets[index] = segment.offset;
+        for (Segment segment = page.head; segment != null && index < count; segment = segment.next) {
+            this.fragmentationOffsets[index] = segment.offset - page.base;
             this.fragmentationLengths[index] = segment.length;
             this.fragmentationFree[index] = segment.free;
             index++;
@@ -647,13 +772,33 @@ public final class VulkanArena {
 
         private Fragmentation(int capacity, long usedBytes, long holeBytes, int holeCount,
                 long largestHoleBytes, long tailBytes) {
+            this(capacity, usedBytes, holeBytes, holeCount, largestHoleBytes, tailBytes,
+                    Math.max(largestHoleBytes, tailBytes));
+        }
+
+        private Fragmentation(int capacity, long usedBytes, long holeBytes, int holeCount,
+                long largestHoleBytes, long tailBytes, long largestFreeRunBytes) {
             this.capacity = capacity;
             this.usedBytes = usedBytes;
             this.holeBytes = holeBytes;
             this.holeCount = holeCount;
             this.largestHoleBytes = largestHoleBytes;
             this.tailBytes = tailBytes;
-            this.largestFreeRunBytes = Math.max(largestHoleBytes, tailBytes);
+            this.largestFreeRunBytes = largestFreeRunBytes;
+        }
+
+        /**
+         * Two readings over disjoint capacities combined into one (S3R-2: one reading per arena page).
+         * Used and hole bytes add, and the tails add - each capacity's end slack is growth slack of the
+         * same kind. The largest free run does not add: a run never spans capacities, so the combined
+         * run is the larger of the two readings' runs. The identity
+         * {@code usedBytes + holeBytes + tailBytes == capacity} is preserved by construction.
+         */
+        static Fragmentation combine(Fragmentation a, Fragmentation b) {
+            return new Fragmentation(a.capacity + b.capacity, a.usedBytes + b.usedBytes,
+                    a.holeBytes + b.holeBytes, a.holeCount + b.holeCount,
+                    Math.max(a.largestHoleBytes, b.largestHoleBytes), a.tailBytes + b.tailBytes,
+                    Math.max(a.largestFreeRunBytes, b.largestFreeRunBytes));
         }
 
         /** {@return the census line for this reading}. */
@@ -677,7 +822,8 @@ public final class VulkanArena {
         int checked = Math.min(length, VERIFY_MAX_BYTES);
         try {
             ensureVerifyBuffer(checked);
-            this.buffer.readInto(this.verifyBuffer, offsetBytes, checked);
+            Page page = pageForRange(offsetBytes, checked);
+            page.buffer.readInto(this.verifyBuffer, offsetBytes - page.base, checked);
             long mapped = this.verifyBuffer.mappedAddress();
             int firstDifference = -1;
             for (int i = 0; i < checked; i++) {
@@ -741,30 +887,33 @@ public final class VulkanArena {
     }
 
     /**
-     * Deletes the buffer and releases every segment. Idempotent. Segments that are still held by the caller become
-     * inert: their {@link Segment#delete()} is a no-op and their offsets must not be used any more. Render thread
-     * only.
+     * Deletes every page's buffer and releases every segment. Idempotent. Segments that are still held by the
+     * caller become inert: their {@link Segment#delete()} is a no-op and their offsets must not be used any
+     * more. Render thread only.
      */
     public void delete() {
         if (this.deleted) {
             return;
         }
         this.deleted = true;
-        Segment segment = this.head;
-        while (segment != null) {
-            Segment next = segment.next;
-            segment.free = true;
-            segment.offset = 0;
-            segment.length = 0;
-            segment.prev = null;
-            segment.next = null;
-            segment.prevFree = null;
-            segment.nextFree = null;
-            segment = next;
+        for (Page page : this.pages) {
+            Segment segment = page.head;
+            while (segment != null) {
+                Segment next = segment.next;
+                segment.free = true;
+                segment.offset = 0;
+                segment.length = 0;
+                segment.prev = null;
+                segment.next = null;
+                segment.prevFree = null;
+                segment.nextFree = null;
+                segment = next;
+            }
+            page.head = null;
+            page.tail = null;
+            page.freeHead = null;
+            page.buffer.delete();
         }
-        this.head = null;
-        this.tail = null;
-        this.freeHead = null;
         this.liveSegmentCount = 0;
         this.used = 0;
         this.capacity = 0;
@@ -772,7 +921,6 @@ public final class VulkanArena {
             this.verifyBuffer.delete();
             this.verifyBuffer = null;
         }
-        this.buffer.delete();
     }
 
     /**
@@ -818,40 +966,19 @@ public final class VulkanArena {
     }
 
     /**
-     * Grows the buffer so it can hold the used bytes plus {@code needed} more.
+     * The capacity of a newly appended page: the page unit, or the request's own size when a single
+     * allocation exceeds the unit - and rounded up to the arena's alignment unit.
      * <p>
-     * Doubling is the normal case. The {@code capacity + needed} term matters when a single request is larger than
-     * the whole current buffer: doubling alone would then leave a tail that is too small and no free range large
-     * enough, so growth would never succeed.
+     * The rounding is the point, as it was for the growth target this replaces: a page capacity off the
+     * unit would put the next page's base off the unit, and a split of a range starting there derives a
+     * start below the range it splits - the allocator corruption {@link #splitStart} refuses. BH-01's
+     * invariant ("every boundary is a multiple of the unit") therefore has to hold for every page base,
+     * not just the first page's capacity. There is deliberately no doubling term and no minimum-growth
+     * term: a page is a fixed unit, and oversizing pages would strand the excess as unusable tail in a
+     * page no later allocation can split across.
      */
-    private void grow(int needed) {
-        long target = growthTarget(this.capacity, needed, this.alignUnit);
-        if (target > Integer.MAX_VALUE) {
-            throw new OutOfMemoryError("The Vulkan arena '" + this.name + "' cannot grow beyond "
-                    + Integer.MAX_VALUE + " bytes (used " + this.used + " bytes, requested " + needed
-                    + " bytes, largestFreeRun=" + largestFreeRun() + ").");
-        }
-        int oldCapacity = this.capacity;
-        this.buffer.ensureCapacity(target);
-        // Read the real size back instead of assuming the request: VulkanBuffer owns the exact allocation size.
-        this.capacity = (int) this.buffer.size();
-        appendFreeTail(oldCapacity, this.capacity - oldCapacity);
-    }
-
-    /**
-     * The capacity a grow aims for: at least double, at least {@code capacity + needed}, at least the minimum
-     * growth - and rounded up to the arena's alignment unit.
-     * <p>
-     * The rounding is the point: {@link VulkanBuffer#ensureCapacity(long)} rounds only to 4 bytes, and
-     * {@link #MINIMUM_GROWTH_BYTES} is not a multiple of every stride's unit (524,288 mod 24 = 8, and likewise
-     * for 28 and 36), so the raw maximum could leave the capacity off the unit. The tail a grow appends then
-     * ends off the unit, and a later split of that tail derives a start below the range it splits - the
-     * allocator corruption {@link #splitStart} now refuses. BH-01's invariant ("every boundary is a multiple
-     * of the unit") held for the constructor's capacity but not for this one; it holds for both now.
-     */
-    static long growthTarget(int capacity, int needed, int alignUnit) {
-        long target = Math.max(Math.max((long) capacity * 2L, (long) capacity + needed),
-                MINIMUM_GROWTH_BYTES);
+    static long pageCapacityBytes(int unitBytes, int needed, int alignUnit) {
+        long target = Math.max((long) unitBytes, (long) needed);
         if (alignUnit > 1) {
             target = (target + alignUnit - 1) / alignUnit * (long) alignUnit;
         }
@@ -881,37 +1008,24 @@ public final class VulkanArena {
         return start;
     }
 
-    /**
-     * Appends the newly added tail of the buffer to the free list. The old layout covers
-     * {@code [0, oldCapacity)} contiguously, so the tail starts exactly at {@code oldCapacity} and live segments
-     * keep their offsets.
-     */
-    private void appendFreeTail(int offset, int length) {
-        if (length <= 0) {
-            return;
+    /** Best-fit search across every page, with an exact-size short circuit; null when nothing fits. */
+    private Segment findFree(int size) {
+        Segment best = null;
+        for (Page page : this.pages) {
+            Segment candidate = findFreeIn(page, size);
+            if (candidate != null && candidate.length == size) {
+                return candidate;
+            }
+            if (candidate != null && (best == null || best.length > candidate.length)) {
+                best = candidate;
+            }
         }
-        Segment last = this.tail;
-        if (last == null) {
-            Segment tailSeg = new Segment(this, offset, length);
-            this.head = tailSeg;
-            this.tail = tailSeg;
-            linkFree(tailSeg);
-            return;
-        }
-        if (last.free) {
-            last.length += length;
-            return;
-        }
-        Segment tailSeg = new Segment(this, offset, length);
-        last.next = tailSeg;
-        tailSeg.prev = last;
-        this.tail = tailSeg;
-        linkFree(tailSeg);
+        return best;
     }
 
-    /** Best-fit search with an exact-size short circuit; returns null when no free range is large enough. */
-    private Segment findFree(int size) {
-        Segment entry = this.freeHead;
+    /** Best fit inside one page's free list, with an exact-size short circuit. */
+    private Segment findFreeIn(Page page, int size) {
+        Segment entry = page.freeHead;
         Segment best = null;
         while (entry != null) {
             if (entry.length == size) {
@@ -1024,6 +1138,8 @@ public final class VulkanArena {
      */
     public static final class Segment implements MeshBufferSegment, Runnable {
         private final VulkanArena arena;
+        /** The page this range lives in; fixed at allocation, because ranges never move. */
+        private final Page page;
         private int offset;
         private int length;
         private boolean free;
@@ -1034,10 +1150,26 @@ public final class VulkanArena {
         private Segment prevFree;
         private Segment nextFree;
 
-        private Segment(VulkanArena arena, int offset, int length) {
+        private Segment(VulkanArena arena, Page page, int offset, int length) {
             this.arena = arena;
+            this.page = page;
             this.offset = offset;
             this.length = length;
+        }
+
+        /** The buffer this range lives in - its page's buffer, stable for the range's whole life. */
+        public VulkanBuffer buffer() {
+            return this.page.buffer;
+        }
+
+        /** This range's byte offset inside its page's buffer, which is what a bind or copy addresses. */
+        public int pageByteOffset() {
+            return this.offset - this.page.base;
+        }
+
+        /** Which page of the arena this range lives in. */
+        public int pageIndex() {
+            return this.page.index;
         }
 
         @Override
@@ -1084,7 +1216,7 @@ public final class VulkanArena {
             if (this.next != null) {
                 this.next.prev = this;
             } else {
-                this.arena.tail = this;
+                this.page.tail = this;
             }
             other.prev = null;
             other.next = null;
@@ -1094,6 +1226,34 @@ public final class VulkanArena {
         public String toString() {
             return "VulkanArena.Segment[offset=" + this.offset + ", length=" + this.length
                     + (this.free ? ", free]" : ", used]");
+        }
+    }
+
+    /**
+     * One page of the arena: one buffer, one segment list covering {@code [base, base + capacity)}
+     * contiguously, and that list's own free list. Segments never cross a page boundary, so coalescing,
+     * splitting and best-fit all stay inside the page that owns the range - which is also what keeps the
+     * page's buffer handle sufficient to address any of its segments.
+     */
+    private static final class Page {
+        private final int index;
+        /** Arena-global byte offset of this page's first byte; a multiple of the arena's alignment unit. */
+        private final int base;
+        private final int capacity;
+        private final VulkanBuffer buffer;
+        private Segment head;
+        private Segment tail;
+        private Segment freeHead;
+
+        private Page(int index, int base, int capacity, VulkanBuffer buffer) {
+            this.index = index;
+            this.base = base;
+            this.capacity = capacity;
+            this.buffer = buffer;
+        }
+
+        private int end() {
+            return this.base + this.capacity;
         }
     }
 }
