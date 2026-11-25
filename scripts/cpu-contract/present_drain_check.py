@@ -11,7 +11,11 @@ to do the same.
 
 This is a source-order contract, because the flush itself is a Vulkan queue submission that no CPU-only test can
 observe. It checks, inside `celtium$presentFrame`, that the pending drain runs after `ensureSwapchain()` and before
-the `lastFrameReachedQueue` gate - an ordering that cannot regress without this check failing. It also checks the
+the `lastFrameReachedQueue` gate - an ordering that cannot regress without this check failing. It also checks that
+a finish follows the drain before the gate: the drain records into the unified frame buffer, and a buffer nobody
+finishes is never queued, so drained groups would miss the very present that drained them (defect B4, proven on
+paper in OVERHAUL-B4-HARM-2026-11-26; the post-drain finish is what PRESENT_DRAIN_FINISH_GUARD gates, default on
+since that proof). It also checks the
 written-frame binding end to end (swapchain write serial -> backend presented-frame stamp -> fixture read),
 because that binding is what makes the startup image nameable by the fixture instead of "the file appeared while
 the counter read 16".
@@ -73,7 +77,17 @@ def main():
     check(swap < drain < gate,
           "the drain must run after ensureSwapchain() and before the completed-frame gate "
           "- a drain placed after the gate still presents a frame behind")
+    # B4: the drain records into the unified frame buffer, which is only queued by a finish. Without a
+    # finish between the drain and the gate, the drained groups stay in the open buffer and miss this
+    # present - one frame late on the composite path, and on the direct-present path recorded against
+    # an image that has already been presented and released.
+    finish = present.index("celtium$finishFrameBuffer()", drain)
+    check(drain < finish < gate,
+          "a finish must follow the present-time drain before the completed-frame gate "
+          "- drained groups left in the open frame buffer are never queued for this present (B4)")
     check("presentFlushFailures" in present, "a failed drain must be counted, not silent")
+    check("presentDrainUnfinished" in present,
+          "a drain that leaves the frame buffer open at the gate must be counted, not silent (B4 census)")
 
     # The written-frame binding: the swapchain counts each successful write per file name, the backend stamps
     # the presented-frame counter when a write lands, and the fixture reads it back. The binding is keyed on the

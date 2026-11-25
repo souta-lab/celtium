@@ -619,6 +619,7 @@ final class PresentSwapchain {
                     + " attempts=" + backend.presentAttempts + " presented=" + backend.framePresentedFromVulkan
                     + " failures=" + backend.presentFailures + " swapsSkipped=" + backend.glSwapsSkipped
                     + " drainFailures=" + backend.presentFlushFailures
+                    + " drainUnfinished=" + backend.presentDrainUnfinished
                     + " waiting=" + backend.lastFrameReachedQueue + " lastSkip=[" + backend.presentSkipReason
                     + "] lastResult=[" + backend.lastPresentResult + "] skipsByReason=[noTarget/stalled="
                     + backend.presentSkipsByReason[0] + " noSwapchain=" + backend.presentSkipsByReason[1]
@@ -646,6 +647,7 @@ final class PresentSwapchain {
         // pending work here restores the swap-point ordering; groups for other targets stay queued for their own
         // pass, exactly as at a bind boundary, and an empty queue costs one list check.
         if (VulkanTerrainGpuBackend.PRESENT_FLUSH_PENDING && !backend.immediateWindowBusy) {
+            boolean frameBufferOpenBeforeDrain = backend.frameBufferOpen;
             try {
                 FramePassTimings.begin("flush");
                 try {
@@ -668,6 +670,13 @@ final class PresentSwapchain {
                     backend.record("present-time immediate drain failed; the queue keeps its work: "
                             + backend.describeWithOrigin(error));
                 }
+            }
+            // B4 census: the drain opened the unified frame buffer and it is still open here, so the
+            // drained groups were recorded but not queued and miss this present. The pre-drain
+            // snapshot keeps the count to windows this drain opened, not a buffer left open by an
+            // earlier path. Structurally zero while PRESENT_DRAIN_FINISH_GUARD is on.
+            if (!frameBufferOpenBeforeDrain && backend.frameBufferOpen) {
+                backend.presentDrainUnfinished++;
             }
         }
         if (!backend.lastFrameReachedQueue) {
