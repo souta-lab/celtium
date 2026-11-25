@@ -4772,6 +4772,33 @@ public final class VulkanContext {
         return first;
     }
 
+    /**
+     * {@return the caller-by-size-class histograms of the host-visible slab pools, for the memory
+     * allocation summary}. The per-pool summary ({@link #celtium$slabPoolSummary}) aggregates by ledger,
+     * so when the Stage 3+4 integration tree filled both host-visible ledgers in one burst it could not
+     * say which caller held the fixed-page class's 8,192 live pages. Each entry names the pool's memory
+     * type and renders its {@link SlabAllocator#slabAllocationHistogram()}: {@code site:class=live/total}
+     * per non-empty cell, with a {@code (fixed=N)} suffix where the fixed-page ledger itself served part
+     * of the live count. Pools with no allocations yet render nothing.
+     */
+    public String celtium$slabHistogramSummary() {
+        StringBuilder summary = new StringBuilder("slabHistograms=[");
+        boolean first = true;
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            String histogram = allocator.slabAllocationHistogram();
+            if (histogram == null) {
+                continue;
+            }
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            summary.append("hostVisible(type=").append(allocator.memoryTypeIndex()).append("):")
+                    .append(histogram);
+        }
+        return summary.append(']').toString();
+    }
+
     /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
     public int celtium$hostVisibleSlabCount() {
         int total = 0;

@@ -4,6 +4,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
+import org.soutalab.celtium.vulkan.hal.SlabAllocationHistogram;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 
 import java.nio.ByteBuffer;
@@ -190,7 +191,8 @@ final class VulkanUniformBuffer {
             // is the slab's persistent mapping plus the offset - no vkMapMemory of this buffer's own.
             SlabAllocator allocator = this.context.celtium$hostVisibleSlabs(requirements.memoryTypeBits());
             try {
-                allocation.slabAllocation = allocator.allocate(requirements.size(), requirements.alignment());
+                allocation.slabAllocation = allocator.allocate(requirements.size(), requirements.alignment(),
+                        SlabAllocationHistogram.SITE_UNIFORM_BUFFER);
             } catch (RuntimeException error) {
                 throw destroyReplacement(allocation, error.getMessage());
             }

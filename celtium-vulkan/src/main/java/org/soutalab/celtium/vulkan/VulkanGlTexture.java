@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.SlabAllocationHistogram;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -4356,7 +4357,8 @@ public final class VulkanGlTexture {
             // an invalidate, and the mapping is the slab's persistent one - stagingAddress is the slab
             // mapping plus this allocation's offset, stable for the allocation's whole life.
             SlabAllocator stagingAllocator = context.celtium$hostVisibleSlabs(requirements.memoryTypeBits());
-            stagingAllocation = stagingAllocator.allocate(requirements.size(), requirements.alignment());
+            stagingAllocation = stagingAllocator.allocate(requirements.size(), requirements.alignment(),
+                    SlabAllocationHistogram.SITE_TEXTURE_STAGING);
             stagingAllocator.bindBuffer(stagingBuffer, stagingAllocation);
             stagingMemory = stagingAllocation.deviceMemory();
             stagingAddress = stagingAllocator.mappedAddress(stagingAllocation);

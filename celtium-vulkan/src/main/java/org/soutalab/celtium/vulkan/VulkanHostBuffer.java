@@ -5,6 +5,7 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkMemoryRequirements;
+import org.soutalab.celtium.vulkan.hal.SlabAllocationHistogram;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 
 import java.nio.LongBuffer;
@@ -347,7 +348,8 @@ public final class VulkanHostBuffer {
             // offset arithmetic lives in exactly one place - the same shape VulkanBuffer uses for its
             // device-local slabs. The mapped address is the slab's persistent mapping plus the offset.
             SlabAllocator allocator = this.context.celtium$hostVisibleSlabs(requirements.memoryTypeBits());
-            this.allocation = allocator.allocate(requirements.size(), requirements.alignment());
+            this.allocation = allocator.allocate(requirements.size(), requirements.alignment(),
+                    SlabAllocationHistogram.SITE_HOST_BUFFER);
             allocator.bindBuffer(this.handle, this.allocation);
             this.mapped = allocator.mappedAddress(this.allocation);
         }

@@ -79,6 +79,14 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * refusal therefore names its pool and reports the two ledgers separately, and the context summary reports
  * the same split, so a refusal is attributable from the crash text alone.
  * <p>
+ * <b>Caller attribution (histogram):</b> a host-visible allocator additionally counts its allocations by
+ * caller site and page-rounded size class in a {@link SlabAllocationHistogram}. The per-ledger summary
+ * aggregates cannot say which of the three host-visible feeders (host buffers, uniform buffers, texture
+ * staging) holds a size class - in the Stage 3+4 integration tree both ledgers filled in one burst and the
+ * fixed-page class's 8,192 live pages were attributable to no one - so the callers that feed these pools
+ * name their site through {@link #allocate(long, long, int)} and the context summary renders the histogram
+ * next to the pool summary. Counting only: the histogram never influences placement or release.
+ * <p>
  * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
  * {@link #delete()} must happen before the context is deleted.
  */
@@ -102,6 +110,14 @@ public final class SlabAllocator {
     private final boolean hostVisible;
     private final SlabPool pool;
     private final FixedPagePool fixedPool;
+
+    /**
+     * Caller-by-size-class counting of this allocator's allocations, host-visible allocators only
+     * ({@code null} otherwise): the pool summary's per-ledger aggregates cannot say which caller holds a
+     * size class, and attributing an exhaustion to a caller is the histogram's whole job. Counting only;
+     * it never influences placement or release.
+     */
+    private final SlabAllocationHistogram histogram;
 
     /** Device slabs backing the ledger's slabs, in the same index order; entries are appended, never removed. */
     private final List<SlabRecord> poolSlabs = new ArrayList<SlabRecord>();
@@ -160,6 +176,7 @@ public final class SlabAllocator {
         this.hostVisible = hostVisible;
         this.pool = new SlabPool(slabSizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES, maxSlabs);
         this.fixedPool = new FixedPagePool(slabSizeBytes, FixedPagePool.FIXED_PAGE_SIZE_BYTES, maxSlabs);
+        this.histogram = hostVisible ? new SlabAllocationHistogram(slabSizeBytes) : null;
     }
 
     /**
@@ -177,6 +194,25 @@ public final class SlabAllocator {
      *                               memory for a fresh slab cannot be allocated, or after {@link #delete()}
      */
     public SlabAllocation allocate(long sizeBytes, long alignment) {
+        return allocate(sizeBytes, alignment, SlabAllocationHistogram.SITE_UNKNOWN);
+    }
+
+    /**
+     * Allocates {@code sizeBytes} like {@link #allocate(long, long)}, attributing the allocation to
+     * {@code site} in this allocator's {@link SlabAllocationHistogram} (host-visible allocators only; the
+     * site is ignored where no histogram is kept). The three callers that feed the host-visible pools pass
+     * their site constants, so a pool exhaustion reads out which caller holds which size class.
+     */
+    public SlabAllocation allocate(long sizeBytes, long alignment, int site) {
+        SlabAllocation allocation = allocateImpl(sizeBytes, alignment);
+        allocation.site = site;
+        if (this.histogram != null) {
+            this.histogram.noteAllocated(site, allocation.size(), allocation.fixedPage());
+        }
+        return allocation;
+    }
+
+    private SlabAllocation allocateImpl(long sizeBytes, long alignment) {
         requireLive();
         if (sizeBytes <= 0L) {
             throw new IllegalArgumentException("sizeBytes must be positive, was " + sizeBytes);
@@ -270,6 +306,10 @@ public final class SlabAllocator {
         } else {
             this.pendingOversized.add(new PendingOversizedRelease(allocation.record, timelineValue));
         }
+        if (this.histogram != null) {
+            this.histogram.noteReleased(allocation.site, allocation.size(), allocation.fixedPage(),
+                    timelineValue);
+        }
     }
 
     /**
@@ -289,6 +329,9 @@ public final class SlabAllocator {
                 this.oversizedSlabs.remove(pending.record);
                 freeSlab(pending.record);
             }
+        }
+        if (this.histogram != null) {
+            this.histogram.collectCompleted(completedTimelineValue);
         }
     }
 
@@ -403,6 +446,20 @@ public final class SlabAllocator {
     /** Number of dedicated oversized slabs currently held. */
     public int oversizedSlabCount() {
         return this.oversizedSlabs.size();
+    }
+
+    /**
+     * The rendered caller-by-size-class histogram of this allocator's allocations (see
+     * {@link SlabAllocationHistogram}), or {@code null} when this allocator keeps no histogram
+     * (device-local allocators) or nothing has been allocated from it yet.
+     */
+    public String slabAllocationHistogram() {
+        if (this.histogram == null || this.histogram.isEmpty()) {
+            return null;
+        }
+        StringBuilder rendered = new StringBuilder();
+        this.histogram.appendSummary(rendered);
+        return rendered.toString();
     }
 
     /**
@@ -600,6 +657,9 @@ public final class SlabAllocator {
         private final SlabPool.Allocation pooled;
         private final FixedPagePool.Allocation fixed;
         private boolean released;
+
+        /** The caller site this allocation is attributed to in the owner's histogram; set by the allocator. */
+        private int site = SlabAllocationHistogram.SITE_UNKNOWN;
 
         SlabAllocation(SlabAllocator owner, SlabRecord record, SlabPool.Allocation pooled) {
             this(owner, record, pooled, null);
