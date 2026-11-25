@@ -4570,6 +4570,19 @@ public final class VulkanContext {
     /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}: (handle, allocation). */
     private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
     /**
+     * Census bookkeeping for the slab retire list above, read by {@link #celtium$slabRetireSummary()}:
+     * when the oldest waiting entry arrived ({@code System.nanoTime()}, 0 while the list is empty - the
+     * drain clears the whole list, so the oldest entry is always the first one added since the last
+     * drain). The class counters on {@link VulkanHostBuffer} decrement at retire time, so they cannot
+     * show this stage-A backlog; these fields exist so a leg can tell "still live" from "retired but the
+     * drain has not run". Bookkeeping only: nothing here changes when anything is destroyed or released.
+     */
+    private long retiredSlabOldestNanos;
+    /** Peak size the slab retire list has reached, so a burst the drain already cleared stays visible. */
+    private int retiredSlabPeak;
+    /** How many times the retired-buffer drain has run; it is the slab retire list's only exit. */
+    private long retiredSlabDrainCalls;
+    /**
      * The fallback slab completion currency, for a device without a frame timeline. The primary currency is
      * the frame timeline (Stage 2): a deferred slab release is keyed on the timeline's last allocated value
      * when the release is recorded ({@link #celtium$slabReleaseValue()}), and collection reads the timeline's
@@ -4617,6 +4630,7 @@ public final class VulkanContext {
      * @return how many buffers were freed
      */
     public int celtium$destroyRetiredBuffers() {
+        this.retiredSlabDrainCalls++;
         celtium$collectSlabReleases();
         VkDevice device = this.device;
         int freed = 0;
@@ -4647,6 +4661,7 @@ public final class VulkanContext {
             freed++;
         }
         this.retiredSlabBuffers.clear();
+        this.retiredSlabOldestNanos = 0L;
         this.retiredBuffersDestroyed += freed;
         this.retiredBuffersOutstanding = 0;
         // The drain ran under the caller's queue-idle guarantee, so every release keyed on the current
@@ -4772,6 +4787,22 @@ public final class VulkanContext {
         return first;
     }
 
+    /**
+     * {@return the stage-A retire census for the slab-backed deferred list}: how many slab buffers are
+     * waiting for the drain right now, the age of the oldest waiting entry, the list's peak size, and
+     * how many times the drain has run. The pool summary beside it counts a retired range as live until
+     * the drain releases it, so without this line a leg cannot tell a pool held by live objects from
+     * one held by retire backlog the drain has not reached (its only call site is conditional and can
+     * starve while a recording stays open). Read-only: computing the age touches no state.
+     */
+    public String celtium$slabRetireSummary() {
+        int waiting = this.retiredSlabBuffers.size();
+        long oldestAgeMillis = waiting == 0 || this.retiredSlabOldestNanos == 0L ? 0L
+                : (System.nanoTime() - this.retiredSlabOldestNanos) / 1000000L;
+        return "slabRetire=[waiting=" + waiting + ",oldestAgeMillis=" + oldestAgeMillis
+                + ",peak=" + this.retiredSlabPeak + ",drainCalls=" + this.retiredSlabDrainCalls + "]";
+    }
+
     /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
     public int celtium$hostVisibleSlabCount() {
         int total = 0;
@@ -4842,6 +4873,12 @@ public final class VulkanContext {
             return;
         }
         this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
+        if (this.retiredSlabBuffers.size() == 1) {
+            this.retiredSlabOldestNanos = System.nanoTime();
+        }
+        if (this.retiredSlabBuffers.size() > this.retiredSlabPeak) {
+            this.retiredSlabPeak = this.retiredSlabBuffers.size();
+        }
         if (this.retiredBufferSites.size() < 8) {
             this.retiredBufferSites.add(site);
             System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " slab=true outstanding="

@@ -463,6 +463,7 @@ final class BackendDiagnostics {
                 + " " + VulkanContext.memoryAllocationSummary()
                 + " " + FallbackPaths.summary()
                 + " " + b.context.celtium$slabPoolSummary()
+                + " " + b.context.celtium$slabRetireSummary()
                 + " " + b.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()
