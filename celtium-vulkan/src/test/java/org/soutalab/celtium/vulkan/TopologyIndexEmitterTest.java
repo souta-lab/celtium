@@ -31,7 +31,7 @@ class TopologyIndexEmitterTest {
     private static int[] expand(int glMode, int vertexCount, int baseVertex) {
         int count = TopologyIndexEmitter.indexCount(glMode, vertexCount);
         assertTrue(count >= 0, "mode " + glMode + " count " + vertexCount + " was refused");
-        long address = MemoryUtil.memAlloc((long) Math.max(count, 1) * 4L);
+        long address = MemoryUtil.nmemAlloc(Math.max(count, 1) * 4L);
         try {
             int written = TopologyIndexEmitter.writeIndices(glMode, vertexCount, baseVertex, address);
             assertEquals(count, written, "written count disagrees with indexCount");
@@ -41,7 +41,7 @@ class TopologyIndexEmitterTest {
             }
             return result;
         } finally {
-            MemoryUtil.memFree(address);
+            MemoryUtil.nmemFree(address);
         }
     }
 
@@ -154,12 +154,12 @@ class TopologyIndexEmitterTest {
 
     @Test
     void writingAnUnknownModeThrows() {
-        long address = MemoryUtil.memAlloc(16L);
+        long address = MemoryUtil.nmemAlloc(16L);
         try {
             assertThrows(IllegalArgumentException.class,
                     () -> TopologyIndexEmitter.writeIndices(9999, 4, 0, address));
         } finally {
-            MemoryUtil.memFree(address);
+            MemoryUtil.nmemFree(address);
         }
     }
 }
