@@ -2,7 +2,6 @@ package org.soutalab.celtium.vulkan.batch;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Comparator;
 
 /**
  * Deferred capture of immediate-mode quad draws (new-architecture design section 2.2, replacing
@@ -35,6 +34,8 @@ public final class ImmediateBatcher {
     private StagingRing ring;
     private int nextQuad;
     private int droppedCaptures;
+    private int[] sortOrder;
+    private int[] sortScratch;
 
     /** Starts a frame on the given ring (its current slot receives this frame's copies). */
     public void beginFrame(StagingRing stagingRing) {
@@ -114,7 +115,7 @@ public final class ImmediateBatcher {
     /** Compiles the frame's captures into the indirect draw plan and ends the frame. */
     public BatchPlan endFrame() {
         int size = this.store.size();
-        Integer[] order = new Integer[size];
+        int[] order = orderFor(size);
         for (int i = 0; i < size; i++) {
             order[i] = i;
         }
@@ -124,26 +125,7 @@ public final class ImmediateBatcher {
         // before translucent anyway - and the ordered items follow in capture sequence, which is
         // the only order their blending may observe. Cross-pass order belongs to the frame graph,
         // not to this sort.
-        Arrays.sort(order, new Comparator<Integer>() {
-            @Override
-            public int compare(Integer a, Integer b) {
-                long keyA = items.sortKey(a);
-                long keyB = items.sortKey(b);
-                int byPass = Integer.compare(DrawSortKey.passId(keyA), DrawSortKey.passId(keyB));
-                if (byPass != 0) {
-                    return byPass;
-                }
-                boolean aOrdered = (items.flags(a) & DrawItemStore.FLAG_ORDERED) != 0;
-                boolean bOrdered = (items.flags(b) & DrawItemStore.FLAG_ORDERED) != 0;
-                if (aOrdered != bOrdered) {
-                    return aOrdered ? 1 : -1;
-                }
-                if (aOrdered) {
-                    return Integer.compare(DrawSortKey.sequence(keyA), DrawSortKey.sequence(keyB));
-                }
-                return Long.compare(keyA, keyB);
-            }
-        });
+        sortByRank(order, size, items);
 
         int[] pipelineKeys = new int[size];
         int[] indexCounts = new int[size];
@@ -183,5 +165,70 @@ public final class ImmediateBatcher {
                 size);
         this.ring = null;
         return plan;
+    }
+
+    /**
+     * The frame's ranking workspace, grown to the largest frame seen and kept across frames
+     * (designer audit 2026-11-25, Stage 5: the previous {@code Integer[]} ranking allocated and
+     * boxed every item on every frame). Only the first {@code size} entries are live in any one
+     * {@link #endFrame()}; the rest is stale capacity, never read.
+     */
+    private int[] orderFor(int size) {
+        if (this.sortOrder == null || this.sortOrder.length < size) {
+            int capacity = Math.max(size,
+                    this.sortOrder == null ? 1024 : this.sortOrder.length * 2);
+            this.sortOrder = new int[capacity];
+            this.sortScratch = new int[capacity];
+        }
+        return this.sortOrder;
+    }
+
+    /**
+     * Stable bottom-up merge sort of {@code order[0..size)} by the {@link #endFrame()} rank.
+     * Stability is load-bearing in the same place it was for the object sort this replaces: a
+     * rank tie keeps capture order (in practice the rank is strict - the sort key's sequence
+     * field is the capture index - but the guarantee costs nothing here).
+     */
+    private void sortByRank(int[] order, int size, DrawItemStore items) {
+        int[] scratch = this.sortScratch;
+        for (int width = 1; width < size; width *= 2) {
+            for (int lo = 0; lo < size; lo += 2 * width) {
+                int mid = Math.min(lo + width, size);
+                int hi = Math.min(lo + 2 * width, size);
+                int i = lo;
+                int j = mid;
+                int k = lo;
+                while (i < mid && j < hi) {
+                    scratch[k++] = compareRank(items, order[i], order[j]) <= 0
+                            ? order[i++] : order[j++];
+                }
+                while (i < mid) {
+                    scratch[k++] = order[i++];
+                }
+                while (j < hi) {
+                    scratch[k++] = order[j++];
+                }
+            }
+            System.arraycopy(scratch, 0, order, 0, size);
+        }
+    }
+
+    /** The endFrame rank of two items: (pass, opaque before ordered, then key or sequence). */
+    private static int compareRank(DrawItemStore items, int a, int b) {
+        long keyA = items.sortKey(a);
+        long keyB = items.sortKey(b);
+        int byPass = Integer.compare(DrawSortKey.passId(keyA), DrawSortKey.passId(keyB));
+        if (byPass != 0) {
+            return byPass;
+        }
+        boolean aOrdered = (items.flags(a) & DrawItemStore.FLAG_ORDERED) != 0;
+        boolean bOrdered = (items.flags(b) & DrawItemStore.FLAG_ORDERED) != 0;
+        if (aOrdered != bOrdered) {
+            return aOrdered ? 1 : -1;
+        }
+        if (aOrdered) {
+            return Integer.compare(DrawSortKey.sequence(keyA), DrawSortKey.sequence(keyB));
+        }
+        return Long.compare(keyA, keyB);
     }
 }
