@@ -157,6 +157,13 @@ public final class VulkanContext {
      */
     private final java.util.Map<Integer, SlabAllocator> deviceLocalSlabsByType =
             new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The host-visible slab pools {@link VulkanHostBuffer} allocates from: same fixed-slab shape as the
+     * device-local pools, but host-visible/coherent and persistently mapped, so a host buffer no longer owns
+     * a {@code vkAllocateMemory} of its own either. One pool per memory type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> hostVisibleSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
     /** The synchronous present path (the async presenter thread's replacement), created with the queue. */
     private PresentEngine presentEngine;
 
@@ -758,12 +765,42 @@ public final class VulkanContext {
     }
 
     /**
+     * {@return the host-visible slab pool serving host buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. The pool's type is the host-visible coherent type
+     * {@link #memoryTypeIndex} picks from the caller's own requirement bits, exactly as
+     * {@link VulkanHostBuffer} picked it for its private allocation before. Ordinary slabs are capped at
+     * 8 per type, so the live {@code vkAllocateMemory} count for all host buffers combined is bounded by
+     * the slab cap (plus one dedicated slab per live oversized &gt;64 MiB request), not by the buffer count.
+     */
+    public SlabAllocator celtium$hostVisibleSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                "the host-visible slab pool");
+        SlabAllocator allocator = this.hostVisibleSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, true);
+            this.hostVisibleSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
+    public int celtium$hostVisibleSlabCount() {
+        int total = 0;
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            total += allocator.liveSlabCount();
+        }
+        return total;
+    }
+
+    /**
      * Makes slab ranges whose deferred releases the frame timeline has already passed reusable again, by
      * asking every device-local pool to collect against the timeline's completed value. Called at the retired
      * buffer drain, the same safe point; a failed counter read simply defers collection to the next drain.
      */
     private void celtium$collectSlabReleases() {
-        if (this.frameTimeline == null || this.deviceLocalSlabsByType.isEmpty()) {
+        if (this.frameTimeline == null
+                || (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty())) {
             return;
         }
         long completed;
@@ -778,6 +815,9 @@ public final class VulkanContext {
         for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
             allocator.collectCompleted(completed);
         }
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
     }
 
     /**
@@ -786,7 +826,13 @@ public final class VulkanContext {
      * {@code vkFreeMemory} the slab must never receive.
      */
     public void celtium$retireSlabBuffer(long handle, SlabAllocator.SlabAllocation allocation, String site) {
-        if (handle == VK_NULL_HANDLE || allocation == null) {
+        if (handle == VK_NULL_HANDLE) {
+            return;
+        }
+        if (allocation == null) {
+            // No slab range to return (a create that failed before its allocation): the handle alone is
+            // retired through the raw list, whose drain destroys it without freeing any memory.
+            celtium$retireBuffer(handle, VK_NULL_HANDLE, site);
             return;
         }
         this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
@@ -2480,6 +2526,10 @@ public final class VulkanContext {
                 allocator.delete();
             }
             this.deviceLocalSlabsByType.clear();
+            for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.hostVisibleSlabsByType.clear();
             this.presentEngine = null;
             vkDestroyDevice(this.device, null);
             this.device = null;
