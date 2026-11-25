@@ -531,6 +531,12 @@ public final class TerrainRenderer {
         } catch (RuntimeException | LinkageError error) {
             this.stageGate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, error);
             record("pipeline for " + pass.name() + " failed: " + describe(error));
+            // Stdout as well, under a greppable tag: a failed pipeline silently skips every
+            // terrain pass of the run, and the record() line alone did not reach the leg logs
+            // in the Phase 1 gate legs r2/r3 (2026-11-25), leaving "no terrain, no announce"
+            // with no named cause. Once per pass - the failure is remembered below.
+            System.out.println("[Celtium] CELTIUM_TERRAIN_PIPELINE_FAILED pass=" + pass.name()
+                    + " reason=" + describe(error));
             // The trace goes to stdout as well as the record: in the leg-11 run the record line reached
             // neither the console log nor the game log, so the creation failure this handler exists to
             // surface stayed unobserved while the handler's own crash (the null put this block used to end
