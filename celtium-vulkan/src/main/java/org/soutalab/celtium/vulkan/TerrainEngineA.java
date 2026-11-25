@@ -623,8 +623,12 @@ final class TerrainEngineA {
                     storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
             slot.sortedOut[slab] = new VulkanHostBuffer(this.context, (long) capacityCommands * COMMAND_BYTES,
                     storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+            // The counts are the countBuffer of both vkCmdDrawIndexedIndirectCount calls
+            // below, so INDIRECT_BUFFER usage is required of them as well (VUID-
+            // vkCmdDrawIndexedIndirectCount-countBuffer-02715) — not only of the
+            // bucket/sorted command buffers they count.
             slot.counts[slab] = new VulkanHostBuffer(this.context, 8L,
-                    storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                    storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
             slot.streamCapacity[slab] = capacityCommands;
         } else if (slot.streamCapacity[slab] < capacityCommands) {
             slot.bucketOut[slab].ensureCapacity((long) capacityCommands * COMMAND_BYTES);
