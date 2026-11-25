@@ -20,11 +20,16 @@ import java.util.TreeMap;
  * already recorded. The only growth is a new, empty slab appended after the existing ones; existing allocations
  * never change slab or offset.
  * <p>
- * <b>Placement:</b> first fit, in slab order and then in offset order. First fit is not the tightest packing, but it
- * is deterministic - the same sequence of requests always produces the same layout - and it reuses the earliest hole,
- * which keeps the tail of the newest slab free for large requests. Requests are rounded up to whole pages and placed
- * at an offset that satisfies the requested alignment; the alignment does not have to be a power of two, and the
- * padding skipped to reach it stays a free run.
+ * <b>Placement:</b> first fit within a size class. A request whose paged size reaches a sixteenth of a slab
+ * is <i>large</i>: slabs are scanned newest first, so a large
+ * request lands in the tail slabs where long free runs survive, instead of failing on a hole that a long-lived
+ * allocation pins open in an old slab. Every smaller request is <i>small</i>: slabs are scanned in creation order,
+ * so small requests fill the earliest holes - including the holes small short-lived churn leaves behind when it is
+ * collected, which are exactly small-request-sized. Within a slab, free runs are scanned in offset order for both
+ * classes. First fit is not the tightest packing, but it is deterministic - the same sequence of requests always
+ * produces the same layout. Requests are rounded up to whole pages and placed at an offset that satisfies the
+ * requested alignment; the alignment does not have to be a power of two, and the padding skipped to reach it stays
+ * a free run.
  * <p>
  * <b>Release:</b> {@link #free(Allocation)} returns a range at once, merging it with any neighbouring free runs.
  * {@link #freeDeferred(Allocation, long)} only records the release against a timeline value: the range stays counted
@@ -45,9 +50,19 @@ public final class SlabPool {
     /** The page size callers are expected to use unless they have a reason to differ: 4096 bytes. */
     public static final int DEFAULT_PAGE_SIZE_BYTES = 4096;
 
+    /**
+     * The size-class divisor: a request whose paged size is at least one {@code LARGE_REQUEST_SLAB_DIVISOR}th of a
+     * slab counts as large and is placed tail-first (see the class documentation). A divisor rather than an absolute
+     * byte threshold keeps the class boundary proportional when the slab size changes.
+     */
+    private static final int LARGE_REQUEST_SLAB_DIVISOR = 16;
+
     private final long slabSizeBytes;
     private final int pageSizeBytes;
     private final int maxSlabs;
+
+    /** Paged size at or above which a request counts as large; never below one page. */
+    private final long largeRequestThresholdBytes;
 
     /** Free runs per slab, keyed by start offset; the value is the run length in bytes. */
     private final List<TreeMap<Long, Long>> freeRunsBySlab = new ArrayList<TreeMap<Long, Long>>();
@@ -91,6 +106,8 @@ public final class SlabPool {
         this.slabSizeBytes = slabSizeBytes;
         this.pageSizeBytes = pageSizeBytes;
         this.maxSlabs = maxSlabs;
+        this.largeRequestThresholdBytes = Math.max((long) pageSizeBytes,
+                slabSizeBytes / LARGE_REQUEST_SLAB_DIVISOR);
     }
 
     /** Size of one slab in bytes; every slab in the pool has exactly this size. */
@@ -111,9 +128,10 @@ public final class SlabPool {
     /**
      * Allocates {@code sizeBytes} rounded up to whole pages, at an offset that is a multiple of {@code alignment}.
      * <p>
-     * Slabs are searched in creation order and free runs in offset order; the first run that can hold the aligned
-     * request wins. When no slab fits and the pool is below its cap, exactly one new slab is appended and the search
-     * is retried against it - appended, never copied into, so the offsets of everything already allocated stay put.
+     * Slabs are searched in the request's size-class order (large: newest first; small: creation order) and free
+     * runs in offset order; the first run that can hold the aligned request wins. When no slab fits and the pool
+     * is below its cap, exactly one new slab is appended and the search is retried against it - appended, never
+     * copied into, so the offsets of everything already allocated stay put.
      *
      * @param sizeBytes the requested size; must be positive
      * @param alignment the required offset alignment; must be at least 1 and need not be a power of two
@@ -132,7 +150,8 @@ public final class SlabPool {
             // Larger than any slab this ledger will ever hold; the owner decides how to serve it.
             return null;
         }
-        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment);
+        boolean large = pagedSize >= this.largeRequestThresholdBytes;
+        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment, large);
         if (allocation != null) {
             return allocation;
         }
@@ -140,7 +159,7 @@ public final class SlabPool {
             return null;
         }
         addSlab();
-        return tryAllocate(pagedSize, sizeBytes, alignment);
+        return tryAllocate(pagedSize, sizeBytes, alignment, large);
     }
 
     /**
@@ -236,8 +255,11 @@ public final class SlabPool {
         return this.live.size();
     }
 
-    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment) {
-        for (int slab = 0; slab < this.freeRunsBySlab.size(); slab++) {
+    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment, boolean large) {
+        int slabCount = this.freeRunsBySlab.size();
+        for (int index = 0; index < slabCount; index++) {
+            // Size-class scan direction: large requests walk the slabs newest first, small ones oldest first.
+            int slab = large ? slabCount - 1 - index : index;
             TreeMap<Long, Long> runs = this.freeRunsBySlab.get(slab);
             // Snapshot the entries: the winning run is split in place below, and a TreeMap cannot be
             // structurally modified while its entry set is being iterated.

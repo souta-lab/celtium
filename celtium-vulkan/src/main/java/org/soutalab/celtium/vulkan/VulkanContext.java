@@ -795,10 +795,13 @@ public final class VulkanContext {
 
     /**
      * Makes slab ranges whose deferred releases the frame timeline has already passed reusable again, by
-     * asking every device-local pool to collect against the timeline's completed value. Called at the retired
-     * buffer drain, the same safe point; a failed counter read simply defers collection to the next drain.
+     * asking every pool to collect against the timeline's completed value. Two drive points: the retired
+     * buffer drain ({@link #celtium$destroyRetiredBuffers()}) and every frame start, because collection that
+     * only runs when a retired buffer happens to drain lets per-frame staging churn hold whole slabs hostage
+     * for as long as the drain stays uncalled. A failed counter read simply defers collection to the next
+     * drive point.
      */
-    private void celtium$collectSlabReleases() {
+    public void celtium$collectSlabReleases() {
         if (this.frameTimeline == null
                 || (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty())) {
             return;

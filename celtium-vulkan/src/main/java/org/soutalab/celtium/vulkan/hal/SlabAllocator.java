@@ -111,6 +111,11 @@ public final class SlabAllocator {
      * <p>
      * A request larger than {@link #slabSize()} is served by a dedicated slab of its own size (see the class
      * documentation) rather than failing.
+     * <p>
+     * When the ledger refuses a request, the refusal is not reported at once: deferred releases nobody has
+     * collected yet are the refusal's common cause (a per-frame staging churn can hold a whole pool hostage
+     * between two collection drive points), so one collection against the frame timeline's current completed
+     * value runs first and the ledger is retried. Only a refusal that survives that retry is real.
      *
      * @throws IllegalStateException when the ledger has no room and its slab cap has been reached, when the device
      *                               memory for a fresh slab cannot be allocated, or after {@link #delete()}
@@ -128,6 +133,9 @@ public final class SlabAllocator {
             return allocateOversized(pagedSize);
         }
         SlabPool.Allocation pooled = this.pool.allocate(sizeBytes, alignment);
+        if (pooled == null) {
+            pooled = collectAndRetry(sizeBytes, alignment);
+        }
         if (pooled == null) {
             throw new IllegalStateException("SlabAllocator is out of memory: no slab can serve " + sizeBytes
                     + " bytes with alignment " + alignment + " (" + this.pool.slabCount() + " of " + this.maxSlabs
@@ -254,6 +262,32 @@ public final class SlabAllocator {
         this.poolSlabs.clear();
         this.oversizedSlabs.clear();
         this.pendingOversized.clear();
+    }
+
+    /**
+     * The collect-on-allocate retry behind {@link #allocate(long, long)}: collects every release the frame
+     * timeline has already passed, then asks the ledger once more. Returns {@code null} when there is nothing
+     * pending to collect, when the context has no frame timeline yet (startup, before the first frame), or when
+     * the timeline's counter cannot be read - an unreadable counter defers collection to the next drive point,
+     * the same disposition {@code celtium$collectSlabReleases} takes at the drain, and the caller reports the
+     * original refusal.
+     */
+    private SlabPool.Allocation collectAndRetry(long sizeBytes, long alignment) {
+        if (this.pool.pendingDeferredCount() == 0 && this.pendingOversized.isEmpty()) {
+            return null;
+        }
+        FrameTimeline timeline = this.context.frameTimeline();
+        if (timeline == null) {
+            return null;
+        }
+        long completed;
+        try {
+            completed = timeline.completedValue();
+        } catch (RuntimeException failure) {
+            return null;
+        }
+        collectCompleted(completed);
+        return this.pool.allocate(sizeBytes, alignment);
     }
 
     private SlabAllocation allocateOversized(long pagedSize) {

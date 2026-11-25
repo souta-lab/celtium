@@ -8553,6 +8553,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         this.skyDrawsThisFrame = 0;
         this.frameId++;
+        // Frame start is the per-frame drive point for slab collection (the other is the retired-buffer
+        // drain): releases the timeline has already passed become reusable here, once per frame, instead of
+        // only whenever a drain happens to run - the gap that let staging churn exhaust the host-visible pool.
+        this.context.celtium$collectSlabReleases();
         // A main-clear reservation that no clear consumed must not survive into the next frame: the clear it named was
         // attached to a group of the frame that just ended, and carrying a later clear with its values would erase the
         // wrong colour.
