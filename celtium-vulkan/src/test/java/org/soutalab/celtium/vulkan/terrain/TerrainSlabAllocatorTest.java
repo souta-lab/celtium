@@ -60,7 +60,8 @@ class TerrainSlabAllocatorTest {
 
     @Test
     void deferredFreeWaitsForTheTimeline() {
-        TerrainSlabAllocator allocator = small();
+        // A single slab, so a deferred free cannot be bypassed by opening another.
+        TerrainSlabAllocator allocator = new TerrainSlabAllocator(16 * 1024, 1);
         var a = allocator.allocate(16 * 1024);
         allocator.freeDeferred(a, 10);
         assertNull(allocator.allocate(4096), "pages must not recycle before their timeline completes");
