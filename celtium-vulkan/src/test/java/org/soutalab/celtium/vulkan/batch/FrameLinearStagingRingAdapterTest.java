@@ -68,6 +68,14 @@ class FrameLinearStagingRingAdapterTest {
         }
     }
 
+    /** The adapter's write contract takes direct buffers only (the capture side's shape). */
+    private static ByteBuffer direct(byte... bytes) {
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length);
+        buffer.put(bytes);
+        buffer.flip();
+        return buffer;
+    }
+
     @Test
     void allocateDelegatesToTheCurrentSlotOnly() {
         FakeRing ring = new FakeRing(2, 64);
@@ -141,7 +149,7 @@ class FrameLinearStagingRingAdapterTest {
         FakeRing ring = new FakeRing(2, 64);
         FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
         long offset = adapter.allocate(4, 1);
-        adapter.write(offset, ByteBuffer.wrap(new byte[]{10, 11, 12, 13}));
+        adapter.write(offset, direct((byte) 10, (byte) 11, (byte) 12, (byte) 13));
         assertEquals(10, ring.read(0, 0));
         assertEquals(13, ring.read(0, 3));
         assertEquals(0, ring.read(1, 0));
@@ -154,7 +162,7 @@ class FrameLinearStagingRingAdapterTest {
         adapter.advanceFrame();
         long offset = adapter.allocate(4, 1);
         assertEquals(0, offset);
-        adapter.write(offset, ByteBuffer.wrap(new byte[]{20, 21, 22, 23}));
+        adapter.write(offset, direct((byte) 20, (byte) 21, (byte) 22, (byte) 23));
         assertEquals(0, ring.read(0, 0));
         assertEquals(20, ring.read(1, 0));
         assertEquals(23, ring.read(1, 3));
@@ -164,7 +172,7 @@ class FrameLinearStagingRingAdapterTest {
     void writeDoesNotAdvanceTheSourcePosition() {
         FakeRing ring = new FakeRing(1, 64);
         FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
-        ByteBuffer source = ByteBuffer.wrap(new byte[]{1, 2, 3, 4});
+        ByteBuffer source = direct((byte) 1, (byte) 2, (byte) 3, (byte) 4);
         source.position(1);
         adapter.write(adapter.allocate(3, 1), source);
         assertEquals(1, source.position());
@@ -176,7 +184,7 @@ class FrameLinearStagingRingAdapterTest {
     void writeOutsideTheSlotThrows() {
         FakeRing ring = new FakeRing(1, 64);
         FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
-        ByteBuffer four = ByteBuffer.wrap(new byte[]{1, 2, 3, 4});
+        ByteBuffer four = direct((byte) 1, (byte) 2, (byte) 3, (byte) 4);
         assertThrows(IllegalArgumentException.class, () -> adapter.write(-1, four));
         assertThrows(IllegalArgumentException.class, () -> adapter.write(62, four));
     }
