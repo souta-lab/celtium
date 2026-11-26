@@ -75,8 +75,8 @@ class TierARegisterOutcomeTest {
         String source = rendererSource();
         assertTrue(source.contains("tierAOffers.add(new TierAOffer("),
                 "a stride-16 build mesh is recorded as an offer instead of an unconditional legacy upload");
-        assertTrue(source.contains("offer.outcome() == TerrainEngineA.RegisterOutcome.REJECTED"),
-                "only a rejected offer falls back to the legacy upload");
+        assertTrue(source.contains("tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass()))"),
+                "the offer's legacy fate is decided by the branch predicate over its outcome and its pass' taint");
         int sortBlock = source.indexOf("output instanceof ChunkSortOutput");
         int sortBlockEnd = source.indexOf("Unexpected result type", sortBlock);
         assertTrue(sortBlock >= 0 && sortBlockEnd > sortBlock, "the sort-output block is located");
