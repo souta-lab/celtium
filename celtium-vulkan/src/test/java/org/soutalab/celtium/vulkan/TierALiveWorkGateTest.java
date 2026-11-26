@@ -47,8 +47,10 @@ class TierALiveWorkGateTest {
         String source = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
         assertTrue(source.contains(
-                        "if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass)) {"),
-                "the hasPass early return also requires Tier-A to hold no live work for the pass");
+                        "if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass)"
+                                + " && !celtium$packHasLiveWork(pass)) {"),
+                "the hasPass early return also requires Tier-A to hold no live work for the pass"
+                        + " (the pack conjunct is stage-2 entry condition (v), pinned in PackLiveWorkGateTest)");
     }
 
     /** The host's answer is a peek at the existing executor, never a creation: creating one would manufacture presence. */

@@ -120,6 +120,20 @@ final class TerrainPackEngine {
         return this.disabled;
     }
 
+    /**
+     * Whether this executor still has work a frame could draw or admit:
+     * resident pack records for this pass, or deferred registrations waiting
+     * for {@link #prepareFrame} to admit them. The terrain pass entry
+     * consults this through the host: a pass held entirely in the pack space
+     * has no legacy storage, so the legacy presence tests cannot see it, yet
+     * its only driver (the arming attempt inside the pack route) sits inside
+     * that entry. The mirror of {@link TerrainEngineA#hasLiveWork()}, with
+     * the record half read per pass from the pack space.
+     */
+    boolean hasLiveWork() {
+        return !this.disabled && (this.store.hasPackRecords(this.passOrdinal) || !this.deferred.isEmpty());
+    }
+
     private void disable(String what, RuntimeException error) {
         if (!this.disabled) {
             this.disabled = true;

@@ -1688,7 +1688,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$preflushIfDeferred();
             return;
         }
-        if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass)) {
+        if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass) && !celtium$packHasLiveWork(pass)) {
             // No geometry for this pass on either route; nothing is opened, nothing has to be closed. The pre-terrain groups stay
             // queued (the deferred drain, adopted by the A/B: legs r11ab-on-amd / r11ab-off-amd, same jar - the
             // same-tick presented pictures differ by 0.1 mean abs diff / 0.07 % of pixels over 24 levels, and the
@@ -1713,6 +1713,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // passes entered 0 times, the presented frames sky-only). The world-entry regime above is
             // unaffected: no executor exists for the pass until the first registration, so the Tier-A test is
             // false there and the early return stands.
+            //
+            // The pack half of the condition (Stage 6 stage-2 entry condition (v), 2026-11-26): the Tier-A
+            // test above is the vanilla executor's only - its stride guard turns every non-16-byte pass
+            // away, and a pack pass is foreign-format by definition, so a pass held entirely in the pack
+            // space (its sections registered as pack records, its legacy storage the only thing the
+            // hasPass test can see) was refused here whenever the legacy side happened to be empty. Today
+            // that cannot bite: pack sections keep their legacy upload unconditionally, so legacy presence
+            // tracks pack residency. The legacy removal (stage 2) ends that tracking, so the entry now
+            // asks the pack executor directly, through the host's peek: resident pack records or a pending
+            // deferred queue for this pass keep the entry open, and the pack route's arming attempt -
+            // the pack executor's only per-frame driver - stays reachable on pack work alone.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
@@ -18278,9 +18289,16 @@ this.frameBufferOpen = false;
                                         == celtium$frameSerial());
                     }
                 }
-                if (handoffSource != 0L && !celtium$renderListsHaveGeometry(renderLists, pass)) {
+                if (handoffSource != 0L && !celtium$renderListsHaveGeometry(renderLists, pass)
+                        && !celtium$packHasLiveWork(pass)) {
                     // Nothing to draw in this pass (e.g. empty gbuffers_water): leave the published colour
                     // owner (deferred1) untouched instead of allocating, clearing, or hijacking color0Tex.
+                    // The "nothing to draw" judgment also asks the pack executor (Stage 6 stage-2 entry
+                    // condition (v), 2026-11-26): renderListsHaveGeometry reads only the legacy lists and
+                    // storage, so a pass whose sections live in the pack space reads empty here while the
+                    // variant below could draw it. While pack sections keep their legacy upload the two
+                    // answers agree; once the legacy route is removed they diverge, and returning "handled"
+                    // here would skip the arming attempt entirely.
                     return true;
                 }
                 if (shadowStage && PACK_SHADOW_CACHE) {
@@ -19777,6 +19795,28 @@ this.frameBufferOpen = false;
         }
         TerrainEngineAHost host = this.terrain.terrainAHost();
         return host != null && host.hasLiveWork(pass);
+    }
+
+    /**
+     * Whether the pack executor already serving {@code pass} still has live
+     * work — resident pack records for the pass or deferred registrations
+     * awaiting admission. The pack half of the pass entry's presence
+     * judgment (Stage 6 stage-2 entry condition (v)): the legacy tests the
+     * entry and the pack route's handoff shortcut read — the regions'
+     * storage sets, the render lists' geometry — cannot see the pack space,
+     * so a pass held entirely there reads as empty to them. Two deliberate
+     * differences from {@link #celtium$tierAHasLiveWork}: there is no stride
+     * guard (a pack pass is foreign-format by definition, so the vanilla
+     * guard would turn this test permanently false; the host's pack map is
+     * the discriminator, and a pass is served by exactly one executor kind),
+     * and no {@code terrainAFailed} guard (that flag records a vanilla pass
+     * head failure; the pack route never consults it, and the pack
+     * executor's own failure state is its disabled flag, read inside the
+     * peek). A peek only — no engine is created here.
+     */
+    private boolean celtium$packHasLiveWork(TerrainRenderPass pass) {
+        TerrainEngineAHost host = this.terrain.terrainAHost();
+        return host != null && host.hasPackLiveWork(pass);
     }
 
     /**

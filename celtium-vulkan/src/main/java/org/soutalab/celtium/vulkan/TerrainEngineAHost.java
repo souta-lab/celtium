@@ -181,6 +181,20 @@ final class TerrainEngineAHost {
     }
 
     /**
+     * Whether a pack executor already exists for {@code pass} and still has
+     * live work (resident pack records or a pending deferred queue). The
+     * pack half of the terrain pass entry's presence judgment: the pack
+     * route's gates consult this so a pass held entirely in the pack space
+     * is not refused — or short-circuited as empty — on legacy presence
+     * alone. A peek only, for the same reason as {@link #hasLiveWork}:
+     * creating an executor here would manufacture the presence being tested.
+     */
+    boolean hasPackLiveWork(TerrainRenderPass pass) {
+        TerrainPackEngine engine = this.packEngines.get(pass);
+        return engine != null && engine.hasLiveWork();
+    }
+
+    /**
      * The pack-format variant executor for one pass (R-17 candidate 2-MIN):
      * the same shared store, budget and residency gate as the vanilla
      * executors, drawing the pass' foreign-format records from the pack
