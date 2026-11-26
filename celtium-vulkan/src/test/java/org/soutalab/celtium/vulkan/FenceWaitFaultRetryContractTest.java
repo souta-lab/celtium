@@ -125,7 +125,9 @@ class FenceWaitFaultRetryContractTest {
         String source = readBackend();
         int latch = source.indexOf("private void noteStalled()");
         assertTrue(latch >= 0, "noteStalled exists");
-        String body = source.substring(latch, latch + 1200);
+        int latchEnd = source.indexOf("\n    }", latch);
+        assertTrue(latchEnd > latch, "noteStalled's end is found");
+        String body = source.substring(latch, latchEnd);
         assertTrue(body.contains("this.gpuStalled = true;"), "the latch is still set in noteStalled");
         assertTrue(body.contains("CELTIUM_STALL"), "the latch still reports itself as CELTIUM_STALL");
         assertFalse(source.contains("gpuStalled = false"),
