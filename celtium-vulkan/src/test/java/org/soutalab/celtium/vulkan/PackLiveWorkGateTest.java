@@ -82,7 +82,7 @@ class PackLiveWorkGateTest {
     void packResidencyIsSeenPerPass() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        var pack = store.register(mesher.build(2, 0, 0, 1, parts(3, 44), 0, 44), 2);
+        var pack = store.register(mesher.build(2, 0, 0, 1, parts(3, 44), 0, 44), 2, 2);
         assertNotNull(pack);
         assertTrue(pack.pack(), "the foreign-stride registration is a pack record");
         assertTrue(store.hasPackRecords(1), "the owning pass sees its pack residency");
@@ -95,7 +95,7 @@ class PackLiveWorkGateTest {
     void vanillaResidencyIsNotPackResidency() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        var vanilla = store.register(mesher.build(1, 0, 0, 1, parts(2, TerrainVertex16.STRIDE), 0), 1);
+        var vanilla = store.register(mesher.build(1, 0, 0, 1, parts(2, TerrainVertex16.STRIDE), 0), 1, 1);
         assertNotNull(vanilla);
         assertFalse(vanilla.pack(), "the 16-byte registration is a vanilla record");
         assertFalse(store.hasPackRecords(1),
@@ -107,10 +107,10 @@ class PackLiveWorkGateTest {
     void packResidencyEndsWithTheRecord() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        var pack = store.register(mesher.build(2, 0, 0, 1, parts(3, 44), 0, 44), 2);
+        var pack = store.register(mesher.build(2, 0, 0, 1, parts(3, 44), 0, 44), 2, 2);
         assertNotNull(pack);
         assertTrue(store.hasPackRecords(1));
-        store.unregister(new TerrainSectionStore.Key(2, 0, 0, 1), 0);
+        store.unregister(new TerrainSectionStore.Key(2, 0, 0, 1));
         assertFalse(store.hasPackRecords(1),
                 "once the record is gone the pass no longer holds the entry open");
     }

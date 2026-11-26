@@ -57,7 +57,7 @@ class TerrainSectionStoreTwoPhaseTest {
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(1, 2, 3, 0);
         long generationBefore = store.imageGeneration();
 
-        var allocated = store.allocateDiagnosed(built, 11L);
+        var allocated = store.allocateDiagnosed(built, 11L, 11L);
         assertNotNull(allocated.pending());
         assertNull(allocated.failure());
         assertNull(store.get(key), "an allocated record is not yet in the store");
@@ -86,7 +86,7 @@ class TerrainSectionStoreTwoPhaseTest {
 
         BuiltSectionMeshParts source = parts(2, true);
         var built = mesher.build(5, 5, 5, 0, source, 0);
-        var allocated = store.allocateDiagnosed(built, 3L);
+        var allocated = store.allocateDiagnosed(built, 3L, 3L);
         assertNotNull(allocated.pending());
         assertTrue(store.geometryAllocator().liveBytes() > geometryBefore,
                 "the allocation really reserved ranges before the discard");
@@ -102,7 +102,7 @@ class TerrainSectionStoreTwoPhaseTest {
         // The key is free again: the rollback stranded neither the key nor
         // the ranges, so the same section registers whole afterwards.
         BuiltSectionMeshParts retry = parts(2, true);
-        var registration = store.register(mesher.build(5, 5, 5, 0, retry, 0), 4L);
+        var registration = store.register(mesher.build(5, 5, 5, 0, retry, 0), 4L, 4L);
         assertNotNull(registration);
         freeParts(source);
         freeParts(retry);
@@ -114,7 +114,7 @@ class TerrainSectionStoreTwoPhaseTest {
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts source = partsForStride(2, 44);
         var built = mesher.build(6, 6, 6, 1, source, 0, 44);
-        var allocated = store.allocateDiagnosed(built, 3L);
+        var allocated = store.allocateDiagnosed(built, 3L, 3L);
         assertNotNull(allocated.pending());
         var arena = store.packArenaForStride(44);
         assertNotNull(arena);
@@ -133,14 +133,14 @@ class TerrainSectionStoreTwoPhaseTest {
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts first = parts(1, false);
         BuiltSectionMeshParts second = parts(1, false);
-        var allocated = store.allocateDiagnosed(mesher.build(2, 2, 2, 0, first, 0), 1L);
+        var allocated = store.allocateDiagnosed(mesher.build(2, 2, 2, 0, first, 0), 1L, 1L);
         assertNotNull(allocated.pending());
         var dupe = mesher.build(2, 2, 2, 0, second, 0);
-        assertThrows(IllegalStateException.class, () -> store.allocateDiagnosed(dupe, 2L),
+        assertThrows(IllegalStateException.class, () -> store.allocateDiagnosed(dupe, 2L, 2L),
                 "a second allocation of an unpublished key would double-book its ranges");
-        assertThrows(IllegalStateException.class, () -> store.registerDiagnosed(dupe, 2L));
+        assertThrows(IllegalStateException.class, () -> store.registerDiagnosed(dupe, 2L, 2L));
         store.discardUnpublished(allocated.pending());
-        assertNotNull(store.register(dupe, 3L), "after the discard the key registers normally");
+        assertNotNull(store.register(dupe, 3L, 3L), "after the discard the key registers normally");
         freeParts(first);
         freeParts(second);
     }
@@ -150,7 +150,7 @@ class TerrainSectionStoreTwoPhaseTest {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts source = parts(1, false);
-        var allocated = store.allocateDiagnosed(mesher.build(3, 3, 3, 0, source, 0), 1L);
+        var allocated = store.allocateDiagnosed(mesher.build(3, 3, 3, 0, source, 0), 1L, 1L);
         assertNotNull(allocated.pending());
         store.publish(allocated.pending());
         assertThrows(IllegalStateException.class, () -> store.publish(allocated.pending()));
