@@ -79,6 +79,15 @@ final class TerrainPackEngine {
 
     private long framesPrepared;
     private long framesDrawn;
+    // Stage split of framesDrawn: the same material pass is drawn by both the
+    // shadow stage and the gbuffers stage through this one executor, so the
+    // total alone cannot attribute a drawn frame to a stage. recordDraws is
+    // handed the executing stage and increments exactly one side per drawn
+    // frame, in the same block as framesDrawn itself, so the invariant
+    // framesDrawnShadow + framesDrawnGbuffers == framesDrawn holds by
+    // construction.
+    private long framesDrawnShadow;
+    private long framesDrawnGbuffers;
     private long issuedCommands;
 
     private static final class Slot {
@@ -318,6 +327,8 @@ final class TerrainPackEngine {
                 System.out.println("[Celtium] CELTIUM_TERRAIN_A_PACK pass=" + this.passName
                         + " frames=" + this.framesPrepared
                         + " drawn=" + this.framesDrawn
+                        + " drawnShadow=" + this.framesDrawnShadow
+                        + " drawnGbuffers=" + this.framesDrawnGbuffers
                         + " issuedCommands=" + this.issuedCommands
                         + " records=" + records.size()
                         + " deferred=" + this.deferred.size()
@@ -380,9 +391,13 @@ final class TerrainPackEngine {
      * method binds each pack slab's arena buffer and the two index buffers in
      * turn.
      *
+     * @param shadowStage whether this execution is the shadow stage; the
+     *                    drawn frame is attributed to exactly one stage, so
+     *                    the census line's drawnShadow/drawnGbuffers split
+     *                    sums to drawn
      * @return whether at least one pack slab was drawn
      */
-    boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex) {
+    boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex, boolean shadowStage) {
         if (this.disabled) {
             return false;
         }
@@ -414,6 +429,11 @@ final class TerrainPackEngine {
         }
         if (any) {
             this.framesDrawn++;
+            if (shadowStage) {
+                this.framesDrawnShadow++;
+            } else {
+                this.framesDrawnGbuffers++;
+            }
         }
         return any;
     }

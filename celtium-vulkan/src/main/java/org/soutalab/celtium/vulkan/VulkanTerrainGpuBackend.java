@@ -19145,7 +19145,7 @@ this.frameBufferOpen = false;
                                     (record.key.sectionY() * 16 - camera.intY) - camera.fracY,
                                     (record.key.sectionZ() * 16 - camera.intZ) - camera.fracZ);
                         }
-                        packEngine.recordDraws(this.commandBuffer, this.frameSlot);
+                        packEngine.recordDraws(this.commandBuffer, this.frameSlot, shadowStage);
                         drawnSections += packVariantRecords.size();
                     }
                 }
