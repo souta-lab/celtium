@@ -354,14 +354,15 @@ public final class VulkanContext {
     private int uploadSlot = -1;
 
     /**
-     * One submission the queue owns but the CPU has not confirmed: its fence, its command buffer, and a bitmask of the
-     * upload-ring slots its copies read (0 for submissions that touched none).
+     * One submission the queue owns but the CPU has not confirmed: its command buffer, a bitmask of the
+     * upload-ring slots its copies read (0 for submissions that touched none), and the batch whose confirmation
+     * - its fence on the fallback path, its timeline value on a timeline device - stands for it.
      * <p>
      * This queue is what replaces "submit, then wait, then free" on the render thread. A submission that only the GPU
      * needs to order - an upload batch, a texture patch, the present blit - is tracked here rather than waited on the
-     * spot; its fence is what releases the resources it still reads (the command buffer, the fence itself, the ring
+     * spot; its batch's confirmation is what releases the resources it still reads (the command buffer, the ring
      * slots), and that happens at the first {@link #celtium$pollDeferredSubmits()} or bounded wait that sees it
-     * signal. Confirmed order is submission order, because the queue executes submissions in order, so polls only
+     * confirmed. Confirmed order is submission order, because the queue executes submissions in order, so polls only
      * ever free from the head.
      */
     private static final class DeferredSubmit {
@@ -389,10 +390,12 @@ public final class VulkanContext {
     }
 
     /**
-     * One batched {@code vkQueueSubmit}: a single fence armed by the call and shared by every entry the batch
-     * carried. The fence stays out of the idle pool until the last entry reclaims - handing it out early would arm
-     * it for a new submission while earlier batch entries still complete against it. {@link #pending} counts
-     * unreclaimed entries, not pending submissions: it starts at the batch's entry count and the reclaim decrements.
+     * One batched {@code vkQueueSubmit}: on a device without a frame timeline, a single fence armed by the call
+     * and shared by every entry the batch carried; on a timeline device the batch carries no fence at all and
+     * its {@link #timelineValue} is the only confirmation currency (R-56). The fence stays out of the idle pool
+     * until the last entry reclaims - handing it out early would arm it for a new submission while earlier batch
+     * entries still complete against it. {@link #pending} counts unreclaimed entries, not pending submissions:
+     * it starts at the batch's entry count and the reclaim decrements.
      */
     private static final class SharedBatch {
         private long fence;
@@ -416,9 +419,9 @@ public final class VulkanContext {
 
     /**
      * Submissions queued for the next {@link #celtium$flushBatchedSubmits()} call, in logical submission order.
-     * Each entry is also already in {@link #deferredSubmits} so await/poll lookups find it by fence; its fence is the
-     * batch's shared one, armed only when the flush submits the whole array - which is why every wait and every poll
-     * flushes first: waiting on an unarmed fence would read as a stall that is really just "not submitted yet".
+     * Each entry is also already in {@link #deferredSubmits} so await/poll lookups find it by its batch token; its
+     * batch's confirmation is armed only when the flush submits the whole array - which is why every wait and every
+     * poll flushes first: waiting on an unsubmitted batch would read as a stall that is really just "not submitted yet".
      */
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
     private final java.util.ArrayList<DeferredSubmit> flushBatchScratch = new java.util.ArrayList<DeferredSubmit>();
@@ -1257,7 +1260,10 @@ public final class VulkanContext {
 
     /**
      * Submits {@code commandBuffer} with no semaphores and tracks it as outstanding instead of waiting for it.
-     * {@return the fence the caller may wait on later through {@link #celtium$awaitDeferredSubmit(long, String)}}.
+     * {@return the token naming the batch the submission joined - its {@link SharedBatch#serial} - which the
+     * caller may wait on later through {@link #celtium$awaitDeferredSubmit(long, String)}. The token is not a
+     * fence handle: on a timeline device the batch carries no fence, so a handle is not the caller's to hold
+     * (R-56). Serials start at 1, so 0 keeps the "no submission" meaning VK_NULL_HANDLE had for holders.
      * <p>
      * The CPU no longer blocks on the submission the queue just took: the fence is what frees the command buffer and
      * releases the upload-ring slots the batch read ({@code uploadSlotMask}, 0 when it read none), and that happens at
@@ -1287,16 +1293,18 @@ public final class VulkanContext {
         if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
             this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
         }
-        SubmitTrail.note(SubmitTrail.DEFERRED, entry.fence, uploadSlotMask);
-        return entry.fence;
+        SubmitTrail.note(SubmitTrail.DEFERRED, entry.batch.serial, uploadSlotMask);
+        return entry.batch.serial;
     }
 
     /**
      * Queues an ALREADY-ENDED frame-slot command buffer into the batched-submit list.
-     * {@return the batch's shared fence the caller records as the slot's stand-in}.
+     * {@return the token naming the batch - its {@link SharedBatch#serial} - which the caller records as the
+     * slot's stand-in (R-56: the batch's shared fence before the token migration)}.
      * <p>
      * The vkQueueSubmit fence limit - one per call - is the only thing keeping every frame recording on its own
-     * driver call: ~8-9 recordings per frame were ~8-9 submits. The batch's one armed fence stands for every entry,
+     * driver call: ~8-9 recordings per frame were ~8-9 submits. The batch's one confirmation - its fence on the
+     * fallback path, its timeline value on a timeline device - stands for every entry,
      * and {@link DeferredSubmit#slotReclaim} runs the slot's completion bookkeeping at reclaim exactly once -
      * the same facts an armed per-slot fence used to publish. Order is preserved by entry order inside the batch:
      * entries flush in the sequence they were queued, which is what the per-call submits expressed.
@@ -1329,7 +1337,7 @@ public final class VulkanContext {
         if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
             this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
         }
-        return entry.fence;
+        return entry.batch.serial;
     }
 
     /**
@@ -1439,7 +1447,11 @@ public final class VulkanContext {
                 batch.deferredEntries = 0;
                 batch.semaphoreEntries = 0;
             }
-            batch.fence = celtium$borrowDeferredFence();
+            // R-56: a timeline device confirms a batch by the counter alone, so its batches never borrow a
+            // fence - nothing is created, armed, queried or reset for them, which is also what makes the
+            // poll's counter-only reclaim legal (the 01123 proof obligation attaches to vkResetFences, and
+            // there is no fence to reset). The borrow and the idle pool serve the fallback path only.
+            batch.fence = this.frameTimeline != null ? VK_NULL_HANDLE : celtium$borrowDeferredFence();
             batch.serial = ++this.batchSerialSequence;
             this.pendingBatch = batch;
         }
@@ -1469,13 +1481,15 @@ public final class VulkanContext {
 
     /**
      * Submits every queued deferred submission in one {@code vkQueueSubmit} call: one VkSubmitInfo per entry, each
-     * keeping its own command buffer and wait/signal semaphores, and the batch's single shared fence armed by the
-     * call. The render thread measured its deferred submits at roughly one driver call each - the queue saw about
-     * eight group closes per frame inside the offer path alone - so the entries are gathered and the fence's
+     * keeping its own command buffer and wait/signal semaphores, and the batch's single confirmation armed by the
+     * call - the shared fence on the fallback path, the timeline signal on a timeline device. The render thread
+     * measured its deferred submits at roughly one driver call each - the queue saw about
+     * eight group closes per frame inside the offer path alone - so the entries are gathered and the batch's
      * completion stands for all of them; per-submit order on one queue is preserved by array order.
      * <p>
-     * Every path that could observe a submission completes or starts must flush first: a fence a caller was handed
-     * is only armed when this submits, so awaiting it before the flush is a stall of the caller's own making.
+     * Every path that could observe a submission completes or starts must flush first: a token a caller was handed
+     * names a batch that is only submitted when this runs, so awaiting it before the flush is a stall of the
+     * caller's own making.
      */
     public void celtium$flushBatchedSubmits() {
         if (this.pendingBatchedSubmits.isEmpty()) {
@@ -1644,8 +1658,9 @@ public final class VulkanContext {
         // Stage 2: the batch's timeline value is allocated here, the one point every batch passes on its way
         // to the queue. Allocation order is submission order because the game thread's flush is the only
         // caller; the lock keeps that true even if a second submitting thread ever appears.
-        // The value rides the last chunk's last submit info, beside the shared fence: both confirm the batch,
-        // the counter without a per-batch fence query.
+        // The value rides the last chunk's last submit info. On a timeline device it is the batch's only
+        // confirmation - the batch carries no fence (R-56); on the fallback path the shared fence the last
+        // chunk arms confirms the same batch beside it.
         if (this.frameTimeline != null && !entries.isEmpty()) {
             synchronized (this.timelineValueLock) {
                 batch.timelineValue = this.frameTimeline.nextValue();
@@ -1691,8 +1706,12 @@ public final class VulkanContext {
         batch.deferredEntries = entries.size() - frameEntries;
         batch.semaphoreEntries = semaphoreEntries;
         if (CrashBreadcrumbs.enabled()) {
+            // R-56: the note's second number is the batch's timeline value - the confirmation a reader can
+            // still check after the fact. The serial already rides the first number; the fence is gone from
+            // the record because on a timeline device there is none, and on the fallback path the serial is
+            // the identity that resolves it.
             CrashBreadcrumbs.note3(CrashBreadcrumbs.BATCH_SUBMIT,
-                    (this.generation << 32) | (batch.serial & 0xffffffffL), batch.fence,
+                    (this.generation << 32) | (batch.serial & 0xffffffffL), batch.timelineValue,
                     CrashBreadcrumbs.packBatchComposition(entries.size(), frameEntries, semaphoreEntries));
         }
         return null;
@@ -1710,6 +1729,8 @@ public final class VulkanContext {
         // Do not free their VkCommandBuffers or reset/destroy the shared fence.
         this.usable = false;
         this.deviceLost = true;
+        // A timeline batch has no fence to quarantine (R-56): the guard leaves the set untouched for it and
+        // only the entries' command buffers are held, exactly as the design fixes for the timeline path.
         if (batch != null && batch.fence != VK_NULL_HANDLE) {
             this.quarantinedFences.add(Long.valueOf(batch.fence));
         }
@@ -1738,14 +1759,18 @@ public final class VulkanContext {
     // present timing counters.
 
     /**
-     * Reclaims every deferred submission whose fence has already signaled, in submission order, without waiting.
-     * {@return how many were reclaimed}. A head whose fence has not signaled ends the walk: the queue executes
-     * submissions in order, so nothing newer can have completed either.
+     * Reclaims every deferred submission whose completion is confirmed, in submission order, without waiting.
+     * {@return how many were reclaimed}. A head whose completion is not confirmed ends the walk: the queue
+     * executes submissions in order, so nothing newer can have completed either.
      * <p>
-     * A timeline-stamped batch head is first screened by the frame timeline's counter, but the counter alone
-     * never reclaims it: the batch's own fence is queried once per batch and must read signalled, because the
-     * reclaim resets that fence and the fence's observed state is the only proof the reset is legal
-     * (VUID-vkResetFences-pFences-01123, Stage 2 integration leg).
+     * A timeline-stamped batch head is reclaimed by the frame timeline's counter alone (R-56): the batch
+     * carries no fence, so there is nothing to query and - the point that makes the counter-only form legal -
+     * nothing for the reclaim to reset. The 01123 proof obligation attaches to {@code vkResetFences}; the
+     * two-stage form this replaced existed because a fence-carrying batch's reclaim ended in a reset whose
+     * legality only the fence's own observed state could prove (Stage 2 integration leg: a counter-only
+     * reclaim over fence-carrying batches produced VUID-vkResetFences-pFences-01123). Entries the counter
+     * cannot confirm - no timeline on the device, no value on the batch, no batch at all - keep the fence
+     * query below, unchanged.
      * <p>
      * Deliberately does NOT flush the pending batch first: a poll is a reclaim scan, and flushing here made every
      * mid-frame poll fragment the batch into ~1-entry submits (measured: 10.7 flushes/frame, submissions/batch 1.09).
@@ -1759,18 +1784,14 @@ public final class VulkanContext {
             throw celtium$lostDevice("pollDeferredSubmits after previous loss");
         }
         int reclaimed = 0;
-        // Stage 2: the timeline's counter, read at most once per poll, is the cheap scan: it names the batches
-        // worth reclaiming and, while it has not reached a batch's value, settles that batch without any fence
-        // ioctl. It is not, by itself, the proof a reclaim stands on. The reclaim ends in vkResetFences on the
-        // batch's fence, and the only state that can prove that reset legal is the fence's own - a counter-only
-        // reclaim reset fences whose completion had never been observed through the fence, which the validation
-        // layer reports as VUID-vkResetFences-pFences-01123 (measured on the Stage 2 integration leg, agera:
-        // 9 occurrences, all on batches the counter alone had judged; a diagnostic build that queried the fence
-        // at every reset read VK_SUCCESS 1812 of 1812 times and the error vanished). So a batch the counter has
-        // reached is confirmed once through its own fence - one query per batch, not per entry - and only then
-        // do its entries reclaim.
+        // Stage 2 + R-56: the timeline's counter, read at most once per poll, is the whole confirmation for a
+        // timeline batch: it names the batches worth reclaiming and, while it has not reached a batch's value,
+        // settles that batch without any ioctl. It can stand alone because the batch carries no fence - the
+        // reclaim below never reaches a vkResetFences for it, so the 01123 proof the two-stage form owed (a
+        // counter-only reclaim over fence-carrying batches reset fences whose completion had never been
+        // observed through the fence; measured on the Stage 2 integration leg, agera: 9 occurrences, all on
+        // batches the counter alone had judged) has no object left to attach to.
         long timelineCompleted = -1L;
-        SharedBatch fenceConfirmedBatch = null;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
             if (head.batch != null && head.batch == this.pendingBatch) {
@@ -1783,22 +1804,9 @@ public final class VulkanContext {
                     timelineCompleted = this.frameTimeline.completedValue();
                 }
                 if (timelineCompleted < head.batch.timelineValue) {
-                    // Not reached: the same submission arms the batch's fence, so the fence cannot be signalled
-                    // either - falling through to the fence query would only pay an ioctl for the same answer.
+                    // Not reached: the value is signalled by the batch's last submit info in queue order, so
+                    // nothing the batch carried can have completed either.
                     break;
-                }
-                if (head.batch != fenceConfirmedBatch) {
-                    int fenceStatus = vkGetFenceStatus(this.device, head.fence);
-                    if (fenceStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                        submitDeviceLost++;
-                        throw celtium$lostDevice("vkGetFenceStatus(deferred)");
-                    }
-                    if (fenceStatus != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                        // The counter reached the batch but the fence has not been observed signalled: the
-                        // batch is not reclaimable yet, whatever the counter says. A later poll re-asks.
-                        break;
-                    }
-                    fenceConfirmedBatch = head.batch;
                 }
                 this.deferredSubmits.poll();
                 celtium$reclaimDeferred(head, false);
@@ -1841,21 +1849,22 @@ public final class VulkanContext {
     }
 
     /**
-     * Boundedly waits on the deferred submission identified by {@code fence} - the handle
-     * {@link #celtium$submitDeferred} returned. {@return false when the fence is no longer tracked because a poll or
-     * settle already confirmed it}. Used by owners whose next write would overwrite memory the submission still reads
-     * (a texture's staging buffer), so the wait covers only that one submission, never the whole queue.
+     * Boundedly waits on the deferred submission identified by {@code token} - the batch serial
+     * {@link #celtium$submitDeferred} returned. {@return false when the token is no longer tracked because a
+     * poll or settle already confirmed it}. Used by owners whose next write would overwrite memory the
+     * submission still reads (a texture's staging buffer), so the wait covers only that one submission, never
+     * the whole queue.
      */
-    public boolean celtium$awaitDeferredSubmit(long fence, String reason) {
+    public boolean celtium$awaitDeferredSubmit(long token, String reason) {
         if (this.deviceLost) {
             throw celtium$lostDevice("awaitDeferredSubmit after previous loss");
         }
-        if (fence == VK_NULL_HANDLE) {
+        if (token == VK_NULL_HANDLE) {
             return false;
         }
         celtium$flushBatchedSubmits();
         for (DeferredSubmit entry : this.deferredSubmits) {
-            if (entry.fence == fence) {
+            if (entry.batch != null && entry.batch.serial == token) {
                 celtium$awaitDeferredEntry(entry, reason);
                 return true;
             }
@@ -1954,6 +1963,12 @@ public final class VulkanContext {
         if (this.deviceLost) {
             throw celtium$lostDevice("awaitDeferredEntry after previous loss");
         }
+        if (entry.batch != null && entry.batch.timelineValue > 0L && this.frameTimeline != null) {
+            // R-56: a timeline batch has no fence to wait on; the wait is on the batch's counter value, with
+            // the same outcome matrix as the fence wait below.
+            celtium$awaitDeferredEntryTimeline(entry, reason);
+            return;
+        }
         long waitStarted = System.nanoTime();
         int waited = vkWaitForFences(this.device, entry.fence, true, SUBMIT_TIMEOUT_NANOS);
         long waitedNanos = System.nanoTime() - waitStarted;
@@ -2004,6 +2019,67 @@ public final class VulkanContext {
         throw new IllegalStateException("vkWaitForFences(deferred " + reason + ") did not confirm completion"
                 + " and did not time out: result=" + waited + ". The queue may still own the submission, so its"
                 + " command buffer and fence are quarantined rather than freed, and the context is marked unusable."
+                + " This is not a lost device: only VK_ERROR_DEVICE_LOST is completion-equivalent"
+                + " (submitWaitFailures=" + submitWaitFailures + ")");
+    }
+
+    /**
+     * The bounded wait on a timeline batch's entry (R-56): the fence wait's outcome matrix, restated on the
+     * batch's timeline value. Success reclaims; a lost device is reported without reclaiming (no handle
+     * recycling is safe, and there is no fence to recycle in any case); a timeout or another failure
+     * quarantines the command buffer - the buffer only, there is no fence to hold with it - latches the
+     * context unusable and throws. The result code comes from
+     * {@link org.soutalab.celtium.vulkan.hal.FrameTimeline#awaitValueResult(long, long)} so each branch is
+     * chosen on the code itself, not on an exception's wording.
+     */
+    private void celtium$awaitDeferredEntryTimeline(DeferredSubmit entry, String reason) {
+        SharedBatch batch = entry.batch;
+        long waitStarted = System.nanoTime();
+        int waited = this.frameTimeline.awaitValueResult(batch.timelineValue, SUBMIT_TIMEOUT_NANOS);
+        long waitedNanos = System.nanoTime() - waitStarted;
+        this.deferredWaits++;
+        this.deferredWaitMillis += waitedNanos / 1_000_000L;
+        if (waitedNanos / 1_000_000L > this.deferredWaitWorstMillis) {
+            this.deferredWaitWorstMillis = waitedNanos / 1_000_000L;
+        }
+        if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+            submitDeviceLost++;
+            // DO NOT call reclaimDeferred: on the fence path it issues vkResetFences, the exact native call
+            // in Neeyo's hs_err_pid24484.log crash stack. Keep all handles untouched and stop the renderer.
+            throw celtium$lostDevice("vkWaitSemaphores(deferred " + reason + ")"
+                    + celtium$batchAttribution(entry, waitedNanos));
+        }
+        if (canReclaimDeferred(waited)) {
+            this.deferredSubmits.remove(entry);
+            celtium$reclaimDeferred(entry, false);
+            return;
+        }
+        if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
+            submitTimeouts++;
+        } else {
+            submitWaitFailures++;
+        }
+        this.usable = false;
+        this.deferredSubmits.remove(entry);
+        this.deferredSubmitsOutstanding--;
+        quarantine(entry.commandBuffer, VK_NULL_HANDLE);
+        // This entry never reclaims, so its share of the batch count leaves with it: the count then names
+        // only entries that can still reclaim. There is no fence for the quarantine set to own here.
+        batch.pending--;
+        entry.batch = null;
+        // The slot confirmation is deliberately not run, as on the fence path: the submission is unconfirmed,
+        // not lost, and this branch latches the context unusable.
+        entry.commandBuffer = null;
+        entry.uploadSlotMask = 0L;
+        if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
+            throw new IllegalStateException("vkWaitSemaphores(deferred " + reason + ") did not reach value "
+                    + batch.timelineValue + " within " + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L)
+                    + "s; the command buffer is quarantined rather than freed (submitTimeouts="
+                    + submitTimeouts + ")");
+        }
+        throw new IllegalStateException("vkWaitSemaphores(deferred " + reason + ") did not confirm completion"
+                + " and did not time out: result=" + waited + ". The queue may still own the submission, so its"
+                + " command buffer is quarantined rather than freed, and the context is marked unusable."
                 + " This is not a lost device: only VK_ERROR_DEVICE_LOST is completion-equivalent"
                 + " (submitWaitFailures=" + submitWaitFailures + ")");
     }
@@ -3182,21 +3258,50 @@ public final class VulkanContext {
     }
 
     /**
-     * {@return the timeline value the batch that armed {@code fence} will signal}, or 0 when no tracked batch
-     * carries that fence or the timeline is absent. The frame-slot wait reads this after flushing: the batch a
-     * slot rode in is the submission whose completion the wait actually needs, and its timeline value is that
-     * completion stated on the counter.
+     * {@return the batch the token names} - the batch whose {@link SharedBatch#serial} equals {@code token} -
+     * or null when the token is 0 or no tracked entry rides in it. The one matching rule both token
+     * resolutions below share (R-56): a token is a batch serial, never a handle, so it is resolved against
+     * the tracked entries, in submission order.
      */
-    public long celtium$timelineValueForFence(long fence) {
-        if (this.frameTimeline == null || fence == VK_NULL_HANDLE) {
-            return 0L;
+    static SharedBatch celtium$batchForToken(java.util.ArrayDeque<DeferredSubmit> entries, long token) {
+        if (token == VK_NULL_HANDLE) {
+            return null;
         }
-        for (DeferredSubmit entry : this.deferredSubmits) {
-            if (entry.fence == fence) {
-                return entry.batch == null ? 0L : entry.batch.timelineValue;
+        for (DeferredSubmit entry : entries) {
+            if (entry.batch != null && entry.batch.serial == token) {
+                return entry.batch;
             }
         }
-        return 0L;
+        return null;
+    }
+
+    /**
+     * {@return the timeline value the batch that carries {@code token} will signal}, or 0 when no tracked
+     * batch carries the token, the batch has not been submitted yet or the timeline is absent. The frame-slot
+     * wait reads this after flushing: the batch a slot rode in is the submission whose completion the wait
+     * actually needs, and its timeline value is that completion stated on the counter. (Before R-56 this
+     * resolved a fence handle; the token migration re-points it at the batch serial the submit returned.)
+     */
+    public long celtium$timelineValueForDeferredToken(long token) {
+        if (this.frameTimeline == null || token == VK_NULL_HANDLE) {
+            return 0L;
+        }
+        SharedBatch batch = celtium$batchForToken(this.deferredSubmits, token);
+        return batch == null ? 0L : batch.timelineValue;
+    }
+
+    /**
+     * {@return the fence the batch that carries {@code token} armed}, or {@code VK_NULL_HANDLE} when no
+     * tracked batch carries the token or the batch is a timeline batch (which carries no fence). Only the
+     * fallback path resolves this: on a device without a timeline the slot wait and the slot poll still query
+     * and wait on the batch's real fence, and the token they hold is not it (R-56).
+     */
+    public long celtium$fenceForDeferredToken(long token) {
+        if (token == VK_NULL_HANDLE) {
+            return VK_NULL_HANDLE;
+        }
+        SharedBatch batch = celtium$batchForToken(this.deferredSubmits, token);
+        return batch == null ? VK_NULL_HANDLE : batch.fence;
     }
 
     /**

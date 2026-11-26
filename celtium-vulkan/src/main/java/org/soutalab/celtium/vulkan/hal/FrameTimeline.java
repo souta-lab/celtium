@@ -136,20 +136,34 @@ public final class FrameTimeline {
      *         result code
      */
     public boolean awaitValue(long value, long timeoutNanos) {
+        int result = awaitValueResult(value, timeoutNanos);
+        if (result == VK_SUCCESS) {
+            return true;
+        }
+        if (result == VK_TIMEOUT) {
+            return false;
+        }
+        throw new IllegalStateException("vkWaitSemaphores(FrameTimeline) returned VkResult " + result);
+    }
+
+    /**
+     * The same wait as {@link #awaitValue}, returning the raw {@code VkResult} instead of folding it into a
+     * boolean-or-throw. Callers whose disposition branches on the code itself - the deferred-submit await,
+     * whose matrix separates a lost device from a timeout from any other failure (R-56) - read the code from
+     * here rather than parsing it back out of {@link #awaitValue}'s exception text, so the matrix cannot
+     * silently break when a message is reworded.
+     *
+     * @return the {@code vkWaitSemaphores} result: {@code VK_SUCCESS}, {@code VK_TIMEOUT},
+     *         {@code VK_ERROR_DEVICE_LOST} or another failure code
+     */
+    public int awaitValueResult(long value, long timeoutNanos) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSemaphoreWaitInfo waitInfo = VkSemaphoreWaitInfo.calloc(stack)
                     .sType$Default()
                     .semaphoreCount(1)
                     .pSemaphores(stack.longs(this.semaphore))
                     .pValues(stack.longs(value));
-            int result = vkWaitSemaphores(this.device, waitInfo, timeoutNanos);
-            if (result == VK_SUCCESS) {
-                return true;
-            }
-            if (result == VK_TIMEOUT) {
-                return false;
-            }
-            throw new IllegalStateException("vkWaitSemaphores(FrameTimeline) returned VkResult " + result);
+            return vkWaitSemaphores(this.device, waitInfo, timeoutNanos);
         }
     }
 
