@@ -38,6 +38,8 @@ public final class AsyncSectionMesher {
         public final int passOrdinal;
         public final ByteBuffer vertexData;
         public final int vertexBytes;
+        /** Vertex stride of the presented stream in bytes (16 for the Tier-A format). */
+        public final int stride;
         /** Per-quad bilinear correction factors in bucket order, or null when absent. */
         public final int[] rdhFactors;
         /** The pass' sorted index buffer (uint32 indices), or null for unsorted passes. */
@@ -49,7 +51,7 @@ public final class AsyncSectionMesher {
         public final SectionDesc descDraft;
 
         private BuiltSectionA(int sectionX, int sectionY, int sectionZ, int passOrdinal,
-                              ByteBuffer vertexData, int vertexBytes, int[] rdhFactors,
+                              ByteBuffer vertexData, int vertexBytes, int stride, int[] rdhFactors,
                               NativeBuffer sortedIndices, int[] bucketCounts, boolean oversize,
                               SectionDesc descDraft) {
             this.sectionX = sectionX;
@@ -58,6 +60,7 @@ public final class AsyncSectionMesher {
             this.passOrdinal = passOrdinal;
             this.vertexData = vertexData;
             this.vertexBytes = vertexBytes;
+            this.stride = stride;
             this.rdhFactors = rdhFactors;
             this.sortedIndices = sortedIndices;
             System.arraycopy(bucketCounts, 0, this.bucketCounts, 0, SectionDesc.BUCKETS);
@@ -77,6 +80,12 @@ public final class AsyncSectionMesher {
          * derived from the desc alone — is the same for every section.
          */
         public long slabBytes() {
+            if (this.stride != TerrainVertex16.STRIDE) {
+                // A foreign format's stream is self-contained: no factor area
+                // is reserved for it (its encoder baked every per-vertex value
+                // into the stream), so the reservation is the vertices alone.
+                return (long) totalQuads * 4 * this.stride;
+            }
             return (long) totalQuads * 4 * TerrainVertex16.STRIDE + (long) totalQuads * 4;
         }
     }
@@ -94,13 +103,29 @@ public final class AsyncSectionMesher {
      */
     public BuiltSectionA build(int sectionX, int sectionY, int sectionZ, int passOrdinal,
                                BuiltSectionMeshParts parts, int extraFlags) {
+        return build(sectionX, sectionY, sectionZ, passOrdinal, parts, extraFlags,
+                TerrainVertex16.STRIDE);
+    }
+
+    /**
+     * The stride-general form (R-17 candidate 2-MIN): the presented vertex
+     * stream is assembled byte-for-byte at whatever stride the pass' format
+     * declares. Bucket contiguity and the sorted shape are format-independent
+     * properties of the merged parts, so the same validation applies; only the
+     * vertex size changes. A foreign format carries no RDH factor stream (its
+     * encoder baked the equivalent data into the stream), and the store
+     * reserves no factor area for it.
+     */
+    public BuiltSectionA build(int sectionX, int sectionY, int sectionZ, int passOrdinal,
+                               BuiltSectionMeshParts parts, int extraFlags, int stride) {
         ByteBuffer vertices = parts.vertexBuffer().getDirectBuffer();
         int vertexBytes = parts.vertexBuffer().getLength();
-        if (vertexBytes % TerrainVertex16.STRIDE != 0) {
-            throw new IllegalArgumentException("vertex data is not a whole number of 16-byte vertices: "
-                    + vertexBytes + " bytes (the section was not built with the Tier-A format)");
+        if (vertexBytes % stride != 0) {
+            throw new IllegalArgumentException("vertex data is not a whole number of "
+                    + stride + "-byte vertices: " + vertexBytes
+                    + " bytes (the section was not built with the pass' presented format)");
         }
-        int vertexCount = vertexBytes / TerrainVertex16.STRIDE;
+        int vertexCount = vertexBytes / stride;
         if (vertexCount == 0) {
             return null;
         }
@@ -157,6 +182,6 @@ public final class AsyncSectionMesher {
         }
 
         return new BuiltSectionA(sectionX, sectionY, sectionZ, passOrdinal, vertices, vertexBytes,
-                factors, parts.indexBuffer(), bucketCounts, oversize, draft.build());
+                stride, factors, parts.indexBuffer(), bucketCounts, oversize, draft.build());
     }
 }

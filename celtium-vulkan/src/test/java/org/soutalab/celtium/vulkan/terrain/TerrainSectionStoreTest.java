@@ -147,4 +147,101 @@ class TerrainSectionStoreTest {
         assertThrows(IllegalStateException.class,
                 () -> store.register(mesher.build(7, 7, 7, 0, parts(1, 0, true), 0), 2));
     }
+
+    private static BuiltSectionMeshParts partsForStride(int quadsPosX, int quadsUnassigned, int stride) {
+        int quads = quadsPosX + quadsUnassigned;
+        NativeBuffer vertices = new NativeBuffer(quads * 4 * stride);
+        Map<ModelQuadFacing, VertexRange> ranges = new EnumMap<>(ModelQuadFacing.class);
+        if (quadsPosX > 0) {
+            ranges.put(ModelQuadFacing.POS_X, new VertexRange(0, quadsPosX * 4));
+        }
+        if (quadsUnassigned > 0) {
+            ranges.put(ModelQuadFacing.UNASSIGNED,
+                    new VertexRange(quadsPosX * 4, quadsUnassigned * 4));
+        }
+        return new BuiltSectionMeshParts(vertices, null, null, ranges, null);
+    }
+
+    @Test
+    void mesherAssemblesAForeignStride() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        var built = mesher.build(0, 0, 0, 1, partsForStride(2, 1, 44), 0, 44);
+        assertNotNull(built);
+        assertEquals(44, built.stride);
+        assertEquals(3, built.totalQuads);
+        assertEquals(3L * 4 * 44, built.slabBytes(),
+                "a foreign stream reserves no factor area: vertices alone");
+        assertEquals(2, built.descDraft.bucketCounts[0]);
+        assertEquals(1, built.descDraft.bucketCounts[6]);
+    }
+
+    @Test
+    void mesherRejectsBytesThatAreNotWholeForeignVertices() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        NativeBuffer odd = new NativeBuffer(44 * 4 + 4);
+        try {
+            Map<ModelQuadFacing, VertexRange> ranges = new EnumMap<>(ModelQuadFacing.class);
+            ranges.put(ModelQuadFacing.POS_X, new VertexRange(0, 4));
+            BuiltSectionMeshParts parts = new BuiltSectionMeshParts(odd, null, null, ranges, null);
+            assertThrows(IllegalArgumentException.class, () -> mesher.build(0, 0, 0, 0, parts, 0, 44));
+        } finally {
+            odd.free();
+        }
+    }
+
+    @Test
+    void packRegistrationLivesInItsOwnArenaWithoutAFactor() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        TerrainSectionStore store = new TerrainSectionStore();
+        var vanilla = store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1);
+        var packFirst = store.register(mesher.build(2, 0, 0, 1, partsForStride(3, 0, 44), 0, 44), 2);
+        var packSecond = store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3);
+        assertNotNull(vanilla);
+        assertNotNull(packFirst);
+        assertNotNull(packSecond);
+        assertTrue(packFirst.pack());
+        assertEquals(TerrainSectionStore.PACK_SLAB_BASE, packFirst.desc.slabId,
+                "the first pack arena's first slab sits at the pack base");
+        assertEquals(0, packFirst.packGeometry.byteOffset);
+        assertEquals(0, packFirst.desc.vertexOffset);
+        assertEquals(0, packFirst.desc.quadStart);
+        assertEquals(44 * 256, packSecond.packGeometry.byteOffset,
+                "pack placements are rounded to whole-vertex pages (stride * 256)");
+        assertEquals(256, packSecond.desc.vertexOffset,
+                "the desc vertex offset is exact at the presented stride");
+        assertEquals(0, packFirst.factorBaseUints(), "no factor area is allocated for pack records");
+        assertEquals(0, store.factorBaseImage()[packFirst.recordIndex]);
+
+        assertEquals(1, store.slabRecordCounts()[0], "only the vanilla record counts for slab dispatch");
+        assertEquals(2, store.packSlabRecordCounts()[TerrainSectionStore.PACK_SLAB_BASE]);
+        assertEquals(2, store.packRecords(1).size());
+        assertEquals(0, store.packRecords(0).size());
+        assertEquals(44, store.packArenaOfSlab(TerrainSectionStore.PACK_SLAB_BASE).stride);
+    }
+
+    @Test
+    void aSecondStrideOpensASecondPackArena() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        TerrainSectionStore store = new TerrainSectionStore();
+        var wide = store.register(mesher.build(0, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 1);
+        var narrow = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 28), 0, 28), 2);
+        assertNotNull(wide);
+        assertNotNull(narrow);
+        assertEquals(TerrainSectionStore.PACK_SLAB_BASE, wide.desc.slabId);
+        assertEquals(TerrainSectionStore.PACK_SLAB_BASE + 8, narrow.desc.slabId);
+        assertEquals(28, store.packArenaOfSlab(TerrainSectionStore.PACK_SLAB_BASE + 8).stride);
+    }
+
+    @Test
+    void packUnregisterReleasesBackIntoThePackArena() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        TerrainSectionStore store = new TerrainSectionStore();
+        assertNotNull(store.register(mesher.build(0, 0, 0, 1, partsForStride(2, 0, 44), 0, 44), 1));
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(0, 0, 0, 1), 5));
+        store.collectReleased(5);
+        var again = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 6);
+        assertNotNull(again);
+        assertEquals(0, again.packGeometry.byteOffset, "the released pack range is reused");
+        assertEquals(1, store.recordCount());
+    }
 }

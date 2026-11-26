@@ -46,6 +46,16 @@ public final class TerrainSectionStore {
         public final TerrainSlabAllocator.Allocation geometry;
         public final TerrainSlabAllocator.Allocation quadSpace;
         public final TerrainSlabAllocator.Allocation factor;
+        /**
+         * Pack-space placement (R-17 candidate 2-MIN), non-null only for
+         * records whose presented format is foreign: the geometry lives in a
+         * per-stride byte arena instead of the 16-byte slabs, and no factor
+         * area is allocated ({@link #factor} stays null — the foreign stream
+         * is self-contained). {@link #geometry}/{@link #quadSpace} are null
+         * for these records.
+         */
+        public final TerrainSlabAllocator.Allocation packGeometry;
+        public final TerrainSlabAllocator.Allocation packQuadSpace;
         /** Mutable: a translucent re-sort may replace the range (see {@link #updateSorted}). */
         public TerrainSlabAllocator.Allocation sorted;
         public final AsyncSectionMesher.BuiltSectionA built;
@@ -55,7 +65,9 @@ public final class TerrainSectionStore {
                              TerrainSlabAllocator.Allocation quadSpace,
                              TerrainSlabAllocator.Allocation factor,
                              TerrainSlabAllocator.Allocation sorted,
-                             AsyncSectionMesher.BuiltSectionA built) {
+                             AsyncSectionMesher.BuiltSectionA built,
+                             TerrainSlabAllocator.Allocation packGeometry,
+                             TerrainSlabAllocator.Allocation packQuadSpace) {
             this.key = key;
             this.desc = desc;
             this.recordIndex = recordIndex;
@@ -64,11 +76,18 @@ public final class TerrainSectionStore {
             this.factor = factor;
             this.sorted = sorted;
             this.built = built;
+            this.packGeometry = packGeometry;
+            this.packQuadSpace = packQuadSpace;
+        }
+
+        /** True when this record's geometry lives in a pack (foreign-format) arena. */
+        public boolean pack() {
+            return this.packGeometry != null;
         }
 
         /** Factor-stream base in uints, as the vertex shader consumes it. */
         public long factorBaseUints() {
-            return this.factor.byteOffset / 4;
+            return this.factor == null ? 0 : this.factor.byteOffset / 4;
         }
     }
 
@@ -80,6 +99,49 @@ public final class TerrainSectionStore {
             new TerrainSlabAllocator(FACTOR_ARENA_BYTES, 1);
     private final TerrainSlabAllocator sortedAllocator =
             new TerrainSlabAllocator(SORTED_ARENA_BYTES, 1);
+
+    /**
+     * Desc slab ids at and above this base belong to the pack space, so the
+     * vanilla engines' per-slab dispatch never matches a pack record. Pack
+     * slab id = {@code PACK_SLAB_BASE + arenaIndex * DEFAULT_MAX_SLABS + slab}.
+     */
+    public static final int PACK_SLAB_BASE = TerrainSlabAllocator.DEFAULT_MAX_SLABS;
+    /** Distinct presented strides the pack space will open arenas for. */
+    public static final int MAX_PACK_ARENAS = 4;
+
+    /**
+     * One pack arena pair for a single presented stride: a byte-unit geometry
+     * arena whose page is a whole number of vertices ({@code stride * 256}),
+     * so every allocation offset is an exact vertex offset at this stride, and
+     * a quad-unit space paired with it slab by slab, exactly like the vanilla
+     * pairing. Capacity management closes inside the arena: no other format's
+     * records ever land here.
+     */
+    public static final class PackArena {
+        public final int index;
+        public final int stride;
+        public final TerrainSlabAllocator geometry;
+        public final TerrainSlabAllocator quadSpace;
+
+        private PackArena(int index, int stride) {
+            this.index = index;
+            this.stride = stride;
+            int page = stride * 256;
+            long slabBytes = TerrainSlabAllocator.DEFAULT_SLAB_BYTES / page * page;
+            this.geometry = new TerrainSlabAllocator(slabBytes,
+                    TerrainSlabAllocator.DEFAULT_MAX_SLABS, page);
+            this.quadSpace = new TerrainSlabAllocator(MAX_QUADS_PER_SLAB,
+                    TerrainSlabAllocator.DEFAULT_MAX_SLABS, 4096);
+        }
+
+        /** Byte size of one geometry slab in this arena (the GPU buffer size). */
+        public long slabBytes() {
+            return this.geometry.slabBytes();
+        }
+    }
+
+    private final java.util.Map<Integer, PackArena> packArenasByStride = new HashMap<>();
+    private final List<PackArena> packArenas = new ArrayList<>();
 
     private final List<Registration> records = new ArrayList<>();
     private final HashMap<Key, Registration> byKey = new HashMap<>();
@@ -117,6 +179,9 @@ public final class TerrainSectionStore {
         }
         if (built.oversize || built.descDraft.oversize()) {
             return new RegisterResult(null, RegisterFailure.OVERSIZE);
+        }
+        if (built.stride != 16) {
+            return registerPackDiagnosed(built, key, generation);
         }
         long vertexBytes = (long) built.totalQuads * 4 * 16;
         // Geometry and quad space must land in the same slab, so they are placed
@@ -171,7 +236,71 @@ public final class TerrainSectionStore {
             desc.sortedIndexBase = sorted.byteOffset / 4;
         }
         Registration registration = new Registration(key, desc, this.records.size(),
-                geometry, quadSpace, factor, sorted, built);
+                geometry, quadSpace, factor, sorted, built, null, null);
+        this.records.add(registration);
+        this.byKey.put(key, registration);
+        this.imageDirty = true;
+        this.imageGeneration++;
+        return new RegisterResult(registration, null);
+    }
+
+    /**
+     * The pack-space half of {@link #registerDiagnosed} (R-17 candidate
+     * 2-MIN): a foreign-format section is placed in its stride's own arena
+     * pair, byte-for-byte as presented. No factor area is allocated (the
+     * stream is self-contained) and the 16-byte slabs are never touched, so
+     * the Tier-A invariant — the main slab holds vanilla-format geometry
+     * only — is kept by construction.
+     */
+    private RegisterResult registerPackDiagnosed(AsyncSectionMesher.BuiltSectionA built,
+                                                 Key key, long generation) {
+        PackArena arena = this.packArenasByStride.get(built.stride);
+        if (arena == null) {
+            if (this.packArenas.size() >= MAX_PACK_ARENAS) {
+                return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+            }
+            arena = new PackArena(this.packArenas.size(), built.stride);
+            this.packArenasByStride.put(built.stride, arena);
+            this.packArenas.add(arena);
+        }
+        long vertexBytes = (long) built.totalQuads * 4 * built.stride;
+        TerrainSlabAllocator.Allocation geometry = null;
+        TerrainSlabAllocator.Allocation quadSpace = null;
+        for (int slab = 0; slab < arena.geometry.maxSlabs(); slab++) {
+            geometry = arena.geometry.allocateInSlab(slab, vertexBytes);
+            if (geometry == null) {
+                continue;
+            }
+            quadSpace = arena.quadSpace.allocateInSlab(slab, built.totalQuads);
+            if (quadSpace != null) {
+                break;
+            }
+            arena.geometry.free(geometry);
+            geometry = null;
+        }
+        if (geometry == null) {
+            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+        }
+        TerrainSlabAllocator.Allocation sorted = null;
+        if (built.sortedIndices != null) {
+            sorted = this.sortedAllocator.allocate(built.sortedIndices.getLength());
+            if (sorted == null) {
+                arena.geometry.free(geometry);
+                arena.quadSpace.free(quadSpace);
+                return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+            }
+        }
+        SectionDesc desc = built.descDraft;
+        desc.slabId = PACK_SLAB_BASE + arena.index * TerrainSlabAllocator.DEFAULT_MAX_SLABS
+                + geometry.slabId;
+        desc.vertexOffset = geometry.byteOffset / built.stride;
+        desc.quadStart = quadSpace.byteOffset;
+        desc.generation = generation;
+        if (sorted != null) {
+            desc.sortedIndexBase = sorted.byteOffset / 4;
+        }
+        Registration registration = new Registration(key, desc, this.records.size(),
+                null, null, null, sorted, built, geometry, quadSpace);
         this.records.add(registration);
         this.byKey.put(key, registration);
         this.imageDirty = true;
@@ -195,9 +324,15 @@ public final class TerrainSectionStore {
             this.records.set(index, last);
             last.recordIndex = index;
         }
-        this.geometryAllocator.freeDeferred(removed.geometry, releaseTimeline);
-        this.quadSpaceAllocator.freeDeferred(removed.quadSpace, releaseTimeline);
-        this.factorAllocator.freeDeferred(removed.factor, releaseTimeline);
+        if (removed.pack()) {
+            PackArena arena = packArenaOfSlab((int) removed.desc.slabId);
+            arena.geometry.freeDeferred(removed.packGeometry, releaseTimeline);
+            arena.quadSpace.freeDeferred(removed.packQuadSpace, releaseTimeline);
+        } else {
+            this.geometryAllocator.freeDeferred(removed.geometry, releaseTimeline);
+            this.quadSpaceAllocator.freeDeferred(removed.quadSpace, releaseTimeline);
+            this.factorAllocator.freeDeferred(removed.factor, releaseTimeline);
+        }
         if (removed.sorted != null) {
             this.sortedAllocator.freeDeferred(removed.sorted, releaseTimeline);
         }
@@ -244,6 +379,10 @@ public final class TerrainSectionStore {
         this.quadSpaceAllocator.collectReleased(completedTimeline);
         this.factorAllocator.collectReleased(completedTimeline);
         this.sortedAllocator.collectReleased(completedTimeline);
+        for (PackArena arena : this.packArenas) {
+            arena.geometry.collectReleased(completedTimeline);
+            arena.quadSpace.collectReleased(completedTimeline);
+        }
     }
 
     public synchronized Registration get(Key key) {
@@ -254,10 +393,18 @@ public final class TerrainSectionStore {
         return this.records.size();
     }
 
-    /** Live record counts per geometry slab id, sized to the slab count. */
+    /**
+     * Live record counts per geometry slab id, sized to the slab count.
+     * Pack-space records are excluded: their desc slab ids address the pack
+     * arenas, and counting them here would make the vanilla engines dispatch
+     * phantom slabs and create real slab buffers for them.
+     */
     public synchronized int[] slabRecordCounts() {
         int[] counts = new int[Math.max(1, this.geometryAllocator.slabCount())];
         for (Registration registration : this.records) {
+            if (registration.pack()) {
+                continue;
+            }
             int slab = (int) registration.desc.slabId;
             if (slab >= counts.length) {
                 counts = java.util.Arrays.copyOf(counts, slab + 1);
@@ -265,6 +412,44 @@ public final class TerrainSectionStore {
             counts[slab]++;
         }
         return counts;
+    }
+
+    /** Live pack-space record counts, indexed by desc slab id (pack range only). */
+    public synchronized int[] packSlabRecordCounts() {
+        int size = PACK_SLAB_BASE + Math.max(1, this.packArenas.size())
+                * TerrainSlabAllocator.DEFAULT_MAX_SLABS;
+        int[] counts = new int[size];
+        for (Registration registration : this.records) {
+            if (registration.pack()) {
+                counts[(int) registration.desc.slabId]++;
+            }
+        }
+        return counts;
+    }
+
+    /** The pack records of one pass, in record order. */
+    public synchronized List<Registration> packRecords(int passOrdinal) {
+        List<Registration> out = new ArrayList<>();
+        for (Registration registration : this.records) {
+            if (registration.pack() && registration.key.passOrdinal() == passOrdinal) {
+                out.add(registration);
+            }
+        }
+        return out;
+    }
+
+    /** The pack arena a desc slab id belongs to, or null outside the pack range. */
+    public synchronized PackArena packArenaOfSlab(int descSlabId) {
+        int arenaIndex = (descSlabId - PACK_SLAB_BASE) / TerrainSlabAllocator.DEFAULT_MAX_SLABS;
+        if (descSlabId < PACK_SLAB_BASE || arenaIndex >= this.packArenas.size()) {
+            return null;
+        }
+        return this.packArenas.get(arenaIndex);
+    }
+
+    /** The pack arena opened for a presented stride, or null when none was. */
+    public synchronized PackArena packArenaForStride(int stride) {
+        return this.packArenasByStride.get(stride);
     }
 
     public synchronized List<Registration> records() {
