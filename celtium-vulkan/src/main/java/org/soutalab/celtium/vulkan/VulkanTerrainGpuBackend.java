@@ -25774,6 +25774,17 @@ this.frameBufferOpen = false;
                                 + " of " + IDLE_WAIT_RETRIES + " before treating the device as stalled"
                                 + " (timeouts=" + this.submissionStatistics.idleWaitTimeouts() + ")");
                         result = timeline.awaitValueResult(timelineValue, IDLE_TIMEOUT_NANOS);
+                        if (FENCE_WAIT_FAULT) {
+                            // The fault re-applies inside the retry loop (R-56 injection redesign): on a
+                            // healthy device the real re-await answers SUCCESS at once, so a fault assigned
+                            // only before the loop was always overwritten by the first retry and the stall
+                            // seat behind the loop could never be exercised. Re-assigning after each
+                            // re-await makes every retry read as the same timeout, so the wait runs its
+                            // full bounded course (the initial wait plus IDLE_WAIT_RETRIES) and reaches
+                            // noteStalled() below.
+                            result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
+                            System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
+                        }
                     }
                 }
                 if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
@@ -25842,6 +25853,14 @@ this.frameBufferOpen = false;
                             + IDLE_WAIT_RETRIES + " before treating the device as stalled (timeouts="
                             + this.submissionStatistics.idleWaitTimeouts() + ")");
                     result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+                    if (FENCE_WAIT_FAULT) {
+                        // The fault re-applies inside the retry loop, as on the timeline branch above
+                        // (R-56 injection redesign): without the re-assignment the first retry's real
+                        // wait overwrote the one pre-loop forgery with its true SUCCESS and the stall
+                        // seat behind the loop stayed unreachable for this injection.
+                        result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
+                        System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
+                    }
                 }
             }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
