@@ -3,6 +3,11 @@ package org.soutalab.celtium.vulkan;
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -172,5 +177,76 @@ class ChainPairFormatClassTest {
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.BGRA8_UNORM),
                 "rule R1 on a BGRA frame: a pinned identity is never forced - it stays in the frame's class");
+    }
+
+    // R-06 residual (rebuild-crossing generation): the before-exists answer is the class the pair
+    // will stand in - the frame's class, not a fixed default. A fixed RGBA answer agreed with the
+    // materialised pair on every classical session, which is why it stayed invisible until Stage 1's
+    // BGRA ignition gave the frame a second class: a prepare reading the answer before the pair
+    // existed built its pipeline against the RGBA class pass, and the window then opened on the
+    // pair's BGRA pass (02684, format axis, once per pair).
+    @Test
+    void anUnresolvedPairReadsAsTheFrameClass() {
+        assertEquals(TargetFormatClass.RGBA8_UNORM, GllessFrameTarget.celtium$unresolvedPairClass(
+                null, TargetFormatClass.RGBA8_UNORM),
+                "a classical frame: the before-exists answer is unchanged");
+        assertEquals(TargetFormatClass.BGRA8_UNORM, GllessFrameTarget.celtium$unresolvedPairClass(
+                null, TargetFormatClass.BGRA8_UNORM),
+                "a BGRA frame: the pair materialises in BGRA, so the before-exists answer is BGRA");
+    }
+
+    @Test
+    void aLivePairClassIsFollowedWhateverTheFrameIs() {
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, GllessFrameTarget.celtium$unresolvedPairClass(
+                TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.BGRA8_UNORM),
+                "rule R5: a resolved pair's class is followed, never re-resolved against the frame");
+        assertEquals(TargetFormatClass.RGBA8_UNORM, GllessFrameTarget.celtium$unresolvedPairClass(
+                TargetFormatClass.RGBA8_UNORM, TargetFormatClass.BGRA8_UNORM));
+    }
+
+    // The two before-exists answers (the format-class query and the class-preserving ensure) must
+    // take the frame's class through the one pure rule, never a class literal of their own: a
+    // literal on either side is the R-06 residual's shape, and the two sides disagreeing is the
+    // inversion in the other direction.
+    @Test
+    void theBeforeExistsAnswersTakeTheFrameClassThroughThePureRule() throws IOException {
+        String query = methodSlice(gllessSource(),
+                "public TargetFormatClass chainPairFormatClass(long identity) {", 400);
+        assertTrue(query.contains("celtium$unresolvedPairClass("),
+                "the query's before-exists answer goes through the pure rule");
+        assertFalse(query.contains("TargetFormatClass.RGBA8_UNORM"),
+                "the query names no class literal for an unresolved pair");
+        String ensure = methodSlice(gllessSource(),
+                "public void ensureChainPairColors(long identity, int attachments, int width, int height) {",
+                1400);
+        assertTrue(ensure.contains("celtium$unresolvedPairClass("),
+                "the class-preserving ensure's before-exists answer goes through the same rule");
+        assertFalse(ensure.contains("TargetFormatClass.RGBA8_UNORM"),
+                "the class-preserving ensure names no class literal for an unresolved pair");
+    }
+
+    private static String gllessSource() throws IOException {
+        return Files.readString(findRepoFile(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java"));
+    }
+
+    /** A slice of one method, from its signature, long enough to cover the lines this pin reads. */
+    private static String methodSlice(String source, String signature, int length) {
+        int start = source.indexOf(signature);
+        assertTrue(start >= 0, "cannot find " + signature);
+        return source.substring(start, Math.min(source.length(), start + length));
+    }
+
+    private static Path findRepoFile(String repoRelative) {
+        Path direct = Paths.get(repoRelative);
+        if (Files.exists(direct)) {
+            return direct;
+        }
+        Path fromModule = Paths.get("..").resolve(repoRelative);
+        if (Files.exists(fromModule)) {
+            return fromModule;
+        }
+        throw new IllegalStateException("cannot locate " + repoRelative + " from "
+                + Paths.get("").toAbsolutePath());
     }
 }

@@ -1986,13 +1986,28 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * {@return the format class the identity's chain pair is allocated in}, or {@code RGBA8_UNORM} before the
-     * pair exists - the answer consumers gate on (the window's render-pass choice, the post chain's adoption
-     * refusal, the readback refusal).
+     * {@return the class a pair reads as}: its own live class when it exists, and {@code frameClass}
+     * before it exists. Pure and static so the rule is pinned without a device; both before-exists
+     * answers in this class (the format-class query and the class-preserving ensure) go through here,
+     * so the two can never disagree about what an unresolved pair is.
+     */
+    static TargetFormatClass celtium$unresolvedPairClass(TargetFormatClass liveClass,
+            TargetFormatClass frameClass) {
+        return liveClass != null ? liveClass : frameClass;
+    }
+
+    /**
+     * {@return the format class the identity's chain pair is allocated in}, or the frame's own class
+     * before the pair exists - the answer consumers gate on (the window's render-pass choice, the post
+     * chain's adoption refusal, the readback refusal). An unresolved pair has no byte order of its own:
+     * the {@link Pair} constructor starts it in the frame's class, and every materialisation path that
+     * no registration junction feeds builds it in that class, so the before-exists answer is the class
+     * the pair will stand in. A junction's resolution replaces that answer at registration, where the
+     * pair is ensured in the resolved class (rules R5 and R3).
      */
     public TargetFormatClass chainPairFormatClass(long identity) {
         Pair pair = existingChainPair(identity);
-        return pair == null ? TargetFormatClass.RGBA8_UNORM : pair.formatClass;
+        return celtium$unresolvedPairClass(pair == null ? null : pair.formatClass, this.frameFormatClass);
     }
 
     /**
@@ -2020,11 +2035,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     public void ensureChainPairColors(long identity, int attachments, int width, int height) {
         // The class-preserving form: the pair keeps the class the registration junction resolved for it
-        // (rule R5). A pair nobody resolved a class for is ensured in RGBA8_UNORM explicitly: the frame's
-        // BGRA class enters through the pin (identity 0 / main) only, never through an unresolved pair.
+        // (rule R5). A pair nobody resolved a class for is ensured in the frame's class: that is the
+        // class its constructor starts in and the class every materialisation path builds an unresolved
+        // pair in, so this ensure and the before-exists answer of chainPairFormatClass agree. A
+        // junction-resolved pair is ensured at registration and never reads as unresolved here.
         Pair existing = existingChainPair(identity);
         ensureChainPairColors(identity, attachments, width, height,
-                existing == null ? TargetFormatClass.RGBA8_UNORM : existing.formatClass);
+                celtium$unresolvedPairClass(existing == null ? null : existing.formatClass,
+                        this.frameFormatClass));
     }
 
     /**
