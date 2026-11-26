@@ -281,6 +281,16 @@ public final class TextureUploadService {
         return this.pendingBytes;
     }
 
+    /** {@return whether this exact request instance is still queued} (identity, not equality). */
+    public boolean isQueued(UploadRequest request) {
+        for (UploadRequest queued : this.queue) {
+            if (queued == request) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * The owner's deferral gate, consulted by the gated flush for each {@link Urgency#DEFERRABLE}
      * request at batch-formation time. Returning {@code false} ends batch formation at that
