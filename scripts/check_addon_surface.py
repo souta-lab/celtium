@@ -232,8 +232,11 @@ LEDGER_III = [
      "needs": ("currentState", "currentBlockAccess", "renderQuadList", "renderBlock"),
      "calls": (("renderBlock", "renderQuadList"),),
      "known_gap": "renderBlock no longer calls renderQuadList (the loop moved to renderModel with the Demonica "
-                  "Tier B split, 9b3623db7); Celeritas Leaf Culling's @Redirect on that call site binds "
-                  "nowhere",
+                  "Tier B split, 9b3623db7), so Celeritas Leaf Culling's @Redirect on that call site binds "
+                  "nowhere and the addon in its current form fails to apply at startup. The gap stays open "
+                  "on the connection surface by design: leaf culling itself is built into celtium natively "
+                  "(option leafCullingMode, default SOLID), so III-1 is closed by the native implementation, "
+                  "not by restoring the call site",
      "source": "Celeritas Leaf Culling 1.x mixins/mod/celeritas/VintageBlockRendererMixin"},
     {"id": "III-2", "doc_token": "CeleritasVideoOptionsController",
      "file": f"{_GUI}/CeleritasVideoOptionsController.java",
