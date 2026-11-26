@@ -195,7 +195,7 @@ public final class ImmediateBatcher {
                 Arrays.copyOf(pipelineKeys, entries), Arrays.copyOf(indexCounts, entries),
                 Arrays.copyOf(instanceCounts, entries), Arrays.copyOf(firstIndices, entries),
                 Arrays.copyOf(vertexOffsets, entries), Arrays.copyOf(firstInstances, entries),
-                Arrays.copyOf(textureSlots, entries),
+                Arrays.copyOf(textureSlots, entries), Arrays.copyOf(stateKeys, entries),
                 size);
         this.ring = null;
         return plan;

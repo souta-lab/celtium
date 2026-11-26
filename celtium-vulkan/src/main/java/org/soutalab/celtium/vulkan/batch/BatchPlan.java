@@ -17,6 +17,11 @@ package org.soutalab.celtium.vulkan.batch;
  * ({@code ImmediateBatcher.setBindlessEnabled(false)}) entries never fuse across a texture
  * change, so a change in this value between consecutive entries is exactly where the executor
  * rebinds the per-texture descriptor set.
+ *
+ * <p>Each entry likewise carries the state key of its first item (the scissor / draw-state
+ * bucket the caller captured with the item). Entries never fuse across a state change, so a
+ * change in this value between consecutive entries is exactly where the executor re-issues
+ * the entry's command state (viewport, scissor, depth bias) through its sink.
  */
 public final class BatchPlan {
 
@@ -27,10 +32,12 @@ public final class BatchPlan {
     private final int[] vertexOffsets;
     private final int[] firstInstances;
     private final int[] textureSlots;
+    private final int[] stateKeys;
     private final int sourceItems;
 
     BatchPlan(int[] pipelineKeys, int[] indexCounts, int[] instanceCounts, int[] firstIndices,
-              int[] vertexOffsets, int[] firstInstances, int[] textureSlots, int sourceItems) {
+              int[] vertexOffsets, int[] firstInstances, int[] textureSlots, int[] stateKeys,
+              int sourceItems) {
         this.pipelineKeys = pipelineKeys;
         this.indexCounts = indexCounts;
         this.instanceCounts = instanceCounts;
@@ -38,6 +45,7 @@ public final class BatchPlan {
         this.vertexOffsets = vertexOffsets;
         this.firstInstances = firstInstances;
         this.textureSlots = textureSlots;
+        this.stateKeys = stateKeys;
         this.sourceItems = sourceItems;
     }
 
@@ -77,5 +85,10 @@ public final class BatchPlan {
     /** The texture slot of the entry's first item (a GL texture name on the fallback path). */
     public int textureSlot(int entry) {
         return this.textureSlots[entry];
+    }
+
+    /** The state key of the entry's first item (the caller's scissor / draw-state bucket). */
+    public int stateKey(int entry) {
+        return this.stateKeys[entry];
     }
 }

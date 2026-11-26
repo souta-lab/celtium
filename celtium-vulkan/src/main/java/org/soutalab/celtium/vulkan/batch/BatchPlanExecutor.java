@@ -20,6 +20,12 @@ package org.soutalab.celtium.vulkan.batch;
  * texture anyway. With bindless texturing the texture rides in each draw's instance record,
  * the sink is never asked to bind one, and a texture change is not a state change at all.
  *
+ * <p>The state points are the plan's state-key change points, on every path: entries never
+ * fuse across a state change either, so wherever the state key changes the sink is asked to
+ * re-issue the command state the key names (the viewport and scissor the caller captured
+ * with the item, the depth bias) before the entry draws. A state change does not by itself
+ * rebind a pipeline or a texture.
+ *
  * <p>The sink is the seam to the command buffer: production binds the frame slot's vertex
  * buffer and the shared quad index buffer once around the call, then answers
  * {@link DrawSink#bindPipeline} with the pipeline object the key names,
@@ -42,6 +48,13 @@ public final class BatchPlanExecutor {
          */
         void bindTexture(int textureSlot);
 
+        /**
+         * Re-issues the command state {@code stateKey} names (viewport, scissor, depth
+         * bias - whatever the caller bucketed into the key at capture). Called at state-key
+         * change points, before the entry that carries the new key draws.
+         */
+        void bindState(int stateKey);
+
         /** Records one indexed draw with the plan entry's fields, verbatim. */
         void drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
                          int firstInstance);
@@ -60,6 +73,8 @@ public final class BatchPlanExecutor {
         int boundPipeline = 0;
         boolean textureBound = false;
         int boundTexture = 0;
+        boolean stateBound = false;
+        int boundState = 0;
         for (int entry = 0; entry < entries; entry++) {
             int pipelineKey = plan.pipelineKey(entry);
             if (!pipelineBound || pipelineKey != boundPipeline) {
@@ -74,6 +89,12 @@ public final class BatchPlanExecutor {
                     boundTexture = textureSlot;
                     textureBound = true;
                 }
+            }
+            int stateKey = plan.stateKey(entry);
+            if (!stateBound || stateKey != boundState) {
+                sink.bindState(stateKey);
+                boundState = stateKey;
+                stateBound = true;
             }
             sink.drawIndexed(plan.indexCount(entry), plan.instanceCount(entry),
                     plan.firstIndex(entry), plan.vertexOffset(entry),

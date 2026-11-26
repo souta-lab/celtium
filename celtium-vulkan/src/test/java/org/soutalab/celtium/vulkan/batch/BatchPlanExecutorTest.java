@@ -34,6 +34,11 @@ class BatchPlanExecutorTest {
         }
 
         @Override
+        public void bindState(int stateKey) {
+            this.calls.add("state=" + stateKey);
+        }
+
+        @Override
         public void drawIndexed(int indexCount, int instanceCount, int firstIndex,
                                 int vertexOffset, int firstInstance) {
             this.calls.add("draw ic=" + indexCount + " n=" + instanceCount
@@ -42,6 +47,10 @@ class BatchPlanExecutorTest {
     }
 
     private static BatchPlan plan(int[] pipelines, int[] textures, int entries) {
+        return plan(pipelines, textures, new int[entries], entries);
+    }
+
+    private static BatchPlan plan(int[] pipelines, int[] textures, int[] states, int entries) {
         int[] indexCounts = new int[entries];
         int[] instanceCounts = new int[entries];
         int[] firstIndices = new int[entries];
@@ -55,7 +64,7 @@ class BatchPlanExecutorTest {
             firstInstances[i] = i;
         }
         return new BatchPlan(pipelines, indexCounts, instanceCounts, firstIndices,
-                vertexOffsets, firstInstances, textures, entries);
+                vertexOffsets, firstInstances, textures, states, entries);
     }
 
     @Test
@@ -71,7 +80,7 @@ class BatchPlanExecutorTest {
         BatchPlan plan = plan(new int[]{7, 8, 9}, new int[]{1, 1, 1}, 3);
         new BatchPlanExecutor().execute(plan, true, sink);
         assertEquals(List.of(
-                "pipeline=7", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "pipeline=7", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "pipeline=8", "draw ic=12 n=1 fi=6 vo=101 inst=1",
                 "pipeline=9", "draw ic=18 n=1 fi=12 vo=102 inst=2"), sink.calls);
     }
@@ -82,7 +91,7 @@ class BatchPlanExecutorTest {
         BatchPlan plan = plan(new int[]{5, 5, 6, 6, 5}, new int[]{1, 1, 1, 1, 1}, 5);
         new BatchPlanExecutor().execute(plan, true, sink);
         assertEquals(List.of(
-                "pipeline=5", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "pipeline=5", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
                 "pipeline=6", "draw ic=18 n=1 fi=12 vo=102 inst=2",
                 "draw ic=24 n=1 fi=18 vo=103 inst=3",
@@ -95,7 +104,7 @@ class BatchPlanExecutorTest {
         BatchPlan plan = plan(new int[]{5, 5, 5, 5}, new int[]{11, 11, 22, 11}, 4);
         new BatchPlanExecutor().execute(plan, false, sink);
         assertEquals(List.of(
-                "pipeline=5", "texture=11", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "pipeline=5", "texture=11", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
                 "texture=22", "draw ic=18 n=1 fi=12 vo=102 inst=2",
                 "texture=11", "draw ic=24 n=1 fi=18 vo=103 inst=3"), sink.calls);
@@ -107,9 +116,24 @@ class BatchPlanExecutorTest {
         BatchPlan plan = plan(new int[]{5, 5, 5}, new int[]{11, 22, 33}, 3);
         new BatchPlanExecutor().execute(plan, true, sink);
         assertEquals(List.of(
-                "pipeline=5", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "pipeline=5", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
                 "draw ic=18 n=1 fi=12 vo=102 inst=2"), sink.calls);
+    }
+
+    /**
+     * A state change re-issues only the state: the panel whose clip rectangle changes
+     * halfway keeps one pipeline and one texture, and the executor's only extra call is the
+     * state point between the two draws.
+     */
+    @Test
+    void stateChangesReissueStateWithoutRebindingPipelineOrTexture() {
+        RecordingSink sink = new RecordingSink();
+        BatchPlan plan = plan(new int[]{5, 5}, new int[]{11, 11}, new int[]{3, 4}, 2);
+        new BatchPlanExecutor().execute(plan, false, sink);
+        assertEquals(List.of(
+                "pipeline=5", "texture=11", "state=3", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "state=4", "draw ic=12 n=1 fi=6 vo=101 inst=1"), sink.calls);
     }
 
     /**
@@ -138,7 +162,7 @@ class BatchPlanExecutorTest {
         for (String call : sink.calls) {
             bindsAndDraws.add(call.startsWith("draw") ? "draw" : call);
         }
-        assertEquals(List.of("pipeline=5", "texture=101", "draw",
+        assertEquals(List.of("pipeline=5", "texture=101", "state=0", "draw",
                 "texture=202", "draw", "texture=101", "draw"), bindsAndDraws);
     }
 }
