@@ -583,15 +583,16 @@ public final class TerrainSectionStore {
      * completion: nothing the GPU can still read is named by the state
      * dropped here.
      * <p>
-     * Integration joint: the pending-retirements list (slice S2) is cleared
-     * at this same seat when the slices integrate - it does not exist on the
-     * tree this reset was written against, and {@code pendingRetirementCount()
-     * == 0} after a reset is part of the same invariant (INV-4b).
+     * The pending-retirements list (slice S2) is cleared at this same seat:
+     * its entries are denominated in the old world's completion currency, and
+     * {@code pendingRetirementCount() == 0} after a reset is part of the same
+     * invariant (INV-4b).
      */
     public synchronized void resetForNewEpoch() {
         this.records.clear();
         this.byKey.clear();
         this.pendingKeys.clear();
+        this.pendingRetirements.clear();
         this.geometryAllocator =
                 new TerrainSlabAllocator(TerrainSlabAllocator.DEFAULT_SLAB_BYTES, TerrainSlabAllocator.DEFAULT_MAX_SLABS);
         this.quadSpaceAllocator =
