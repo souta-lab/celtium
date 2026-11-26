@@ -2445,6 +2445,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int fontRunRefusalLogs;
     /** Whether the font run census has printed; a leg may tear down more than one world. */
     private boolean fontRunCensusPrinted;
+    /**
+     * Whether a font-run sink submission is in flight right now (render thread only).
+     * <p>
+     * Set by {@link #celtium$submitFontRun} around its {@code submitImmediateBatch} call and
+     * read at the group close, which stamps the group {@link ImmediateGroup#fromFontRun}:
+     * the close runs inside the submission, so the flag is the batch's own provenance, the
+     * same shape as the section stamps the close reads from the bracket state. Saved and
+     * restored around the call, so a submission the sink's own entry flush triggers cannot
+     * leak the mark into an unrelated group.
+     */
+    private boolean fontRunSubmitting;
 
     /**
      * {@code -Dceltium.vulkan.windowSplit=true}: the window's fixed cost, split into the parts that own it.
@@ -9115,6 +9126,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // the submission, so the flag has to come back exactly as it was: the saved matrices are the ones the mirror
         // had, and if it had moved they are stale - leaving the flag clear would hand the next batch a stale matrix.
         boolean savedMatricesDirty = this.matricesDirty;
+        // The font-run provenance flag (see the field): set for the submission below, whose
+        // group closes stamp themselves from it, and restored with the rest of the state.
+        boolean savedFontRunSubmitting = this.fontRunSubmitting;
         try {
             // The run's texture must land on unit 0 - the sampler the group's shader reads and the unit
             // boundTextureName() reports. bindTexture writes the ACTIVE unit, and a flush that happens while the
@@ -9148,6 +9162,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // silence. The calibrated world scene refuses no batch at all (refusedBeforeAppend=0), so this changes
             // nothing there; the scenes where a run can be refused are the ones with a custom program bound or a
             // target that is not ready, and there the text was drawn by nobody.
+            this.fontRunSubmitting = true;
             boolean accepted = submitImmediateBatch(run.format, run.stride, run.formatId, run.address,
                     run.vertexCount, run.drawMode);
             if (!accepted) {
@@ -9166,6 +9181,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.fontRunRefusals++;
             return false;
         } finally {
+            this.fontRunSubmitting = savedFontRunSubmitting;
             this.immediateState.activeTextureUnit(0);
             this.immediateState.texture2dEnabled(savedTexture2d);
             this.immediateState.bindTexture(savedTexture);
@@ -16682,6 +16698,11 @@ this.frameBufferOpen = false;
             if (group.closedInUiSection) {
                 HudCensus.noteGroupClosed(this.frameId);
             }
+            // The S5-2 routing stamps: the same bracket read, unconditional (the census
+            // stamps above are gated by their censuses and so cannot route on), and the
+            // font-run provenance of the submission that built this group.
+            group.closedInUiBracket = FramePassTimings.uiSectionActive();
+            group.fromFontRun = this.fontRunSubmitting;
             group.color = this.currentGroupColor;
             group.blendSrc = this.currentGroupBlendSrc;
             group.blendDst = this.currentGroupBlendDst;

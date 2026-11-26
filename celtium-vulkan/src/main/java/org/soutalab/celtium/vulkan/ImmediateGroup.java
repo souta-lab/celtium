@@ -154,6 +154,31 @@ public final class ImmediateGroup {
     public boolean closedInUiSection;
 
     /**
+     * Whether this group was closed while a UI bracket was open - the S5-2 routing stamp.
+     * <p>
+     * The same close-site bracket read as {@link #closedInUiSection}, but unconditional: the
+     * census stamps above are gated by their censuses (with the census off they are always
+     * false, by design), while the Stage 5 stage 4 migration routes on this question in every
+     * configuration - a group the batcher wave takes must be identifiable as UI-section
+     * regardless of which diagnostics happen to be on. The bracket state itself is kept
+     * unconditionally ({@code FramePassTimings.uiSectionActive}), so the stamp costs one
+     * boolean read per close.
+     */
+    public boolean closedInUiBracket;
+
+    /**
+     * Whether this group's batches were submitted by the font-run sink
+     * ({@code celtium$submitFontRun}).
+     * <p>
+     * Font runs reach the group queue through the ordinary submission path, so without a
+     * stamp a font group is indistinguishable at the draw from any other group of its
+     * format. The S5-2 font migration identifies its population by this stamp, set at the
+     * close from the backend's sink-in-flight flag - the same "stamped at the close, from
+     * the state that was the batch's own" shape as the section stamps above.
+     */
+    public boolean fromFontRun;
+
+    /**
      * {@return a hash of the group's viewport and scissor state}.
      * <p>
      * Two groups whose rectangles match can share one {@code vkCmdSetViewport}/{@code vkCmdSetScissor}, which is what
@@ -366,6 +391,8 @@ public final class ImmediateGroup {
         this.probePoisoned = false;
         this.closedInGuiSection = false;
         this.closedInUiSection = false;
+        this.closedInUiBracket = false;
+        this.fromFontRun = false;
         this.polygonOffsetFactor = 0.0f;
         this.polygonOffsetUnits = 0.0f;
         this.polygonOffsetEnabled = false;
