@@ -170,6 +170,17 @@ final class IndirectImmediateRuns {
                     + mesh.indexCount() + " arena=" + mesh.isArenaBorrow() + " pipeline="
                     + prepared.pipeline.getClass().getSimpleName());
         }
+        if (mesh.usesSharedQuadIndex()
+                && mesh.vertexCount() / org.soutalab.celtium.vulkan.batch.SharedQuadIndex.VERTICES_PER_QUAD
+                        > org.soutalab.celtium.vulkan.batch.SharedQuadIndex.MAX_QUADS) {
+            // A run command is a single (indexCount, firstIndex, vertexOffset) triple and cannot express the
+            // pattern slicing a shared-quad mesh past the pattern's 65,536 quads needs; the per-group path
+            // draws those in chunks, so an oversized shared mesh goes there instead. An in-pattern shared
+            // mesh is exact as a command: firstIndex 0 into the shared buffer, the slice base as the vertex
+            // offset, and the derived index count.
+            celtium$flushIndirectRun("shared-pattern-overflow");
+            return false;
+        }
         if (stride <= 0 || vertexOffsetBytes % stride != 0L || indexOffsetBytes % 4L != 0L
                 || mesh.indexCount() <= 0 || mesh.vertexCount() <= 0) {
             celtium$flushIndirectRun("stride");

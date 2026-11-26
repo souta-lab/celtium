@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.batch.SharedQuadIndexBuffer;
 import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
@@ -144,6 +145,13 @@ public final class VulkanContext {
      */
     private boolean interopPath;
     private VkDevice device;
+    /**
+     * The one shared quad index buffer every immediate quad draw addresses (Stage 5 slice S5-0).
+     * Created once at the end of {@link #initialize}, before the first frame whose batches can
+     * carry it, and deleted in {@link #delete()} ahead of the device. Its upload rides the deferred
+     * upload batch, which the first frame's submission flushes before anything reads the pattern.
+     */
+    private SharedQuadIndexBuffer sharedQuadIndexBuffer;
     // Once the driver reports device loss, even fence reset/destroy can crash natively.
     // Deliberately leak device-owned handles until the failed process exits.
     private volatile boolean deviceLost;
@@ -2536,6 +2544,10 @@ public final class VulkanContext {
                 vkDestroyFence(this.device, this.idleDeferredFences[i], null);
             }
             this.idleDeferredFenceCount = 0;
+            if (this.sharedQuadIndexBuffer != null) {
+                this.sharedQuadIndexBuffer.delete();
+                this.sharedQuadIndexBuffer = null;
+            }
             destroyStaging();
             if (ringDrained) {
                 destroyUploadRing();
@@ -3010,6 +3022,12 @@ public final class VulkanContext {
         reportDeviceContractIfReady();
         this.memoryProperties = VkPhysicalDeviceMemoryProperties.calloc();
         vkGetPhysicalDeviceMemoryProperties(this.physicalDevice, this.memoryProperties);
+        this.sharedQuadIndexBuffer = new SharedQuadIndexBuffer(this);
+    }
+
+    /** {@return the shared quad index buffer created at startup; never null on a created context}. */
+    public SharedQuadIndexBuffer sharedQuadIndexBuffer() {
+        return this.sharedQuadIndexBuffer;
     }
 
     /** Select supported instance extensions for the desktop platforms handled by VulkanSwapchain. */

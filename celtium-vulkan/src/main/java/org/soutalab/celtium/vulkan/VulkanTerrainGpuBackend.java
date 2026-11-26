@@ -9665,6 +9665,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+    /**
+     * Appends one accepted batch to the open group's mesh, dispatching on the topology: a quad batch takes the
+     * mesh's quad form (which addresses the shared pattern instead of writing indices, when the mesh's scheme
+     * allows), every other mode takes the streamed form whose indices {@link TopologyIndexEmitter} writes into
+     * the mesh. {@code modelView} is null for a plain copy, or the batch's matrix for a pre-transformed group.
+     */
+    private boolean celtium$appendImmediate(VulkanDynamicMesh mesh, long vertexAddress, int vertexStride,
+            int vertexCount, int drawMode, float[] modelView) {
+        if (drawMode == org.lwjgl.opengl.GL11.GL_QUADS) {
+            return modelView == null
+                    ? mesh.copyVerticesQuads(vertexAddress, vertexStride, vertexCount)
+                    : mesh.copyVerticesTransformedQuads(vertexAddress, vertexStride, vertexCount, modelView);
+        }
+        return modelView == null
+                ? mesh.copyVerticesExpanded(vertexAddress, vertexStride, vertexCount, drawMode)
+                : mesh.copyVerticesTransformedExpanded(vertexAddress, vertexStride, vertexCount, drawMode, modelView);
+    }
+
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode, NativeGeometryBuffer retained) {
@@ -10018,9 +10036,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return false;
         }
         long expandStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-        int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
+        // The expansion itself no longer happens here: the count is all the accept path needs (the
+        // refusal decision and the flush accounting), and the indices are written by
+        // TopologyIndexEmitter into the group's mesh at append time - or not written at all, when
+        // the group addresses the shared quad pattern (Stage 5 slice S5-0).
+        int expandedIndices = TopologyIndexEmitter.indexCount(drawMode, vertexCount);
         if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXPAND, System.nanoTime() - expandStart);
-        if (indices == null) {
+        if (expandedIndices < 0) {
             this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
             // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
             // nothing to order against. The helper keeps the flush for the switch that does hand it to GL.
@@ -10493,7 +10515,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     if (this.retainedGeometry == null) {
                         this.retainedGeometry = new RetainedGeometryCache(this.context);
                     }
-                    this.currentGeometryLease = this.retainedGeometry.acquire(retained, drawMode, indices);
+                    this.currentGeometryLease = this.retainedGeometry.acquire(retained, drawMode);
                     this.currentImmediateMesh = this.currentGeometryLease.value();
                 }
                 long groupCreateCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
@@ -10846,10 +10868,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     ? (celtium$isAffineIdentity(this.glModelView)
                             // An identity model view bakes nothing: the plain copy is the same bytes and skips the
                             // per-vertex matrix multiply (measured as 2.9% of client-thread CPU with the bake on).
-                            ? this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)
-                            : this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
-                                    indices, this.glModelView))
-                    : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices));
+                            ? celtium$appendImmediate(this.currentImmediateMesh, vertexAddress, vertexStride,
+                                    vertexCount, drawMode, null)
+                            : celtium$appendImmediate(this.currentImmediateMesh, vertexAddress, vertexStride,
+                                    vertexCount, drawMode, this.glModelView))
+                    : celtium$appendImmediate(this.currentImmediateMesh, vertexAddress, vertexStride,
+                            vertexCount, drawMode, null));
             long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
@@ -10869,7 +10893,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.currentGroupUsed = true;
             this.currentGroupBatches++;
             if (!this.currentGroupIndexFlushExempt) {
-                this.pendingImmediateIndices += indices.length;
+                this.pendingImmediateIndices += expandedIndices;
             }
             if (retained != null) {
                 // A retained mesh is immutable and may be used by many queued draws. Seal this draw now so a later
@@ -11231,7 +11255,7 @@ this.frameBufferOpen = false;
      * {@return whether the live modelView is a translate/scale/flip}, i.e. every off-axis element is exactly zero and
      * the matrix is affine. That is the matrix shape GUI and 2-D draws build. For it the CPU's single-precision
      * product {@code sx*x + tx} is bit-identical to the shader's full product, because the dropped terms are exact
-     * zeroes - which is the only shape {@link #copyVerticesTransformed} may bake. A rotated matrix is not refused
+     * zeroes - which is the only shape the transformed append may bake. A rotated matrix is not refused
      * anywhere: it simply stays on the matrix-keyed group rule.
      */
     private boolean celtium$axisAlignedModelView() {
@@ -23569,9 +23593,8 @@ this.frameBufferOpen = false;
                     vertices.putInt(0xFF00FF00);
                 }
                 vertices.flip();
-                int[] indices = VulkanImmediateDrawer.expandIndices(7, 4);
-                this.isolationMesh.copyVertices(MemoryUtil.memAddress(vertices), VulkanImmediatePipeline.VERTEX_BYTES,
-                        4, indices);
+                this.isolationMesh.copyVerticesQuads(MemoryUtil.memAddress(vertices),
+                        VulkanImmediatePipeline.VERTEX_BYTES, 4);
             } finally {
                 MemoryUtil.memFree(vertices);
             }
