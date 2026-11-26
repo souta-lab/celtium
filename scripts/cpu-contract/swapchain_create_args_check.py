@@ -14,7 +14,7 @@ The usage expectations were revised with issue #422 (bd004afbc): the present pat
 transfer-only, so under the default mode a surface without TRANSFER_DST is refused by name and a
 surface without COLOR_ATTACHMENT is usable. The BH-18 colour-attachment expectations are still
 exercised, through the explicit opt-back-in mode select(..., false) - the mode VulkanSwapchain
-chooses when celtium.vulkan.presentTransferOnly=false.
+always chooses since direct present became the only present form (stage 8).
 
 Usage: python3 scripts/cpu-contract/swapchain_create_args_check.py
 Exit: 0 when every condition holds, 1 otherwise.

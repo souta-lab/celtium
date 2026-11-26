@@ -90,21 +90,6 @@ public final class VulkanContext {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
-    /**
-     * The direct present path (A→B overhaul Stage 1): frames render into a borrowed swapchain image and
-     * the present is a layout transition plus {@code vkQueuePresentKHR}, never a blit. The default is ON
-     * (restored in the Stage 2 integration landing): an unset property takes the direct path, and
-     * {@code -Dceltium.present.direct=false} is the complete opt-out, taking the frame path down the
-     * composite blit present (and transfer-only swapchain usage) exactly as before Stage 1. The path
-     * landed opt-in (ruling, lanechat #9168) because the borrowed-image machinery carried a
-     * framebuffer/layout lifetime defect (measured then: ignition followed by a crash ~9 s into the
-     * world; S1 record §6/§7); the ruling's restore condition - that defect fixed and a full ignition
-     * leg run survived in the same landing - is met by the Stage 2 borrow fix (defects A-E;
-     * OVERHAUL-S2-BORROWFIX record section 5: three flag-on legs exit 0, the last with direct present
-     * held throughout and no framebuffer/layout validation errors).
-     */
-    public static final boolean PRESENT_DIRECT =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.present.direct", "true"));
     private static final boolean HIDE_FD_EXTENSIONS =
             Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
@@ -1297,10 +1282,12 @@ public final class VulkanContext {
         }
         int adopted = this.presentEngine == null ? SwapchainCreateArguments.FORMAT_UNDEFINED
                 : this.presentEngine.swapchainFormat();
-        int decided = SwapchainCreateArguments.frameColorFormat(adopted, PRESENT_DIRECT,
+        // Direct present is the only present form (the Stage 1 path; its opt-out property was
+        // removed in stage 8), so the decision is always made in the direct shape.
+        int decided = SwapchainCreateArguments.frameColorFormat(adopted, true,
                 VulkanColorFormat.usable(this.physicalDevice,
                         RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM));
-        if (!PRESENT_DIRECT || adopted != SwapchainCreateArguments.FORMAT_UNDEFINED) {
+        if (adopted != SwapchainCreateArguments.FORMAT_UNDEFINED) {
             celtium$latchFrameColorFormat(decided);
         } else {
             this.provisionalFrameColorFormat = decided;
@@ -4169,8 +4156,7 @@ public final class VulkanContext {
 
     /**
      * {@return the bindless texture binding}, creating it on first use against this context's device,
-     * or null when the device cannot index a texture array (or
-     * {@code -Dceltium.vulkan.forceNoBindless=true} asks for the per-texture path) - every caller must
+     * or null when the device cannot index a texture array - every caller must
      * treat null as "keep the per-texture path", the same fallback contract as the frame timeline. Its
      * retirements are stamped on the merged slab-completion currency ({@link #celtium$slabReleaseValue()}),
      * the one counter the slab allocator already retires on, so the binding introduces no currency of

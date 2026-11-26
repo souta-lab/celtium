@@ -18,8 +18,7 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * completion value to free matured slots.
  *
  * <p>Absence is the fallback: {@link #create(VulkanContext, LongSupplier)} returns {@code null}
- * on a device without descriptor indexing ({@code textureArraySupported() == false}) and under
- * {@code -Dceltium.vulkan.forceNoBindless=true} (the measurement kill-switch). Callers keep the
+ * on a device without descriptor indexing ({@code textureArraySupported() == false}). Callers keep the
  * binding in a nullable field and skip every hook when it is null, which is exactly the
  * per-texture descriptor path the design prescribes for unsupported environments - the batcher
  * side of that fallback is per entry: the capture's array-index lookup answers -1 for every
@@ -106,17 +105,14 @@ public final class BindlessTextureBinding {
     }
 
     /**
-     * Builds the binding for a device, or returns {@code null} when bindless is unavailable or
-     * force-disabled - the caller then runs the per-texture fallback: with no binding the
+     * Builds the binding for a device, or returns {@code null} when bindless is unavailable -
+     * the caller then runs the per-texture fallback: with no binding the
      * capture's index lookup answers -1 for every texture, so no captured entry claims a
      * texture in its record and fused draws never span textures on the per-texture form.
      */
     public static BindlessTextureBinding create(VulkanContext context,
                                                 LongSupplier retireValueSource) {
         if (context == null || !context.textureArraySupported()) {
-            return null;
-        }
-        if ("true".equalsIgnoreCase(System.getProperty("celtium.vulkan.forceNoBindless", "false"))) {
             return null;
         }
         return new BindlessTextureBinding(new BindlessDescriptorArray(context), retireValueSource);

@@ -370,9 +370,6 @@ final class PresentSwapchain {
     }
 
     void celtium$ensureBorrowedFrameImage() {
-        if (!VulkanContext.PRESENT_DIRECT) {
-            return;
-        }
         if (!(backend.frameTarget instanceof GllessFrameTarget)) {
             return;
         }

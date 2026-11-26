@@ -24720,8 +24720,8 @@ this.frameBufferOpen = false;
      * The bindless array form: a base-texture group whose texture the shared array holds is
      * captured against the prepared twin's array twin, its record carrying the array index,
      * flagged so the entry fuses across texture changes and binds no per-texture set. The
-     * fallback identity is exact: with no binding (an unsupported device, or
-     * {@code celtium.vulkan.forceNoBindless}) the index lookup answers -1 for every texture,
+     * fallback identity is exact: with no binding (an unsupported device) the index lookup
+     * answers -1 for every texture,
      * so every group takes the per-texture form below, byte for byte as before the array
      * form was wired.
      *
