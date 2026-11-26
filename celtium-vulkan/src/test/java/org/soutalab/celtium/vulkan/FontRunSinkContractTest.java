@@ -21,7 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * return value, and the state it borrows (texture unit, alpha test, matrices,
  * {@code matricesDirty}) has to come back exactly as it was or the next batch draws contaminated.
  * The stage-4 wiring left the sink's shape unchanged - capture moved to the drain, where a
- * font-stamped group whose capture fails falls back to the per-group draw - so the contract is
+ * font-stamped group whose capture fails falls back to the direct draw (the per-group draw
+ * until stage 6 replaced it with the record-twin draw) - so the contract is
  * preserved by construction; this class is the dedicated pin the wiring commits did not carry.
  * The backend needs a Vulkan device, so the decision sites are pinned as source contracts (the
  * repo's idiom for device-bound decisions, as in {@link TierASlabCapacityTest}).
@@ -233,12 +234,21 @@ class FontRunSinkContractTest {
                 "a recycled group does not carry a previous submission's font stamp");
     }
 
-    /** The stage-4 population axis: a font-stamped group is batch-eligible like a UI-section group. */
+    /**
+     * The population axis across stages: stage 4 admitted font-stamped groups through the
+     * eligibility gate's stamp term; stage 6's population is the whole record-twin
+     * population, so the stamps left eligibility and now act where they belong - in the
+     * capture's order classification, which keeps a font-stamped group (like a
+     * UI-bracket group) ordered unconditionally.
+     */
     @Test
     void fontGroupsAreABatchPopulation() throws IOException {
-        assertTrue(eligibilityRegion(backendSource())
+        assertFalse(eligibilityRegion(backendSource())
                         .contains("if (!group.closedInUiBracket && !group.fromFontRun) {"),
-                "the eligibility gate admits groups on the font stamp as well as the UI bracket");
+                "stage 6 eligibility no longer gates on the stamps: the population is the twin population");
+        assertTrue(captureRegion(backendSource())
+                        .contains("(group.closedInUiBracket || group.fromFontRun)"),
+                "a font-stamped group is captured ordered, as a UI-bracket group is");
     }
 
     /**
