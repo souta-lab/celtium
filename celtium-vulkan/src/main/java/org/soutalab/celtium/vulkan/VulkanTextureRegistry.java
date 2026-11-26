@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding;
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
@@ -364,6 +365,41 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * The bindless texture binding this registry feeds (S5-1), or {@code null} - the state every
+     * registry is in until the renderer builds one, and the permanent state on a device without
+     * descriptor indexing. When present, every owned mirror's creation, whole-image replacement
+     * and destruction is mirrored into the bindless array through the two hooks below; when
+     * absent, nothing about this class changes. Published external images are not registered:
+     * their views belong to their owners and are republished under new handles, which is an
+     * integration-phase decision recorded with the S5-1 prep.
+     */
+    private BindlessTextureBinding bindlessBinding;
+
+    /** Installs the bindless binding; the renderer calls this once, before the first frame. */
+    public void setBindlessBinding(BindlessTextureBinding binding) {
+        this.bindlessBinding = binding;
+    }
+
+    /** {@return the installed bindless binding}, for the draw side's handle lookups. */
+    public BindlessTextureBinding bindlessBinding() {
+        return this.bindlessBinding;
+    }
+
+    /** Mirrors one owned texture's current image into the bindless array, when one is installed. */
+    private void celtium$bindlessRegister(int glTextureId, VulkanGlTexture texture) {
+        if (this.bindlessBinding != null) {
+            this.bindlessBinding.onTextureRegistered(glTextureId, texture.view(), texture.sampler());
+        }
+    }
+
+    /** Ends one owned texture's bindless registration, when a binding is installed. */
+    private void celtium$bindlessRelease(int glTextureId) {
+        if (this.bindlessBinding != null) {
+            this.bindlessBinding.onTextureReleased(glTextureId);
+        }
+    }
+
+    /**
      * Publishes an image this registry does not own under a GL texture name, and returns the wrapper the immediate
      * path resolves that name through.
      * <p>
@@ -428,6 +464,7 @@ public final class VulkanTextureRegistry {
         celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published image");
         celtium$dropMemoFor(glTextureId);
         if (superseded != null) {
+            celtium$bindlessRelease(glTextureId);
             // A mirror this registry created for the same name is superseded by the renderer's own live image. It is
             // this registry's object, so it is destroyed - through the retire queue, because a recorded frame may
             // still name its view. Without this the sampling side could keep resolving the empty mirror.
@@ -515,6 +552,7 @@ public final class VulkanTextureRegistry {
         celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published depth image");
         celtium$dropMemoFor(glTextureId);
         if (superseded != null) {
+            celtium$bindlessRelease(glTextureId);
             final VulkanGlTexture retiredMirror = superseded.texture;
             VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
                 @Override
@@ -752,6 +790,7 @@ public final class VulkanTextureRegistry {
         this.mutations++;
         celtium$dropMemoFor(glTextureId);
         this.mirrorCount++;
+        celtium$bindlessRegister(glTextureId, texture);
         return texture;
     }
 
@@ -786,6 +825,7 @@ public final class VulkanTextureRegistry {
         this.entries.remove((int) glTextureId);
         this.mutations++;
         celtium$dropMemoFor(glTextureId);
+        celtium$bindlessRelease(glTextureId);
         final VulkanGlTexture image = entry.texture;
         VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
             @Override
@@ -810,6 +850,7 @@ public final class VulkanTextureRegistry {
         this.mutations++;
         celtium$dropMemoFor(id);
         this.mirrorCount++;
+        celtium$bindlessRegister(id, texture);
         recordApplication(id, true);
         return id;
     }
@@ -868,6 +909,7 @@ public final class VulkanTextureRegistry {
         this.mutations++;
         celtium$dropMemoFor(glTextureId);
         this.mirrorCount++;
+        celtium$bindlessRegister(glTextureId, texture);
         java.nio.ByteBuffer zeros = org.lwjgl.system.MemoryUtil.memCalloc(width * height, 4);
         try {
             if (texture.uploadFromNamedImage(glTextureId, width, height, zeros)) {
@@ -1330,6 +1372,7 @@ public final class VulkanTextureRegistry {
                 this.mutations++;
         celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
+                celtium$bindlessRegister(glTextureId, texture);
             }
             // Control: -Dceltium.vulkan.mirrorCapturedLevels=false keeps the pre-N07b behaviour (level 0 only, the
             // chain above it generated here by a whole-image blit) so the per-level content can be measured one flag
@@ -1349,6 +1392,9 @@ public final class VulkanTextureRegistry {
             this.imageUploads++;
             entry.width = extent[0];
             entry.height = extent[1];
+            // A resize recreates the image and its view, so the bindless slot is rewritten with
+            // the current handles (a same-size upload makes this a rewrite of the same values).
+            celtium$bindlessRegister(glTextureId, entry.texture);
             // The whole level-0 surface arrived from a CPU-side producer, so this is an initialization: the generation a
             // skipped readback reads is bumped and the registry records the image as established, exactly as a
             // whole-texture announcement does.
@@ -1389,6 +1435,7 @@ public final class VulkanTextureRegistry {
                 this.mutations++;
         celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
+                celtium$bindlessRegister(glTextureId, texture);
             }
             if (ANNOUNCE_EXTENT_LOGS < 32) {
                 ANNOUNCE_EXTENT_LOGS++;
@@ -1409,6 +1456,8 @@ public final class VulkanTextureRegistry {
                 // partial patch is refused as "before initialization" - which is exactly where the atlas's animated
                 // sprite writes were landing and being read back instead.
                 markFullyInitialized(glTextureId);
+                // The upload may have resized (recreated) the image; refresh the bindless slot.
+                celtium$bindlessRegister(glTextureId, texture);
             } else {
                 this.imageUploadsSkipped++;
             }
@@ -1571,6 +1620,7 @@ public final class VulkanTextureRegistry {
         celtium$dropMemoFor(glTextureId);
                 this.mirrorCount++;
                 this.createdByAnnouncement++;
+                celtium$bindlessRegister(glTextureId, created);
             } catch (RuntimeException | LinkageError error) {
                 this.failureCount++;
                 this.lastFailure = "mirror for GL texture " + glTextureId + " from an announcement: " + error;
@@ -2236,6 +2286,7 @@ public final class VulkanTextureRegistry {
         }
         if (entry != null) {
             this.forgotten++;
+            celtium$bindlessRelease(glTextureId);
             final VulkanGlTexture image = entry.texture;
             VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
                 @Override
@@ -2695,6 +2746,7 @@ public final class VulkanTextureRegistry {
         }
         for (Entry entry : this.entries.values()) {
             celtium$noteLargeRemoval(entry.glId, entry, "registry deleted");
+            celtium$bindlessRelease(entry.glId);
             entry.texture.delete();
         }
         this.entries.clear();
