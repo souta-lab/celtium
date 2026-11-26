@@ -3698,6 +3698,33 @@ public final class VulkanContext {
                     createInfo.pNext(drawParametersFeatures.address());
                 }
             }
+            // One descriptor set for every texture a window draws (architecture section 11.6): the shaders index an
+            // array of sampled images with a value that comes from the draw itself, which is why the array needs
+            // non-uniform indexing, a runtime-sized binding and update-after-bind - descriptors are written as textures
+            // are registered while recorded buffers may still reference the set. All three are optional, so each is
+            // asked for separately and reported; a device without them keeps the per-group sets.
+            // The query runs here, BEFORE the Vulkan 1.2 block below, not after it (R-44): on a 1.2+ device the
+            // indexing fields are promoted into VkPhysicalDeviceVulkan12Features, and a pNext chain that holds
+            // both that struct and the standalone VkPhysicalDeviceDescriptorIndexingFeatures is exactly what
+            // VUID-VkDeviceCreateInfo-pNext-02830 rejects. The answer is therefore computed first and folded
+            // into the single Vulkan12 struct below; the standalone struct is still created further down, but
+            // only for a pre-1.2 device, where no Vulkan12 struct can join the chain.
+            {
+                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures supported =
+                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+                        .calloc(stack).sType$Default().pNext(supported.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
+                boolean nonUniform = supported.shaderSampledImageArrayNonUniformIndexing();
+                boolean runtimeArray = supported.runtimeDescriptorArray();
+                boolean afterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
+                boolean partiallyBound = supported.descriptorBindingPartiallyBound();
+                // Writing a new array index while earlier frames that bound the set are still executing is only legal
+                // with UPDATE_UNUSED_WHILE_PENDING; the model instances register textures at exactly that time.
+                boolean unusedWhilePending = supported.descriptorBindingUpdateUnusedWhilePending();
+                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound
+                        && unusedWhilePending;
+            }
             // E10's premise (design section 4.2): vkCmdDrawIndexedIndirectCount is Vulkan 1.2 core, but the call is
             // only legal when the device was created with the drawIndirectCount feature enabled, and the pNext chain
             // carried no Vulkan12Features struct at all - so the feature was neither queried nor enabled, on any
@@ -3719,11 +3746,24 @@ public final class VulkanContext {
                 // timeline is not required - a device that does not report it keeps the fence synchronisation
                 // it has today (see timelineSemaphoreSupported's contract) - so its absence refuses nothing.
                 this.timelineSemaphoreSupported = supported12.timelineSemaphore();
-                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported) {
+                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported
+                        || this.textureArraySupported) {
                     indirectCountFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
                             .sType$Default()
                             .drawIndirectCount(this.drawIndirectCountSupported)
-                            .timelineSemaphore(this.timelineSemaphoreSupported);
+                            .timelineSemaphore(this.timelineSemaphoreSupported)
+                            // Promoted descriptor-indexing fields (R-44, VUID-02830): on a 1.2+
+                            // device these live on this struct, never on a second standalone
+                            // indexing struct in the same chain. Each is set to exactly the
+                            // textureArraySupported verdict the query above computed - the same
+                            // all-or-nothing set the standalone struct used to carry - so the
+                            // enabled feature set is unchanged on every device.
+                            .shaderSampledImageArrayNonUniformIndexing(this.textureArraySupported)
+                            .runtimeDescriptorArray(this.textureArraySupported)
+                            .descriptorBindingSampledImageUpdateAfterBind(this.textureArraySupported)
+                            .descriptorBindingPartiallyBound(this.textureArraySupported)
+                            .descriptorBindingUpdateUnusedWhilePending(this.textureArraySupported)
+                            .descriptorBindingVariableDescriptorCount(this.textureArraySupported);
                     if (createInfo.pNext() != 0L) {
                         org.lwjgl.system.MemoryUtil.memPutLong(indirectCountFeatures.address() + 8L, createInfo.pNext());
                     }
@@ -3745,28 +3785,15 @@ public final class VulkanContext {
                 }
                 createInfo.pNext(meshFeatures.address());
             }
-            // One descriptor set for every texture a window draws (architecture section 11.6): the shaders index an
-            // array of sampled images with a value that comes from the draw itself, which is why the array needs
-            // non-uniform indexing, a runtime-sized binding and update-after-bind - descriptors are written as textures
-            // are registered while recorded buffers may still reference the set. All three are optional, so each is
-            // asked for separately and reported; a device without them keeps the per-group sets.
             org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures = null;
             {
-                org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures supported =
-                        org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack).sType$Default();
-                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
-                        .calloc(stack).sType$Default().pNext(supported.address());
-                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
-                boolean nonUniform = supported.shaderSampledImageArrayNonUniformIndexing();
-                boolean runtimeArray = supported.runtimeDescriptorArray();
-                boolean afterBind = supported.descriptorBindingSampledImageUpdateAfterBind();
-                boolean partiallyBound = supported.descriptorBindingPartiallyBound();
-                // Writing a new array index while earlier frames that bound the set are still executing is only legal
-                // with UPDATE_UNUSED_WHILE_PENDING; the model instances register textures at exactly that time.
-                boolean unusedWhilePending = supported.descriptorBindingUpdateUnusedWhilePending();
-                this.textureArraySupported = nonUniform && runtimeArray && afterBind && partiallyBound
-                        && unusedWhilePending;
-                if (this.textureArraySupported) {
+                // Only a pre-1.2 device still gets the standalone struct (R-44): the query moved
+                // above the Vulkan 1.2 block, and on a 1.2+ device the fields were folded into
+                // the single VkPhysicalDeviceVulkan12Features there - a second struct in the
+                // same chain is the exact shape VUID-VkDeviceCreateInfo-pNext-02830 rejects.
+                // Pre-1.2 no Vulkan12 struct can join the chain, so the standalone form stays
+                // both legal and necessary there.
+                if (!askIndirectCount && this.textureArraySupported) {
                     indexingFeatures = org.lwjgl.vulkan.VkPhysicalDeviceDescriptorIndexingFeatures.calloc(stack)
                             .sType$Default()
                             .shaderSampledImageArrayNonUniformIndexing(true)
