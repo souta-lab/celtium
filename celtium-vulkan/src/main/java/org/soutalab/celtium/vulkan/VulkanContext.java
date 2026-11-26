@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
 import org.soutalab.celtium.vulkan.batch.SharedQuadIndexBuffer;
+import org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding;
 import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
@@ -2557,6 +2558,13 @@ public final class VulkanContext {
                 vkDestroyFence(this.device, this.idleDeferredFences[i], null);
             }
             this.idleDeferredFenceCount = 0;
+            // The bindless binding dies before the shared quad index buffer and the frame-linear ring
+            // (plan section 2.1's fixed order): its descriptor array and deferred-release queue are
+            // drained against a device the teardown wait above has already confirmed idle.
+            if (this.bindlessBinding != null) {
+                this.bindlessBinding.delete();
+                this.bindlessBinding = null;
+            }
             if (this.sharedQuadIndexBuffer != null) {
                 this.sharedQuadIndexBuffer.delete();
                 this.sharedQuadIndexBuffer = null;
@@ -3351,6 +3359,15 @@ public final class VulkanContext {
      * of in the persistent-resource allocators. Null until first asked for, and again after {@link #delete()}.
      */
     private org.soutalab.celtium.vulkan.hal.FrameLinearRing frameLinearRing;
+    /**
+     * The bindless texture binding (Stage 5 stage 3), created on first use: the one descriptor array
+     * every registered texture is indexed through. Null until first asked for, null for good when the
+     * device cannot index such an array (or the kill switch asks for the per-texture path), and null
+     * again after {@link #delete()}.
+     */
+    private BindlessTextureBinding bindlessBinding;
+    /** Whether {@link #bindlessBinding()} has resolved {@link #bindlessBinding} yet (it may resolve to null). */
+    private boolean bindlessBindingResolved;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
     /**
@@ -3448,6 +3465,33 @@ public final class VulkanContext {
         if (this.frameLinearRing != null) {
             this.frameLinearRing.reset(slot);
         }
+    }
+
+    /**
+     * {@return the bindless texture binding}, creating it on first use against this context's device,
+     * or null when the device cannot index a texture array (or
+     * {@code -Dceltium.vulkan.forceNoBindless=true} asks for the per-texture path) - every caller must
+     * treat null as "keep the per-texture path", the same fallback contract as the frame timeline. Its
+     * retirements are stamped on the merged slab-completion currency ({@link #celtium$slabReleaseValue()}),
+     * the one counter the slab allocator already retires on, so the binding introduces no currency of
+     * its own. Render thread only.
+     */
+    public BindlessTextureBinding bindlessBinding() {
+        if (!this.bindlessBindingResolved) {
+            this.bindlessBindingResolved = true;
+            if (this.device != null) {
+                this.bindlessBinding = BindlessTextureBinding.create(this, this::celtium$slabReleaseValue);
+            }
+        }
+        return this.bindlessBinding;
+    }
+
+    /**
+     * {@return the bindless texture binding when it already exists}, without creating it - for
+     * diagnostics and completion drains, which must not bring the binding into being as a side effect.
+     */
+    public BindlessTextureBinding celtium$bindlessBindingOrNull() {
+        return this.bindlessBinding;
     }
 
     /** {@return whether the device was created with {@code pipelineStatisticsQuery} enabled}. */

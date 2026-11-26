@@ -969,6 +969,11 @@ final class CopyReadSide {
     VulkanTextureRegistry celtium$registry() {
         if (this.backend.textureRegistry == null) {
             this.backend.textureRegistry = new VulkanTextureRegistry(this.backend.context);
+            // Stage 5 stage 3 (section 3.5): the registry's lifecycle hooks feed the context's one
+            // bindless binding from here on. Injection happens at creation, before any texture
+            // exists in the registry, so no registration can slip past the hook; a null binding
+            // (device without array indexing, or the kill switch) leaves the hooks inert.
+            this.backend.textureRegistry.setBindlessBinding(this.backend.context.bindlessBinding());
         }
         return this.backend.textureRegistry;
     }

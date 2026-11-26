@@ -326,8 +326,8 @@ public final class VulkanImmediatePipeline {
      * from the push range the layout declares for it.
      */
     public void drawIndirectRange(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
-                                  long recordsSet, long[] bindCache, long indirectBuffer, long indirectOffset,
-                                  int drawCount) {
+                                  long recordsSet, long recordsDynamicOffset, long[] bindCache, long indirectBuffer,
+                                  long indirectOffset, int drawCount) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || drawCount <= 0) {
             return;
         }
@@ -342,7 +342,8 @@ public final class VulkanImmediatePipeline {
         }
         if (recordsSet != 0L) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    org.lwjgl.system.MemoryStack.stackGet().longs(recordsSet), null);
+                    org.lwjgl.system.MemoryStack.stackGet().longs(recordsSet),
+                    org.lwjgl.system.MemoryStack.stackGet().ints((int) recordsDynamicOffset));
         }
         mesh.bindAtZero(commandBuffer, bindCache);
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,
@@ -350,8 +351,8 @@ public final class VulkanImmediatePipeline {
     }
 
     public void drawIndirectRangeBuffers(VkCommandBuffer commandBuffer, long vertexBuffer, long indexBuffer, ByteBuffer pushConstants,
-                                  long recordsSet, long[] bindCache, long indirectBuffer, long indirectOffset,
-                                  int drawCount) {
+                                  long recordsSet, long recordsDynamicOffset, long[] bindCache, long indirectBuffer,
+                                  long indirectOffset, int drawCount) {
         if (this.pipeline == VK_NULL_HANDLE || vertexBuffer == 0L || indexBuffer == 0L || drawCount <= 0) {
             return;
         }
@@ -366,7 +367,8 @@ public final class VulkanImmediatePipeline {
         }
         if (recordsSet != 0L) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    org.lwjgl.system.MemoryStack.stackGet().longs(recordsSet), null);
+                    org.lwjgl.system.MemoryStack.stackGet().longs(recordsSet),
+                    org.lwjgl.system.MemoryStack.stackGet().ints((int) recordsDynamicOffset));
         }
         VulkanDynamicMesh.bindRawAtZero(commandBuffer, bindCache, vertexBuffer, indexBuffer);
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect(commandBuffer, indirectBuffer, indirectOffset, drawCount,

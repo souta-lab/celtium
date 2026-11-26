@@ -33,7 +33,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * {@link ImmediateGroup} of its own with its own push block, binds and draw - most of the record loop and much of the
  * accept path. Here a replay is one 256-byte record (matrix, colour, combine, texture affine, lighting, texture and
  * light-map indices) and one indirect command into a shared mesh pool, and a run of consecutive replays with the same
- * pipeline state is one {@code vkCmdDrawIndexedIndirect}. Textures come from {@link VulkanTextureArray} by index, so
+ * pipeline state is one {@code vkCmdDrawIndexedIndirect}. Textures come from the bindless array
+ * ({@link org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding}) by index, so
  * a texture change no longer breaks a run.
  * <p>
  * Lifetimes. Records and commands live in {@link #SEGMENTS} per-frame segments of one buffer each; a frame writes only

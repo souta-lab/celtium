@@ -57,10 +57,14 @@ class ReentryStallInstrumentTest {
         int drawRecords = head.indexOf("celtium$deleteSegment(\"drawRecords\"");
         int modelInstances = head.indexOf("celtium$deleteSegment(\"modelInstances\"");
         int nativePass = head.indexOf("celtium$deleteSegment(\"nativePass\"");
+        // Stage 5 stage 3 re-pin (count unchanged): the textureArray segment left the sequence
+        // with the deleted per-backend texture array - the bindless binding is the context's to
+        // delete, not a backend segment - so the head now closes at nativePass and no
+        // textureArray bracket may reappear here.
         int textureArray = head.indexOf("celtium$deleteSegment(\"textureArray\"");
         assertTrue(indirect >= 0 && indirect < drawRecords && drawRecords < modelInstances
-                        && modelInstances < nativePass && nativePass < textureArray,
-                "the head's brackets close in order: indirect, drawRecords, modelInstances, nativePass, textureArray");
+                        && modelInstances < nativePass && textureArray < 0,
+                "the head's brackets close in order: indirect, drawRecords, modelInstances, nativePass");
         int windowExit = head.indexOf("if (this.windowOwned) {");
         int releaseWorld = head.indexOf("celtium$deleteSegment(\"releaseWorldResources\"");
         assertTrue(windowExit >= 0 && releaseWorld > windowExit,

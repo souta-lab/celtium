@@ -16,6 +16,32 @@ final class BackendDiagnostics {
         this.b = backend;
     }
 
+    /**
+     * The bindless binding's state for the summary line: how many textures the array holds and how
+     * many releases are still waiting on the completion currency. "absent" when the binding was
+     * never created (or the device/kill switch refused it) - the successor of the old textureArray
+     * segment, in the same place on the line.
+     */
+    private String bindlessSummary() {
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
+                b.context == null ? null : b.context.celtium$bindlessBindingOrNull();
+        return binding == null ? "absent"
+                : "registered" + binding.registeredCount() + "/pending" + binding.pendingReleases();
+    }
+
+    /**
+     * Registrations the 4096-entry bindless table refused because it was full. A refused texture's
+     * draws stay on the per-texture path, so this counts the textures whose draws fell back - the
+     * registration-side reading of the slicing design's bindlessOverflowDraws counter (the draw-side
+     * count belongs to the stage 4 execution loop, which is the path that would observe the draws
+     * themselves). Printed unconditionally: the gate is that the counter appears, value 0 included.
+     */
+    private long bindlessOverflowDraws() {
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
+                b.context == null ? null : b.context.celtium$bindlessBindingOrNull();
+        return binding == null ? 0L : binding.overflowRegistrations();
+    }
+
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
@@ -28,7 +54,8 @@ final class BackendDiagnostics {
                 + " skipReason=" + (b.terrainStatistics.lastSkipReason() == null ? "none" : b.terrainStatistics.lastSkipReason().replace(' ', '_'))
                 + " immediateState=" + b.immediateStatistics.immediateStateCalls() + " immediateOffered=" + b.immediateStatistics.immediateBatchesOffered()
                 + " frameId=" + b.frameId + " flushCount=" + b.immediateStatistics.flushCount()
-                + " textureArray=" + (b.textureArray == null ? "absent" : b.textureArray.report())
+                + " bindless=" + bindlessSummary()
+                + " bindlessOverflowDraws=" + bindlessOverflowDraws()
                 + " " + (b.modelInstances == null ? "modelInstances[absent failed=" + b.modelInstancesFailed + "]"
                         : b.modelInstances.describe())
                 + " textureIndex=hit" + b.textureIndexHits + "/miss" + b.textureIndexMisses

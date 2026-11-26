@@ -384,17 +384,19 @@ final class IndirectImmediateRuns {
         }
         if (this.indirectRunPipeline != null) {
             this.indirectRunPipeline.drawIndirectRange(b.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
-                    this.indirectRunTextureSet, b.drawRecords.descriptorSet(), b.immediateBindCache,
+                    this.indirectRunTextureSet, b.drawRecords.descriptorSet(), b.drawRecords.descriptorDynamicOffset(),
+                    b.immediateBindCache,
                     this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
                     this.indirectRunCommands);
         } else if (this.indirectRunPipelineObject instanceof VulkanImmediateItemPipeline item) {
             item.drawIndirectRange(b.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
-                    this.indirectRunTextureSet, b.drawRecords.descriptorSet(), b.immediateBindCache,
+                    this.indirectRunTextureSet, b.drawRecords.descriptorSet(), b.drawRecords.descriptorDynamicOffset(),
+                    b.immediateBindCache,
                     this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
                     this.indirectRunCommands);
         } else if (this.indirectRunPipelineObject instanceof VulkanImmediatePipeline colour) {
             colour.drawIndirectRange(b.commandBuffer, this.indirectRunMesh, this.indirectRunPush,
-                    b.drawRecords.descriptorSet(), b.immediateBindCache,
+                    b.drawRecords.descriptorSet(), b.drawRecords.descriptorDynamicOffset(), b.immediateBindCache,
                     this.indirectCommands.buffer(), (long) this.indirectRunFirstCommand * INDIRECT_COMMAND_BYTES,
                     this.indirectRunCommands);
         }

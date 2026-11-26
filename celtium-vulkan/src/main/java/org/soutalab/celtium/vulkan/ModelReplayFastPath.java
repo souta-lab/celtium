@@ -100,8 +100,8 @@ final class ModelReplayFastPath {
         Object openGroup;
         Object instances;
         Object registry;
-        /** The bindless texture array the two indices name; a rebuilt array makes a cached index meaningless. */
-        Object textureArray;
+        /** The bindless binding the two indices name; a rebuilt binding makes a cached index meaningless. */
+        Object bindlessBinding;
         Object lightmap;
         Object combine;
         /**
@@ -225,7 +225,7 @@ final class ModelReplayFastPath {
         if (now.openGroup != last.openGroup) return shapeMiss("openGroup");
         if (now.instances != last.instances) return shapeMiss("instances");
         if (now.registry != last.registry) return shapeMiss("registry");
-        if (now.textureArray != last.textureArray) return shapeMiss("textureArray");
+        if (now.bindlessBinding != last.bindlessBinding) return shapeMiss("bindlessBinding");
         if (now.lightmap != last.lightmap) return shapeMiss("lightmap");
         if (now.combine != last.combine) return shapeMiss("combine");
         // Only a success names the tuple: a refused shape must not leave the previous list's tuple looking matched.
@@ -401,7 +401,7 @@ final class ModelReplayFastPath {
         last.openGroup = now.openGroup;
         last.instances = now.instances;
         last.registry = now.registry;
-        last.textureArray = now.textureArray;
+        last.bindlessBinding = now.bindlessBinding;
         last.lightmap = now.lightmap;
         last.combine = now.combine;
         last.stateVersion = now.stateVersion;
