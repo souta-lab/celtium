@@ -9,74 +9,71 @@ import org.taumc.celeritas.CeleritasVintage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * Pins the Stage 4 A16 pack guard at the selection seam.
+ * Pins the selection seam after the R-18 guard removal (landed with the R-17
+ * candidate 2-MIN form).
  *
- * <p>The guard cannot be observed in a real fixture run from either side: with Demonica present its
- * mixin takes over {@code chooseVertexType()}, and without Demonica the Iris API supplier disappears,
- * so {@code ShaderModBridge.areShadersEnabled()} stays false. The production no-arg path therefore
- * delegates to the package-private overload tested here, with the bridge method reference as its
- * shader-state supplier.
+ * <p>The guard this class used to pin held {@code TERRAIN_A16} back while a
+ * shader pack was in use, on the premise that the Tier-A stream carried no
+ * Demonica auxiliary attributes. Under 2-MIN a pack's own presented format
+ * registers with the Tier-A machinery as a format variant, so the premise is
+ * gone: selection no longer consults the shader state at all, and the guard
+ * log line is never printed. The seam itself still cannot be observed in a
+ * real fixture run (with Demonica present its mixin takes over
+ * {@code chooseVertexType()}), so the package-private overload remains the
+ * test surface, with the shader state supplied directly.
  */
 class CeleritasWorldRendererA16GuardTest {
     private boolean originalUseCompactVertexFormat;
 
     @BeforeEach
-    void resetGuardAndSaveOption() throws Exception {
+    void saveOption() {
         this.originalUseCompactVertexFormat =
                 CeleritasVintage.options().performance.useCompactVertexFormat;
-        setGuardReported(false);
     }
 
     @AfterEach
-    void restoreGuardAndOption() throws Exception {
+    void restoreOption() {
         CeleritasVintage.options().performance.useCompactVertexFormat =
                 this.originalUseCompactVertexFormat;
-        setGuardReported(false);
     }
 
     @Test
-    void shaderPackInUseSelectsVanillaLikeLegacyFormatWhenCompactOptionIsOff() {
+    void shaderPackInUseSelectsTerrainA16WhenCompactOptionIsOff() {
         CeleritasVintage.options().performance.useCompactVertexFormat = false;
 
         ChunkVertexType selected = CeleritasWorldRenderer.chooseVertexType(() -> true);
 
-        assertNotSame(ChunkMeshFormats.TERRAIN_A16, selected);
-        assertSame(Boolean.getBoolean("celtium.terrain.forceCompactFormat")
-                ? ChunkMeshFormats.COMPACT
-                : ChunkMeshFormats.VANILLA_LIKE, selected);
+        assertSame(ChunkMeshFormats.TERRAIN_A16, selected);
     }
 
     @Test
-    void shaderPackInUseSelectsCompactLegacyFormatWhenCompactOptionIsOn() {
+    void shaderPackInUseSelectsTerrainA16WhenCompactOptionIsOn() {
         CeleritasVintage.options().performance.useCompactVertexFormat = true;
 
         ChunkVertexType selected = CeleritasWorldRenderer.chooseVertexType(() -> true);
 
-        assertNotSame(ChunkMeshFormats.TERRAIN_A16, selected);
-        assertSame(ChunkMeshFormats.COMPACT, selected);
+        assertSame(ChunkMeshFormats.TERRAIN_A16, selected);
     }
 
     @Test
-    void guardLogIsPrintedOnceForRepeatedShaderPackSelections() {
+    void guardLogIsNeverPrintedForRepeatedShaderPackSelections() {
         CeleritasVintage.options().performance.useCompactVertexFormat = true;
 
         String output = captureStdout(() -> {
-            assertSame(ChunkMeshFormats.COMPACT,
+            assertSame(ChunkMeshFormats.TERRAIN_A16,
                     CeleritasWorldRenderer.chooseVertexType(() -> true));
-            assertSame(ChunkMeshFormats.COMPACT,
+            assertSame(ChunkMeshFormats.TERRAIN_A16,
                     CeleritasWorldRenderer.chooseVertexType(() -> true));
         });
 
-        assertEquals(1, occurrences(output, "CELTIUM_TERRAIN_A16_GUARD"));
+        assertEquals(0, occurrences(output, "CELTIUM_TERRAIN_A16_GUARD"));
     }
 
     @Test
@@ -86,13 +83,7 @@ class CeleritasWorldRendererA16GuardTest {
                         CeleritasWorldRenderer.chooseVertexType(() -> false)));
 
         assertFalse(output.contains("CELTIUM_TERRAIN_A16_GUARD"),
-                "the guard must not report or alter selection when no shader pack is in use: " + output);
-    }
-
-    private static void setGuardReported(boolean reported) throws Exception {
-        Field field = CeleritasWorldRenderer.class.getDeclaredField("terrainA16GuardReported");
-        field.setAccessible(true);
-        field.setBoolean(null, reported);
+                "no guard remains to report: " + output);
     }
 
     private static String captureStdout(Runnable action) {

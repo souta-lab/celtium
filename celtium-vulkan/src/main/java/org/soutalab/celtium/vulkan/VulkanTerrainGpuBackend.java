@@ -18512,6 +18512,42 @@ this.frameBufferOpen = false;
                 imageTextures[i] = tex;
             }
 
+            // R-17 candidate 2-MIN: the Tier-A format variant. When this pass'
+            // sections are resident in the pack space and the program delivers
+            // region offsets through the GLSM table, the variant executor can
+            // draw the whole pass with the shared cull machinery: its dispatch
+            // is recorded here, before the render pass opens (the same seat
+            // the vanilla pass head records from), and the draws are issued
+            // once inside the pass below, under this route's own program. The
+            // variant arms only on complete residency; on any refusal the
+            // per-region legacy loop below draws the pass whole, unchanged.
+            // The shadow stage is excluded: whether the cull camera can be
+            // the light viewpoint is not established (U3), so the shadow
+            // stage keeps drawing through the legacy batches in the loop.
+            TerrainPackEngine packEngine = null;
+            java.util.List<org.soutalab.celtium.vulkan.terrain.TerrainSectionStore.Registration>
+                    packVariantRecords = null;
+            boolean packVariantArmed = false;
+            if (!shadowStage
+                    && org.soutalab.celtium.vulkan.gl.GlsmPackState.ENABLED
+                    && modPipeline.celtium$glsmRegionTable()) {
+                TerrainEngineAHost packHost = this.terrain.terrainAHost();
+                TerrainPackEngine candidate = packHost == null ? null : packHost.packEngineIfPresent(pass);
+                if (candidate != null) {
+                    java.util.List<org.soutalab.celtium.vulkan.terrain.TerrainSectionStore.Registration>
+                            records = candidate.packRecords();
+                    if (!records.isEmpty()
+                            && packHost.store().recordCount() <= modPipeline.celtium$glsmRegionTableSlots()
+                            && candidate.prepareFrame(this.commandBuffer, this.frameSlot,
+                                    celtium$gpuTerrainCensusVp(matrices),
+                                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z)) {
+                        packEngine = candidate;
+                        packVariantRecords = records;
+                        packVariantArmed = true;
+                    }
+                }
+            }
+
             // Begin the load/store-depth MRT render pass.
             VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack)
                     .sType$Default()
@@ -18597,6 +18633,62 @@ this.frameBufferOpen = false;
                 // offset 0 every time - the pass binds it once here, as the built-in path does,
                 // and the region draws below (indirect or direct) read it throughout.
                 this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+                if (packVariantArmed) {
+                    // R-17 2-MIN issuance: one claim and one bind serve the whole
+                    // pass — on the table route the per-record varying input is
+                    // the table slot (the cull commands' firstInstance), which is
+                    // not in the uniform block, so the set the loop claims per
+                    // region is record-independent here too (the E10 shadow
+                    // issuance shape, carried to the variant). A failed claim
+                    // cancels the arm before any draw is suppressed and the loop
+                    // below draws the pass in its per-region form, intact.
+                    long variantDescSet;
+                    ByteBuffer variantPushUniforms;
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordUniform");
+                    try {
+                        org.soutalab.celtium.vulkan.PackUniformCensus.noteRegion(shadowStage);
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
+                        try {
+                            variantDescSet = modPipeline.samplersAndImages(samplerToken, modProgram, this.frameId);
+                        } finally {
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("packSamplerClaim");
+                        }
+                        if (modPipeline.uniformsViaBuffer()) {
+                            variantPushUniforms = null;
+                        } else {
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("packUniformPack");
+                            try {
+                                variantPushUniforms = VulkanModProgramPipeline.packUniforms(modProgram);
+                            } finally {
+                                org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformPack");
+                            }
+                            modPipeline.celtium$notePushPack(modProgram, variantPushUniforms);
+                        }
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordUniform");
+                    }
+                    if (variantDescSet == 0L && (modPipeline.uniformsViaBuffer()
+                            || !samplers.isEmpty() || !imageBindings.isEmpty())) {
+                        packVariantArmed = false;
+                    } else {
+                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer,
+                                variantPushUniforms, variantDescSet, setScratch);
+                        // The table slot is the record index: the cull shader
+                        // stamps it as every command's firstInstance, and the
+                        // program reads its section's offset (section origin
+                        // minus the camera, the loop's region-offset formula at
+                        // section granularity) from the slot.
+                        for (org.soutalab.celtium.vulkan.terrain.TerrainSectionStore.Registration record
+                                : packVariantRecords) {
+                            modPipeline.celtium$writeRegionOffset(record.recordIndex,
+                                    (record.key.sectionX() * 16 - camera.intX) - camera.fracX,
+                                    (record.key.sectionY() * 16 - camera.intY) - camera.fracY,
+                                    (record.key.sectionZ() * 16 - camera.intZ) - camera.fracZ);
+                        }
+                        packEngine.recordDraws(this.commandBuffer, this.frameSlot);
+                        drawnSections += packVariantRecords.size();
+                    }
+                }
                 if (shadowIssuanceArmed) {
                     // E10 shadow issuance: one claim and one bind serve the whole stage —
                     // on the GLSM route the per-region span's only varying input is the
@@ -18640,6 +18732,12 @@ this.frameBufferOpen = false;
                     }
                 }
                 while (true) {
+                    if (packVariantArmed) {
+                        // R-17 2-MIN: the variant executor drew the whole pass
+                        // above; the per-region legacy loop is this pass'
+                        // fallback for the unarmed case, not a second draw.
+                        break;
+                    }
                     // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
                     // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
                     // packRegionBind / packRegionDraw bracket the bind issuance and the command loop
@@ -19711,6 +19809,18 @@ this.frameBufferOpen = false;
         // mid-frame uploads at the next frame's head rather than between this
         // frame's passes.
         host.noteTierAFrameHead(this.frameId);
+        if (pass.vertexType() != null
+                && pass.vertexType().getVertexFormat().getStride()
+                        != org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
+            // A non-16-byte pass is never the vanilla executor's (R-17 2-MIN):
+            // its sections are pack-space records, served by the pack route's
+            // variant or by this path's legacy batches when the variant does
+            // not arm. Arming the vanilla executor here would let its dispatch
+            // (which filters the shared table by this pass' ordinal and finds
+            // no records) report armed on other passes' slabs and suppress
+            // the legacy batches, drawing nothing for the pass.
+            return null;
+        }
         try {
             TerrainEngineA engine = host.engineFor(this.context, pass);
             boolean ok = engine.prepareFrame(this.commandBuffer, this.frameSlot,
