@@ -33,7 +33,7 @@ class ImmediateMultiColorPassContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/IndirectImmediateRuns.java";
     private static final String[] PIPELINE_CLASSES = {
             "VulkanImmediatePipeline", "VulkanImmediateTexturePipeline", "VulkanImmediateBlockPipeline",
-            "VulkanImmediateItemPipeline", "VulkanImmediateParticlePipeline"};
+            "VulkanImmediateItemPipeline", "VulkanImmediateParticleRecordsPipeline"};
 
     @Test
     @DisplayName("the colour fold is the identity at one colour, for plain and line keys alike")

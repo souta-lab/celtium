@@ -3195,7 +3195,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     String blendOutlier;
     /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
-    private VulkanImmediateParticlePipeline descriptorProbe;
+    private VulkanImmediateParticleRecordsPipeline descriptorProbe;
     /**
      * Flushes made by the world-to-GUI ordering rule in {@link #endWorldPass()} - the counter that names the rule.
      * <p>
@@ -3574,6 +3574,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     InstanceDataStore drawRecords;
 
+    /** Lock for the record store's first creation: the creation path runs on the prewarm thread too. */
+    private final Object drawRecordsLock = new Object();
+
+    /**
+     * {@return whether the draw-record store exists, creating it on first use}.
+     * <p>
+     * The store used to be created only at a window's start, but since Stage 5 S5-3 the particle family's
+     * pipelines are built against its descriptor layout on the creation path - prepare, the prewarm's
+     * creation actions and the descriptor probe - which can all run before the first window. The creation
+     * is the window's own; a device that cannot give the store answers false, and the caller refuses by
+     * name rather than building a pipeline whose layout lacks the records set.
+     */
+    private boolean celtium$ensureDrawRecords() {
+        if (this.drawRecords != null) {
+            return true;
+        }
+        synchronized (this.drawRecordsLock) {
+            if (this.drawRecords == null) {
+                this.drawRecords = InstanceDataStore.create(this.context);
+            }
+        }
+        return this.drawRecords != null;
+    }
+
     /**
      * {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured and lit item groups as records plus
      * indirect commands, one command per group and one call per material run.
@@ -3655,16 +3679,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * A per-texture descriptor captured with a group: the set, the cache key it was prepared under, and the
      * original pipeline that owns the cache (the eviction check and the rebuild go through it, as the indirect
      * run's flush does).
+     * <p>
+     * The particle form (Stage 5 S5-3) names the twin instead of an original - the family's record-reading
+     * form is its only form - and its key is the pair key its cache is keyed by,
+     * {@code (texture.key() * 31) + lightmap.key()}, recomputed from the wrappers current at the drain.
      */
     private static final class BatchTextureBinding {
         long descriptor;
         final long textureKey;
         final VulkanImmediateTexturePipeline original;
+        final VulkanImmediateParticleRecordsPipeline particle;
 
         BatchTextureBinding(long descriptor, long textureKey, VulkanImmediateTexturePipeline original) {
             this.descriptor = descriptor;
             this.textureKey = textureKey;
             this.original = original;
+            this.particle = null;
+        }
+
+        BatchTextureBinding(long descriptor, long pairKey, VulkanImmediateParticleRecordsPipeline particle) {
+            this.descriptor = descriptor;
+            this.textureKey = pairKey;
+            this.original = null;
+            this.particle = particle;
         }
     }
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
@@ -4235,8 +4272,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
             new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
-            new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateParticlePipeline> particlePipelineCache =
             new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateItemPipeline> itemPipelineCache =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -9108,14 +9143,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // the draw path's own rule rather than a relaxation of the gate.
                 VulkanTerrainPipeline ui = this.terrain.pipelineFor(this.lastUiPass);
                 long renderPass = ui != null ? ui.renderPass() : uiRenderPass();
-                this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, renderPass,
+                // Stage 5 S5-3: the probe's vehicle is the record-reading twin now - the gate's position,
+                // its conditions and its failure surface are unchanged (the stage-5 pack's section 3-4);
+                // only the descriptor machinery's host moved, and the twin is built against the record
+                // store's layout like every particle pipeline, so the store is ensured first.
+                if (!celtium$ensureDrawRecords()) {
+                    throw new IllegalStateException("the draw-record store could not be created");
+                }
+                this.descriptorProbe = VulkanImmediateParticleRecordsPipeline.create(this.context, renderPass,
                         VulkanColorBlendState.of(false, 0, 0,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                 org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
                                 VulkanColorBlendState.allChannels()),
                         this.currentGroupPreTransformed && !this.celtium$axisAlignedModelView(), false, VulkanCullState.NONE,
-                        org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
+                        org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL,
+                        this.drawRecords.descriptorSetLayout());
             }
             boolean ok = celtium$descriptorSet(
                     this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
@@ -12078,7 +12121,7 @@ this.frameBufferOpen = false;
             case 2: return VulkanImmediateTexturePipeline.VERTEX_BYTES;
             case 3: return VulkanImmediateBlockPipeline.VERTEX_BYTES;
             case 4: return VulkanImmediateItemPipeline.VERTEX_BYTES;
-            case 5: return VulkanImmediateParticlePipeline.VERTEX_BYTES;
+            case 5: return VulkanImmediateParticleRecordsPipeline.VERTEX_BYTES;
             default: return VulkanImmediatePipeline.VERTEX_BYTES;
         }
     }
@@ -12783,10 +12826,7 @@ this.frameBufferOpen = false;
         for (VulkanImmediateBlockPipeline pipeline : this.blockPipelineCache.values()) {
             block += pipeline.setsCreated;
         }
-        long particle = 0;
-        for (VulkanImmediateParticlePipeline pipeline : this.particlePipelineCache.values()) {
-            particle += pipeline.setsCreated;
-        }
+        long particle = this.indirectRuns.celtium$particleSetsCreated();
         long texture = VulkanImmediateTexturePipeline.DESCRIPTOR_SETS_ALLOCATED.get();
         long item = VulkanImmediateItemPipeline.DESCRIPTOR_SETS_ALLOCATED.get();
         return "[texture=" + texture + ",item=" + item + ",block=" + block + ",particle=" + particle
@@ -12938,7 +12978,7 @@ this.frameBufferOpen = false;
     private Object celtium$cachedImmediatePipeline(int format, long branchKey) {
         switch (format) {
             case VulkanImmediateFormats.PARTICLE:
-                return this.particlePipelineCache.get(branchKey);
+                return this.indirectRuns.celtium$cachedParticlePipeline(branchKey);
             case VulkanImmediateFormats.ITEM:
                 return this.itemPipelineCache.get(branchKey);
             case VulkanImmediateFormats.BLOCK:
@@ -12970,7 +13010,8 @@ this.frameBufferOpen = false;
     private void celtium$cacheImmediatePipeline(int format, long branchKey, Object pipeline) {
         switch (format) {
             case VulkanImmediateFormats.PARTICLE:
-                this.particlePipelineCache.put(branchKey, (VulkanImmediateParticlePipeline) pipeline);
+                this.indirectRuns.celtium$cacheParticlePipeline(branchKey,
+                        (VulkanImmediateParticleRecordsPipeline) pipeline);
                 break;
             case VulkanImmediateFormats.ITEM:
                 this.itemPipelineCache.put(branchKey, (VulkanImmediateItemPipeline) pipeline);
@@ -13027,8 +13068,17 @@ this.frameBufferOpen = false;
             // the RGB *and* the alpha pair to that same pair - so the alpha pair the pipeline baked was the wrong one
             // for every particle batch in the scene. The depth and cull arguments are left as this family asserted
             // them: they are a different finding's subject and changing them here would move an accepted picture.
-            return VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
-                    true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]), targetColors);
+            // Stage 5 S5-3: the family's only form is the record-reading twin, resolved through the runs
+            // class's dedicated accessor in the colour family's shape; the twin is built against the
+            // record store's layout, so the store is ensured first, and a store that cannot be created
+            // declines the build (the prepare then refuses the batch by name, as it does for a failed
+            // descriptor).
+            if (!celtium$ensureDrawRecords()) {
+                return null;
+            }
+            return this.indirectRuns.celtium$recordsParticlePipeline(
+                    celtium$immediateBranchKey(format, key, pass), pass, celtium$blendState(state),
+                    celtium$vkCompareOp(state[7]), targetColors);
         }
         if (format == VulkanImmediateFormats.ITEM) {
             // The lit bit only: the per-group lit/unlit census stays at the prepare branch, which
@@ -13311,10 +13361,6 @@ this.frameBufferOpen = false;
             released += releaseDirect(block == null ? null : () -> block.delete());
         }
         this.blockPipelineCache.clear();
-        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
-            released += releaseDirect(particle == null ? null : () -> particle.delete());
-        }
-        this.particlePipelineCache.clear();
         // Each entry is a pipeline layout, a descriptor set layout and one or more descriptor pools, and a pool cannot
         // be destroyed while a set allocated from it is alive, so a cache dropped without this leaks the whole family.
         released += releaseImmediatePipelineCache(this.immediatePipelineCache);
@@ -13346,6 +13392,10 @@ this.frameBufferOpen = false;
             released += releaseDirect(records == null ? null : records::delete);
         }
         this.indirectRuns.recordsColourPipelines.clear();
+        for (VulkanImmediateParticleRecordsPipeline records : this.indirectRuns.recordsParticlePipelines.values()) {
+            released += releaseDirect(records == null ? null : records::delete);
+        }
+        this.indirectRuns.recordsParticlePipelines.clear();
         // Mod program pipelines are built like one of the variants released above and keyed by it: they go with it.
         for (VulkanModProgramPipeline modProgram : this.modPrograms.modProgramPipelines.values()) {
             released += releaseDirect(modProgram == null ? null : modProgram::delete);
@@ -15201,7 +15251,7 @@ this.frameBufferOpen = false;
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
-            VulkanImmediateParticlePipeline value = (VulkanImmediateParticlePipeline)
+            VulkanImmediateParticleRecordsPipeline value = (VulkanImmediateParticleRecordsPipeline)
                     celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
@@ -18285,6 +18335,10 @@ this.frameBufferOpen = false;
             records.delete();
         }
         this.indirectRuns.recordsColourPipelines.clear();
+        for (VulkanImmediateParticleRecordsPipeline records : this.indirectRuns.recordsParticlePipelines.values()) {
+            records.delete();
+        }
+        this.indirectRuns.recordsParticlePipelines.clear();
         if (this.indirectRuns.indirectCommands != null) {
             this.indirectRuns.indirectCommands.delete();
             this.indirectRuns.indirectCommands = null;
@@ -24498,7 +24552,7 @@ this.frameBufferOpen = false;
             return !blockPipeline.celtium$setStillCached(prepared.descriptor,
                     (currentTexture.key() * 31L) + lightmapKey);
         }
-        if (prepared.pipeline instanceof VulkanImmediateParticlePipeline particlePipeline) {
+        if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline particlePipeline) {
             return !particlePipeline.celtium$setStillCached(prepared.descriptor,
                     (currentTexture.key() * 31L) + lightmapKey);
         }
@@ -24618,11 +24672,19 @@ this.frameBufferOpen = false;
         if (prepared == null || mesh == null || this.drawRecords == null) {
             return false;
         }
-        if (!group.closedInUiBracket && !group.fromFontRun) {
-            return false;
-        }
         int formatId = group.formatId;
-        if (formatId != VulkanImmediateFormats.POSITION_COLOR
+        // Stage 5 S5-3: the particle family is its own population axis beside the UI/font one. A particle
+        // group is neither UI-bracketed nor a font run - it arrives from the world pass - so the
+        // population test is the union the stage-5 prep's section 2-5 fixes: (UI/font population) or
+        // (format 5 with the shared quad index and a multiple-of-four vertex count, checked below).
+        boolean particle = formatId == VulkanImmediateFormats.PARTICLE;
+        if (!group.closedInUiBracket && !group.fromFontRun) {
+            if (!particle) {
+                return false;
+            }
+        }
+        if (!particle
+                && formatId != VulkanImmediateFormats.POSITION_COLOR
                 && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR
                 && formatId != VulkanImmediateFormats.POSITION_TEX
                 && formatId != VulkanImmediateFormats.POSITION) {
@@ -24633,6 +24695,15 @@ this.frameBufferOpen = false;
             return false;
         }
         Object pipeline = prepared.pipeline;
+        if (particle) {
+            // The texgen/combine exclusions do not apply: the particle family has no such variants, and
+            // its texture transform rides the record itself. The twin's vertex input is the family's
+            // fixed 28-byte layout, so a mesh at another stride - the 31/32-byte mod layouts are
+            // repacked to the canonical form before a group is built - is not this family's mesh and
+            // must not be copied into the ring under this pipeline.
+            return pipeline instanceof VulkanImmediateParticleRecordsPipeline
+                    && mesh.layout().stride == VulkanImmediateParticleRecordsPipeline.VERTEX_BYTES;
+        }
         if (pipeline instanceof VulkanImmediateTexturePipeline texturePipeline) {
             // The texgen and combine variants have no record-reading shader pair; their groups stay per-group.
             return !texturePipeline.celtium$texGen() && !texturePipeline.celtium$combine4();
@@ -24641,10 +24712,26 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return whether this group's draw order is free under the group-open census' definition}: blending
+     * off, depth test on, depth writes on - read from the group's own captured state, the mapped form of
+     * the same three inputs the census reads from the live mirror at group open
+     * ({@code !blendEnabled && depthTestEnabled && depthMask}). Stage 5 S5-3 is the definition's first
+     * consumer: a particle group whose order is free is captured with {@code ordered=false} and may fuse
+     * and move inside its segment; every other particle group keeps its capture order.
+     */
+    static boolean celtium$batchOrderFree(ImmediateGroup group) {
+        int[] state = group.state;
+        return state != null && state.length > 4
+                && state[0] == 0 && state[3] != 0 && state[4] != 0;
+    }
+
+    /**
      * Attempts to capture this group into the open batch segment at drain time (the stage-4 record's
      * section 2: the capture point is the drain, inside drawPendingImmediate's group loop, where the group's
-     * matrices are already in the push block and its mesh is final). All migrated captures are ordered: the
-     * UI and font populations observe submission order, so nothing here may be reordered by the sort.
+     * matrices are already in the push block and its mesh is final). The stage-4 captures are all ordered:
+     * the UI and font populations observe submission order, so nothing of theirs may be reordered by the
+     * sort. A particle group (Stage 5 S5-3) is classified by {@link #celtium$batchOrderFree}: order-free
+     * groups are captured unordered, the rest ordered like the stage-4 populations.
      *
      * @return whether the group was captured; a group that is not captured is drawn by the caller exactly as
      *         before
@@ -24656,8 +24743,11 @@ this.frameBufferOpen = false;
         }
         Object twin;
         boolean colour;
+        boolean particle = false;
         int textureSlot;
         int pushBytes = 0;
+        long twinHandle;
+        long twinLayout;
         if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texturePipeline) {
             VulkanImmediateTexturePipeline records = this.indirectRuns.celtium$recordsPipelineForBatch(texturePipeline);
             if (records == null || records.celtium$handle() == 0L) {
@@ -24666,6 +24756,21 @@ this.frameBufferOpen = false;
             twin = records;
             colour = false;
             textureSlot = group.texture;
+            twinHandle = records.celtium$handle();
+            twinLayout = records.celtium$pipelineLayout();
+        } else if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline particleTwin) {
+            // The prepared pipeline IS the twin: the family's record-reading form is its only form, so
+            // there is no original-to-twin resolution to perform - the runs accessor's product arrives
+            // here directly (Stage 5 S5-3).
+            if (particleTwin.celtium$handle() == 0L) {
+                return false;
+            }
+            twin = particleTwin;
+            colour = false;
+            particle = true;
+            textureSlot = group.texture;
+            twinHandle = particleTwin.celtium$handle();
+            twinLayout = particleTwin.celtium$pipelineLayout();
         } else {
             VulkanImmediatePipeline records = this.indirectRuns.celtium$recordsColourPipeline(
                     (VulkanImmediatePipeline) prepared.pipeline);
@@ -24676,6 +24781,8 @@ this.frameBufferOpen = false;
             colour = true;
             textureSlot = -1;
             pushBytes = records.celtium$pushConstantBytes();
+            twinHandle = records.celtium$handle();
+            twinLayout = records.celtium$pipelineLayout();
         }
         // The indirect run's deferred draws belong to earlier groups of this window: they record first.
         this.indirectRuns.celtium$flushIndirectRun("batch-segment");
@@ -24691,25 +24798,36 @@ this.frameBufferOpen = false;
         if (keyBoxed == null) {
             pipelineKey = this.batchNextPipelineKey++;
             this.batchPipelineKeys.put(twin, Integer.valueOf(pipelineKey));
-            long handle = colour ? ((VulkanImmediatePipeline) twin).celtium$handle()
-                    : ((VulkanImmediateTexturePipeline) twin).celtium$handle();
-            long layout = colour ? ((VulkanImmediatePipeline) twin).celtium$pipelineLayout()
-                    : ((VulkanImmediateTexturePipeline) twin).celtium$pipelineLayout();
             this.batchTwinBindings.put(Integer.valueOf(pipelineKey),
-                    new BatchTwinBinding(handle, layout, colour, pushBytes));
+                    new BatchTwinBinding(twinHandle, twinLayout, colour, pushBytes));
         } else {
             pipelineKey = keyBoxed.intValue();
         }
         if (!colour) {
-            this.batchTextureBindings.putIfAbsent(Integer.valueOf(textureSlot),
-                    new BatchTextureBinding(prepared.descriptor, prepared.textureKey,
-                            (VulkanImmediateTexturePipeline) prepared.pipeline));
+            if (particle) {
+                // The pair key the sink's still-cached check is asked with: the pair the drain's guard
+                // left the prepared descriptor under, recomputed from the wrappers current at the drain,
+                // exactly as celtium$siblingSetEvicted recomputes it.
+                VulkanGlTexture current = celtium$registry().get(textureSlot);
+                long pairKey = (current == null ? prepared.textureKey : current.key()) * 31L
+                        + (this.lightmapTexture == null ? 0L : this.lightmapTexture.key());
+                this.batchTextureBindings.putIfAbsent(Integer.valueOf(textureSlot),
+                        new BatchTextureBinding(prepared.descriptor, pairKey,
+                                (VulkanImmediateParticleRecordsPipeline) twin));
+            } else {
+                this.batchTextureBindings.putIfAbsent(Integer.valueOf(textureSlot),
+                        new BatchTextureBinding(prepared.descriptor, prepared.textureKey,
+                                (VulkanImmediateTexturePipeline) prepared.pipeline));
+            }
         }
         int stride = mesh.layout().stride;
         java.nio.ByteBuffer vertices = org.lwjgl.system.MemoryUtil.memByteBuffer(
                 mesh.vertexAddress(), mesh.vertexCount() * stride);
+        // The stage-4 populations are captured ordered (their order is observed); a particle group is
+        // captured ordered unless its order is free (Stage 5 S5-3, celtium$batchOrderFree).
+        boolean ordered = !particle || !celtium$batchOrderFree(group);
         boolean captured = this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,
-                recordIndex, true, vertices, mesh.vertexCount() / 4, stride);
+                recordIndex, ordered, vertices, mesh.vertexCount() / 4, stride);
         if (!captured) {
             // The ring or the shared index space had no room: the record above is inert (nothing reads an
             // unreferenced record) and the group draws per-group. Counted here, in the wiring's own fallback
@@ -24757,6 +24875,46 @@ this.frameBufferOpen = false;
                 && a.polygonOffsetEnabled == b.polygonOffsetEnabled
                 && a.polygonOffsetFactor == b.polygonOffsetFactor
                 && a.polygonOffsetUnits == b.polygonOffsetUnits;
+    }
+
+    /**
+     * Draws one particle group through its record-reading twin directly: the family's per-group form
+     * since Stage 5 S5-3 deleted the per-group pipeline. The group's push block is written as a single
+     * record and the mesh is drawn with the record's index as the instance index - a one-group segment
+     * issued in place, under the viewport and depth bias the drain already issued for this group.
+     * <p>
+     * Reached when the batcher did not capture the group (an ineligible mesh, or no room in the ring or
+     * the shared index space). The prepared descriptor is the one the drain's eviction guard left current
+     * for this group, so no second eviction question is asked here. A group whose record cannot be
+     * written is counted in the route census' dropped counter and not drawn: never drawn with a wrong
+     * binding, and never silently.
+     *
+     * @return always true: the group is consumed here, drawn or counted
+     */
+    private boolean celtium$drawParticleGroupFallback(ImmediateGroup group, VulkanDynamicMesh mesh,
+            PreparedImmediate prepared, java.nio.ByteBuffer push) {
+        VulkanImmediateParticleRecordsPipeline twin =
+                (VulkanImmediateParticleRecordsPipeline) prepared.pipeline;
+        int recordIndex = this.drawRecords == null ? -1 : this.drawRecords.record(push, -1);
+        if (recordIndex < 0 || mesh == null || mesh.indexCount() <= 0) {
+            this.batchDroppedDraws++;
+            return true;
+        }
+        long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            vkCmdBindPipeline(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, twin.celtium$handle());
+            vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    twin.celtium$pipelineLayout(), 0, stack.longs(prepared.descriptor), null);
+            vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    twin.celtium$pipelineLayout(), 1, stack.longs(this.drawRecords.descriptorSet()),
+                    stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
+            mesh.bindAndDrawInstanced(this.commandBuffer, recordIndex);
+        }
+        // The binds above bypass the flush's bind cache: whatever it believes is bound no longer is.
+        java.util.Arrays.fill(this.immediateBindCache, -1L);
+        if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
+        this.particleDrawCount++;
+        return true;
     }
 
     /**
@@ -24836,13 +24994,24 @@ this.frameBufferOpen = false;
         private void bindTextureSet(int textureSlot) {
             BatchTextureBinding binding = batchTextureBindings.get(Integer.valueOf(textureSlot));
             long descriptor = binding.descriptor;
-            if (!binding.original.celtium$setStillCached(descriptor, binding.textureKey)) {
+            boolean stillCached = binding.particle != null
+                    ? binding.particle.celtium$setStillCached(descriptor, binding.textureKey)
+                    : binding.original.celtium$setStillCached(descriptor, binding.textureKey);
+            if (!stillCached) {
                 // Item 699's shape, segment edition: a later group of this window rebuilt against a newer
                 // wrapper and evicted the set this segment captured. Rebuild against the texture's current
                 // wrapper, as the indirect run's flush does; when no rebuild is available, the entries that
                 // sample this texture are dropped (counted), never drawn with the retired set.
                 VulkanGlTexture current = celtium$registry().get(textureSlot);
-                long rebuilt = current == null ? 0L : binding.original.descriptorSetFor(current);
+                long rebuilt;
+                if (binding.particle != null) {
+                    // The particle pair is rebuilt with the light map the drain is using, the drain's own
+                    // rebuild form for this family.
+                    rebuilt = current == null ? 0L
+                            : binding.particle.descriptorSetFor(current, lightmapTexture);
+                } else {
+                    rebuilt = current == null ? 0L : binding.original.descriptorSetFor(current);
+                }
                 if (rebuilt == 0L) {
                     this.textureDropped = true;
                     return;
@@ -24896,11 +25065,9 @@ this.frameBufferOpen = false;
         // over HotSpot's 8000-byte HugeMethodLimit, so it was never JIT-compiled and ran interpreted - 29.9% of the
         // client thread in leg tickjfr-celtium-2 (JFR frame type "Interpreted").
         this.reports.celtium$windowDiagnostics(target);
-        if (this.drawRecords == null) {
-            // InstanceDataStore.create answers null when its descriptor objects could not be created: a device
-            // that cannot give a storage-buffer set keeps the per-group path, as before.
-            this.drawRecords = InstanceDataStore.create(this.context);
-        }
+        // InstanceDataStore.create answers null when its descriptor objects could not be created: a device
+        // that cannot give a storage-buffer set keeps the per-group path, as before.
+        celtium$ensureDrawRecords();
         if (this.drawRecords != null) {
             // A window starts a fresh slice of the frame slot's ring for its records; the indirect run of
             // architecture 11.13 writes into it from the group loop. Selecting here makes the store's lifetime
@@ -25267,7 +25434,7 @@ this.frameBufferOpen = false;
                                     : itemPipeline.descriptorSetFor(currentTexture);
                         } else if (prepared.pipeline instanceof VulkanImmediateBlockPipeline blockPipeline) {
                             rebuilt = blockPipeline.descriptorSetFor(currentTexture, this.lightmapTexture);
-                        } else if (prepared.pipeline instanceof VulkanImmediateParticlePipeline particlePipeline) {
+                        } else if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline particlePipeline) {
                             rebuilt = particlePipeline.descriptorSetFor(currentTexture, this.lightmapTexture);
                         } else {
                             rebuilt = 0L;
@@ -25493,6 +25660,7 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
                     batchCaptured = celtium$tryCaptureBatchGroup(group, mesh, prepared, push);
                     boolean indirectConsumed = false;
+                    boolean particleDrawn = false;
                     if (!batchCaptured) {
                         if (celtium$flushBatchSegment()) {
                             // The segment's execution re-issued command state per entry, ending on its last
@@ -25501,9 +25669,16 @@ this.frameBufferOpen = false;
                             celtium$setGroupViewport(groupStack, group, this.passAreaWidth, this.passAreaHeight);
                             celtium$issueGroupDepthBias(group);
                         }
-                        indirectConsumed = this.indirectRuns.celtium$tryEnqueueIndirect(group, mesh, prepared, push);
+                        if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline) {
+                            // The family's per-group form is gone (Stage 5 S5-3): an uncaptured particle
+                            // group is drawn through its twin directly - never offered to the indirect
+                            // run, which has no particle form, and never dropped silently.
+                            particleDrawn = celtium$drawParticleGroupFallback(group, mesh, prepared, push);
+                        } else {
+                            indirectConsumed = this.indirectRuns.celtium$tryEnqueueIndirect(group, mesh, prepared, push);
+                        }
                     }
-                    if (!batchCaptured && !indirectConsumed) {
+                    if (!batchCaptured && !indirectConsumed && !particleDrawn) {
                     long bindDescriptor = prepared.descriptor;
                     if (REPLACE_TEXTURE_IDS != null && prepared.pipeline instanceof VulkanImmediateTexturePipeline
                             && this.textureRegistry != null) {
@@ -25536,10 +25711,6 @@ this.frameBufferOpen = false;
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                         if (BATCH_TIMINGS) this.blockDrawNanos += System.nanoTime() - variantStart;
                         this.blockDrawCount++;
-                    } else if (pipeline instanceof VulkanImmediateParticlePipeline value) {
-                        value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
-                        this.particleDrawCount++;
                     } else if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
                         if (value.label != null && this.modPrograms.modTraceLines < 400 && this.frameId >= 300
                                 && this.frameId < 300 + ModPrograms.MOD_TRACE_FRAMES) {
@@ -25560,7 +25731,7 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
-                    if (indirectConsumed || batchCaptured) {
+                    if (indirectConsumed || batchCaptured || particleDrawn) {
                         // The bracket has to close on both paths. It used to close only inside the direct branch, so
                         // a group the indirect path consumed left grpDraw open and the next group's begin restarted
                         // it - the reported grpDraw then held the whole remainder of the loop, which is how a

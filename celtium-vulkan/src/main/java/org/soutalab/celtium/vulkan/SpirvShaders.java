@@ -112,6 +112,12 @@ public final class SpirvShaders {
     /** Fragment module for the particle layout, sampling both the texture and the lightmap. */
     public static final String IMMEDIATE_PARTICLE_FRAGMENT = "immediate_particle.frag";
 
+    /** The record-reading form of {@link #IMMEDIATE_PARTICLE_VERTEX}: the particle family, from the record buffer. */
+    public static final String IMMEDIATE_PARTICLE_RECORDS_VERTEX = "immediate_particle_records.vert";
+
+    /** The record-reading form of {@link #IMMEDIATE_PARTICLE_FRAGMENT}. */
+    public static final String IMMEDIATE_PARTICLE_RECORDS_FRAGMENT = "immediate_particle_records.frag";
+
     /** Fragment module for the BLOCK-family immediate geometry, sampling both the texture and the lightmap. */
     public static final String IMMEDIATE_BLOCK_FRAGMENT = "immediate_block.frag";
 

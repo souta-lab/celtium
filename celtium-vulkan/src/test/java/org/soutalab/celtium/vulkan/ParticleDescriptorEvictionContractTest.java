@@ -31,15 +31,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ParticleDescriptorEvictionContractTest {
 
     private static final String PIPELINE =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateParticlePipeline.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateParticleRecordsPipeline.java";
 
     // ---- the ring's decision ---------------------------------------------------------------------------
 
     @Test
     @DisplayName("the eviction ring serves keys eldest first, and a full ring records nothing further")
     void ringServesEldestFirstAndDropsNotesWhenFull() {
-        VulkanImmediateParticlePipeline.EvictionRing ring =
-                new VulkanImmediateParticlePipeline.EvictionRing(4);
+        VulkanImmediateParticleRecordsPipeline.EvictionRing ring =
+                new VulkanImmediateParticleRecordsPipeline.EvictionRing(4);
         ring.note(11L);
         ring.note(22L);
         ring.note(33L);
@@ -69,7 +69,7 @@ class ParticleDescriptorEvictionContractTest {
      * its limit and the ring has an eldest, the eldest key's set leaves the cache for the retired store.
      */
     private static void evictEldest(Long2LongOpenHashMap cache,
-                                    VulkanImmediateParticlePipeline.EvictionRing ring,
+                                    VulkanImmediateParticleRecordsPipeline.EvictionRing ring,
                                     RetiredDescriptorSets retired, long pool, int limit) {
         while (cache.size() >= limit && ring.hasEldest()) {
             long eldest = ring.eldest();
@@ -84,8 +84,8 @@ class ParticleDescriptorEvictionContractTest {
     @DisplayName("at the cache limit the eldest sets retire and the live sets stay cached")
     void evictionAtTheLimitRetiresOnlyTheEldest() {
         Long2LongOpenHashMap cache = new Long2LongOpenHashMap();
-        VulkanImmediateParticlePipeline.EvictionRing ring =
-                new VulkanImmediateParticlePipeline.EvictionRing(8);
+        VulkanImmediateParticleRecordsPipeline.EvictionRing ring =
+                new VulkanImmediateParticleRecordsPipeline.EvictionRing(8);
         RetiredDescriptorSets retired = new RetiredDescriptorSets();
         long pool = 4242L;
         int limit = 4;
@@ -109,8 +109,8 @@ class ParticleDescriptorEvictionContractTest {
     @DisplayName("a ring entry whose set already left the cache retires nothing, and the loop moves past it")
     void aRingEntryWhoseSetIsGoneRetiresNothing() {
         Long2LongOpenHashMap cache = new Long2LongOpenHashMap();
-        VulkanImmediateParticlePipeline.EvictionRing ring =
-                new VulkanImmediateParticlePipeline.EvictionRing(8);
+        VulkanImmediateParticleRecordsPipeline.EvictionRing ring =
+                new VulkanImmediateParticleRecordsPipeline.EvictionRing(8);
         RetiredDescriptorSets retired = new RetiredDescriptorSets();
         cache.put(1L, 101L);
         ring.note(1L);
@@ -196,7 +196,7 @@ class ParticleDescriptorEvictionContractTest {
         int free = handOff.indexOf("vkFreeDescriptorSets");
         assertTrue(guard >= 0 && free > guard,
                 "a batch queued before delete() drops itself instead of freeing into a destroyed pool");
-        String delete = body(read(PIPELINE), "public void delete()", "private void createPipelineLayout()");
+        String delete = body(read(PIPELINE), "public void delete()", "private void createPipelineLayout(long");
         assertTrue(delete.contains("this.descriptorFreeGeneration++"),
                 "delete() is what advances the generation the guard reads");
         assertTrue(delete.contains("this.retiredSets.clear()"),

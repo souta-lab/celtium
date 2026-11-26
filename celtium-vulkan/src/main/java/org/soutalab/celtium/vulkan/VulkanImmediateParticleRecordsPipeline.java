@@ -2,21 +2,19 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
-import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
 import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineInputAssemblyStateCreateInfo;
-import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
 import org.lwjgl.vulkan.VkPipelineMultisampleStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineRasterizationStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
 import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
-import org.lwjgl.vulkan.VkPushConstantRange;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
@@ -27,20 +25,29 @@ import java.nio.LongBuffer;
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
- * The first pipeline for Minecraft's own immediate-mode geometry: untextured {@code POSITION_COLOR} vertices, the
- * format a mod's {@code BufferBuilder.begin(GL_QUADS, DefaultVertexFormats.POSITION_COLOR)} produces.
+ * The record-reading pipeline for Minecraft's particle geometry (Stage 5, S5-3): the particle family's
+ * only pipeline form since the per-group particle pipeline was deleted in the same landing that
+ * introduced this class.
  * <p>
- * It is deliberately a single fixed state combination (depth test on with LEQUAL, depth writes off, straight alpha
- * blending on) rather than the full deferred selection from the state model. That keeps the first slice honest and
- * measurable: the batches it can draw are the ones whose state matches, everything else keeps being refused with a
- * reason. The state-driven pipeline cache replaces it once the draw path is proven end to end.
+ * The vertex layout is the particle family's own (position, texture, colour, lightmap - a different order
+ * from BLOCK), and the state block a group would have pushed - the combined matrix, the texture affine and
+ * the alpha reference - is read from the draw-record storage buffer at set 1, indexed by
+ * {@code gl_InstanceIndex}, instead of push constants: the layout declares the per-texture pair set at
+ * set 0 (texture at binding 0, light map at binding 1, the pair this class's descriptor cache below
+ * writes) and the records set at set 1, and no push range at all. A group the batcher does not capture is
+ * still drawn through this pipeline, as a one-record segment of its own (the backend's particle fallback
+ * draw), so the family has no second drawing form to fall back to.
  * <p>
- * No texture is bound - the format has no texture coordinates - so the pipeline has no descriptor sets at all and
- * nothing but the 128 bytes of push constants the terrain and UI pipelines also use.
+ * The descriptor machinery - the (texture, light map) pair cache, its eldest eviction into the
+ * completion-gated free, the generation guard - is the deleted class's, moved unchanged: the pair a batch
+ * samples did not change when the state block's vehicle did. The blend state is the batch's captured own
+ * (BH-07), replicated once per colour attachment of the pass; depth test on, depth writes off and no
+ * culling are the family's asserted constants, as they were.
  * <p>
- * Threading: render thread only.
+ * Threading: render thread only, except that the backend's creation path may build an instance on the
+ * prewarm compiler thread, exactly as it built the deleted class's instances.
  */
-public final class VulkanImmediateParticlePipeline {
+public final class VulkanImmediateParticleRecordsPipeline {
 
     /** Bounded census of the layout a descriptor is actually written with, for VUID-vkCmdDraw-None-09600. */
     private static int descLayoutLogs;
@@ -61,16 +68,8 @@ public final class VulkanImmediateParticlePipeline {
                 + (images == null ? 0 : images.remaining()));
     }
 
-    /** The BLOCK family: 3 floats position, 4 unsigned bytes colour, 2 floats uv, 2 unsigned shorts lightmap. */
+    /** The PARTICLE family: 3 floats position, 2 floats uv, 4 unsigned bytes colour, 2 unsigned shorts lightmap. */
     public static final int VERTEX_BYTES = 28;
-    // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
-    // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 128;
-
-    /** Elides a push whose bytes are already in this command buffer (see {@link VulkanPushCache}). */
-    private final VulkanPushCache pushCache = VulkanPushCache.SHARED;
-    /** One duplicate per source buffer, instead of one per packet: see {@link ReusableDuplicate}. */
-    private final ReusableDuplicate clampedView = new ReusableDuplicate();
 
     private final VulkanContext context;
     private final long renderPass;
@@ -131,8 +130,10 @@ public final class VulkanImmediateParticlePipeline {
     /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
     private final int depthCompareOp;
 
-    private VulkanImmediateParticlePipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
-                                           boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
+    private VulkanImmediateParticleRecordsPipeline(VulkanContext context, long renderPass,
+                                                   VulkanColorBlendState colorBlend,
+                                                   boolean depthTest, boolean depthWrite, int cull,
+                                                   int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
         this.colorBlend = colorBlend;
@@ -143,42 +144,49 @@ public final class VulkanImmediateParticlePipeline {
     }
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
-    public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass) {
+    public static VulkanImmediateParticleRecordsPipeline create(VulkanContext context, long renderPass,
+                                                                long recordsSetLayout) {
         return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, VulkanCullState.NONE,
-                VK_COMPARE_OP_LESS_OR_EQUAL);
+                VK_COMPARE_OP_LESS_OR_EQUAL, recordsSetLayout);
     }
 
     /**
      * Creates a pipeline for one drawing state: the blend factors, blend equations and colour write mask the batch was
      * captured under (BH-07, BH-10), the depth test and its write mask, and face culling. These bake into the pipeline
      * object, which is why the immediate path caches one per state instead of forcing every batch through a single
-     * hardcoded combination.
+     * hardcoded combination. {@code recordsSetLayout} is the draw-record store's set layout, declared at
+     * set 1 beside this family's own pair layout at set 0; it must be a live handle, because a pipeline
+     * built without it could never be bound with the records set the vertex stage reads.
      */
-    public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass,
+    public static VulkanImmediateParticleRecordsPipeline create(VulkanContext context, long renderPass,
                             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
-                            int depthCompareOp) {
-        return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+                            int depthCompareOp, long recordsSetLayout) {
+        return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp,
+                recordsSetLayout, 1);
     }
 
     /**
      * The multi-target form: built against a pass attaching {@code colorAttachments} colour targets,
      * with the blend state replicated for each.
      */
-    public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass,
+    public static VulkanImmediateParticleRecordsPipeline create(VulkanContext context, long renderPass,
                             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
-                            int depthCompareOp, int colorAttachments) {
+                            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
         if (colorBlend == null) {
             throw new IllegalArgumentException("colorBlend must be set");
         }
-        VulkanImmediateParticlePipeline result = new VulkanImmediateParticlePipeline(context, renderPass, colorBlend,
-                depthTest, depthWrite, cull, depthCompareOp);
+        if (recordsSetLayout == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException("recordsSetLayout must be set");
+        }
+        VulkanImmediateParticleRecordsPipeline result = new VulkanImmediateParticleRecordsPipeline(context,
+                renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp);
         result.colorAttachments = Math.max(1, colorAttachments);
         // BH-20: roll back partial layout/pool handles if pipeline creation fails.
         try {
-            result.createPipelineLayout();
+            result.createPipelineLayout(recordsSetLayout);
             result.createPipeline();
         } catch (RuntimeException | LinkageError error) {
             VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
@@ -186,45 +194,6 @@ public final class VulkanImmediateParticlePipeline {
             throw error;
         }
         return result;
-    }
-
-    /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
-    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
-                     long descriptorSetToBind, long[] bindCache) {
-        if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
-            return;
-        }
-        // OPT-12: pipeline and descriptor binds dedup against the flush's bind cache; a pipeline rebind
-        // disturbs the set bound under the old layout, so the descriptor slot resets whenever this re-emits.
-        if (bindCache[4] != this.pipeline) {
-            long pipelineStart = PacketCost.beginPipelineBind();
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-            PacketCost.notePipelineBind(PacketCost.endPush(pipelineStart));
-            bindCache[4] = this.pipeline;
-            bindCache[5] = -1L;
-        }
-        if (bindCache[5] != descriptorSetToBind) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
-            bindCache[5] = descriptorSetToBind;
-        }
-        // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
-        // command's stage flags have to cover every stage that reads the range.
-        ByteBuffer clamped = this.clampedView.view(pushConstants, PUSH_CONSTANT_BYTES);
-        // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
-        // past the range is a validation error, so only the declared bytes go out.
-        
-        long pushStart = PacketCost.beginPush();
-        if (this.pushCache.shouldPush(commandBuffer.address(), this.pipelineLayout, clamped)) {
-            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
-            this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
-        }
-        PacketCost.notePush(PacketCost.endPush(pushStart));
-        // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
-        // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
-        // slice at 0 and drawing another group's vertices (OPT-05).
-        mesh.bindAndDraw(commandBuffer, bindCache);
     }
 
     public int vertexBytes() {
@@ -304,7 +273,7 @@ public final class VulkanImmediateParticlePipeline {
                     .descriptorCount(1)
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
-            VulkanDescriptorWrites.note(write, "VulkanImmediateParticlePipeline");
+            VulkanDescriptorWrites.note(write, "VulkanImmediateParticleRecordsPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(descriptorKey, set);
             celtium$noteCachedKey(descriptorKey);
@@ -499,7 +468,7 @@ public final class VulkanImmediateParticlePipeline {
         if (this.context.celtium$recordingOpen()) {
             this.context.celtium$retireCleanup("particle.delete", () -> {
                 if (pipelineToDestroy != VK_NULL_HANDLE) {
-                    this.context.celtium$notePipelineDestroy("immediateparticlepipeline");
+                    this.context.celtium$notePipelineDestroy("immediateparticlerecordspipeline");
                     vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
                 }
                 if (poolToDestroy != VK_NULL_HANDLE) {
@@ -516,7 +485,7 @@ public final class VulkanImmediateParticlePipeline {
             return;
         }
         if (pipelineToDestroy != VK_NULL_HANDLE) {
-            this.context.celtium$notePipelineDestroy("immediateparticlepipeline");
+            this.context.celtium$notePipelineDestroy("immediateparticlerecordspipeline");
             vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
         }
         if (poolToDestroy != VK_NULL_HANDLE) {
@@ -535,7 +504,17 @@ public final class VulkanImmediateParticlePipeline {
         return this.colorAttachments;
     }
 
-    private void createPipelineLayout() {
+    /** {@return the graphics pipeline handle, or 0 when creation rolled back}. */
+    public long celtium$handle() {
+        return this.pipeline;
+    }
+
+    /** {@return the pipeline layout: the pair set at 0, the records set at 1, no push range}. */
+    public long celtium$pipelineLayout() {
+        return this.pipelineLayout;
+    }
+
+    private void createPipelineLayout(long recordsSetLayout) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
                     org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(2, stack);
@@ -584,14 +563,10 @@ public final class VulkanImmediateParticlePipeline {
             check(vkAllocateDescriptorSets(this.context.device(), allocate, setHandle),
                     "vkAllocateDescriptorSets(immediate textured)");
             this.descriptorSet = setHandle.get(0);
-            VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
-            // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
-            // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
-            range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                    .offset(0).size(PUSH_CONSTANT_BYTES);
+            // No push range: the state block rides the record at set 1, so the layout is the pair layout
+            // this class owns at set 0 and the record store's layout at set 1, in that order.
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
-                    .pSetLayouts(stack.longs(this.descriptorSetLayout))
-                    .pPushConstantRanges(range);
+                    .pSetLayouts(stack.longs(this.descriptorSetLayout, recordsSetLayout));
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(this.context.device(), create, null, handle),
                     "vkCreatePipelineLayout(immediate)");
@@ -601,8 +576,8 @@ public final class VulkanImmediateParticlePipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_PARTICLE_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_PARTICLE_FRAGMENT);
+            ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_PARTICLE_RECORDS_VERTEX);
+            ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_PARTICLE_RECORDS_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;
             try {
@@ -708,7 +683,7 @@ public final class VulkanImmediateParticlePipeline {
                         .renderPass(this.renderPass)
                         .subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle, "immediate-particle"),
+                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle, "immediate-particle-records"),
                         "vkCreateGraphicsPipelines(immediate)");
                 this.pipeline = pipelineHandle.get(0);
             } finally {

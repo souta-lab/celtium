@@ -21,7 +21,7 @@ package org.soutalab.celtium.vulkan;
  * POSITION_TEX_COLOR               pos3f tex2f col4ub                                 24    2  VulkanImmediateTexturePipeline
  * BLOCK                            pos3f col4ub tex2f lightmap2s                      28    3  VulkanImmediateBlockPipeline
  * ITEM                             pos3f col4ub tex2f nrm3b pad1b                     28    4  VulkanImmediateItemPipeline
- * PARTICLE_POSITION_TEX_COLOR_LMAP pos3f tex2f col4ub lightmap2s                     28    5  VulkanImmediateParticlePipeline
+ * PARTICLE_POSITION_TEX_COLOR_LMAP pos3f tex2f col4ub lightmap2s                     28    5  VulkanImmediateParticleRecordsPipeline
  * POSITION_TEX                     pos3f tex2f                                        20    6  VulkanImmediateTexturePipeline, colourless
  * POSITION                         pos3f                                              12    7  VulkanImmediateTexturePipeline, one attribute
  * POSITION_TEX_COLOR_NORMAL        pos3f tex2f col4ub nrm3b pad1b                     28    8  VulkanImmediateTexturePipeline, tex+colour

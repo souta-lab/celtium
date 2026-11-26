@@ -318,6 +318,43 @@ public final class VulkanDynamicMesh {
         draw(commandBuffer);
     }
 
+    /**
+     * Records this mesh's draws with {@code firstInstance} set: the records-twin single-group form, where
+     * the draw's record index rides the instance index (the particle family's fallback draw, Stage 5 S5-3).
+     * The binds are the plain form of {@link #bindAndDraw(VkCommandBuffer)} - the mesh's own slice offsets,
+     * so the slice base is in the binding, not the draw - and the shared-quad chunking matches
+     * {@link #draw(VkCommandBuffer)}'s: one indexed draw per pattern chunk for a shared mesh, addressing
+     * the pattern from its start with the chunk's first quad in the vertex offset, and one draw over the
+     * mesh's own index stream otherwise.
+     */
+    public void bindAndDrawInstanced(VkCommandBuffer commandBuffer, int firstInstance) {
+        if (this.destroyed) {
+            throw new IllegalStateException("a destroyed mesh cannot be drawn");
+        }
+        if (this.indexCount == 0 || this.vertexCount == 0) {
+            return;
+        }
+        if (SKIP_DRAW_CALLS || abSkipDraw) {
+            return;
+        }
+        org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0,
+                stack.longs(vertexBuffer()), stack.longs(vertexBindOffset()));
+        org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer(), indexBindOffset(),
+                org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+        if (this.sharedQuadIndexing) {
+            int totalQuads = this.vertexCount / SharedQuadIndex.VERTICES_PER_QUAD;
+            for (int firstQuad = 0; firstQuad < totalQuads; firstQuad += SharedQuadIndex.MAX_QUADS) {
+                int quads = Math.min(SharedQuadIndex.MAX_QUADS, totalQuads - firstQuad);
+                org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer,
+                        quads * SharedQuadIndex.INDICES_PER_QUAD, 1, 0,
+                        firstQuad * SharedQuadIndex.VERTICES_PER_QUAD, firstInstance);
+            }
+            return;
+        }
+        org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1, 0, 0, firstInstance);
+    }
+
     /** How many mesh binds use the offset-in-draw form (buffers bound once) and how many re-bind at a slice offset. */
     public static long DRAW_FORM_BINDS;
     public static long BIND_FORM_BINDS;

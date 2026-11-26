@@ -40,7 +40,7 @@ class SiblingEvictedDescriptorRebuildTest {
         String[] pipelines = {
                 "VulkanImmediateItemPipeline.java",
                 "VulkanImmediateBlockPipeline.java",
-                "VulkanImmediateParticlePipeline.java",
+                "VulkanImmediateParticleRecordsPipeline.java",
         };
         for (String pipeline : pipelines) {
             String source = source(pipeline);
