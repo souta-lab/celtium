@@ -12,11 +12,10 @@ import java.util.Map;
  * backend each hold a piece of the same facts, in two identity spaces and four generation
  * systems - so stage 2 is an integration, not a new build: one owner per fact, introduced slice
  * by slice behind the single flag {@code -Dceltium.vulkan.glsmFrameState} (default off; the
- * slices share the flag, there are no per-slice flags). With the flag off, every call site keeps
- * the legacy owner and this class is never touched, so the off path is the original code path
- * byte for byte. When a slice's on path becomes the default (the merge phase's A/B decides),
- * that slice's legacy owners are deleted in the same landing - the design's §5 rule, the same
- * operation stage 1 used for its on-default landing.
+ * slices shared the flag, there were no per-slice flags). Stage 5 stage 7 removed the flag and
+ * the legacy owners together - the design's §5 rule, the same operation stage 1 used for its
+ * on-default landing - so the route this class owns is now the only route, and the property
+ * names nothing.
  * <p>
  * This slice (S2-2) builds only {@link ClearState}: the single owner of clear issue and
  * application state. The remaining sub-states of the design's §3.2 sketch (TargetRecord, the
@@ -26,14 +25,6 @@ import java.util.Map;
  * Pure state: no Vulkan or GL calls, render-thread confined like the owners it replaces.
  */
 public final class GlsmFrameState {
-
-    /**
-     * Whether the stage-2 frame-state route is on: {@code -Dceltium.vulkan.glsmFrameState},
-     * default off. One flag for every stage-2 slice (design §5); an explicit {@code true}
-     * opts in.
-     */
-    public static final boolean ENABLED =
-            "true".equalsIgnoreCase(System.getProperty("celtium.vulkan.glsmFrameState", "false"));
 
     private final ClearState clearState = new ClearState();
 
@@ -114,7 +105,7 @@ public final class GlsmFrameState {
     /**
      * The single owner of clear issue and application state (design §3.4).
      * <p>
-     * What it replaces on the on path, and where each piece used to live:
+     * What it replaced, and where each piece used to live:
      * <ul>
      * <li>the frame image's latch ({@code GllessFrameTarget.gameClearLatched*}), and</li>
      * <li>the pair latch ({@code RenderTargetRegistry}'s latched clear) - one record for

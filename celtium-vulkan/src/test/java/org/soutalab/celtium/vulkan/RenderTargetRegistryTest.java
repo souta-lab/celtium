@@ -6,7 +6,6 @@ import org.soutalab.celtium.vulkan.RenderTargetRegistry.ImageSlot;
 import java.util.Collection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RenderTargetRegistryTest {
@@ -52,12 +51,6 @@ class RenderTargetRegistryTest {
         registry.noteChainPairLayout(chainId, 3);
         registry.noteChainPairLayout(chainId, 7);
         assertEquals(7, registry.chainPairLayoutOf(chainId));
-
-        registry.beginFrame(1L);
-        assertTrue(registry.noteClear(ImageSlot.MAIN, true, false));
-        assertFalse(registry.noteClear(ImageSlot.CHAIN_PAIR, true, false));
-        assertTrue(registry.noteClear(ImageSlot.CHAIN_PAIR, false, false));
-        assertEquals("{MAIN=1, CHAIN_PAIR=1}", registry.clearsBySlot());
 
         registry.noteFrameTargetReplaced();
         assertEquals(-1, registry.layoutOf(ImageSlot.MAIN));

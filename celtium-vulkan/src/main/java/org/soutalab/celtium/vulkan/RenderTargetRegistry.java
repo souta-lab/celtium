@@ -26,10 +26,11 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
  *   <li><b>layout</b> - each slot carries the layout its image is currently in, and the generation at which that
  *   layout was recorded. A layout noted for an older generation is stale by construction and is reported as such
  *   instead of being read as current.</li>
- *   <li><b>clear</b> - the clear a frame issues belongs to the slot of the identity that was bound when the game
- *   issued it, and at most one slot owns the colour clear of a frame. {@link #noteClear} refuses (and counts) a clear
- *   aimed at a slot whose content another identity already occupies this frame, which is the rule that keeps a late
- *   clear from erasing work an earlier window of the same frame did.</li>
+ *   <li><b>clear</b> - not owned here any more: the clear a frame issues belongs to the slot of the identity that
+ *   was bound when the game issued it, and at most one slot owns the colour clear of a frame - that rule and the
+ *   latch it was recorded in moved to {@code GlsmFrameState.ClearState} in GLSM stage 2 and became the only form in
+ *   stage 5 stage 7, which deleted this class's latch record and ownership rule. What stays here is the pair-clear
+ *   bookkeeping below ({@link #pairClearedFrame}), a different fact: the frame a pair was last cleared in.</li>
  * </ol>
  * <p>
  * Deliberately pure state: no call into the backend, no Vulkan handle it cannot name from the values passed in, and no
@@ -626,162 +627,6 @@ public final class RenderTargetRegistry {
         this.generation++;
         java.util.Arrays.fill(this.slotLayoutGen, Long.MIN_VALUE);
         this.chainPairLayouts.clear();
-    }
-
-    // ---------------------------------------------------------------- clear ownership
-
-    /** The clear latched for an identity: mask, colour, depth, and the slot it was latched for. */
-    private int latchedMask;
-    private float latchedRed;
-    private float latchedGreen;
-    private float latchedBlue;
-    private float latchedAlpha;
-    private double latchedDepth = 1.0D;
-    private ImageSlot latchedSlot;
-    private long latchedGeneration = -1L;
-    private boolean hasLatchedClear;
-    /** The identity the latched clear names - {@link #latchedSlot} alone cannot tell one chain pair from another. */
-    private long latchedIdentity = Long.MIN_VALUE;
-    /** The frame whose clears have already been attributed, and which slot owns this frame's colour clear. */
-    private long clearFrame = -1L;
-    private ImageSlot colourClearOwner;
-    private final int[] clearsBySlot = new int[ImageSlot.values().length];
-    private int latchedClearsApplied;
-    private int liveClearsApplied;
-    private int clearCollisions;
-
-    /**
-     * Latches the clear the game issued, for the identity that was bound when it issued it.
-     * <p>
-     * The game clears a framebuffer between binding it and binding the next one, so this is the only moment the clear
-     * can be attributed to the image it names. The slot is resolved through {@link #slotFor}, so the attribution is
-     * the same rule the draws follow.
-     */
-    public void latchClear(long identity, int mask, float red, float green, float blue, float alpha, double depth) {
-        this.latchedMask = mask;
-        this.latchedRed = red;
-        this.latchedGreen = green;
-        this.latchedBlue = blue;
-        this.latchedAlpha = alpha;
-        this.latchedDepth = depth;
-        this.latchedSlot = slotFor(identity);
-        this.latchedIdentity = identity;
-        this.latchedGeneration = this.generation;
-        this.hasLatchedClear = true;
-    }
-
-    /** {@return whether a latched clear is waiting to be applied}. */
-    public boolean hasLatchedClear() {
-        return this.hasLatchedClear;
-    }
-
-    /** {@return the slot the latched clear belongs to}, or {@code null} when none is latched. */
-    public ImageSlot latchedSlot() {
-        return this.latchedSlot;
-    }
-
-    /** {@return the identity the latched clear names}, or {@link Long#MIN_VALUE} when none is latched. */
-    public long latchedIdentity() {
-        return this.latchedIdentity;
-    }
-
-    /** {@return the latched clear's buffer mask}. */
-    public int latchedMask() {
-        return this.latchedMask;
-    }
-
-    /** {@return the latched clear's colour as {r, g, b, a}}. */
-    public float[] latchedColour() {
-        return new float[] {this.latchedRed, this.latchedGreen, this.latchedBlue, this.latchedAlpha};
-    }
-
-    /** {@return the latched clear's depth value}. */
-    public double latchedDepth() {
-        return this.latchedDepth;
-    }
-
-    /**
-     * Begins a frame's clear ownership: one frame, one owner of the colour clear.
-     * <p>
-     * Called once per frame before any clear is attributed. A latched clear from the previous frame that was never
-     * applied is dropped and counted, because applying it in this frame would clear an image with a colour the game
-     * asked for while a different framebuffer was bound.
-     */
-    public void beginFrame(long frameId) {
-        if (this.clearFrame == frameId) {
-            return;
-        }
-        this.clearFrame = frameId;
-        this.colourClearOwner = null;
-        if (this.hasLatchedClear && this.latchedGeneration != this.generation) {
-            this.hasLatchedClear = false;
-            this.latchedSlot = null;
-            this.latchedIdentity = Long.MIN_VALUE;
-        }
-    }
-
-    /**
-     * Records that a clear landed on a slot, and refuses one that would erase another identity's content.
-     *
-     * @param slot    the slot the clear names
-     * @param colour  whether the clear includes the colour buffer (a depth-only clear never collides)
-     * @param latched whether it came from the latched game clear rather than a live read
-     * @return {@code true} when the clear is the frame's first colour clear for that slot, {@code false} when it was
-     *         refused because another identity already owns this frame's colour clear
-     */
-    public boolean noteClear(ImageSlot slot, boolean colour, boolean latched) {
-        if (colour) {
-            if (this.colourClearOwner != null && this.colourClearOwner != slot) {
-                this.clearCollisions++;
-                return false;
-            }
-            this.colourClearOwner = slot;
-        }
-        this.clearsBySlot[slot.ordinal()]++;
-        if (latched) {
-            this.latchedClearsApplied++;
-            this.hasLatchedClear = false;
-            this.latchedSlot = null;
-            this.latchedIdentity = Long.MIN_VALUE;
-        } else {
-            this.liveClearsApplied++;
-        }
-        return true;
-    }
-
-    /** {@return the slot that owns this frame's colour clear}, or {@code null} when none has cleared yet. */
-    public ImageSlot colourClearOwner() {
-        return this.colourClearOwner;
-    }
-
-    /** {@return how many clears landed on each slot}, as {@code slot=n} entries. */
-    public String clearsBySlot() {
-        ImageSlot[] slots = ImageSlot.values();
-        StringBuilder sb = new StringBuilder("{");
-        boolean any = false;
-        for (int i = 0; i < slots.length; i++) {
-            int count = this.clearsBySlot[i];
-            if (count == 0) {
-                continue;
-            }
-            if (any) {
-                sb.append(", ");
-            }
-            sb.append(slots[i].name()).append('=').append(count);
-            any = true;
-        }
-        return sb.append('}').toString();
-    }
-
-    /** {@return how many clears came from the latch and how many were read live}. */
-    public String clearAttribution() {
-        return "latched=" + this.latchedClearsApplied + " live=" + this.liveClearsApplied
-                + " collisions=" + this.clearCollisions;
-    }
-
-    /** {@return how many clears were refused because another identity owned the frame's colour clear}. */
-    public int clearCollisions() {
-        return this.clearCollisions;
     }
 
     /**

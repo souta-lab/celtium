@@ -71,26 +71,6 @@ public final class GlsmClearState {
         this.version++;
     }
 
-    /**
-     * Re-latches a main-framebuffer clear that was consumed because the draw queue carried
-     * it, after the carrying group was discarded undrawn (the stub's celtium$rependMainClear
-     * record, replayed): same per-buffer snapshot rule as {@link #issue}, no census counting.
-     */
-    public void repend(int mask, int drawFbo, float[] rgba, double depth) {
-        if ((mask & 0x4000) != 0) {
-            this.lastMainRed = rgba[0]; this.lastMainGreen = rgba[1];
-            this.lastMainBlue = rgba[2]; this.lastMainAlpha = rgba[3];
-            this.mainValuesKnown = true;
-        }
-        if ((mask & 0x0100) != 0) {
-            this.lastMainDepth = depth;
-        }
-        this.pendingMask |= mask;
-        this.pendingDrawFbo = drawFbo;
-        this.pendingIsMain = true;
-        this.version++;
-    }
-
     public float lastMainRed() { return this.lastMainRed; }
     public float lastMainGreen() { return this.lastMainGreen; }
     public float lastMainBlue() { return this.lastMainBlue; }
