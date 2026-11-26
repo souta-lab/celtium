@@ -31,7 +31,7 @@ class Stage6MigrationWiringTest {
     private static final String MODEL_REPLAY = ROOT + "ModelReplay.java";
 
     private static String read(String repoRelative) throws IOException {
-        return Files.readString(findRepoFile(repoRelative));
+        return Files.readString(findRepoFile(repoRelative)).replace("\r\n", "\n");
     }
 
     private static int occurrences(String source, String needle) {
