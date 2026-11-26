@@ -89,7 +89,7 @@ class TerrainHostQuiescenceGateTest {
         TerrainEngineAHost host = new TerrainEngineAHost();
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         BuiltSectionMeshParts source = parts(2);
-        assertNotNull(host.store().register(mesher.build(1, 2, 3, 0, source, 0), 1L));
+        assertNotNull(host.store().register(mesher.build(1, 2, 3, 0, source, 0), 1L, 1L));
         source.vertexBuffer().free();
         return host;
     }
@@ -168,7 +168,7 @@ class TerrainHostQuiescenceGateTest {
         // The store serves the next epoch: the same section registers whole.
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         BuiltSectionMeshParts source = parts(2);
-        assertNotNull(host.store().register(mesher.build(1, 2, 3, 0, source, 0), 2L));
+        assertNotNull(host.store().register(mesher.build(1, 2, 3, 0, source, 0), 2L, 2L));
         assertEquals(1, host.store().recordCount());
         source.vertexBuffer().free();
     }
@@ -181,7 +181,7 @@ class TerrainHostQuiescenceGateTest {
         TerrainEngineA vanilla = (TerrainEngineA) unsafe().allocateInstance(TerrainEngineA.class);
         setField(vanilla, "host", host);
         setField(vanilla, "worldEpoch", deadEpoch);
-        assertFalse(vanilla.prepareFrame(null, 0, null, 0, 0, 0),
+        assertFalse(vanilla.prepareFrame(null, 0, null, 0, 0, 0, 0L),
                 "INV-4c: a dead epoch's executor prepares nothing");
 
         TerrainPackEngine pack = (TerrainPackEngine) unsafe().allocateInstance(TerrainPackEngine.class);
@@ -189,7 +189,7 @@ class TerrainHostQuiescenceGateTest {
         setField(pack, "worldEpoch", deadEpoch);
         assertNull(pack.register(null, 0L),
                 "INV-4c: a dead epoch's pack executor registers nothing - the guard fires before the build is read");
-        assertFalse(pack.prepareFrame(null, 0, null, 0, 0, 0),
+        assertFalse(pack.prepareFrame(null, 0, null, 0, 0, 0, 0L),
                 "INV-4c: a dead epoch's pack executor prepares nothing");
     }
 
