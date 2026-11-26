@@ -171,7 +171,9 @@ class ImmediateBatcherTest {
      * The int[] merge sort that replaced the boxed {@code Integer[]} ranking must produce the
      * identical plan the old algorithm produced. The oracle below is that old algorithm -
      * boxed sort with the same rank comparator, then the same fusion rule - run over the item
-     * tuples the captures were known to append.
+     * tuples the captures were known to append. The fusion rule it mirrors is the current
+     * one, including the S5-2 state-key boundary (slicing section 3-6): a state change
+     * between neighbours splits the entry even when the rest would fuse.
      */
     @Test
     void planMatchesTheBoxedSortOracleOnRandomFrames() {
@@ -244,6 +246,7 @@ class ImmediateBatcherTest {
             for (int n = 0; n < items; n++) {
                 long[] item = oracleItems.get(order[n]);
                 int pipeline = DrawSortKey.pipelineKey(item[0]);
+                int state = DrawSortKey.stateKey(item[0]);
                 int indexCount = (int) item[3] * 6;
                 int firstIndex = (int) item[2] * 6;
                 int vertexOffset = (int) item[1];
@@ -251,6 +254,7 @@ class ImmediateBatcherTest {
                 int last = expected.size() - 1;
                 if (last >= 0
                         && expected.get(last)[0] == pipeline
+                        && expected.get(last)[6] == state
                         && expected.get(last)[4] == vertexOffset
                         && expected.get(last)[5] == instance
                         && expected.get(last)[2] == 1
@@ -258,8 +262,9 @@ class ImmediateBatcherTest {
                     expected.get(last)[1] += indexCount;
                     continue;
                 }
-                // pipeline, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-                expected.add(new int[]{pipeline, indexCount, 1, firstIndex, vertexOffset, instance});
+                // pipeline, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance,
+                // stateKey (the entry's first item's; a state change splits, see above)
+                expected.add(new int[]{pipeline, indexCount, 1, firstIndex, vertexOffset, instance, state});
             }
             assertEquals(items, plan.sourceItems(), "seed " + seed);
             assertEquals(expected.size(), plan.entryCount(), "seed " + seed);

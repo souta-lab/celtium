@@ -21,10 +21,14 @@ import java.util.Arrays;
  * {@code firstIndex = firstQuad * 6} and
  * {@code vertexOffset = ringVertexBase - firstQuad * 4}: the shared pattern's indices for quad
  * {@code q} are {@code 4q..4q+3}, and adding the offset lands them on this draw's vertices in the
- * ring. Adjacent plan entries are fused only when pipeline, vertex offset and instance slot all
- * match and the index ranges are contiguous - the one case where two captures are provably a
- * single draw. On the per-texture fallback ({@link #setBindlessEnabled(boolean)} false) the
- * texture slot must also match, because a fused entry can only sample one bound texture.
+ * ring. Adjacent plan entries are fused only when pipeline, state key, vertex offset and
+ * instance slot all match and the index ranges are contiguous - the one case where two
+ * captures are provably a single draw. The state key carries the draw-state boundary the
+ * caller captured with the item (the scissor rectangle and alpha/depth state hash, S5-2
+ * slicing section 3-6): a fused entry draws under one state, so a state change is a fusion
+ * boundary even when everything else matches. On the per-texture fallback
+ * ({@link #setBindlessEnabled(boolean)} false) the texture slot must also match, because a
+ * fused entry can only sample one bound texture.
  *
  * <p>Threading: render thread only. Vertex data is quad-shaped by contract (4 vertices per
  * primitive); other primitive modes do not go through this batcher.
@@ -155,10 +159,12 @@ public final class ImmediateBatcher {
         int[] vertexOffsets = new int[size];
         int[] firstInstances = new int[size];
         int[] textureSlots = new int[size];
+        int[] stateKeys = new int[size];
         int entries = 0;
         for (int n = 0; n < size; n++) {
             int item = order[n];
             int pipeline = DrawSortKey.pipelineKey(items.sortKey(item));
+            int stateKey = DrawSortKey.stateKey(items.sortKey(item));
             int indexCount = items.quadCount(item) * SharedQuadIndex.INDICES_PER_QUAD;
             int firstIndex = items.firstQuad(item) * SharedQuadIndex.INDICES_PER_QUAD;
             int vertexOffset = items.vertexOffset(item);
@@ -166,6 +172,7 @@ public final class ImmediateBatcher {
             int textureSlot = items.textureSlot(item);
             if (entries > 0
                     && pipelineKeys[entries - 1] == pipeline
+                    && stateKeys[entries - 1] == stateKey
                     && vertexOffsets[entries - 1] == vertexOffset
                     && firstInstances[entries - 1] == instance
                     && instanceCounts[entries - 1] == 1
@@ -181,6 +188,7 @@ public final class ImmediateBatcher {
             vertexOffsets[entries] = vertexOffset;
             firstInstances[entries] = instance;
             textureSlots[entries] = textureSlot;
+            stateKeys[entries] = stateKey;
             entries++;
         }
         BatchPlan plan = new BatchPlan(
