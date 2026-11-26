@@ -42,8 +42,9 @@ class TerrainEmptySlabCopyContractTest {
         String source = readSource(ENGINE);
         assertTrue(source.contains("SlabBuffer slab = slabBuffer(registration.geometry.slabId);"),
                 "upload materializes the slab its registration just landed in (never an empty copy)");
-        assertTrue(source.contains("SlabBuffer slab = slabBuffer(s);"),
-                "the draw bind materializes armed slabs");
+        assertTrue(source.contains("slab = slabBuffer(s);"),
+                "the draw bind materializes armed slabs (inside prescription A's"
+                        + " capacity receptacle since the Tier-A prescription A landing)");
         int sites = source.split("slabBuffer\\(", -1).length - 1;
         assertEquals(3, sites,
                 "slabBuffer( appears at the definition and exactly those two call sites;"
