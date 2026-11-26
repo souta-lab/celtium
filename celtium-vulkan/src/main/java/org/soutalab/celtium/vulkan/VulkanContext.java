@@ -5007,16 +5007,21 @@ public final class VulkanContext {
      * {@return the device-local image slab pool serving images whose memory requirements carry
      * {@code memoryTypeBits}}, created on first use. Kept apart from {@link #celtium$deviceLocalSlabs}
      * (the buffer pools) so no slab ever mixes buffer and image ranges; see the field's documentation.
-     * Ordinary slabs are capped at 8 per type, so the live {@code vkAllocateMemory} count for all mirrored
+     * Ordinary slabs are capped at 12 per type, so the live {@code vkAllocateMemory} count for all mirrored
      * textures combined is bounded by the slab caps of the image pools they use (plus one dedicated slab
-     * per live oversized image), not by the texture count.
+     * per live oversized image), not by the texture count. The cap was 8 until the frame target's images
+     * were housed here (R-54): the 2026-11-26 Demonica+BSL leg then measured live demand at 517 MB of the
+     * 512 MiB cap (96.4%, no deferred releases pending) and a chain pair's colour image was refused, which
+     * disabled the shader pack for the whole run. 12 slabs (768 MiB) is the measured-demand judgement the
+     * R-54 design reserved for a multi-pair scene; the cap is a ceiling, not a reservation, so scenes that
+     * never grow past 8 slabs allocate exactly what they did before.
      */
     public SlabAllocator celtium$deviceLocalImageSlabs(int memoryTypeBits) {
         int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                 "the device-local image slab pool");
         SlabAllocator allocator = this.deviceLocalImageSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, "deviceLocalImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8,
+            allocator = new SlabAllocator(this, "deviceLocalImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 12,
                     false);
             this.deviceLocalImageSlabsByType.put(Integer.valueOf(type), allocator);
         }
