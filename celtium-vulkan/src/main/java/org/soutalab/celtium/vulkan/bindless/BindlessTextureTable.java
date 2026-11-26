@@ -14,6 +14,13 @@ import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
  * list and the next registration of that slot bumps the generation, so a stale handle held by a
  * queued draw is detectable instead of silently sampling whatever texture reused the slot.
  *
+ * <p>Releases on the render path are deferred (S5-1): a slot whose texture was destroyed may
+ * still be sampled by an in-flight frame, so {@link #detachForDeferredRelease(int)} ends the
+ * registration (the name stops resolving and can be registered afresh into a different slot)
+ * while keeping the slot itself out of the free list until
+ * {@link #completeDeferredRelease(int)} runs once the GPU completion value that retires it has
+ * passed. {@link BindlessDeferredReleaseQueue} owns the timing; this class owns the state.
+ *
  * <p>Threading: render thread only, like the registry it complements.
  */
 public final class BindlessTextureTable {
@@ -29,9 +36,11 @@ public final class BindlessTextureTable {
     private final Int2IntOpenHashMap slotByGlId = new Int2IntOpenHashMap();
     private final int[] glIdBySlot = new int[CAPACITY];
     private final int[] generationBySlot = new int[CAPACITY];
+    private final boolean[] retiringBySlot = new boolean[CAPACITY];
     private final int[] freeSlots = new int[CAPACITY];
     private int freeTop;
     private int size;
+    private int retiring;
 
     public BindlessTextureTable() {
         this.slotByGlId.defaultReturnValue(-1);
@@ -73,6 +82,56 @@ public final class BindlessTextureTable {
         this.size--;
     }
 
+    /**
+     * Ends the registration for a GL texture name without freeing its slot: the name stops
+     * resolving (and may be registered again, into a different slot), but the slot stays out of
+     * the free list - and its descriptor entry untouched - until
+     * {@link #completeDeferredRelease(int)} is called with the returned handle. This is the only
+     * release the render path may use for a texture whose image is being destroyed, because an
+     * in-flight frame may still sample the slot.
+     *
+     * @return the detached registration's handle, or {@link #INVALID_HANDLE} when the name was
+     *         not registered
+     */
+    public int detachForDeferredRelease(int glId) {
+        int slot = this.slotByGlId.remove(glId);
+        if (slot < 0) {
+            return INVALID_HANDLE;
+        }
+        this.retiringBySlot[slot] = true;
+        this.retiring++;
+        this.size--;
+        return handle(slot);
+    }
+
+    /**
+     * Frees a slot detached by {@link #detachForDeferredRelease(int)} once the caller knows the
+     * GPU is done with it. A handle whose generation no longer matches (the slot was already
+     * completed and reused) or that names a live registration completes nothing.
+     *
+     * @return whether a slot was freed
+     */
+    public boolean completeDeferredRelease(int handle) {
+        if (handle < 0) {
+            return false;
+        }
+        int slot = handle & SLOT_MASK;
+        if (!this.retiringBySlot[slot]
+                || this.generationBySlot[slot] != (handle >>> SLOT_BITS)) {
+            return false;
+        }
+        this.retiringBySlot[slot] = false;
+        this.retiring--;
+        this.glIdBySlot[slot] = -1;
+        this.freeSlots[this.freeTop++] = slot;
+        return true;
+    }
+
+    /** Slots detached for deferred release whose completion has not been applied yet. */
+    public int retiringCount() {
+        return this.retiring;
+    }
+
     /** The slot a handle refers to, or -1 when the handle is stale or invalid. */
     public int slotOf(int handle) {
         if (handle < 0) {
@@ -80,6 +139,7 @@ public final class BindlessTextureTable {
         }
         int slot = handle & SLOT_MASK;
         boolean current = this.glIdBySlot[slot] >= 0
+                && !this.retiringBySlot[slot]
                 && this.generationBySlot[slot] == (handle >>> SLOT_BITS);
         return current ? slot : -1;
     }

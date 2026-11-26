@@ -23,7 +23,8 @@ import java.util.Arrays;
  * {@code q} are {@code 4q..4q+3}, and adding the offset lands them on this draw's vertices in the
  * ring. Adjacent plan entries are fused only when pipeline, vertex offset and instance slot all
  * match and the index ranges are contiguous - the one case where two captures are provably a
- * single draw.
+ * single draw. On the per-texture fallback ({@link #setBindlessEnabled(boolean)} false) the
+ * texture slot must also match, because a fused entry can only sample one bound texture.
  *
  * <p>Threading: render thread only. Vertex data is quad-shaped by contract (4 vertices per
  * primitive); other primitive modes do not go through this batcher.
@@ -36,6 +37,26 @@ public final class ImmediateBatcher {
     private int droppedCaptures;
     private int[] sortOrder;
     private int[] sortScratch;
+    /**
+     * Whether draws may fuse across texture changes. True (the default) is the bindless shape:
+     * the texture rides in each draw's instance record, so a texture change is not a state
+     * change and fusion ignores it. False is the per-texture fallback for devices without
+     * descriptor indexing (S5-1): a fused entry would sample one texture for all its draws, so
+     * {@link #endFrame()} additionally requires equal texture slots to fuse, and the executor
+     * rebinds the per-texture descriptor set wherever {@link BatchPlan#textureSlot(int)}
+     * changes between entries. Set once, when the renderer learns whether the bindless binding
+     * exists; not a per-frame switch.
+     */
+    private boolean bindlessEnabled = true;
+
+    /** Selects the bindless shape (true, default) or the per-texture fallback (false). */
+    public void setBindlessEnabled(boolean bindlessEnabled) {
+        this.bindlessEnabled = bindlessEnabled;
+    }
+
+    public boolean bindlessEnabled() {
+        return this.bindlessEnabled;
+    }
 
     /** Starts a frame on the given ring (its current slot receives this frame's copies). */
     public void beginFrame(StagingRing stagingRing) {
@@ -133,6 +154,7 @@ public final class ImmediateBatcher {
         int[] firstIndices = new int[size];
         int[] vertexOffsets = new int[size];
         int[] firstInstances = new int[size];
+        int[] textureSlots = new int[size];
         int entries = 0;
         for (int n = 0; n < size; n++) {
             int item = order[n];
@@ -141,11 +163,13 @@ public final class ImmediateBatcher {
             int firstIndex = items.firstQuad(item) * SharedQuadIndex.INDICES_PER_QUAD;
             int vertexOffset = items.vertexOffset(item);
             int instance = items.instanceDataIndex(item);
+            int textureSlot = items.textureSlot(item);
             if (entries > 0
                     && pipelineKeys[entries - 1] == pipeline
                     && vertexOffsets[entries - 1] == vertexOffset
                     && firstInstances[entries - 1] == instance
                     && instanceCounts[entries - 1] == 1
+                    && (this.bindlessEnabled || textureSlots[entries - 1] == textureSlot)
                     && firstIndices[entries - 1] + indexCounts[entries - 1] == firstIndex) {
                 indexCounts[entries - 1] += indexCount;
                 continue;
@@ -156,12 +180,14 @@ public final class ImmediateBatcher {
             firstIndices[entries] = firstIndex;
             vertexOffsets[entries] = vertexOffset;
             firstInstances[entries] = instance;
+            textureSlots[entries] = textureSlot;
             entries++;
         }
         BatchPlan plan = new BatchPlan(
                 Arrays.copyOf(pipelineKeys, entries), Arrays.copyOf(indexCounts, entries),
                 Arrays.copyOf(instanceCounts, entries), Arrays.copyOf(firstIndices, entries),
                 Arrays.copyOf(vertexOffsets, entries), Arrays.copyOf(firstInstances, entries),
+                Arrays.copyOf(textureSlots, entries),
                 size);
         this.ring = null;
         return plan;

@@ -3528,18 +3528,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long currentGroupTextureSerial = Long.MIN_VALUE;
 
     /**
-     * The one descriptor set a converted window binds, with every texture it draws in one array (section 11.6). Created
-     * on the first accepted batch that names a texture; null when the device cannot index such an array, which keeps the
-     * per-group sets and is reported as {@code textureArray=false}.
+     * The draw records an indirect immediate run reads (architecture 11.13), held since Stage 5
+     * stage 3 by the unified {@link InstanceDataStore}: one descriptor set per frame slot over
+     * slices of the frame-linear ring, selected per window for the frame slot being built. Created
+     * on the first converted window; null when its descriptor objects could not be created, which
+     * keeps the per-group path.
      */
-    VulkanTextureArray textureArray;
-
-    /**
-     * The draw records an indirect immediate run will read (architecture 11.13). Created with the texture array and reset
-     * per window; nothing draws from it yet, and the acceptance legs are what prove its buffer, set layout and descriptor
-     * set are created and released cleanly on this device.
-     */
-    ImmediateDrawRecords drawRecords;
+    InstanceDataStore drawRecords;
 
     /**
      * {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured and lit item groups as records plus
@@ -12784,11 +12779,50 @@ this.frameBufferOpen = false;
      * family's reads under the prepared key itself; the particle family's key carries the blend
      * pair the family historically asserted, folded in by multiplication so a particle state and
      * a colour state never share an entry.
+     * <p>
+     * The render pass the pipeline is built against is folded into every family's key (R-06,
+     * format axis). A pipeline names its creation pass, and the frame colour format's decision
+     * moves once per session - the provisional classic answer first, the latched answer after -
+     * so an entry built in the provisional window must never answer a draw under the pass the
+     * latched decision built. Keyed on the state alone it did exactly that, and the draw bound a
+     * pipeline whose pass declares R8G8B8A8 inside a pass declaring B8G8R8A8
+     * (VUID-vkCmdDrawIndexed-renderPass-02684, a single event on each of the bundle final leg's
+     * runs). The mod programs' caches key on the render pass for exactly this reason
+     * ({@code ModPrograms.ModProgramKey}, {@code PassExecutor.PipelineKey}); here the handle is
+     * mixed into the fold by {@link #celtium$immediatePassMix} and folded under the line bit in
+     * the shape of {@link #celtium$pipelineKey} - the bit saved, the fold run with it clear, the
+     * bit restored - so the fold can neither set the line flag on a triangle batch nor clear it
+     * on a line batch, the measured failure that bit exists to prevent. The price is
+     * duplication: the same state builds once per pass it is drawn under. The live pass
+     * population is the frame pass, the standalone UI pass, the chain-pair variants and the
+     * format-class passes - a handful, bounded by the passes themselves.
      */
-    static long celtium$immediateBranchKey(int format, long key) {
-        return format == VulkanImmediateFormats.PARTICLE
+    static long celtium$immediateBranchKey(int format, long key, long pass) {
+        long branch = format == VulkanImmediateFormats.PARTICLE
                 ? key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
                 : key;
+        long flag = branch & LINE_KEY_BIT;
+        long mixed = ((branch & ~LINE_KEY_BIT) * 31L + celtium$immediatePassMix(pass)) & ~LINE_KEY_BIT;
+        return mixed | flag;
+    }
+
+    /**
+     * {@return the render pass handle mixed for the branch key's fold}: a murmur3 finalizer
+     * over the handle, so every bit of the handle reaches the fold. The xor fold the mod
+     * programs' key hashes with is not strong enough here - that hash only buckets a key whose
+     * equals also compares the handle itself, while this fold IS the comparison, and the
+     * handles the validation layer names are not raw pointers on the measured machines: the
+     * bundle leg's 02684 body names 0x350000000035 and 0xa600000000a6, a small id repeated in
+     * both halves, whose xor folds (0x3535, 0xa6a6) carry only the halves' xor - the term's
+     * entropy shrinks to the id's. The finalizer is a bijection on the handle, so two distinct
+     * passes keep distinct fold terms whatever shape the handle takes.
+     */
+    private static long celtium$immediatePassMix(long pass) {
+        long mix = pass;
+        mix ^= mix >>> 33;
+        mix *= 0xff51afd7ed558ccdL;
+        mix ^= mix >>> 33;
+        return mix;
     }
 
     /** {@return the cached pipeline for a branch, or null when the branch has not built it}. */
@@ -12953,7 +12987,7 @@ this.frameBufferOpen = false;
      */
     private Object celtium$getOrCreateImmediatePipeline(int format, long key, int[] state, long pass,
             int targetColors) {
-        long branchKey = celtium$immediateBranchKey(format, key);
+        long branchKey = celtium$immediateBranchKey(format, key, pass);
         Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
         if (pipeline == null) {
             pipeline = celtium$createImmediatePipeline(format, key, state, pass, targetColors);
@@ -12971,21 +13005,30 @@ this.frameBufferOpen = false;
      * warmed legacy-blend state) instead - the fallback draw is counted on the prewarm, and the
      * caller keeps the material out of the prepare cache so the exact pipeline takes over from
      * the next prepare once it lands. Before the warm set has run, or when the async compile
-     * has failed for the key, the miss resolves synchronously exactly as it always did.
+     * has failed for the key, the miss resolves synchronously exactly as it always did. The
+     * fallback serves single-colour targets only: the standard pipeline is built against the
+     * one-colour terrain pass, so a target attaching several colours resolves synchronously
+     * through the exact colour-aware path instead of drawing with a pipeline whose render
+     * pass leaves the extra attachments unused (the pack-scene 02684 residual).
+     * <p>
+     * The standard is read under this draw's own pass, under the same key shape as the exact
+     * key: the warm set warms the standards against the terrain pass, so a miss under another
+     * pass finds no standard there and builds its exact pipeline synchronously - the substitute
+     * is never a pipeline built against a different pass.
      */
     private Object celtium$resolveImmediatePipeline(int format, long key, int[] state, long pass,
             int targetColors) {
-        long branchKey = celtium$immediateBranchKey(format, key);
+        long branchKey = celtium$immediateBranchKey(format, key, pass);
         Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
         if (pipeline != null) {
             return pipeline;
         }
         PipelinePrewarm prewarm = this.pipelinePrewarm;
         if (prewarm != null && this.pipelinePrewarmWarmed && !prewarm.isFailed(key)
-                && prewarm.needsFallback(key)) {
+                && prewarm.needsFallback(key) && targetColors <= 1) {
             celtium$requestImmediatePipelinePrewarm(format, key, state, pass, targetColors);
             Object standard = celtium$cachedImmediatePipeline(format, celtium$immediateBranchKey(format,
-                    celtium$immediateStandardKey(format, key, state)));
+                    celtium$immediateStandardKey(format, key, state), pass));
             if (standard != null) {
                 prewarm.noteFallbackDraw();
                 this.celtium$lastPrepareWasFallback = true;
@@ -13137,9 +13180,10 @@ this.frameBufferOpen = false;
      * Releases every immediate pipeline the backend built against a render pass, and empties the caches.
      * <p>
      * Each of these objects names a render pass at creation: the world's terrain pass for a world frame, the standalone
-     * UI pass for a menu frame. The cache key is the draw state alone and does not include it, so a cache cannot outlive
-     * the world whose pass it was built for - {@link VulkanTerrainPipeline#delete()} destroys the terrain render pass,
-     * and a reused entry would name it. This is called from the world-leave path and from the backend's own teardown;
+     * UI pass for a menu frame. The cache key folds the pass in (see {@link #celtium$immediateBranchKey}), but the
+     * entries are the pipeline objects themselves, and an object built against a pass the teardown destroys must not
+     * outlive it - {@link VulkanTerrainPipeline#delete()} destroys the terrain render pass, and a later world whose
+     * pass lands on the recycled handle would be handed the dead world's pipeline. This is called from the world-leave path and from the backend's own teardown;
      * because each map is emptied here, the second call finds nothing and releases nothing again, which is what makes
      * the release exactly-once on both paths.
      * <p>
@@ -13323,7 +13367,20 @@ this.frameBufferOpen = false;
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing is batched.
-            this.context.celtium$flushBatchedSubmits();
+            // S5-D1 (change B): while the frame target holds a live present borrow and the present is not
+            // skipped, this flush is held instead - the batch stays pending and the direct present's own
+            // flush submits the frame's entries and the final transition as one vkQueueSubmit. The two
+            // calls are consecutive in the same mixin hook, so nothing observes the batch in between; a
+            // present that is then gated off leaves the batch for the next natural flush point, and every
+            // observer of a submission flushes first. Swapchain destruction flushes before it drains
+            // (VulkanSwapchain.delete), so a held batch never outlives the images it names. The retired
+            // cleanups below keep their order: their firing is sequence-gated, not flush-gated.
+            boolean holdBatchForPresent = !SKIP_PRESENT
+                    && this.frameTarget instanceof GllessFrameTarget gllessTarget
+                    && gllessTarget.hasLivePresentBorrow();
+            if (!holdBatchForPresent) {
+                this.context.celtium$flushBatchedSubmits();
+            }
             // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
             // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
             // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
@@ -18060,12 +18117,7 @@ this.frameBufferOpen = false;
         this.openModelRunGroup = null;
         segmentStarted = celtium$deleteSegment("modelInstances", segmentStarted);
         this.nativePassExecutor.delete();
-        segmentStarted = celtium$deleteSegment("nativePass", segmentStarted);
-        if (this.textureArray != null) {
-            this.textureArray.destroy();
-            this.textureArray = null;
-        }
-        celtium$deleteSegment("textureArray", segmentStarted);
+        celtium$deleteSegment("nativePass", segmentStarted);
         this.deleteCalls++;
         System.out.println("[Celtium] CELTIUM_BACKEND_DELETE backend@" + Integer.toHexString(System.identityHashCode(this))
                 + " " + celtium$ownershipSummary());
@@ -22304,43 +22356,28 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Registers a wrapper in the shared texture array, creating the array on first use.
-     * <p>
-     * Nothing draws through it yet: this is the registration half of the shared-descriptor design, and the count it reports
-     * is what says how many textures a window actually needs. The array is skipped entirely on a device without the
-     * features, so the per-group path is what runs there.
+     * Resolves a texture to its index in the context's bindless array (Stage 5 stage 3, section
+     * 3.1) - the re-pointing of the old per-backend texture array registration. Registration itself
+     * is no longer demand-driven from here: the texture registry's lifecycle hooks feed the array
+     * as textures are created and released (section 3.5), so this is a pure lookup of the handle
+     * the registry assigned the texture's GL name. A texture without full content, a device (or
+     * kill switch) without a binding, and a name the table never took all answer -1, which keeps
+     * the caller on the per-texture path; the hit/miss counters keep their old meaning.
      */
-    int celtium$registerTexture(org.soutalab.celtium.vulkan.VulkanGlTexture texture) {
-        if (texture == null || !this.context.textureArraySupported()) {
+    int celtium$bindlessIndex(org.soutalab.celtium.vulkan.VulkanGlTexture texture, int glTextureId) {
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
+                texture == null || !texture.hasFullContent() ? null : this.context.bindlessBinding();
+        if (binding == null) {
             this.textureIndexMisses++;
             return -1;
         }
-        if (this.textureArray != null) {
-            // Already registered: answered without a MemoryStack push (a thread-local lookup per model replay).
-            int known = this.textureArray.knownIndex(texture);
-            if (known >= 0) {
-                this.textureIndexHits++;
-                return known;
-            }
+        int index = binding.slotOf(binding.handleOf(glTextureId));
+        if (index < 0) {
+            this.textureIndexMisses++;
+        } else {
+            this.textureIndexHits++;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (this.textureArray == null) {
-                VulkanTextureArray array = new VulkanTextureArray(this.context);
-                if (!array.create(stack)) {
-                    this.textureArray = null;
-                    this.textureIndexMisses++;
-                    return -1;
-                }
-                this.textureArray = array;
-            }
-            int index = this.textureArray.indexFor(stack, texture, 0);
-            if (index < 0) {
-                this.textureIndexMisses++;
-            } else {
-                this.textureIndexHits++;
-            }
-            return index;
-        }
+        return index;
     }
 
     /**
@@ -24223,7 +24260,8 @@ this.frameBufferOpen = false;
         this.pendingModelActive = false;
         VulkanModelInstances.Run run = this.pendingModelRun;
         this.pendingModelRun = null;
-        if (run == null || run.count <= 0 || this.modelInstances == null || this.textureArray == null) {
+        if (run == null || run.count <= 0 || this.modelInstances == null
+                || this.context.celtium$bindlessBindingOrNull() == null) {
             return;
         }
         this.modelRunsDrawn++;
@@ -24293,19 +24331,20 @@ this.frameBufferOpen = false;
         // client thread in leg tickjfr-celtium-2 (JFR frame type "Interpreted").
         this.reports.celtium$windowDiagnostics(target);
         if (this.drawRecords == null) {
-            ImmediateDrawRecords records = new ImmediateDrawRecords(this.context);
-            if (records.create()) {
-                this.drawRecords = records;
-            } else {
-                // A device that cannot give a storage-buffer set keeps the per-group path; the refusal is named rather
-                // than silently drawn through.
-                records.delete();
-            }
+            // InstanceDataStore.create answers null when its descriptor objects could not be created: a device
+            // that cannot give a storage-buffer set keeps the per-group path, as before.
+            this.drawRecords = InstanceDataStore.create(this.context);
         }
         if (this.drawRecords != null) {
-            // A window starts a fresh record array; the indirect run of architecture 11.13 will write into it from the
-            // group loop. Reset here so the array's lifetime is the window's, like the group list it parallels.
-            this.drawRecords.reset();
+            // A window starts a fresh slice of the frame slot's ring for its records; the indirect run of
+            // architecture 11.13 writes into it from the group loop. Selecting here makes the store's lifetime
+            // the window's, like the group list it parallels, and the frame's lightmap is bound into the slot's
+            // unified set 1 alongside the records.
+            this.drawRecords.selectSlot(this.frameSlot);
+            if (this.lightmapTexture != null) {
+                this.drawRecords.bindLightmap(this.lightmapTexture.view(), this.lightmapTexture.sampler(),
+                        this.lightmapTexture.samplingLayout());
+            }
         }
         this.indirectRuns.indirectCommandCount = 0;
         try { this.commandState.requireDraw(target); }
@@ -25727,6 +25766,7 @@ this.frameBufferOpen = false;
                 // Nothing of this slot's is in flight, so the GPU is done with its linear-ring slices: this
                 // "not pending" answer is one of the confirmations the ring's reset gate (Stage 2) accepts.
                 this.context.celtium$resetFrameLinearSlot(slot);
+                celtium$drainBindlessReleases();
             }
             return true;
         }
@@ -25810,6 +25850,7 @@ this.frameBufferOpen = false;
                 // counter read is where the loss is detected on this path.
                 this.context.celtium$pollDeferredSubmits();
                 this.context.celtium$resetFrameLinearSlot(slot);
+                celtium$drainBindlessReleases();
                 return true;
             }
         }
@@ -25888,7 +25929,24 @@ this.frameBufferOpen = false;
             // The slot's submission is confirmed, in whichever shape the confirmation arrived: its
             // linear-ring slices are the GPU's no longer (Stage 2's reset gate).
             this.context.celtium$resetFrameLinearSlot(slot);
+            celtium$drainBindlessReleases();
             return true;
+        }
+    }
+
+    /**
+     * Advances the bindless binding's deferred releases against the merged completion currency
+     * (Stage 5 stage 3, section 3.5). Called only from {@link #waitForSlot(int)}'s success exits -
+     * the frame loop's one completion gate, the same confirmations the linear-ring reset rides -
+     * so a retired texture's array slot is freed only once the counter says every submission that
+     * could still sample it has completed. The peek form is deliberate: a frame that never created
+     * the binding has nothing to drain.
+     */
+    private void celtium$drainBindlessReleases() {
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
+                this.context.celtium$bindlessBindingOrNull();
+        if (binding != null) {
+            binding.advance(this.context.celtium$slabCompletedValue());
         }
     }
 

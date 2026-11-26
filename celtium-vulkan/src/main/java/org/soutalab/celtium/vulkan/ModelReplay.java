@@ -475,13 +475,15 @@ final class ModelReplay {
             b.textureRegistry = b.celtium$registry();
         }
         VulkanGlTexture image = b.textureRegistry.get(texture);
-        int textureIndex = image == null ? -1 : b.celtium$registerTexture(image);
-        int lightmapIndex = state[8] == 0 ? textureIndex : b.celtium$registerTexture(b.lightmapTexture);
-        if (textureIndex < 0 || lightmapIndex < 0 || b.textureArray == null) {
+        int textureIndex = image == null ? -1 : b.celtium$bindlessIndex(image, texture);
+        int lightmapIndex = state[8] == 0 ? textureIndex
+                : b.celtium$bindlessIndex(b.lightmapTexture, b.lightmapSourceGlId);
+        if (textureIndex < 0 || lightmapIndex < 0) {
             return false;
         }
         if (b.modelInstances == null) {
-            VulkanModelInstances created = new VulkanModelInstances(b.context, b.textureArray.layout());
+            VulkanModelInstances created = new VulkanModelInstances(b.context,
+                    b.context.bindlessBinding().descriptorSetLayout());
             try {
                 if (!created.create()) {
                     created.delete();
@@ -590,7 +592,8 @@ final class ModelReplay {
      */
     private boolean celtium$tryModelReplayFastPath(int listId, int texture, VulkanDynamicMesh mesh,
             float[] projection, float[] modelView, float[] lightCoord, float[] combineColor) {
-        if (!ModelReplayFastPath.ENABLED || b.modelInstances == null || b.textureArray == null) {
+        if (!ModelReplayFastPath.ENABLED || b.modelInstances == null
+                || b.context.celtium$bindlessBindingOrNull() == null) {
             return false;
         }
         long target = b.targetRegistry.currentIdentity();
@@ -610,7 +613,7 @@ final class ModelReplay {
         probe.openGroup = b.openModelRunGroup;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
-        probe.textureArray = b.textureArray;
+        probe.bindlessBinding = b.context.celtium$bindlessBindingOrNull();
         probe.lightmap = b.lightmapTexture;
         probe.combine = combineColor;
         // The four versions the value half is decided by. Read before the shape guard so a refused shape costs nothing:
@@ -749,7 +752,7 @@ final class ModelReplay {
         probe.openGroup = open;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
-        probe.textureArray = b.textureArray;
+        probe.bindlessBinding = b.context.celtium$bindlessBindingOrNull();
         probe.lightmap = b.lightmapTexture;
         // The versions are deliberately not re-read here: they must be the ones the guard read *before* the values were
         // captured, or a state change between the capture and this record would store a version newer than the bytes
@@ -781,8 +784,10 @@ final class ModelReplay {
             b.passBiasC = 0.0F;
             b.passBiasS = 0.0F;
         }
-        if (b.modelInstances != null && b.textureArray != null) {
-            long textureSet = b.textureArray.set();
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding bindlessBinding =
+                b.context.celtium$bindlessBindingOrNull();
+        if (b.modelInstances != null && bindlessBinding != null) {
+            long textureSet = bindlessBinding.descriptorSet();
             VulkanModelInstances.Run run = group.modelRun;
             // Runs whose commands continue the previous run in the same buffer pair and whose state matches merge into
             // one indirect range; the merged draw happens at the flush below, after the group that ends the sequence.

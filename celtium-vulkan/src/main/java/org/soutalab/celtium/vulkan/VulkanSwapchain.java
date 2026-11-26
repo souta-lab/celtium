@@ -1398,7 +1398,9 @@ public final class VulkanSwapchain {
                 + " presentWorstMillis=" + (this.presentWorstNanos / 1000000L)
                 + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L)
                 + " preRecordedBlitPresents=" + this.preRecordedBlitPresents
-                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords;
+                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords
+                + " transitionBatchedJoins=" + this.transitionBatchedJoins
+                + " transitionSoloFlushes=" + this.transitionSoloFlushes;
     }
 
     private void celtium$notePresentTime(long nanos) {
@@ -1672,8 +1674,18 @@ public final class VulkanSwapchain {
      */
     private long presentTransitionPool = VK_NULL_HANDLE;
     private long[] preRecordedPresentTransitions = new long[0];
+    /**
+     * The {@link VkCommandBuffer} wrappers for {@link #preRecordedPresentTransitions}, cached at record
+     * time (S5-D1): the deferred-submit ledger names buffers by wrapper, and wrapping per present
+     * would allocate on the frame's hottest path.
+     */
+    private VkCommandBuffer[] preRecordedPresentTransitionBuffers = new VkCommandBuffer[0];
     private long preRecordedTransitionSwapchain = VK_NULL_HANDLE;
     private long preRecordedTransitionPresents;
+    /** S5-D1 census: direct presents whose transition entry joined a batch that already held entries. */
+    private long transitionBatchedJoins;
+    /** S5-D1 census: direct presents whose transition entry flushed as its batch's only entry. */
+    private long transitionSoloFlushes;
 
     /** {@return the transition slot for a resting layout}, or -1 for a layout no frame rests in. */
     private static int celtium$presentTransitionSlot(int fromLayout) {
@@ -1730,6 +1742,7 @@ public final class VulkanSwapchain {
             int[] layouts = {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
             this.preRecordedPresentTransitions = new long[bufferCount];
+            this.preRecordedPresentTransitionBuffers = new VkCommandBuffer[bufferCount];
             for (int i = 0; i < this.images.length; i++) {
                 for (int s = 0; s < layouts.length; s++) {
                     long handle = handles.get(i * layouts.length + s);
@@ -1737,6 +1750,8 @@ public final class VulkanSwapchain {
                         return VK_NULL_HANDLE;
                     }
                     this.preRecordedPresentTransitions[i * layouts.length + s] = handle;
+                    this.preRecordedPresentTransitionBuffers[i * layouts.length + s] =
+                            new VkCommandBuffer(handle, this.context.device());
                 }
             }
             this.preRecordedTransitionSwapchain = this.swapchain;
@@ -1783,10 +1798,50 @@ public final class VulkanSwapchain {
         return vkEndCommandBuffer(commands) == VK_SUCCESS;
     }
 
+    /**
+     * {@return the cached {@link VkCommandBuffer} wrapper for the transition
+     * {@link #preRecordedPresentTransition} names}, or null when there is none. The handle lookup
+     * drives the recording, so the two never disagree about whether a transition exists.
+     */
+    private VkCommandBuffer preRecordedPresentTransitionBuffer(int imageIndex, int fromLayout) {
+        if (preRecordedPresentTransition(imageIndex, fromLayout) == VK_NULL_HANDLE) {
+            return null;
+        }
+        int slot = celtium$presentTransitionSlot(fromLayout);
+        if (slot < 0 || imageIndex < 0
+                || imageIndex * 3 + slot >= this.preRecordedPresentTransitionBuffers.length) {
+            return null;
+        }
+        return this.preRecordedPresentTransitionBuffers[imageIndex * 3 + slot];
+    }
+
+    /**
+     * Submits whatever the batched ledger still holds before a destroy-side drain (S5-D1, review
+     * condition 1): since the frame boundary holds its flush for the present while a borrow is live,
+     * a swapchain rebuild or teardown can be reached with frame entries - and the present's own
+     * transition entry - still pending against this generation's images and transition pool.
+     * {@code vkQueueWaitIdle} only waits for work already submitted, so without this flush the held
+     * entries would be submitted after the destruction, against destroyed objects.
+     * <p>
+     * A failed flush does not change the outcome: it latches the context device-lost and quarantines
+     * its entries (nothing stays pending), and the drain that follows reads that verdict and governs
+     * whether destruction proceeds.
+     */
+    private void celtium$flushBatchedBeforeDestroy() {
+        try {
+            this.context.celtium$flushBatchedSubmits();
+        } catch (RuntimeException flushFailure) {
+            // The context latched the failure as device loss; the drain below is the authority on
+            // whether the handles may be destroyed, exactly as for a drain that fails on its own.
+        }
+    }
+
     /** Drops the recorded transition set; the queue is drained first, as for the blit set. */
     private void discardPreRecordedTransitions() {
         this.preRecordedTransitionSwapchain = VK_NULL_HANDLE;
         this.preRecordedPresentTransitions = new long[0];
+        this.preRecordedPresentTransitionBuffers = new VkCommandBuffer[0];
+        celtium$flushBatchedBeforeDestroy();
         if (this.presentTransitionPool != VK_NULL_HANDLE && drainForCleanup("present transition pool")) {
             vkDestroyCommandPool(this.context.device(), this.presentTransitionPool, null);
             this.presentTransitionPool = VK_NULL_HANDLE;
@@ -1810,17 +1865,15 @@ public final class VulkanSwapchain {
      * {@link #presentImage} survives only for the loading screen's standalone texture present, whose
      * source is not a frame the target rendered.
      * <p>
-     * Known shape debt (designer audit 2026-11-25, section 1 Stage 1): the final transition below is a
-     * pre-recorded command buffer submitted as its own {@code vkQueueSubmit}, where the plan's shape is
-     * no separate submit at all - the frame's render pass declares {@code PRESENT_SRC_KHR} as its final
-     * layout and the one frame submission carries the transition. Adjudicated at the Stage 2
-     * integration landing (OVERHAUL-INTEGRATION-S2 record): the elimination is NOT folded into that
-     * landing, because its planned shape is a render-pass construction change (pass variants keyed by
-     * final layout, plus the layout ledger's resting-layout update), not a submit-plumbing fold, and
-     * the integration leg's verdict had to attribute to the merge and the direct-present default
-     * restoration alone. The separate submit stays until that slice lands: it is one present-path
-     * packet per presented frame, issued after the frame's batched submits are flushed
-     * ({@link #submitPreRecorded} flushes them first), in the same class as the borrow-acquire drain.
+     * Shape debt D1 (designer audit 2026-11-25, section 1 Stage 1) is resolved by the S5-D1 slice:
+     * the final transition no longer submits as its own {@code vkQueueSubmit}. The pre-recorded
+     * transition buffer joins the frame's batched deferred ledger as an external entry (see
+     * {@code VulkanContext.celtium$submitDeferredExternal}) and the flush below is the frame's one
+     * submission; the frame boundary holds its own flush for this present while a borrow is live, so
+     * the transition and the frame's entries arrive together. The plan's render-pass finalLayout
+     * variant was not adopted: the layout ledger, not a render pass, is the resting-layout authority
+     * here, and the last writer of a frame is not knowable at record time (D1 design section 2).
+     * {@link #submitPreRecorded} survives for the blit present, which is outside D1's scope.
      */
     public String presentDirect(FrameImageTarget target) {
         long presentStarted = System.nanoTime();
@@ -1865,8 +1918,8 @@ public final class VulkanSwapchain {
                 return "present image: could not create the render-finished semaphore";
             }
             int restingLayout = target.colorImageLayout();
-            long transition = preRecordedPresentTransition(imageIndex, restingLayout);
-            if (transition == VK_NULL_HANDLE) {
+            VkCommandBuffer transition = preRecordedPresentTransitionBuffer(imageIndex, restingLayout);
+            if (transition == null) {
                 abandonAcquiredImage("the direct present transition could not be recorded from layout "
                         + restingLayout);
                 target.releasePresentBorrow();
@@ -1875,11 +1928,37 @@ public final class VulkanSwapchain {
             }
             // Consume-on-read: the semaphore comes back only when the frame's submissions did not already
             // wait the borrow's acquire, in which case this submission is the first to touch the image and
-            // takes the wait itself (submitPreRecorded compacts the null handle away otherwise).
+            // takes the wait itself (the external entry compacts the null handle away otherwise).
             long unconsumedAcquire = target.presentAcquireSemaphore();
             long submitStartedNanos = System.nanoTime();
-            String submitError = submitPreRecorded(stack, transition,
-                    new long[] {unconsumedAcquire}, new long[] {renderFinished});
+            String submitError;
+            try {
+                // S5-D1: the transition no longer submits alone. It joins the frame's batched deferred
+                // ledger as an external entry - this swapchain's own buffer, borrowed for this one
+                // submission - and this flush is the frame's one vkQueueSubmit: the frame entries the
+                // boundary held for this present, any swap-point drain entries, and the transition
+                // (wait: the unconsumed acquire; signal: renderFinished) in queue order. The enqueue
+                // happens only here, after every gate and borrow check above has passed, so the acquire
+                // signal's production stays adjacent to its consumption.
+                boolean joined = this.context.celtium$submitDeferredExternal(transition,
+                        unconsumedAcquire == VK_NULL_HANDLE ? null : new long[] {unconsumedAcquire},
+                        unconsumedAcquire == VK_NULL_HANDLE
+                                ? null : new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT},
+                        new long[] {renderFinished});
+                if (joined) {
+                    this.transitionBatchedJoins++;
+                } else {
+                    this.transitionSoloFlushes++;
+                }
+                this.context.celtium$flushBatchedSubmits();
+                submitError = null;
+            } catch (RuntimeException submitFailure) {
+                // Error-semantics contract (S5-D1 design section 3.1, review condition 5): a batched
+                // flush failure latches the context unusable / device-lost, so the retire below is
+                // teardown bookkeeping for the acquired image, not a recovery the next frame undoes.
+                submitError = "present image: the direct present transition submission failed: "
+                        + submitFailure.getMessage();
+            }
             presentSubmitNanos += System.nanoTime() - submitStartedNanos;
             if (submitError != null) {
                 if ("retire".equals(presentStageDisposition(true, true, false))) {
@@ -2686,6 +2765,10 @@ public final class VulkanSwapchain {
         if (this.context.presentEngine() != null) {
             this.context.presentEngine().retireSwapchain();
         }
+        // S5-D1 (review condition 1): a batch the frame boundary held for the present must reach the
+        // queue before the drain below - the drain only waits for submitted work, and the images,
+        // views and transition pool destroyed past it are what the held entries name.
+        celtium$flushBatchedBeforeDestroy();
         if (!drainForCleanup("delete")) {
             // The queue could not be confirmed idle: destroying the pool, the semaphores or the views would free objects
             // a pending submission may still reference. They are held instead (#368), which is a leak at a moment the

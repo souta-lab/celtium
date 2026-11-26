@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.function.LongSupplier;
 
 /**
  * A pure ledger for the fixed-page path: slabs divided into pages of exactly one staging-class size, where
@@ -36,7 +37,10 @@ import java.util.Set;
  * <b>Growth and release:</b> as in {@link SlabPool}, slabs are appended lazily up to the cap and never copied,
  * and {@link #freeDeferred(Allocation, long)} keeps a page counted as used until
  * {@link #collectCompleted(long)} passes its timeline value, because the GPU may still be reading the staging
- * bytes the CPU has already finished with.
+ * bytes the CPU has already finished with. As in {@link SlabPool}, the append is preceded by one collection
+ * when the owner has wired a completion-currency source ({@link #setCompletedValueSource}) and deferred
+ * releases are pending: a page whose release the currency has passed is capacity this pool already owns, and
+ * growing past it would raise the owner's slab peak for a page that was free in everything but bookkeeping.
  * <p>
  * <b>Census:</b> slabs created here are ordinary slabs of the owning allocator for accounting: the allocator
  * counts them in its live slab count and used bytes through the same {@code VulkanContext.allocateMemory}
@@ -65,6 +69,14 @@ public final class FixedPagePool {
 
     /** Membership view of {@link #deferredReleases}, for rejecting a second release of the same allocation. */
     private final Set<Allocation> deferredPending = new HashSet<Allocation>();
+
+    /**
+     * The owner's completion-currency source, consulted only at the growth point of {@link #allocate}:
+     * while deferred releases are pending, the pool collects them against this value before it appends a
+     * slab. Null when the owner has not wired one, in which case growth never collects - the behaviour
+     * this ledger had before the hook existed.
+     */
+    private LongSupplier completedValueSource;
 
     private long usedBytes;
 
@@ -123,7 +135,9 @@ public final class FixedPagePool {
     /**
      * Allocates one whole page for a request of at most one page, in the first slab with a free page (slabs in
      * creation order, pages in offset order, so the layout is deterministic). When every existing slab is full
-     * and the pool is below its cap, exactly one new slab is appended and its first page is handed out.
+     * and the pool is below its cap, exactly one new slab is appended and its first page is handed out. When a
+     * completion-currency source is wired and deferred releases are pending, the append is preceded by one
+     * collection against that source and one retry of the search (see the class documentation).
      *
      * @return the allocation, or {@code null} when the request is outside this pool's size class or alignment
      *         rule, or when every page is live and the slab cap has been reached
@@ -138,6 +152,30 @@ public final class FixedPagePool {
         if (!serves(sizeBytes, alignment)) {
             return null;
         }
+        Allocation allocation = claimFirstFreePage(sizeBytes);
+        if (allocation != null) {
+            return allocation;
+        }
+        if (this.livePagesBySlab.size() >= this.maxSlabs) {
+            return null;
+        }
+        if (this.completedValueSource != null && !this.deferredReleases.isEmpty()) {
+            // Collect before grow, as in SlabPool: a page whose deferred release the completion currency
+            // has already passed is capacity this pool already owns. A release whose value has not
+            // completed is not collected here - the gate is the timeline value, exactly as at every other
+            // collection drive point - and the growth below proceeds without it.
+            collectCompleted(this.completedValueSource.getAsLong());
+            allocation = claimFirstFreePage(sizeBytes);
+            if (allocation != null) {
+                return allocation;
+            }
+        }
+        this.livePagesBySlab.add(new BitSet(this.pagesPerSlab));
+        return claim(this.livePagesBySlab.size() - 1, 0, sizeBytes);
+    }
+
+    /** The first free page in creation order, or {@code null} when every existing slab is full. */
+    private Allocation claimFirstFreePage(long sizeBytes) {
         for (int slab = 0; slab < this.livePagesBySlab.size(); slab++) {
             BitSet pages = this.livePagesBySlab.get(slab);
             int page = pages.nextClearBit(0);
@@ -145,11 +183,7 @@ public final class FixedPagePool {
                 return claim(slab, page, sizeBytes);
             }
         }
-        if (this.livePagesBySlab.size() >= this.maxSlabs) {
-            return null;
-        }
-        this.livePagesBySlab.add(new BitSet(this.pagesPerSlab));
-        return claim(this.livePagesBySlab.size() - 1, 0, sizeBytes);
+        return null;
     }
 
     private Allocation claim(int slab, int page, long requestedSize) {
@@ -208,6 +242,15 @@ public final class FixedPagePool {
             }
         }
         return released;
+    }
+
+    /**
+     * Wires the completion-currency source consulted at the growth point of {@link #allocate} (see the
+     * class documentation's growth and release paragraph). The owner sets this once, at construction; the
+     * value is read only when an allocation is about to append a slab while deferred releases are pending.
+     */
+    public void setCompletedValueSource(LongSupplier completedValueSource) {
+        this.completedValueSource = completedValueSource;
     }
 
     /** Number of slabs the pool currently holds; grows lazily up to {@link #maxSlabs()}. */

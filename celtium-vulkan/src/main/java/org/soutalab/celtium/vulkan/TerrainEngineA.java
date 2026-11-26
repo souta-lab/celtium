@@ -430,7 +430,18 @@ final class TerrainEngineA {
                 slot.armed[s] = false;
             }
             float[] planes = GpuTerrainDrawTable.extractPlanes(viewProjection);
-            int[] slabCounts = this.store.slabRecordCounts();
+            // T3 stage 1 (empty-copy removal): arm from this pass' own record
+            // counts, not the store-wide ones. A slab holding only other
+            // passes' records yields zero counts and zero draws for this pass
+            // (the cull shader filters by pass and slab), yet arming it made
+            // recordDraws materialize a device slab buffer for it — and
+            // fillSlabCounts its per-slot stream buffers and descriptor set —
+            // an empty copy of a slab this pass never reads. A slab this pass
+            // holds records in arms exactly as before, and the stream
+            // capacity fillSlabCounts derives from the count is now this
+            // pass' own append bound, which is the exact one: the dispatch
+            // appends only this pass' records.
+            int[] slabCounts = this.store.slabRecordCounts(this.passOrdinal);
             boolean any = false;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 // R-20 bundled form: phase 1 fills every non-empty slab's

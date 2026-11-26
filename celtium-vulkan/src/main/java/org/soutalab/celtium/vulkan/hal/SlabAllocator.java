@@ -160,6 +160,12 @@ public final class SlabAllocator {
         this.hostVisible = hostVisible;
         this.pool = new SlabPool(slabSizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES, maxSlabs);
         this.fixedPool = new FixedPagePool(slabSizeBytes, FixedPagePool.FIXED_PAGE_SIZE_BYTES, maxSlabs);
+        // Collect-before-grow: when either ledger is about to append a slab while deferred releases are
+        // pending, it first collects them against the context's slab completed value - the same currency
+        // the collect-on-allocate retry further below uses - so a burst does not raise this allocator's
+        // slab peak for ranges the GPU has already finished with.
+        this.pool.setCompletedValueSource(() -> this.context.celtium$slabCompletedValue());
+        this.fixedPool.setCompletedValueSource(() -> this.context.celtium$slabCompletedValue());
     }
 
     /**
