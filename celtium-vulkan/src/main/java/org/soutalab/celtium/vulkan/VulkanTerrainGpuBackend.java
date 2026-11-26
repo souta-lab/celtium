@@ -3666,11 +3666,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The per-texture bindings captured in the open segment, by GL texture name. */
     private final java.util.HashMap<Integer, BatchTextureBinding> batchTextureBindings = new java.util.HashMap<>();
     /**
-     * Groups captured into batch segments; groups that fell back after a capture was attempted; draws dropped
-     * because a captured texture set was evicted and could not be rebuilt; segments discarded unexecuted at a
-     * frame boundary. Read by the window census line (CELTIUM_BATCH_ROUTE), which is the leg's route evidence.
+     * Groups captured into batch segments; of those, the ones captured in the bindless array
+     * form (their texture rides in the record); groups that fell back after a capture was
+     * attempted; draws dropped because a captured texture set was evicted and could not be
+     * rebuilt; segments discarded unexecuted at a frame boundary. Read by the window census
+     * line (CELTIUM_BATCH_ROUTE), which is the leg's route evidence.
      */
     private long batchCapturedGroups;
+    private long batchArrayCapturedGroups;
     private long batchFallbackGroups;
     private long batchDroppedDraws;
     private long batchDiscardedSegments;
@@ -3689,12 +3692,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
          * and the fog (and, lit, the displaced combine reference) - so their entries push.
          */
         final int pushBytes;
+        /**
+         * Whether this twin is a bindless array twin: its set 0 is the texture array rather
+         * than one texture's set, so the sink binds {@link #arraySet} with the pipeline and no
+         * per-texture set is ever bound (or dropped) for its entries.
+         */
+        final boolean array;
+        /** The bindless texture array's descriptor set, bound at set 0 when {@link #array}. */
+        final long arraySet;
 
         BatchTwinBinding(long pipeline, long layout, int recordsSet, int pushBytes) {
+            this(pipeline, layout, recordsSet, pushBytes, false, 0L);
+        }
+
+        BatchTwinBinding(long pipeline, long layout, int recordsSet, int pushBytes,
+                boolean array, long arraySet) {
             this.pipeline = pipeline;
             this.layout = layout;
             this.recordsSet = recordsSet;
             this.pushBytes = pushBytes;
+            this.array = array;
+            this.arraySet = arraySet;
         }
     }
 
@@ -24513,12 +24531,11 @@ this.frameBufferOpen = false;
             try {
                 this.batchRing = org.soutalab.celtium.vulkan.batch.FrameLinearStagingRingAdapter.create(this.context);
                 this.batchBatcher = new org.soutalab.celtium.vulkan.batch.ImmediateBatcher();
-                // The per-texture shape: the bindless array route is not wired in this slice - its vertex
-                // shader still declares the stale 224-byte record stride and the pair has never run - so every
-                // entry rebinds its per-texture set at the executor's change points, which is the rebind form
-                // the stage-4 entry pack's section 3-3 requires of the entries the array cannot serve. The
-                // reopening condition is the array pair's stride fix plus its own verification leg.
-                this.batchBatcher.setBindlessEnabled(false);
+                // No frame-wide texture shape is set here: whether a texture rides in an
+                // entry's record is decided per group at capture (see
+                // celtium$tryCaptureBatchGroup), and entries the array cannot serve rebind
+                // their per-texture set at the executor's change points - the rebind form the
+                // stage-4 entry pack's section 3-3 requires of them.
             } catch (RuntimeException | LinkageError error) {
                 this.batchRing = null;
                 this.batchBatcher = null;
@@ -24575,7 +24592,7 @@ this.frameBufferOpen = false;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 vkCmdBindVertexBuffers(this.commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
                 vkCmdBindIndexBuffer(this.commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
-                this.batchExecutor.execute(plan, false, new BatchDrawSink(stack));
+                this.batchExecutor.execute(plan, new BatchDrawSink(stack));
             }
             // The segment bound pipelines, sets and buffers outside the immediate bind cache's knowledge:
             // the next per-group draw rebinds everything, exactly as after a window head.
@@ -24670,6 +24687,14 @@ this.frameBufferOpen = false;
      * submission order even for a single opaque group (coplanar GUI quads at one depth
      * resolve by order under LESS_OR_EQUAL). A world group that is not order-free is
      * ordered; an order-free world group may fuse and move inside its segment.
+     * <p>
+     * The bindless array form: a base-texture group whose texture the shared array holds is
+     * captured against the prepared twin's array twin, its record carrying the array index,
+     * flagged so the entry fuses across texture changes and binds no per-texture set. The
+     * fallback identity is exact: with no binding (an unsupported device, or
+     * {@code celtium.vulkan.forceNoBindless}) the index lookup answers -1 for every texture,
+     * so every group takes the per-texture form below, byte for byte as before the array
+     * form was wired.
      *
      * @return whether the group was captured; a group that is not captured is drawn by the caller
      *         through the direct twin fallback
@@ -24716,24 +24741,64 @@ this.frameBufferOpen = false;
             return false;
         }
         int textureSlot = colour ? -1 : group.texture;
+        // The bindless array form: a base-texture group whose texture the shared array holds
+        // is captured against the prepared twin's array twin instead, with the array index
+        // written into its record, and no per-texture binding is registered for it - the
+        // texture rides in the record, which the capture flags so the plan's fusion and the
+        // executor's binds treat the entry as such. The group's own textureArrayIndex is not
+        // the source: it is stamped -1 at group open by design (no immediate pipeline read an
+        // array index when that stamp was written, and resolving it there was a lookup per
+        // group for nothing), so the index is resolved here, at capture, through the same
+        // pure lookup the model path uses - the registry's lifecycle feeds the array, so the
+        // lookup registers nothing and fills nothing. Every miss (no full content, no binding
+        // on this device or under the kill switch, a name the table never took, a variant
+        // with no array form, a twin build that declined) leaves the locals at their
+        // per-texture values and the group is captured exactly as it was before this form
+        // existed.
+        Object captureTwin = twin;
+        boolean textureInRecord = false;
+        int arrayIndex = -1;
+        long arraySet = 0L;
+        if (twin instanceof VulkanImmediateTextureRecordsPipeline recordsTwin
+                && recordsTwin.celtium$bindlessArrayEligible()) {
+            int resolved = celtium$bindlessIndex(celtium$registry().get(textureSlot), textureSlot);
+            if (resolved >= 0) {
+                org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
+                        this.context.bindlessBinding();
+                VulkanImmediateTextureRecordsPipeline arrayTwin = binding == null ? null
+                        : this.recordsPipelines.celtium$arrayPipelineForBatch(recordsTwin,
+                                binding.descriptorSetLayout());
+                if (arrayTwin != null && arrayTwin.celtium$handle() != 0L) {
+                    captureTwin = arrayTwin;
+                    textureInRecord = true;
+                    arrayIndex = resolved;
+                    arraySet = binding.descriptorSet();
+                    twinHandle = arrayTwin.celtium$handle();
+                    twinLayout = arrayTwin.celtium$pipelineLayout();
+                }
+            }
+        }
         celtium$ensureBatchSegment();
         int stateKey = celtium$internBatchState(group);
-        int recordIndex = this.drawRecords.record(push, -1);
+        int recordIndex = this.drawRecords.record(push, arrayIndex);
         if (recordIndex < 0) {
             this.batchFallbackGroups++;
             return false;
         }
-        Integer keyBoxed = this.batchPipelineKeys.get(twin);
+        Integer keyBoxed = this.batchPipelineKeys.get(captureTwin);
         int pipelineKey;
         if (keyBoxed == null) {
             pipelineKey = this.batchNextPipelineKey++;
-            this.batchPipelineKeys.put(twin, Integer.valueOf(pipelineKey));
+            this.batchPipelineKeys.put(captureTwin, Integer.valueOf(pipelineKey));
             this.batchTwinBindings.put(Integer.valueOf(pipelineKey),
-                    new BatchTwinBinding(twinHandle, twinLayout, recordsSet, pushBytes));
+                    textureInRecord
+                            ? new BatchTwinBinding(twinHandle, twinLayout, recordsSet, pushBytes,
+                                    true, arraySet)
+                            : new BatchTwinBinding(twinHandle, twinLayout, recordsSet, pushBytes));
         } else {
             pipelineKey = keyBoxed.intValue();
         }
-        if (!colour) {
+        if (!colour && !textureInRecord) {
             this.batchTextureBindings.putIfAbsent(Integer.valueOf(textureSlot),
                     new BatchTextureBinding(prepared.descriptor,
                             celtium$batchTextureCacheKey(twin, prepared, textureSlot), twin));
@@ -24749,7 +24814,7 @@ this.frameBufferOpen = false;
         boolean ordered = particle ? !celtium$batchOrderFree(group)
                 : (group.closedInUiBracket || group.fromFontRun) || !celtium$batchOrderFree(group);
         boolean captured = this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,
-                recordIndex, ordered, vertices, mesh.vertexCount() / 4, stride);
+                textureInRecord, recordIndex, ordered, vertices, mesh.vertexCount() / 4, stride);
         if (!captured && mesh.vertexCount() / 4
                 <= org.soutalab.celtium.vulkan.batch.SharedQuadIndex.MAX_QUADS) {
             // The mid-flush (Stage 5 stage 6): the open segment's ring or shared index space
@@ -24764,7 +24829,7 @@ this.frameBufferOpen = false;
             celtium$ensureBatchSegment();
             stateKey = celtium$internBatchState(group);
             captured = this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,
-                    recordIndex, ordered, vertices, mesh.vertexCount() / 4, stride);
+                    textureInRecord, recordIndex, ordered, vertices, mesh.vertexCount() / 4, stride);
         }
         if (!captured) {
             // The ring or the shared index space had no room even in a fresh segment: the
@@ -24777,6 +24842,9 @@ this.frameBufferOpen = false;
         }
         this.batchSegmentCaptures++;
         this.batchCapturedGroups++;
+        if (textureInRecord) {
+            this.batchArrayCapturedGroups++;
+        }
         return true;
     }
 
@@ -25075,6 +25143,8 @@ this.frameBufferOpen = false;
         private BatchTwinBinding twin;
         private int textureSlot = Integer.MIN_VALUE;
         private boolean textureDropped;
+        /** Whether set 0 currently holds the bindless texture array (bound with an array twin). */
+        private boolean arraySetBound;
 
         BatchDrawSink(MemoryStack stack) {
             this.stack = stack;
@@ -25093,16 +25163,41 @@ this.frameBufferOpen = false;
                     this.twin.recordsSet, this.stack.longs(drawRecords.descriptorSet()),
                     this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
             drawRecords.noteSetBound();
-            if (this.twin.recordsSet != 0 && this.textureSlot != Integer.MIN_VALUE && !this.textureDropped) {
+            if (this.twin.array) {
+                // An array twin's set 0 is the texture array, bound once with the pipeline: its
+                // entries name their textures in their records, so no per-texture bind follows
+                // for them, and a per-texture drop verdict left over from an earlier entry of
+                // this segment never applies to them.
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                        0, this.stack.longs(this.twin.arraySet), null);
+                this.arraySetBound = true;
+                this.textureDropped = false;
+                return;
+            }
+            if (this.twin.recordsSet != 0 && this.textureSlot != Integer.MIN_VALUE && !this.textureDropped
+                    && !this.arraySetBound) {
                 // A pipeline bind disturbs the sets bound under an incompatible layout, and the executor
                 // does not re-ask for the texture across a pipeline change: rebind the current texture's
-                // set under this pipeline's layout before any draw reads it.
+                // set under this pipeline's layout before any draw reads it. Skipped when the set 0
+                // currently holds the texture array (the previous entry rode in its records): the
+                // executor's per-entry rule re-asks for this entry's texture right after this bind,
+                // because the array entry invalidated its tracked binding.
                 bindTextureSet(this.textureSlot);
             }
         }
 
         @Override
         public void bindTexture(int textureSlot) {
+            if (this.twin.array) {
+                // The executor's contract never asks for a texture while an array twin is bound
+                // (the entries' flag suppresses the ask); defensively, the only set this twin
+                // reads at set 0 is the array itself, so rebind that and never enter the
+                // per-texture registration, eviction-check or drop procedure for it.
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                        0, this.stack.longs(this.twin.arraySet), null);
+                this.arraySetBound = true;
+                return;
+            }
             this.textureSlot = textureSlot;
             this.textureDropped = false;
             if (this.twin.recordsSet == 0) {
@@ -25112,6 +25207,7 @@ this.frameBufferOpen = false;
         }
 
         private void bindTextureSet(int textureSlot) {
+            this.arraySetBound = false;
             BatchTextureBinding binding = batchTextureBindings.get(Integer.valueOf(textureSlot));
             long descriptor = binding.descriptor;
             boolean stillCached = binding.celtium$setStillCached();
@@ -26063,6 +26159,7 @@ this.frameBufferOpen = false;
                 // The batch route's own evidence (S5-2): how many groups the drain captured into segments,
                 // how many fell back after an attempt, and the two loss counters. Cumulative over the run.
                 System.out.println("[Celtium] CELTIUM_BATCH_ROUTE captured=" + this.batchCapturedGroups
+                        + " arrayCaptured=" + this.batchArrayCapturedGroups
                         + " fallback=" + this.batchFallbackGroups
                         + " droppedDraws=" + this.batchDroppedDraws
                         + " discardedSegments=" + this.batchDiscardedSegments

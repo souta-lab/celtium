@@ -274,6 +274,42 @@ public final class VulkanImmediateTextureRecordsPipeline {
     }
 
     /**
+     * Creates the bindless array twin of an already-built record-reading pipeline: every
+     * carrier that decides the drawing - the render pass, the blend state, the depth test and
+     * write mask, the cull state, the compare op, the records set layout and the colour
+     * attachment count - is copied from {@code like}, so the twin draws the same batch under
+     * the same state and differs only in where the texture comes from (the array at set 0
+     * instead of one texture's set). This is the form the batch capture resolves: the prepared
+     * pipeline of a group is the exact state authority, including when it is the prewarm's
+     * standard substitute, so the twin is derived from the instance rather than rebuilt from
+     * a state tuple that would have to be threaded to the capture.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createArrayLike(
+            VulkanImmediateTextureRecordsPipeline like, long arraySetLayout) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(like.context, like.renderPass,
+                like.colorBlend, like.depthTest, like.depthWrite, like.cull, like.depthCompareOp,
+                like.recordsLayout);
+        pipeline.colorAttachments = like.colorAttachments;
+        pipeline.arrayRecords = true;
+        pipeline.arrayLayout = arraySetLayout;
+        return pipeline.build();
+    }
+
+    /**
+     * {@return whether this pipeline is the base textured variant the bindless array form
+     * twins}: the array vertex shader declares only the base TEX_COLOR attribute form, so the
+     * position variants (which keep sampling per texture), the generated-coordinate and
+     * combine forms (which have no array shader pair), the widened-stride forms and an array
+     * variant itself are all refused. The batch capture asks this of the prepared pipeline
+     * before resolving its array twin.
+     */
+    public boolean celtium$bindlessArrayEligible() {
+        return !this.arrayRecords && !this.texGen && !this.combine4 && !this.positionOnly
+                && !this.positionNoTexture && this.extraTrailingElementBytes == 0
+                && this.explicitStride == 0;
+    }
+
+    /**
      * Creates the {@link VulkanImmediateFormats#COMBINE4} variant: position plus the coordinates of units 0, 2 and 3 (unit 1
      * is not sampled), one texture, and the fragment stage that evaluates the combine the group's push block selects.
      */

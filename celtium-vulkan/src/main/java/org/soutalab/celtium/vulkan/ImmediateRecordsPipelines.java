@@ -2,6 +2,8 @@ package org.soutalab.celtium.vulkan;
 
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+
 /**
  * The permanent host of the immediate families' record-reading pipelines (Stage 5 stage 6
  * slice S6-b).
@@ -62,6 +64,16 @@ final class ImmediateRecordsPipelines {
      * the prewarm compiler thread also runs.
      */
     private final ConcurrentHashMap<Long, VulkanImmediateParticleRecordsPipeline> particlePipelines =
+            new ConcurrentHashMap<>();
+    /**
+     * The bindless array twins of base-texture record-reading pipelines, keyed by the records
+     * twin they twin (the pipeline class keeps identity equality, so the key is the instance).
+     * An array twin is a capture-time derivation of an already-resolved pipeline, not a branch
+     * of the prepare dispatch, so it does not ride the branch-keyed caches; it is built once
+     * per records twin and released with them in {@link #celtium$releaseAll()}.
+     */
+    private final ConcurrentHashMap<VulkanImmediateTextureRecordsPipeline,
+            VulkanImmediateTextureRecordsPipeline> textureArrayPipelines =
             new ConcurrentHashMap<>();
 
     ImmediateRecordsPipelines(VulkanTerrainGpuBackend backend) {
@@ -271,6 +283,36 @@ final class ImmediateRecordsPipelines {
         return twin;
     }
 
+    /**
+     * {@return the bindless array twin of a base-texture records twin, built on first use}, or
+     * null when the twin's variant has no array form (see
+     * {@link VulkanImmediateTextureRecordsPipeline#celtium$bindlessArrayEligible()}), when no
+     * array layout is offered, or when the build fails - the capture then keeps the records
+     * twin and its per-texture form, which is the fallback this slice exists beside, never a
+     * dropped draw.
+     *
+     * @param recordsTwin   the prepared pipeline the capture resolved for the group
+     * @param arraySetLayout the bindless texture array's set layout, from the context's binding
+     */
+    VulkanImmediateTextureRecordsPipeline celtium$arrayPipelineForBatch(
+            VulkanImmediateTextureRecordsPipeline recordsTwin, long arraySetLayout) {
+        if (recordsTwin == null || arraySetLayout == VK_NULL_HANDLE
+                || !recordsTwin.celtium$bindlessArrayEligible()) {
+            return null;
+        }
+        VulkanImmediateTextureRecordsPipeline twin = this.textureArrayPipelines.get(recordsTwin);
+        if (twin == null) {
+            try {
+                twin = VulkanImmediateTextureRecordsPipeline.createArrayLike(recordsTwin,
+                        arraySetLayout);
+            } catch (RuntimeException | LinkageError error) {
+                return null;
+            }
+            this.textureArrayPipelines.put(recordsTwin, twin);
+        }
+        return twin;
+    }
+
     /** {@return the particle pipelines' summed descriptor-set count, for the backend's descriptor census}. */
     long celtium$particleSetsCreated() {
         long total = 0;
@@ -309,6 +351,11 @@ final class ImmediateRecordsPipelines {
             }
             cache.clear();
         }
+        for (VulkanImmediateTextureRecordsPipeline pipeline : this.textureArrayPipelines.values()) {
+            pipeline.delete();
+            released++;
+        }
+        this.textureArrayPipelines.clear();
         for (VulkanImmediateColourRecordsPipeline pipeline : this.colourPipelines.values()) {
             pipeline.delete();
             released++;

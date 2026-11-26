@@ -14,6 +14,16 @@ public final class DrawItemStore {
     /** Flag bit in {@link #flags(int)}: the item must keep capture order (translucent / GUI). */
     public static final int FLAG_ORDERED = 1;
 
+    /**
+     * Flag bit in {@link #flags(int)}: the item's texture rides in its instance record (the
+     * bindless array index the writer stored at the record's array-index offset), so the item
+     * samples through the texture array and no per-texture descriptor set is bound for it.
+     * Carried per item, not per frame: a segment mixes these items with per-texture ones, and
+     * the fusion rule in {@link ImmediateBatcher#endFrame()} reads the bit on both sides of a
+     * texture change before letting an entry span it.
+     */
+    public static final int FLAG_TEXTURE_IN_RECORD = 2;
+
     private long[] sortKeys;
     private int[] vertexOffsets;
     private int[] firstQuads;

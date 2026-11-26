@@ -12,11 +12,13 @@ package org.soutalab.celtium.vulkan.batch;
  * describe one contiguous, identically-stated run (see the batcher). Arrays are sized to the
  * entry count exactly; the plan is a per-frame value, not reused.
  *
- * <p>Each entry also carries the texture slot of its first item. With bindless texturing the
- * executor ignores it (the texture rides in the instance record); on the per-texture fallback
- * ({@code ImmediateBatcher.setBindlessEnabled(false)}) entries never fuse across a texture
- * change, so a change in this value between consecutive entries is exactly where the executor
- * rebinds the per-texture descriptor set.
+ * <p>Each entry also carries the texture slot of its first item and whether that item's
+ * texture rides in its instance record ({@link #textureInRecord(int)}). For a record-riding
+ * entry the executor ignores the slot (the texture array is bound with the entry's pipeline);
+ * for a per-texture entry, entries never fuse across a texture change, so a change in this
+ * value between consecutive entries is exactly where the executor rebinds the per-texture
+ * descriptor set - and a record-riding entry in between rebinds too, because it leaves the
+ * texture array bound where the per-texture set was.
  *
  * <p>Each entry likewise carries the state key of its first item (the scissor / draw-state
  * bucket the caller captured with the item). Entries never fuse across a state change, so a
@@ -33,11 +35,12 @@ public final class BatchPlan {
     private final int[] firstInstances;
     private final int[] textureSlots;
     private final int[] stateKeys;
+    private final boolean[] textureInRecord;
     private final int sourceItems;
 
     BatchPlan(int[] pipelineKeys, int[] indexCounts, int[] instanceCounts, int[] firstIndices,
               int[] vertexOffsets, int[] firstInstances, int[] textureSlots, int[] stateKeys,
-              int sourceItems) {
+              boolean[] textureInRecord, int sourceItems) {
         this.pipelineKeys = pipelineKeys;
         this.indexCounts = indexCounts;
         this.instanceCounts = instanceCounts;
@@ -46,6 +49,7 @@ public final class BatchPlan {
         this.firstInstances = firstInstances;
         this.textureSlots = textureSlots;
         this.stateKeys = stateKeys;
+        this.textureInRecord = textureInRecord;
         this.sourceItems = sourceItems;
     }
 
@@ -90,5 +94,14 @@ public final class BatchPlan {
     /** The state key of the entry's first item (the caller's scissor / draw-state bucket). */
     public int stateKey(int entry) {
         return this.stateKeys[entry];
+    }
+
+    /**
+     * Whether the entry's items sample through the bindless texture array, their texture
+     * riding in each item's instance record: the executor binds no per-texture set for such
+     * an entry, whatever {@link #textureSlot(int)} says.
+     */
+    public boolean textureInRecord(int entry) {
+        return this.textureInRecord[entry];
     }
 }

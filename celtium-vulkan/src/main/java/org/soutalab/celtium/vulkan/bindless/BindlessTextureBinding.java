@@ -22,7 +22,9 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * {@code -Dceltium.vulkan.forceNoBindless=true} (the measurement kill-switch). Callers keep the
  * binding in a nullable field and skip every hook when it is null, which is exactly the
  * per-texture descriptor path the design prescribes for unsupported environments - the batcher
- * side of that fallback is {@code ImmediateBatcher.setBindlessEnabled(false)}. A registration
+ * side of that fallback is per entry: the capture's array-index lookup answers -1 for every
+ * texture while no binding exists, so every group is captured in the per-texture form and no
+ * entry ever claims a texture rides in its record. A registration
  * that finds the table full returns {@link BindlessTextureTable#INVALID_HANDLE} and is counted
  * in {@link #overflowRegistrations()}; the draw for that texture takes the same per-texture
  * fallback.
@@ -70,8 +72,9 @@ public final class BindlessTextureBinding {
 
     /**
      * Builds the binding for a device, or returns {@code null} when bindless is unavailable or
-     * force-disabled - the caller then runs the per-texture fallback and must tell the batcher
-     * ({@code setBindlessEnabled(false)}) so fused draws never span textures.
+     * force-disabled - the caller then runs the per-texture fallback: with no binding the
+     * capture's index lookup answers -1 for every texture, so no captured entry claims a
+     * texture in its record and fused draws never span textures on the per-texture form.
      */
     public static BindlessTextureBinding create(VulkanContext context,
                                                 LongSupplier retireValueSource) {

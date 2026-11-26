@@ -26,9 +26,11 @@ import java.util.Arrays;
  * captures are provably a single draw. The state key carries the draw-state boundary the
  * caller captured with the item (the scissor rectangle and alpha/depth state hash, S5-2
  * slicing section 3-6): a fused entry draws under one state, so a state change is a fusion
- * boundary even when everything else matches. On the per-texture fallback
- * ({@link #setBindlessEnabled(boolean)} false) the texture slot must also match, because a
- * fused entry can only sample one bound texture.
+ * boundary even when everything else matches. The texture rule is per item, not per frame:
+ * an item whose texture rides in its record ({@link DrawItemStore#FLAG_TEXTURE_IN_RECORD})
+ * samples through the bindless texture array, so two such items may fuse across a texture
+ * change; any other pairing must also match texture slots, because a fused entry that binds
+ * a per-texture set can only sample the one bound texture.
  *
  * <p>Threading: render thread only. Vertex data is quad-shaped by contract (4 vertices per
  * primitive); other primitive modes do not go through this batcher.
@@ -41,26 +43,6 @@ public final class ImmediateBatcher {
     private int droppedCaptures;
     private int[] sortOrder;
     private int[] sortScratch;
-    /**
-     * Whether draws may fuse across texture changes. True (the default) is the bindless shape:
-     * the texture rides in each draw's instance record, so a texture change is not a state
-     * change and fusion ignores it. False is the per-texture fallback for devices without
-     * descriptor indexing (S5-1): a fused entry would sample one texture for all its draws, so
-     * {@link #endFrame()} additionally requires equal texture slots to fuse, and the executor
-     * rebinds the per-texture descriptor set wherever {@link BatchPlan#textureSlot(int)}
-     * changes between entries. Set once, when the renderer learns whether the bindless binding
-     * exists; not a per-frame switch.
-     */
-    private boolean bindlessEnabled = true;
-
-    /** Selects the bindless shape (true, default) or the per-texture fallback (false). */
-    public void setBindlessEnabled(boolean bindlessEnabled) {
-        this.bindlessEnabled = bindlessEnabled;
-    }
-
-    public boolean bindlessEnabled() {
-        return this.bindlessEnabled;
-    }
 
     /** Starts a frame on the given ring (its current slot receives this frame's copies). */
     public void beginFrame(StagingRing stagingRing) {
@@ -83,9 +65,26 @@ public final class ImmediateBatcher {
     }
 
     /**
+     * Captures one quad draw whose texture is bound per texture at execution (the fallback
+     * form); see {@link #captureQuads(int, int, int, int, int, boolean, int, boolean,
+     * ByteBuffer, int, int)} for the record-riding form.
+     */
+    public boolean captureQuads(int passId, int pipelineKey, int stateKey, int layer,
+                                int textureSlot, int instanceDataIndex, boolean ordered,
+                                ByteBuffer vertexData, int quadCount, int bytesPerVertex) {
+        return captureQuads(passId, pipelineKey, stateKey, layer, textureSlot, false,
+                instanceDataIndex, ordered, vertexData, quadCount, bytesPerVertex);
+    }
+
+    /**
      * Captures one quad draw. {@code vertexData}'s remaining bytes must be exactly
      * {@code quadCount * 4 * bytesPerVertex}.
      *
+     * @param textureInRecord true when the draw's texture rides in its instance record (the
+     *                        writer stored the bindless array index in the record): the item
+     *                        samples through the texture array, fuses across texture changes
+     *                        with other record-riding items, and the executor never binds a
+     *                        per-texture set for its entry. False is the per-texture form.
      * @param instanceDataIndex the draw's record in the instance-data SSBO; draws that share a
      *                          record pass the same index, which is what lets {@link #endFrame()}
      *                          fuse adjacent captures of one record into a single draw
@@ -95,7 +94,8 @@ public final class ImmediateBatcher {
      * {@link #droppedCaptures()}, never partially captured
      */
     public boolean captureQuads(int passId, int pipelineKey, int stateKey, int layer,
-                                int textureSlot, int instanceDataIndex, boolean ordered,
+                                int textureSlot, boolean textureInRecord, int instanceDataIndex,
+                                boolean ordered,
                                 ByteBuffer vertexData, int quadCount, int bytesPerVertex) {
         if (this.ring == null) {
             throw new IllegalStateException("beginFrame was not called");
@@ -123,7 +123,9 @@ public final class ImmediateBatcher {
         int vertexOffset = (int) (offset / bytesPerVertex)
                 - firstQuad * SharedQuadIndex.VERTICES_PER_QUAD;
         this.store.append(sortKey, vertexOffset, firstQuad, quadCount,
-                instanceDataIndex, textureSlot, ordered ? DrawItemStore.FLAG_ORDERED : 0);
+                instanceDataIndex, textureSlot,
+                (ordered ? DrawItemStore.FLAG_ORDERED : 0)
+                        | (textureInRecord ? DrawItemStore.FLAG_TEXTURE_IN_RECORD : 0));
         return true;
     }
 
@@ -160,6 +162,7 @@ public final class ImmediateBatcher {
         int[] firstInstances = new int[size];
         int[] textureSlots = new int[size];
         int[] stateKeys = new int[size];
+        boolean[] textureInRecord = new boolean[size];
         int entries = 0;
         for (int n = 0; n < size; n++) {
             int item = order[n];
@@ -170,13 +173,21 @@ public final class ImmediateBatcher {
             int vertexOffset = items.vertexOffset(item);
             int instance = items.instanceDataIndex(item);
             int textureSlot = items.textureSlot(item);
+            boolean itemInRecord =
+                    (items.flags(item) & DrawItemStore.FLAG_TEXTURE_IN_RECORD) != 0;
+            // The texture rule, per entry: an entry spans a texture change only when its own
+            // first item and the candidate both ride in their records (the entry's items all
+            // share its pipeline, and the array form is a pipeline of its own, so the first
+            // item's bit speaks for the whole entry); otherwise the slots must match, as a
+            // per-texture entry can only sample the one bound texture.
             if (entries > 0
                     && pipelineKeys[entries - 1] == pipeline
                     && stateKeys[entries - 1] == stateKey
                     && vertexOffsets[entries - 1] == vertexOffset
                     && firstInstances[entries - 1] == instance
                     && instanceCounts[entries - 1] == 1
-                    && (this.bindlessEnabled || textureSlots[entries - 1] == textureSlot)
+                    && ((textureInRecord[entries - 1] && itemInRecord)
+                            || textureSlots[entries - 1] == textureSlot)
                     && firstIndices[entries - 1] + indexCounts[entries - 1] == firstIndex) {
                 indexCounts[entries - 1] += indexCount;
                 continue;
@@ -189,6 +200,7 @@ public final class ImmediateBatcher {
             firstInstances[entries] = instance;
             textureSlots[entries] = textureSlot;
             stateKeys[entries] = stateKey;
+            textureInRecord[entries] = itemInRecord;
             entries++;
         }
         BatchPlan plan = new BatchPlan(
@@ -196,6 +208,7 @@ public final class ImmediateBatcher {
                 Arrays.copyOf(instanceCounts, entries), Arrays.copyOf(firstIndices, entries),
                 Arrays.copyOf(vertexOffsets, entries), Arrays.copyOf(firstInstances, entries),
                 Arrays.copyOf(textureSlots, entries), Arrays.copyOf(stateKeys, entries),
+                Arrays.copyOf(textureInRecord, entries),
                 size);
         this.ring = null;
         return plan;
