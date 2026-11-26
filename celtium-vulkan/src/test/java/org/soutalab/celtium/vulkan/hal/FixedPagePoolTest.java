@@ -185,4 +185,17 @@ class FixedPagePoolTest {
         assertEquals(PAGE, pool.usedBytes());
         assertEquals(1, pool.liveAllocationCount());
     }
+
+    @Test
+    void serveCountCountsEveryServedAllocationOnly() {
+        FixedPagePool pool = new FixedPagePool(SLAB, PAGE, 1);
+        FixedPagePool.Allocation a = pool.allocate(1000L, 64L);
+        pool.allocate(2000L, 64L);
+        assertEquals(2L, pool.serveCount());
+        pool.free(a);
+        pool.allocate(3000L, 64L);
+        assertEquals(3L, pool.serveCount());
+        assertNull(pool.allocate(PAGE + 1, 64L));
+        assertEquals(3L, pool.serveCount());
+    }
 }

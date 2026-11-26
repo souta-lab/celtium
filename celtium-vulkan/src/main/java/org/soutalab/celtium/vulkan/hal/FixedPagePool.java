@@ -79,6 +79,8 @@ public final class FixedPagePool {
     private LongSupplier completedValueSource;
 
     private long usedBytes;
+    /** Cumulative count of allocations this pool has served (R-60 confirmation instrument). */
+    private long serves;
 
     /**
      * Creates an empty pool. No slab exists until the first allocation needs one.
@@ -191,6 +193,7 @@ public final class FixedPagePool {
         Allocation allocation = new Allocation(slab, page * this.pageSizeBytes, this.pageSizeBytes, requestedSize);
         this.live.add(allocation);
         this.usedBytes += this.pageSizeBytes;
+        this.serves++;
         return allocation;
     }
 
@@ -298,6 +301,11 @@ public final class FixedPagePool {
     /** Allocations not yet returned, including ones pending a deferred release. */
     public int liveAllocationCount() {
         return this.live.size();
+    }
+
+    /** Cumulative count of allocations this pool has ever served, live or already returned. */
+    public long serveCount() {
+        return this.serves;
     }
 
     private void releasePage(Allocation allocation) {

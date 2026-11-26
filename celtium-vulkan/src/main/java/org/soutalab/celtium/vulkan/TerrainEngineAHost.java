@@ -389,6 +389,9 @@ final class TerrainEngineAHost {
                 .append(",oversizedSlabSizes=").append(VulkanContext.oversizedSlabSizesText(
                         allocator == null ? new long[0] : allocator.oversizedSlabSizes()));
         TerrainSlabAllocator logical = this.store.geometryAllocator();
+        summary.append(",bandServes=").append(allocator == null ? "small:0,medium:0,large:0,chunk:0"
+                        : allocator.slabBandServeSummary())
+                .append(",fixedServes=").append(allocator == null ? 0L : allocator.fixedPageServeCount());
         summary.append(",logicalSlabs=").append(logical.slabCount())
                 .append(",logicalLiveBytes=").append(logical.liveBytes())
                 .append(",hostSlabBuffers=").append(this.liveSlabBufferCount());

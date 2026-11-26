@@ -376,6 +376,16 @@ public final class SlabAllocator {
         return this.pool.slabCount();
     }
 
+    /** The ordinary pool's per-band serve counts as summary text (see {@link SlabPool#bandServeSummary()}). */
+    public String slabBandServeSummary() {
+        return this.pool.bandServeSummary();
+    }
+
+    /** Cumulative allocations the fixed-page pool has served (see {@link FixedPagePool#serveCount()}). */
+    public long fixedPageServeCount() {
+        return this.fixedPages.serveCount();
+    }
+
     /** Bytes held by live allocations in the ordinary ledger alone (see {@link #usedBytes()} for the total). */
     public long ordinaryUsedBytes() {
         return this.pool.usedBytes();

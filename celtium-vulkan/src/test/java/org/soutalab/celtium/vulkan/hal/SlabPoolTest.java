@@ -473,4 +473,33 @@ class SlabPoolTest {
         assertEquals(0L, second.offset() % 65536L);
         assertEquals(0L, second.offset() % (2L * 65536));
     }
+
+    @Test
+    void serveCountsAttributeEachAllocationToItsBand() {
+        // Band indices in declaration order: small 0, medium 1, large 2, chunk 3. On a 4 MiB slab
+        // the large threshold is 256 KiB, so the four size classes are all reachable.
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 4);
+        pool.allocate(PAGE, 1);
+        pool.allocate(128 * 1024, 1);
+        pool.allocate(256 * 1024, 1);
+        pool.allocate(65536, 1);
+        pool.allocate(PAGE, 1);
+        assertEquals(2L, pool.bandServeCount(0));
+        assertEquals(1L, pool.bandServeCount(1));
+        assertEquals(1L, pool.bandServeCount(2));
+        assertEquals(1L, pool.bandServeCount(3));
+        assertEquals("small:2,medium:1,large:1,chunk:1", pool.bandServeSummary());
+    }
+
+    @Test
+    void capFallbackServesAttributeToTheServingSlabBand() {
+        SlabPool pool = new SlabPool(64 * PAGE, PAGE, 1);
+        pool.allocate(PAGE, 1);
+        // The chunk request finds no chunk slab and the pool is at its cap, so the small slab
+        // serves it - and the serve counts for the small band that did the work, not the chunk
+        // band that asked.
+        assertNotNull(pool.allocate(65536, 1));
+        assertEquals(2L, pool.bandServeCount(0));
+        assertEquals(0L, pool.bandServeCount(3));
+    }
 }

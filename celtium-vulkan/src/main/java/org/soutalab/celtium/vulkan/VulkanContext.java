@@ -5961,6 +5961,8 @@ public final class VulkanContext {
                     .append(",fixedUsedBytes=").append(allocator.fixedUsedBytes())
                     .append(",fixedFreeBytes=").append(allocator.fixedFreeBytes())
                     .append(",fixedLargestFreeRun=").append(allocator.fixedLargestFreeRun())
+                    .append(",bandServes=").append(allocator.slabBandServeSummary())
+                    .append(",fixedServes=").append(allocator.fixedPageServeCount())
                     .append(",oversizedSlabs=").append(allocator.oversizedSlabCount())
                     .append(",oversizedSlabSizes=")
                     .append(oversizedSlabSizesText(allocator.oversizedSlabSizes()));

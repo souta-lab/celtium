@@ -151,6 +151,13 @@ public final class SlabPool {
     private LongSupplier completedValueSource;
 
     private long usedBytes;
+    /**
+     * Cumulative allocations served, attributed to the band of the slab that served them - so a
+     * cap-fallback serve counts for the serving slab's band, not the request's (R-60 confirmation
+     * instrument: the per-band serve counts are what shows whether the chunk band carries the
+     * whole-chunk traffic or the traffic still lands on the other bands).
+     */
+    private final long[] bandServes = new long[BAND_CHUNK + 1];
 
     /**
      * Creates an empty pool. No slab exists until the first allocation needs one.
@@ -197,6 +204,19 @@ public final class SlabPool {
     /** The slab cap this pool was created with. */
     public int maxSlabs() {
         return this.maxSlabs;
+    }
+
+    /** Cumulative allocations served by slabs of the given band, cap-fallback serves included. */
+    public long bandServeCount(int band) {
+        return this.bandServes[band];
+    }
+
+    /** The per-band serve counts as summary text: {@code small:N,medium:N,large:N,chunk:N}. */
+    public String bandServeSummary() {
+        return "small:" + this.bandServes[BAND_SMALL]
+                + ",medium:" + this.bandServes[BAND_MEDIUM]
+                + ",large:" + this.bandServes[BAND_LARGE]
+                + ",chunk:" + this.bandServes[BAND_CHUNK];
     }
 
     /**
@@ -420,6 +440,7 @@ public final class SlabPool {
                 Allocation allocation = new Allocation(slab, offset, pagedSize, requestedSize);
                 this.live.add(allocation);
                 this.usedBytes += pagedSize;
+                this.bandServes[slabBand]++;
                 return allocation;
             }
         }
