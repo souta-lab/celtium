@@ -11,6 +11,8 @@ import org.soutalab.celtium.vulkan.VulkanContext;
 import java.nio.LongBuffer;
 
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -81,8 +83,12 @@ public final class FrameLinearRing {
 
     /**
      * Creates one ring slot per frame slot, each {@code slotBytes} bytes, as a persistently mapped host buffer
-     * usable as a transfer source and as vertex, index and uniform data. Every slot is a dedicated allocation
-     * owned by this class - see the class comment for why it is not a {@code VulkanHostBuffer}.
+     * usable as a transfer source and as vertex, index, uniform and storage data, and as the indirect-command
+     * buffer a frame's draw arguments are read from. The storage and indirect usages are what let the Stage 5
+     * batch path keep its instance-data SSBO slices and its {@code VkDrawIndexedIndirectCommand} runs inside
+     * these same two slot buffers instead of spending more of the Stage 3 buffer budget. Every slot is a
+     * dedicated allocation owned by this class - see the class comment for why it is not a
+     * {@code VulkanHostBuffer}.
      */
     public FrameLinearRing(VulkanContext context, long slotBytes) {
         if (context == null) {
@@ -98,7 +104,8 @@ public final class FrameLinearRing {
         this.mapped = new long[slots];
         this.allocators = new LinearRingAllocator[slots];
         int usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-                | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+                | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+                | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
         long size = alignUp4(slotBytes);
         try {
             for (int slot = 0; slot < slots; slot++) {
