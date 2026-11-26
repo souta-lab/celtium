@@ -19641,6 +19641,11 @@ this.frameBufferOpen = false;
         if (host == null) {
             return null;
         }
+        // The shared desc image is fixed per frame (R-15): stamp the frame on
+        // the host before any engine prepares, so a store image that moves
+        // mid-frame uploads at the next frame's head rather than between this
+        // frame's passes.
+        host.noteTierAFrameHead(this.frameId);
         try {
             TerrainEngineA engine = host.engineFor(this.context, pass);
             boolean ok = engine.prepareFrame(this.commandBuffer, this.frameSlot,

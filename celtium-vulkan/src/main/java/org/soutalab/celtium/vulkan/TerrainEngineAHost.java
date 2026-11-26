@@ -71,6 +71,12 @@ final class TerrainEngineAHost {
     private VulkanHostBuffer descBuffer;
     private VulkanHostBuffer factorBaseBuffer;
     private long uploadedDescGeneration = -1;
+    // Frame keying of the desc upload: the backend stamps the current frame at
+    // its Tier-A pass heads, and the upload runs at most once per frame, so
+    // every pass of a frame reads the one image the frame started with. A
+    // generation that moves mid-frame uploads at the next frame's first head.
+    private long descFrameKey = Long.MIN_VALUE;
+    private long descUploadedFrameKey = Long.MIN_VALUE;
     private VulkanHostBuffer factorBuffer;
     private VulkanHostBuffer sortedBuffer;
 
@@ -191,15 +197,44 @@ final class TerrainEngineAHost {
     }
 
     /**
+     * Stamps the frame the backend's Tier-A pass heads are serving, at the pass
+     * head, before any engine prepares. The desc upload keys on this stamp;
+     * stamping the same frame again is a no-op in effect.
+     */
+    void noteTierAFrameHead(long frameKey) {
+        this.descFrameKey = frameKey;
+    }
+
+    /**
+     * Whether the desc image uploads now: at creation, or when the store image
+     * has moved and this frame has not uploaded yet. A move after the frame's
+     * upload waits for the next frame, so no pass of a frame reads a different
+     * image than the passes before it in that frame.
+     */
+    static boolean descUploadDue(boolean bufferExists, long generation, long uploadedGeneration,
+                                 long frameKey, long uploadedFrameKey) {
+        if (!bufferExists) {
+            return true;
+        }
+        if (generation == uploadedGeneration) {
+            return false;
+        }
+        return frameKey != uploadedFrameKey;
+    }
+
+    /**
      * Re-uploads the store's desc and factor-base images into the shared buffers
-     * when the store's image generation has moved. The store packs every pass'
-     * records into the one image, so one upload serves every pass; before the
-     * sharing, each engine re-uploaded the identical image into its own copy,
-     * once per pass per generation move.
+     * when the store's image generation has moved, at most once per frame (see
+     * {@link #descUploadDue}). The store packs every pass' records into the one
+     * image, so one upload serves every pass; before the sharing, each engine
+     * re-uploaded the identical image into its own copy, once per pass per
+     * generation move, and a mid-frame move could split the frame's passes
+     * across two images.
      */
     void uploadDescImageIfMoved(VulkanContext context) {
         long generation = this.store.imageGeneration();
-        if (generation == this.uploadedDescGeneration && this.descBuffer != null) {
+        if (!descUploadDue(this.descBuffer != null, generation, this.uploadedDescGeneration,
+                this.descFrameKey, this.descUploadedFrameKey)) {
             return;
         }
         int[] descImage = this.store.descImage();
@@ -231,6 +266,7 @@ final class TerrainEngineAHost {
             MemoryUtil.memPutInt(factorAddress + (long) i * 4L, factorBaseImage[i]);
         }
         this.uploadedDescGeneration = generation;
+        this.descUploadedFrameKey = this.descFrameKey;
     }
 
     /**
