@@ -15752,14 +15752,6 @@ this.frameBufferOpen = false;
         return org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || FrameBudgetTimings.enabled();
     }
 
-    /**
-     * Whether immediate groups take their slices from the per-frame linear ring before the frame arena
-     * (Stage 2's consumer connection). On unless {@code -Dceltium.vulkan.frameRingMesh=false}, which restores
-     * the arena-first order exactly, as the integration leg's A/B switch.
-     */
-    private static final boolean FRAME_RING_MESH =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.frameRingMesh", "true"));
-
     /** Whether the ring's creation already failed once on this backend, so the fallback is recorded once. */
     private boolean frameRingMeshFailed;
 
@@ -15780,21 +15772,19 @@ this.frameBufferOpen = false;
         if (this.frameArena == null) {
             this.frameArena = new VulkanFrameArena(this.context);
         }
-        if (FRAME_RING_MESH) {
-            try {
-                VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
-                        this.context.celtium$frameLinearRing(), this.frameSlot);
-                if (ringMesh != null) {
-                    return ringMesh;
-                }
-            } catch (RuntimeException | LinkageError failure) {
-                // The ring could not be created (a device-side failure while the arena path may still work):
-                // record it once and fall through, rather than refusing every group on the ring's account.
-                if (!this.frameRingMeshFailed) {
-                    this.frameRingMeshFailed = true;
-                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
-                            + "; groups fall back to the frame arena");
-                }
+        try {
+            VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
+                    this.context.celtium$frameLinearRing(), this.frameSlot);
+            if (ringMesh != null) {
+                return ringMesh;
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            // The ring could not be created (a device-side failure while the arena path may still work):
+            // record it once and fall through, rather than refusing every group on the ring's account.
+            if (!this.frameRingMeshFailed) {
+                this.frameRingMeshFailed = true;
+                record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                        + "; groups fall back to the frame arena");
             }
         }
         VulkanDynamicMesh borrowed = this.frameArena.openMesh();
