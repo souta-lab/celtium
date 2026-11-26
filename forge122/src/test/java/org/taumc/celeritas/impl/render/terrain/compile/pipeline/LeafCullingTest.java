@@ -40,11 +40,17 @@ class LeafCullingTest {
      * initialisation reaches {@code SoundEvents} - and that class refuses to initialise
      * before Bootstrap ("Accessed Sounds before Bootstrap!"). The doubles below are real
      * blocks, so the test JVM has to be bootstrapped first; Bootstrap's own guard makes
-     * the call a no-op when another test class got there first.
+     * the call a no-op when another test class got there first. The shared states are
+     * assigned here rather than in static initialisers for the same reason: a class
+     * initialiser runs before any {@code @BeforeAll} method can.
      */
     @BeforeAll
     static void bootstrapMinecraft() {
         Bootstrap.register();
+        AIR = new StubBlock(Material.AIR, false).getDefaultState();
+        LEAVES = new StubLeaves().getDefaultState();
+        SOLID_BLOCK = new StubBlock(Material.ROCK, true).getDefaultState();
+        NON_SOLID_BLOCK = new StubBlock(Material.ROCK, false).getDefaultState();
     }
 
     private static class StubBlock extends Block {
@@ -82,10 +88,10 @@ class LeafCullingTest {
         }
     }
 
-    private static final IBlockState AIR = new StubBlock(Material.AIR, false).getDefaultState();
-    private static final IBlockState LEAVES = new StubLeaves().getDefaultState();
-    private static final IBlockState SOLID_BLOCK = new StubBlock(Material.ROCK, true).getDefaultState();
-    private static final IBlockState NON_SOLID_BLOCK = new StubBlock(Material.ROCK, false).getDefaultState();
+    private static IBlockState AIR;
+    private static IBlockState LEAVES;
+    private static IBlockState SOLID_BLOCK;
+    private static IBlockState NON_SOLID_BLOCK;
 
     private static final class StubAccess implements IBlockAccess {
         private final Map<BlockPos, IBlockState> blocks = new HashMap<>();
