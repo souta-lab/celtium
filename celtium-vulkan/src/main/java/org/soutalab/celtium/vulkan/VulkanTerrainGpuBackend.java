@@ -73,6 +73,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final int MIN_UNIFORM_ALIGNMENT = 256;
 
     /**
+     * The Tier-A per-pass ignition counters (residuals R-21): every pass that reaches the Tier-A
+     * arming decision in {@code recordRenderPass} is one attempt on the pass's own fallback path
+     * ({@code terrain.engine.<pass name>}), verdicted fast when the Tier-A engine records the pass
+     * and fallback when the legacy loop below does. Handles are resolved once per pass name and
+     * held here. Counting only - rendering behaviour is unchanged. Passes the pack route answers
+     * return before this decision point and are not counted here; the residency gate's section
+     * counts are a separate census, not this one.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, FallbackPaths.Handle>
+            TERRAIN_ENGINE_PASS_PATHS = new java.util.concurrent.ConcurrentHashMap<String, FallbackPaths.Handle>();
+
+    /** {@return the shared per-pass Tier-A ignition counter, registering its path on first use}. */
+    private static FallbackPaths.Handle terrainEnginePassPath(String passName) {
+        return TERRAIN_ENGINE_PASS_PATHS.computeIfAbsent(passName,
+                name -> FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE + "." + name));
+    }
+
+    /**
      * Bytes per dynamic uniform block. Mirrors {@code CeltiumSolidUniforms} in
      * {@code celtium-vulkan/src/main/shaders/terrain_solid.vert}: region offset, fog colour and parameters,
      * material flags and the (currently unused) chunk fade parameters.
@@ -19750,6 +19768,11 @@ this.frameBufferOpen = false;
         // executor's IndirectCount draws instead (recordDraws at the pass tail).
         TerrainEngineA tierAEngine = celtium$terrainAPassHead(pass, matrices, occlusionCamera);
         boolean tierAArmed = tierAEngine != null;
+        // R-21: this pass's Tier-A ignition verdict - one attempt per pass reaching the arming
+        // decision, fast when Tier-A records the pass, fallback when the legacy loop below does.
+        FallbackPaths.Handle terrainEnginePath = terrainEnginePassPath(pass.name());
+        terrainEnginePath.attempt();
+        terrainEnginePath.verdict(tierAArmed);
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
