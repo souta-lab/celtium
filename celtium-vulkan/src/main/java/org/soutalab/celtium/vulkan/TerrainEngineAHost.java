@@ -71,6 +71,8 @@ final class TerrainEngineAHost {
      */
     private final java.util.Set<Integer> taintedPassOrdinals =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Map<TerrainRenderPass, TerrainPackEngine> packEngines = new IdentityHashMap<>();
+    private final java.util.Map<Integer, VulkanHostBuffer> packArenaBuffers = new java.util.HashMap<>();
     private long generation;
     private VulkanContext context;
     private SlabAllocator geometrySlabAllocator;
@@ -164,6 +166,49 @@ final class TerrainEngineAHost {
             this.engines.put(pass, engine);
         }
         return engine;
+    }
+
+    /**
+     * The pack-format variant executor for one pass (R-17 candidate 2-MIN):
+     * the same shared store, budget and residency gate as the vanilla
+     * executors, drawing the pass' foreign-format records from the pack
+     * arenas. A pass is served by exactly one of the two executor kinds —
+     * its presented format decides at registration time.
+     */
+    TerrainPackEngine packEngineFor(VulkanContext context, TerrainRenderPass pass) {
+        this.context = context;
+        TerrainPackEngine engine = this.packEngines.get(pass);
+        if (engine == null) {
+            engine = new TerrainPackEngine(context, ordinalFor(pass),
+                    "pack-" + ordinalFor(pass), this.store, this.budget, this.residencyGate, this);
+            this.packEngines.put(pass, engine);
+        }
+        return engine;
+    }
+
+    /** The pack executor already serving a pass, or null when none was created. */
+    TerrainPackEngine packEngineIfPresent(TerrainRenderPass pass) {
+        return this.packEngines.get(pass);
+    }
+
+    /**
+     * The GPU buffer of one pack slab (keyed by desc slab id), created lazily
+     * at its arena's slab size. The pack engines upload through its mapping
+     * and bind it as the vertex buffer; the host owns it and deletes it after
+     * every engine.
+     */
+    VulkanHostBuffer packArenaBuffer(VulkanContext context, int descSlabId) {
+        VulkanHostBuffer buffer = this.packArenaBuffers.get(descSlabId);
+        if (buffer == null) {
+            TerrainSectionStore.PackArena arena = this.store.packArenaOfSlab(descSlabId);
+            if (arena == null) {
+                throw new IllegalStateException("no pack arena for desc slab " + descSlabId);
+            }
+            buffer = new VulkanHostBuffer(context, arena.slabBytes(),
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            this.packArenaBuffers.put(descSlabId, buffer);
+        }
+        return buffer;
     }
 
     /**
@@ -353,10 +398,15 @@ final class TerrainEngineAHost {
         if (ordinal == null) {
             return;
         }
+        TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
+        TerrainPackEngine packEngine = this.packEngines.get(pass);
+        if (packEngine != null) {
+            packEngine.updateSorted(key, indices, releaseStamp());
+            return;
+        }
         TerrainEngineA engine = this.engines.get(pass);
         if (engine != null) {
-            engine.updateSorted(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
-                    indices, releaseStamp());
+            engine.updateSorted(key, indices, releaseStamp());
         }
     }
 
@@ -375,6 +425,10 @@ final class TerrainEngineAHost {
             engine.delete();
         }
         this.engines.clear();
+        for (TerrainPackEngine engine : this.packEngines.values()) {
+            engine.delete();
+        }
+        this.packEngines.clear();
         // The shared resident buffers (R-15) are read by every pass' draws and
         // cull dispatches until the engines are gone, so they go here too, with
         // the other shared resources, after every engine.
@@ -394,6 +448,12 @@ final class TerrainEngineAHost {
             this.sortedBuffer.delete();
             this.sortedBuffer = null;
         }
+        // After every engine: the pack arena buffers are the pack engines'
+        // vertex buffers, so they are freed once no pack engine can bind them.
+        for (VulkanHostBuffer buffer : this.packArenaBuffers.values()) {
+            buffer.delete();
+        }
+        this.packArenaBuffers.clear();
         // After every engine: the shared allocator's slabs are the engines' slab
         // buffers' memory, so they are freed last (its delete is teardown,
         // freeing live slabs outright), and the shared index buffer is read by
