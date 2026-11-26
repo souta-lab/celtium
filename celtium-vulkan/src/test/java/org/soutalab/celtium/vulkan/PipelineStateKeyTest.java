@@ -60,10 +60,35 @@ class PipelineStateKeyTest {
         assertEquals(key.value(), PipelineStateKey.of(state, 42).value());
     }
 
+    /**
+     * The pre-stage-7 {@code *31} mix of {@link VulkanGlState#pipelineKey(int)}, replicated
+     * from the accessors it read so the equivalence below stays pinned after the switch:
+     * the packed key must never merge two states the shipped mix told apart.
+     */
+    private static long legacyMixKey(VulkanGlState state, int vertexFormatHash) {
+        long key = vertexFormatHash;
+        boolean blend = state.blendEnabled();
+        key = (key * 31) + (blend ? 1 : 0);
+        key = (key * 31) + (blend ? state.blendSrcRgb() : 0);
+        key = (key * 31) + (blend ? state.blendDstRgb() : 0);
+        key = (key * 31) + (blend ? state.blendSrcAlpha() : 0);
+        key = (key * 31) + (blend ? state.blendDstAlpha() : 0);
+        key = (key * 31) + (blend ? state.blendEquationRgb() : 0);
+        key = (key * 31) + (blend ? state.blendEquationAlpha() : 0);
+        key = (key * 31) + state.colorMask();
+        key = (key * 31) + (state.depthTestEnabled() ? state.depthFunc() + 1 : 0);
+        key = (key * 31) + (state.depthMask() ? 1 : 0);
+        key = (key * 31) + state.cullState();
+        key = (key * 31) + (state.alphaTestEnabled() ? state.alphaFunc() + 1 : 0);
+        key = (key * 31) + (state.lightingEnabled() ? 1 : 0);
+        key = (key * 31) + state.shadeModel();
+        return key;
+    }
+
     @Test
     void equalityMatchesPipelineKeyAcrossRecordedStates() {
         // A recorded corpus of state scripts, each producing a state the pipeline key must
-        // tell apart from every other. The corpus premise - the old mix hash also tells
+        // tell apart from every other. The corpus premise - the legacy mix hash also tells
         // them all apart - is asserted as part of the test, so the equivalence below is a
         // measured fact about this corpus, not an assumption about hashes in general.
         List<Consumer<VulkanGlState>> scripts = new ArrayList<>();
@@ -121,8 +146,10 @@ class PipelineStateKeyTest {
         for (int i = 0; i < n; i++) {
             VulkanGlState state = fresh();
             scripts.get(i).accept(state);
-            mixed[i] = state.pipelineKey(42);
+            mixed[i] = legacyMixKey(state, 42);
             packed[i] = PipelineStateKey.of(state, 42).value();
+            assertEquals(packed[i], state.pipelineKey(42),
+                    "pipelineKey itself is the packed key after the stage-7 switch");
         }
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
@@ -135,7 +162,7 @@ class PipelineStateKeyTest {
         for (int i = 0; i < n; i++) {
             VulkanGlState state = fresh();
             scripts.get(i).accept(state);
-            assertEquals(mixed[i], state.pipelineKey(42));
+            assertEquals(mixed[i], legacyMixKey(state, 42));
             assertEquals(packed[i], PipelineStateKey.of(state, 42).value());
         }
     }

@@ -1108,28 +1108,16 @@ public final class VulkanGlState {
      * Blend factors, depth state, culling, alpha test, lighting and the shade model all bake into the pipeline
      * object, while matrices, colour and texture bindings do not (they are push constants and descriptors), so they
      * are deliberately left out of the key.
+     * <p>
+     * Stage 5 stage 7 (S5-5): the encoding is {@link PipelineStateKey}'s packed form, not the
+     * {@code *31} mix this method used to run. The mix discriminated the same fields and
+     * decoded none of them; the packing discriminates them exactly in its low 48 bits and
+     * folds the format hash above, under the same erasure rules (a disabled blend or test
+     * contributes nothing). BH-07, BH-10: the equations and the colour write mask bake into
+     * the same attachment and must therefore close a pipeline the way the factors do.
      */
     public long pipelineKey(int vertexFormatHash) {
-        long key = vertexFormatHash;
-        boolean blend = this.raster.blendEnabled();
-        key = (key * 31) + (blend ? 1 : 0);
-        key = (key * 31) + (blend ? this.raster.blendSrcRgb() : 0);
-        key = (key * 31) + (blend ? this.raster.blendDstRgb() : 0);
-        key = (key * 31) + (blend ? this.raster.blendSrcAlpha() : 0);
-        key = (key * 31) + (blend ? this.raster.blendDstAlpha() : 0);
-        // BH-07, BH-10: the equations and the colour write mask bake into the same attachment and must therefore
-        // close a pipeline the way the factors do. Before this they were not in the mirror at all, so the Fancy
-        // cloud's depth-only pass and the visible pass shared one pipeline and the first pass painted colour.
-        key = (key * 31) + (blend ? this.raster.blendEquationRgb() : 0);
-        key = (key * 31) + (blend ? this.raster.blendEquationAlpha() : 0);
-        key = (key * 31) + this.raster.colorMask();
-        key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
-        key = (key * 31) + (this.depthMask ? 1 : 0);
-        key = (key * 31) + this.cullState();
-        key = (key * 31) + (this.alphaTestEnabled ? this.alphaFunc + 1 : 0);
-        key = (key * 31) + (this.lightingEnabled ? 1 : 0);
-        key = (key * 31) + this.shadeModel;
-        return key;
+        return PipelineStateKey.of(this, vertexFormatHash).value();
     }
 
     /** {@return a one-line description of the state that affects pipeline selection}, for diagnostics */
