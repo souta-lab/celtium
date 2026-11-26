@@ -60,7 +60,7 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * Slot count follows {@link FrameSubmissionScheduler#FRAME_SLOTS}: ring slot {@code s} serves the frame recorded
  * into frame slot {@code s}, and comes round again exactly when that frame slot does.
  */
-public final class FrameLinearRing {
+public final class FrameLinearRing implements FrameLinearRingAccess {
     /** Default bytes per slot, from {@code celtium.vulkan.frameRingSlotMiB} (clamped to 16..32, default 32). */
     public static final long DEFAULT_SLOT_BYTES =
             (long) clampSlotMiB(Integer.getInteger("celtium.vulkan.frameRingSlotMiB", 32).intValue()) << 20;
@@ -124,11 +124,13 @@ public final class FrameLinearRing {
     }
 
     /** {@return how many slots the ring holds} - the frame-slot count it was built against. */
+    @Override
     public int slots() {
         return this.buffers.length;
     }
 
     /** {@return the fixed capacity of one slot in bytes}. */
+    @Override
     public long slotCapacity(int slot) {
         requireSlot(slot);
         return this.allocators[slot].capacity();
@@ -140,6 +142,7 @@ public final class FrameLinearRing {
      * @return the slice's offset from the slot buffer's base, or {@code -1} when the slice does not fit in what
      *         remains of the slot - the caller then falls back, because the ring never grows and never waits
      */
+    @Override
     public long alloc(int slot, long size, long alignment) {
         requireSlot(slot);
         if (this.deleted) {
@@ -155,6 +158,7 @@ public final class FrameLinearRing {
     }
 
     /** {@return the mapped host address of {@code slot}'s base plus {@code offset}}. */
+    @Override
     public long mappedAddress(int slot, long offset) {
         requireSlot(slot);
         if (this.mapped[slot] == 0L) {
@@ -164,6 +168,7 @@ public final class FrameLinearRing {
     }
 
     /** {@return the bytes handed out of {@code slot} since its last applied reset}, including alignment padding. */
+    @Override
     public long used(int slot) {
         requireSlot(slot);
         return this.allocators[slot].used();

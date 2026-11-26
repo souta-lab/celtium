@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan.batch;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.VulkanContext;
 import org.soutalab.celtium.vulkan.hal.FrameLinearRing;
+import org.soutalab.celtium.vulkan.hal.FrameLinearRingAccess;
 
 import java.nio.ByteBuffer;
 
@@ -11,13 +12,18 @@ import java.nio.ByteBuffer;
  * (design NEON-S5-GLSM-SLICING section 4 - the ring's one implementation is the Stage 2 linear
  * ring; this adapter is the only place the batch package touches it).
  *
+ * <p>The adapter depends only on the narrow {@link FrameLinearRingAccess} surface of the ring
+ * (ringmap section 7 item 2, decided as option (a) at the Stage 5 stage 1 intake), so this
+ * translation is fixed by unit tests over a fake ring; production passes the context's
+ * {@link FrameLinearRing}, which implements that surface.
+ *
  * <p>Translation, nothing more:
  * <ul>
- *   <li>{@link #allocate} delegates to {@link FrameLinearRing#alloc} on the adapter's current
+ *   <li>{@link #allocate} delegates to {@link FrameLinearRingAccess#alloc} on the adapter's current
  *   slot and returns its slot-relative offset unchanged - the two contracts state the same
  *   offset basis, so no arithmetic happens here.</li>
  *   <li>{@link #write} copies into the slot's persistently mapped memory at
- *   {@link FrameLinearRing#mappedAddress}. The source must be a direct buffer (the capture
+ *   {@link FrameLinearRingAccess#mappedAddress}. The source must be a direct buffer (the capture
  *   path's vertex data always is; the ring is raw host memory and there is no heap staging
  *   copy), and the source's position is not advanced.</li>
  *   <li>{@link #advanceFrame} rotates only the adapter's own slot counter. It never calls the
@@ -46,10 +52,10 @@ import java.nio.ByteBuffer;
  */
 public final class FrameLinearStagingRingAdapter implements StagingRing {
 
-    private final FrameLinearRing ring;
+    private final FrameLinearRingAccess ring;
     private int currentSlot;
 
-    public FrameLinearStagingRingAdapter(FrameLinearRing ring) {
+    public FrameLinearStagingRingAdapter(FrameLinearRingAccess ring) {
         if (ring == null) {
             throw new IllegalArgumentException("ring must not be null");
         }
