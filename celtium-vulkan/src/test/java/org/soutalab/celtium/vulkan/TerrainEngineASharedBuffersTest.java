@@ -18,7 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and the factor and sorted arenas (32 MiB each per pass, holding only that pass'
  * slice of the store's single cross-pass offset spaces). All four now live on the
  * host, created lazily at the same first touches, written at the store's own offsets,
- * and deleted only after every engine. The device-bound halves cannot run on a
+ * and deleted only after every engine. The one desc upload is additionally keyed to
+ * the frame: it runs at most once per frame, at the frame's first pass head, so a
+ * store image that moves mid-frame never splits the frame's passes across two
+ * images — the gate deciding that is a pure function and is driven directly below.
+ * The device-bound halves cannot run on a
  * CPU-only instance, so the ownership shape is pinned at the source layer, the shape
  * {@code HostBufferGrowthRetentionTest} and {@code FrameTargetSlabHousingTest}
  * established.
@@ -29,6 +33,8 @@ class TerrainEngineASharedBuffersTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java";
     private static final String ENGINE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineA.java";
+    private static final String BACKEND =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
 
     @Test
     void theFourResidentBuffersAreHostFieldsNotEngineFields() throws IOException {
@@ -98,6 +104,32 @@ class TerrainEngineASharedBuffersTest {
             assertFalse(engine.contains(bufferDelete),
                     "no engine frees a shared buffer while a sibling pass still draws");
         }
+    }
+
+    @Test
+    void descUploadIsDueAtCreationAndNotWithoutAMove() {
+        assertTrue(TerrainEngineAHost.descUploadDue(false, 0L, -1L, Long.MIN_VALUE, Long.MIN_VALUE),
+                "no buffer yet: the first touch creates and uploads");
+        assertFalse(TerrainEngineAHost.descUploadDue(true, 5L, 5L, 7L, 3L),
+                "the store image has not moved: nothing to upload");
+    }
+
+    @Test
+    void descUploadRunsAtMostOncePerFrame() {
+        assertTrue(TerrainEngineAHost.descUploadDue(true, 6L, 5L, 7L, 3L),
+                "the image moved and this frame has not uploaded yet: upload at its head");
+        assertFalse(TerrainEngineAHost.descUploadDue(true, 6L, 5L, 7L, 7L),
+                "the image moved again after this frame's upload: the frame keeps its image");
+        assertTrue(TerrainEngineAHost.descUploadDue(true, 7L, 6L, 8L, 7L),
+                "the next frame uploads the moved image at its head");
+    }
+
+    @Test
+    void theBackendStampsTheFrameOnTheHostAtThePassHead() throws IOException {
+        assertTrue(read(BACKEND).contains("host.noteTierAFrameHead(this.frameId);"),
+                "the pass head stamps the backend's frame id on the host");
+        assertTrue(read(HOST).contains("void noteTierAFrameHead(long frameKey)"),
+                "the host carries the frame stamp the upload keys on");
     }
 
     private static String read(String repoRelative) throws IOException {
