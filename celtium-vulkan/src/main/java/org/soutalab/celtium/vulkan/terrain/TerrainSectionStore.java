@@ -97,13 +97,17 @@ public final class TerrainSectionStore {
         }
     }
 
-    private final TerrainSlabAllocator geometryAllocator =
+    // Not final: resetForNewEpoch() replaces each ledger wholesale with a fresh
+    // instance, deferred-release backlog included (T3 design section 5.2). Every
+    // reader reaches the ledgers through the accessors below, never a cached
+    // instance, so the swap is the whole of the change.
+    private TerrainSlabAllocator geometryAllocator =
             new TerrainSlabAllocator(TerrainSlabAllocator.DEFAULT_SLAB_BYTES, TerrainSlabAllocator.DEFAULT_MAX_SLABS);
-    private final TerrainSlabAllocator quadSpaceAllocator =
+    private TerrainSlabAllocator quadSpaceAllocator =
             new TerrainSlabAllocator(MAX_QUADS_PER_SLAB, TerrainSlabAllocator.DEFAULT_MAX_SLABS, 4096);
-    private final TerrainSlabAllocator factorAllocator =
+    private TerrainSlabAllocator factorAllocator =
             new TerrainSlabAllocator(FACTOR_ARENA_BYTES, 1);
-    private final TerrainSlabAllocator sortedAllocator =
+    private TerrainSlabAllocator sortedAllocator =
             new TerrainSlabAllocator(SORTED_ARENA_BYTES, 1);
 
     /**
@@ -146,8 +150,10 @@ public final class TerrainSectionStore {
         }
     }
 
-    private final java.util.Map<Integer, PackArena> packArenasByStride = new HashMap<>();
-    private final List<PackArena> packArenas = new ArrayList<>();
+    // Not final for the same reason as the ledgers above: the epoch reset drops
+    // the arenas (and the allocators inside them) by replacing the collections.
+    private java.util.Map<Integer, PackArena> packArenasByStride = new HashMap<>();
+    private List<PackArena> packArenas = new ArrayList<>();
 
     private final List<Registration> records = new ArrayList<>();
     private final HashMap<Key, Registration> byKey = new HashMap<>();
@@ -561,6 +567,45 @@ public final class TerrainSectionStore {
             arena.geometry.collectReleased(completedTimeline);
             arena.quadSpace.collectReleased(completedTimeline);
         }
+    }
+
+    /**
+     * Ends the world epoch in this store (T3 design section 5.2, the paired
+     * reset's store step): every record is removed, every unpublished
+     * allocation is dropped, and each ledger - the four arenas and every pack
+     * arena - is replaced wholesale with a fresh instance, so the deferred
+     * releases still queued against the old world's completion currency die
+     * with the ledger that held them instead of being collected into a world
+     * that never recorded them. The desc and factor-base images return to
+     * their initial empty state and the image generation restarts with the
+     * epoch. Immediate reuse of the old ranges is sound only because the
+     * caller (the host's delete) has already verified quiescence and
+     * completion: nothing the GPU can still read is named by the state
+     * dropped here.
+     * <p>
+     * Integration joint: the pending-retirements list (slice S2) is cleared
+     * at this same seat when the slices integrate - it does not exist on the
+     * tree this reset was written against, and {@code pendingRetirementCount()
+     * == 0} after a reset is part of the same invariant (INV-4b).
+     */
+    public synchronized void resetForNewEpoch() {
+        this.records.clear();
+        this.byKey.clear();
+        this.pendingKeys.clear();
+        this.geometryAllocator =
+                new TerrainSlabAllocator(TerrainSlabAllocator.DEFAULT_SLAB_BYTES, TerrainSlabAllocator.DEFAULT_MAX_SLABS);
+        this.quadSpaceAllocator =
+                new TerrainSlabAllocator(MAX_QUADS_PER_SLAB, TerrainSlabAllocator.DEFAULT_MAX_SLABS, 4096);
+        this.factorAllocator =
+                new TerrainSlabAllocator(FACTOR_ARENA_BYTES, 1);
+        this.sortedAllocator =
+                new TerrainSlabAllocator(SORTED_ARENA_BYTES, 1);
+        this.packArenasByStride = new HashMap<>();
+        this.packArenas = new ArrayList<>();
+        this.descImage = new int[0];
+        this.factorBaseImage = new int[0];
+        this.imageDirty = true;
+        this.imageGeneration = 0;
     }
 
     public synchronized Registration get(Key key) {

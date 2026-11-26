@@ -77,6 +77,19 @@ final class TerrainEngineAHost {
     private final Map<TerrainRenderPass, TerrainPackEngine> packEngines = new IdentityHashMap<>();
     private final java.util.Map<Integer, VulkanHostBuffer> packArenaBuffers = new java.util.HashMap<>();
     private long generation;
+    /**
+     * The world epoch this host's state belongs to (T3 design section 5.2):
+     * advanced by every successful paired reset in {@link #delete}, and
+     * stamped into each executor at creation, so an executor of a dead epoch
+     * can be told apart from the live ones and refuse to run.
+     */
+    private long worldEpoch;
+    /**
+     * Whether the current epoch has already been torn down by {@link #delete}:
+     * a repeated delete is then a no-op, and the flag clears when the next
+     * epoch's first executor is created.
+     */
+    private boolean worldTornDown;
     private VulkanContext context;
     private SlabAllocator geometrySlabAllocator;
     private VulkanHostBuffer sharedIndexBuffer;
@@ -104,6 +117,11 @@ final class TerrainEngineAHost {
 
     TerrainResidencyGate residencyGate() {
         return this.residencyGate;
+    }
+
+    /** The world epoch the executors created now belong to; see {@link #delete}. */
+    long worldEpoch() {
+        return this.worldEpoch;
     }
 
     /**
@@ -167,6 +185,7 @@ final class TerrainEngineAHost {
             engine = new TerrainEngineA(context, ordinalFor(pass),
                     "pass-" + ordinalFor(pass), this.store, this.budget, this.residencyGate, this);
             this.engines.put(pass, engine);
+            this.worldTornDown = false;
         }
         return engine;
     }
@@ -211,6 +230,7 @@ final class TerrainEngineAHost {
             engine = new TerrainPackEngine(context, ordinalFor(pass),
                     "pack-" + ordinalFor(pass), this.store, this.budget, this.residencyGate, this);
             this.packEngines.put(pass, engine);
+            this.worldTornDown = false;
         }
         return engine;
     }
@@ -520,7 +540,39 @@ final class TerrainEngineAHost {
         }
     }
 
-    void delete(VulkanContext context) {
+    /**
+     * Ends the current world epoch: the paired reset of T3 design section
+     * 5.2, behind the quiescence + completion gate. The gate is verified
+     * here, at the host's own door, not trusted to the caller: no recording
+     * may be open, no recorded-but-unsubmitted batch may be queued, and
+     * every submission must be confirmed complete. Unless all three hold,
+     * nothing is destroyed and {@code false} is returned - a half-torn epoch
+     * is never left for the next world to adopt (INV-4a); the caller settles
+     * the device (finish, flush, wait - the backend's settle, M4) and calls
+     * again. When the gate holds, the reset runs its five steps in order and
+     * the post-state is total (INV-4b): no records, no live ledger bytes, no
+     * pending retirements, every shared buffer - superseded handles included
+     * - destroyed, the geometry slab allocator gone. A repeated call after a
+     * successful reset is a harmless no-op returning {@code true}.
+     *
+     * @return whether the epoch now stands torn down
+     */
+    boolean delete(VulkanContext context) {
+        if (this.worldTornDown) {
+            return true;
+        }
+        boolean recordingOpen = context.celtium$recordingOpen();
+        boolean pendingBatchedSubmits = context.celtium$hasPendingBatchedSubmits();
+        boolean submissionCompleted = context.celtium$isSubmissionCompleted();
+        if (recordingOpen || pendingBatchedSubmits || !submissionCompleted) {
+            System.out.println("[Celtium] CELTIUM_TERRAIN_A_DELETE_REFUSED epoch=" + this.worldEpoch
+                    + " recordingOpen=" + recordingOpen
+                    + " pendingBatchedSubmits=" + pendingBatchedSubmits
+                    + " submissionCompleted=" + submissionCompleted);
+            return false;
+        }
+        // Step 1: every executor, vanilla and pack. Each frees the payload
+        // copies its own deferred FIFO owns (condition (3)'s ownership).
         for (TerrainEngineA engine : this.engines.values()) {
             engine.delete();
         }
@@ -529,9 +581,27 @@ final class TerrainEngineAHost {
             engine.delete();
         }
         this.packEngines.clear();
-        // The shared resident buffers (R-15) are read by every pass' draws and
-        // cull dispatches until the engines are gone, so they go here too, with
-        // the other shared resources, after every engine.
+        // Step 2: the store's paired reset - records, unpublished allocations
+        // and every ledger leave with the epoch, in one wholesale replacement.
+        this.store.resetForNewEpoch();
+        // Step 3: the host's accompanying state, and the epoch advance itself.
+        this.residencyGate.reset();
+        this.taintedPassOrdinals.clear();
+        this.ordinals.clear();
+        this.budget.reset();
+        this.uploadedDescGeneration = -1;
+        this.descFrameKey = Long.MIN_VALUE;
+        this.descUploadedFrameKey = Long.MIN_VALUE;
+        this.worldEpoch++;
+        // Step 4: the shared VkBuffers. The shared resident buffers (R-15) are
+        // read by every pass' draws and cull dispatches until the engines are
+        // gone, so they go here, after every engine; a host buffer's delete
+        // destroys its retained superseded handles with it, which is the whole
+        // set the retention kept alive for this moment. (Integration joint:
+        // slice S1 turns the desc and factor-base buffers into per-slot
+        // arrays; their destruction loop is adapted at this same seat when
+        // the slices integrate, and nothing else in the reset changes.)
+        int retiredSlabBefore = context.celtium$retiredSlabBufferCount();
         if (this.descBuffer != null) {
             this.descBuffer.delete();
             this.descBuffer = null;
@@ -554,17 +624,30 @@ final class TerrainEngineAHost {
             buffer.delete();
         }
         this.packArenaBuffers.clear();
-        // After every engine: the shared allocator's slabs are the engines' slab
-        // buffers' memory, so they are freed last (its delete is teardown,
-        // freeing live slabs outright), and the shared index buffer is read by
-        // every pass' draws until the engines are gone.
+        // The shared index buffer is read by every pass' draws until the
+        // engines are gone, so it goes with the other shared resources.
         if (this.sharedIndexBuffer != null) {
             this.sharedIndexBuffer.delete();
             this.sharedIndexBuffer = null;
         }
+        // Step 5, last: the shared allocator's slabs are the engines' slab
+        // buffers' memory, so they are freed after every buffer that sub-
+        // allocates from them (its delete is teardown, freeing live slabs
+        // outright). The gate above is what keeps step 4's deletes from
+        // escaping into the context's retire list through a host buffer's
+        // recording-open branch; a retire here would mean the gate itself is
+        // broken, so it is recorded as one (T3 design section 5.2).
         if (this.geometrySlabAllocator != null) {
             this.geometrySlabAllocator.delete();
             this.geometrySlabAllocator = null;
         }
+        int retiredSlabAfter = context.celtium$retiredSlabBufferCount();
+        if (retiredSlabAfter > retiredSlabBefore) {
+            System.out.println("[Celtium] CELTIUM_TERRAIN_A_GATE_VIOLATION epoch=" + (this.worldEpoch - 1)
+                    + " retiredSlabBuffers " + retiredSlabBefore + " -> " + retiredSlabAfter
+                    + ": a shared buffer escaped into the retire list during a gate-passed delete");
+        }
+        this.worldTornDown = true;
+        return true;
     }
 }

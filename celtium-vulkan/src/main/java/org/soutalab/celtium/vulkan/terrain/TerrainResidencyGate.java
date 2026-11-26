@@ -71,6 +71,20 @@ public final class TerrainResidencyGate {
     private final Set<TerrainSectionStore.Key> headOfLine = new HashSet<>();
     private final EnumMap<Reason, Long> counters = new EnumMap<>(Reason.class);
 
+    /**
+     * Forgets every expectation, miss, head-of-line block and counter: the
+     * epoch boundary of the paired reset (T3 design section 5.2). The old
+     * world's expectations must not leak into the next world's verification -
+     * a section the new world never offered would otherwise count as missing
+     * forever, and a stale miss would keep its pass tainted.
+     */
+    public synchronized void reset() {
+        this.missing.clear();
+        this.expected.clear();
+        this.headOfLine.clear();
+        this.counters.clear();
+    }
+
     /** Records that the renderer attempted to place this section in Tier-A. */
     public synchronized void expect(TerrainSectionStore.Key key) {
         this.expected.add(key);

@@ -17858,8 +17858,51 @@ this.frameBufferOpen = false;
      * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
      * about a world, because the frame target survives one.
      */
+    /**
+     * The quiescence half of the terrain teardown gate (T3 design section
+     * 5.2): nothing is being recorded, nothing recorded is still queued
+     * unsubmitted, and every submission is confirmed complete. Destruction
+     * below - the terrain host's paired reset above all - is sound only
+     * under all three.
+     */
+    private boolean celtium$terrainQuiescent() {
+        return !this.context.celtium$recordingOpen()
+                && !this.context.celtium$hasPendingBatchedSubmits()
+                && this.context.celtium$isSubmissionCompleted();
+    }
+
     @Override
     public void celtium$releaseWorldResources() {
+        // The gate at the door (T3 design section 5.2, review M4): this
+        // teardown destroys what in-flight work may still name, so it first
+        // composes quiescence + completion from the context. The caller's own
+        // settle normally leaves the stream closed already; when it does not,
+        // one settle is attempted here - settleGpu finishes any open frame
+        // buffer and flushes the queued batches before it waits (M4), and
+        // settleDeferredSubmits then observes the fences the wait confirmed,
+        // which is what the completion half reads on a fence-path device.
+        // Still not quiescent after that, nothing destructive runs: the
+        // per-world arming state is detached and the method returns, leaving
+        // the resources for the device teardown that follows - a leak on a
+        // stalled device, never a destroy under the GPU.
+        if (!celtium$terrainQuiescent()) {
+            // Only a settle that actually confirmed the device idle earns the
+            // fence observation; on a stalled or lost device the refusal
+            // below is the whole answer, exactly as in delete()'s own head.
+            if (settleGpu("world teardown")) {
+                this.context.celtium$settleDeferredSubmits();
+            }
+        }
+        if (!celtium$terrainQuiescent()) {
+            record("world teardown refused: the submission stream is not quiescent (recordingOpen="
+                    + this.context.celtium$recordingOpen()
+                    + " pendingBatchedSubmits=" + this.context.celtium$hasPendingBatchedSubmits()
+                    + " submissionCompleted=" + this.context.celtium$isSubmissionCompleted()
+                    + "); world resources are detached, not destroyed");
+            this.terrainAArmedEngines.clear();
+            this.terrainAArmedFrame = -1L;
+            return;
+        }
         // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
         // wrong world's region storage.
         if (!this.deferredUploads.isEmpty()) {
@@ -17929,6 +17972,13 @@ this.frameBufferOpen = false;
             this.terrain.terrainAHost().delete(this.context);
         }
         this.terrainAArmedEngines.clear();
+        // The armed cache's frame stamp belongs to the dead world too: reset
+        // with the cache, so the next world's first frame re-arms from a
+        // clean stamp instead of comparing against a dead frame id. (The
+        // recording epoch the sharing design keeps beside it is slice S1's
+        // field; its reset joins at this same seat when the slices
+        // integrate.)
+        this.terrainAArmedFrame = -1L;
         for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
@@ -25697,6 +25747,17 @@ this.frameBufferOpen = false;
             record("not releasing resources after a stall: " + reason);
             return false;
         }
+        // Close the submission stream before the wait (T3 review M4): a frame
+        // buffer still open or a batch still queued has not been submitted, so
+        // waiting on the device alone would confirm nothing about it - and a
+        // teardown gate composed of "no recording, nothing queued, everything
+        // confirmed" could pass over work that was never sent. Finishing and
+        // flushing here makes the wait below cover everything recorded so
+        // far, which is what the gate's completion half then reads.
+        if (this.context.celtium$recordingOpen()) {
+            celtium$finishFrameBuffer();
+        }
+        this.context.celtium$flushBatchedSubmits();
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         synchronized (this.deviceWaitLock) {

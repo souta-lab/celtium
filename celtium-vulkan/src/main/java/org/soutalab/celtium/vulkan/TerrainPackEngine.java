@@ -61,6 +61,14 @@ final class TerrainPackEngine {
     private final TerrainUploadBudget budget;
     private final TerrainResidencyGate residencyGate;
     private final TerrainEngineAHost host;
+    /**
+     * The world epoch this executor was created in, stamped from the host at
+     * construction (T3 design section 5.2): once the host's paired reset
+     * advances the epoch, this executor belongs to a dead world and its entry
+     * points refuse to run (INV-4c) - a defensive backstop, since the reset
+     * also removes the executor from every reachable map.
+     */
+    private final long worldEpoch;
     private volatile TerrainResidencyGate.Report lastResidencyReport;
     private long setLayout;
     private long pipelineLayout;
@@ -104,6 +112,7 @@ final class TerrainPackEngine {
         this.budget = budget;
         this.residencyGate = residencyGate;
         this.host = host;
+        this.worldEpoch = host.worldEpoch();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -154,6 +163,12 @@ final class TerrainPackEngine {
      *         ineligible, an arena is exhausted, or admission was deferred
      */
     TerrainSectionStore.Registration register(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        // Epoch guard first (INV-4c): an executor of a dead epoch refuses
+        // before any side effect - no residency expectation, no deferred
+        // queue entry, no store touch.
+        if (this.worldEpoch != this.host.worldEpoch()) {
+            return null;
+        }
         if (this.disabled) {
             return null;
         }
@@ -280,6 +295,11 @@ final class TerrainPackEngine {
      */
     boolean prepareFrame(VkCommandBuffer commandBuffer, int slotIndex, float[] viewProjection,
                          double cameraX, double cameraY, double cameraZ) {
+        // Epoch guard (INV-4c), as in register: a dead epoch's executor
+        // prepares nothing.
+        if (this.worldEpoch != this.host.worldEpoch()) {
+            return false;
+        }
         if (this.disabled) {
             return false;
         }
