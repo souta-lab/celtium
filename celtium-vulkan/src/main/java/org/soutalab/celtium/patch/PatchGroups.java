@@ -210,6 +210,10 @@ public final class PatchGroups {
               "core.TexturedQuadMixin",
               "features.render.MultipartBakedModelMixin"
         );
+        group("leaf_culling", "leaf culling", false,
+              "leaf face suppression stops and leaf faces return to vanilla's answers everywhere; the fast renderer's material swap for surrounded leaves is not a mixin and still runs, so surrounded leaves still render opaque but their hidden faces are built again",
+              "core.terrain.BlockLeavesMixin"
+        );
         group("entities", "entities", true,
               "range limiting, the light cache and some TESRs return to the vanilla path; the design marks this group as still to be audited, so it stays essential until that read is done",
               "core.EntityItemRangeMixin",

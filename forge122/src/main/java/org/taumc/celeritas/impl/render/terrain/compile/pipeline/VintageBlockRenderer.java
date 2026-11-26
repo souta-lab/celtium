@@ -148,6 +148,19 @@ public class VintageBlockRenderer {
         var material = buffers.getRenderPassConfiguration().getMaterialForRenderType(layer);
         var buffer = buffers.get(material);
 
+        // III-1 (native leaf culling): a surrounded leaf in a SOLID mode emits its quads into
+        // the SOLID layer's material instead of the leaves material. The decision is taken
+        // once per block here, after the current state is fixed and before either
+        // renderQuadList call site; both sites inherit the swap through the locals they
+        // already receive. The swap - and only the swap - is suppressed while a shader pack
+        // is in use; face suppression (the BlockLeaves mixin) does not consult shader state.
+        if (LeafCulling.shouldSolidify(state, blockAccess, pos,
+                CeleritasVintage.options().quality.leafCullingMode, LeafCulling.shaderPackInUse())) {
+            material = buffers.getRenderPassConfiguration().getMaterialForRenderType(BlockRenderLayer.SOLID);
+            buffer = buffers.get(material);
+            LeafCullingCensus.recordSolidifiedBlock();
+        }
+
         long rand = MathHelper.getPositionRandom(pos);
 
         IBlockColor colorProvider = this.blockColors.get(state.getBlock().delegate);

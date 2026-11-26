@@ -128,6 +128,18 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
          */
         public GraphicsQuality leavesQuality = GraphicsQuality.DEFAULT;
 
+        /**
+         * Celtium's native leaf culling (III-1, absorbed from the Leaf Culling addon as a
+         * behaviour rather than a connection surface). Consumed at chunk-build time by the
+         * leaf face-suppression mixin on {@code BlockLeaves.shouldSideBeRendered} and by the
+         * fast block renderer's material swap; the predicates themselves live in the build
+         * pipeline and receive this value as an argument. The default is SOLID - the absorbed
+         * addon's own default, and the mode whose visible change is smallest (a fully
+         * surrounded leaf renders opaque with its own texture; silhouettes do not change).
+         * NONE disables both mechanisms completely and is the kill switch.
+         */
+        public LeafCullingMode leafCullingMode = LeafCullingMode.SOLID;
+
         public boolean enableVignette = true;
 
         @SerializedName("use_quad_normals_for_shading_v2")
@@ -175,6 +187,30 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
 
         public boolean isFancy(boolean fancyGraphics) {
             return (this == FANCY) || (this == DEFAULT && fancyGraphics);
+        }
+    }
+
+    /**
+     * The leaf-culling modes of the native III-1 implementation, in the absorbed addon's
+     * vocabulary: NONE turns both mechanisms off; HOLLOW culls leaf faces that face two or
+     * more consecutive leaves; SOLID_AGGRESSIVE renders a leaf as opaque when it is blocked
+     * on the four horizontal sides; SOLID requires all six sides to be blocked.
+     */
+    public enum LeafCullingMode implements TextProvider {
+        NONE("celeritas.options.leaf_culling_mode.none"),
+        HOLLOW("celeritas.options.leaf_culling_mode.hollow"),
+        SOLID_AGGRESSIVE("celeritas.options.leaf_culling_mode.solid_aggressive"),
+        SOLID("celeritas.options.leaf_culling_mode.solid");
+
+        private final TextComponent name;
+
+        LeafCullingMode(String name) {
+            this.name = TextComponent.translatable(name);
+        }
+
+        @Override
+        public TextComponent getLocalizedName() {
+            return this.name;
         }
     }
 
