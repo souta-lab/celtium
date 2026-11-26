@@ -110,9 +110,21 @@ public final class TextureUploadService {
         public final Region region;
         public final long sourceAddress;
         public final long byteCount;
+        /**
+         * The image's total mip level count, needed by the submitter only when
+         * {@link #generateMips} is set (the chain's barriers and blits span every level).
+         * 1 for a single-level upload.
+         */
+        public final int imageLevels;
 
         public UploadRequest(long image, int oldLayout, int newLayout, boolean generateMips,
                              Urgency urgency, Region region, long sourceAddress, long byteCount) {
+            this(image, oldLayout, newLayout, generateMips, urgency, region, sourceAddress, byteCount, 1);
+        }
+
+        public UploadRequest(long image, int oldLayout, int newLayout, boolean generateMips,
+                             Urgency urgency, Region region, long sourceAddress, long byteCount,
+                             int imageLevels) {
             if (image == 0L) {
                 throw new IllegalArgumentException("upload image must not be VK_NULL_HANDLE");
             }
@@ -136,6 +148,7 @@ public final class TextureUploadService {
             this.region = region;
             this.sourceAddress = sourceAddress;
             this.byteCount = byteCount;
+            this.imageLevels = Math.max(1, imageLevels);
         }
     }
 
@@ -269,6 +282,19 @@ public final class TextureUploadService {
     }
 
     /**
+     * The owner's deferral gate, consulted by the gated flush for each {@link Urgency#DEFERRABLE}
+     * request at batch-formation time. Returning {@code false} ends batch formation at that
+     * request: the batches already formed in this call still submit, and the refused request and
+     * everything behind it stay queued and are reported as deferred, exactly like the
+     * staging-space deferral. The gate owns its accounting (the upload budget ledger, in the
+     * production wiring); the service only reports.
+     */
+    public interface DeferralGate {
+        /** {@return whether {@code request} may be issued by this flush} */
+        boolean mayIssue(UploadRequest request);
+    }
+
+    /**
      * Retires the staging slices {@code completedValue} has completed, then submits the queue
      * in FIFO batches as far as the reusable space reaches, under the class-level flush policy.
      *
@@ -276,6 +302,15 @@ public final class TextureUploadService {
      * @param submitter      the batch recording/submission seam
      */
     public FlushResult flush(long completedValue, BatchSubmitter submitter) {
+        return flush(completedValue, submitter, null);
+    }
+
+    /**
+     * The gated form of {@link #flush(long, BatchSubmitter)}: {@code gate} (nullable) is asked
+     * about each DEFERRABLE request before its staging slice is allocated; a refusal ends batch
+     * formation for this call without disturbing FIFO order.
+     */
+    public FlushResult flush(long completedValue, BatchSubmitter submitter, DeferralGate gate) {
         if (submitter == null) {
             throw new IllegalArgumentException("batch submitter must not be null");
         }
@@ -290,6 +325,9 @@ public final class TextureUploadService {
             java.util.ArrayList<ResolvedUpload> batch = new java.util.ArrayList<ResolvedUpload>();
             long batchBytes = 0L;
             for (UploadRequest request : this.queue) {
+                if (gate != null && request.urgency == Urgency.DEFERRABLE && !gate.mayIssue(request)) {
+                    break;
+                }
                 long offset = this.pool.allocate(request.byteCount);
                 if (offset < 0L) {
                     break;
