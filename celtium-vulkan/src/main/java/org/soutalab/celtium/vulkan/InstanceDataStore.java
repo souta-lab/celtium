@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.soutalab.celtium.vulkan.hal.FrameLinearRing;
+import org.soutalab.celtium.vulkan.hal.RecordsRing;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -39,16 +40,31 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 /**
  * The unified set 1 every converted window binds (Stage 5 slicing design section 3.2): the draw
  * records at binding 0 and the frame's lightmap sampler at binding 1, one descriptor set per frame
- * slot. Stage 5 stage 3 lands the store in its plan B form, adjudicated in the stage 3 record
- * before implementation: the records live in slices of the stage 2 {@link FrameLinearRing}, so the
- * store owns no buffer object of its own - the +1 BO of the plan A per-slot buffers is the price
- * the BO budget could not pay at B2 = Live 26 with a variable part of 22.
+ * slot. Stage 5 stage 3 landed the store in its plan B form, adjudicated in the stage 3 record
+ * before implementation: the records lived in slices of the stage 2 {@link FrameLinearRing}, so
+ * the store owned no buffer object of its own - the +1 BO of the plan A per-slot buffers was the
+ * price the BO budget could not pay at B2 = Live 26 with a variable part of 22.
  *
- * <p>The store only ever allocates from the ring; it never resets, holds or releases ring slots,
- * because the ring's completion discipline belongs to the frame scheduler alone. A slice stays
- * valid because the ring never reissues a slot's bytes until that slot's frame has completed, and
- * a new selection of the same slot allocates a fresh slice after the previous one rather than
- * reusing it, so slices recorded by earlier windows of the same frame are never overwritten.
+ * <p>The ring records separation (F-4) retires that sharing. The records now live in a dedicated
+ * {@link RecordsRing} - one buffer object for all slots, one fixed region per slot - because the
+ * shared ring made the records the fatal victim of geometry-side exhaustion: a window's slice is
+ * taken in one allocation, so the window the ring could not serve lost every record at once (the
+ * all-or-nothing freeze the bindless verification leg measured), while geometry-side exhaustion
+ * merely promotes and keeps drawing. The budget position that forced plan B no longer holds
+ * (Live 22 against the 24 gate after the BO convergence, D-62), so the separation pays exactly
+ * the one buffer object plan A would have spent several of. Exhaustion of the dedicated pool
+ * degrades the geometry side's way: the store refuses, the caller keeps the direct path, and the
+ * drawing survives. Setting {@code celtium.vulkan.recordsDedicatedPool=false} restores the
+ * shared-ring source, which remains a supported configuration and the separation's A/B arm.
+ *
+ * <p>The store only ever allocates from its source; it never resets, holds or releases the
+ * shared ring's slots, because that ring's completion discipline belongs to the frame scheduler
+ * alone. A slice stays valid because the ring never reissues a slot's bytes until that slot's
+ * frame has completed, and a new selection of the same slot allocates a fresh slice after the
+ * previous one rather than reusing it, so slices recorded by earlier windows of the same frame
+ * are never overwritten. The dedicated pool follows the same rule at the store's own seat: its
+ * slot region is rewound only at {@link #beginFrame}, where the slot's previous submission is
+ * known complete.
  *
  * <p>Binding 0 is {@code STORAGE_BUFFER_DYNAMIC}, written once per slot against the slot's whole
  * ring buffer; each bind supplies the current slice's offset as the dynamic offset. That is what
@@ -65,8 +81,12 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
  * growth inside a selection allocates a larger slice in the same slot and copies the records
  * written so far - safe because binding happens at the window's flush, after all its records, so
  * the final offset is the one that gets bound - and a failed growth refuses only the record that
- * did not fit. Remembered demand grows with use and never shrinks; a refused selection does not
- * shrink it either, because the ring frees the whole slot at its next completion.
+ * did not fit. Remembered demand grows with use inside a frame and decays at the frame boundary
+ * to the largest window the finished frame actually served (never below the initial ask): the
+ * all-time-high ratchet the bindless leg's diagnosis named is what made one busy phase tax every
+ * later window of the slot, and the boundary is the one seat that knows what the frame needed.
+ * A refused selection does not shrink demand either, because the slot's bytes are freed wholesale
+ * at its next completion.
  */
 final class InstanceDataStore {
 
@@ -86,7 +106,7 @@ final class InstanceDataStore {
     private static final int ARRAY_INDEX_OFFSET = 216;
 
     /**
-     * The ring surface the store carves record slices from; the seam that lets the store be
+     * The slice source the store carves record slices from; the seam that lets the store be
      * tested without a device. The store only allocates through it.
      */
     interface RingSource {
@@ -94,15 +114,32 @@ final class InstanceDataStore {
 
         long slotCapacity(int slot);
 
-        /** {@return the slot-relative offset of a fresh slice, or -1 when it does not fit} */
+        /** {@return the buffer-relative offset of a fresh slice, or -1 when it does not fit} */
         long alloc(int slot, long size, long alignment);
 
         long mappedAddress(int slot, long offset);
 
         long buffer(int slot);
+
+        /** {@return a short name for the source's home, for the diagnostics line} */
+        String kind();
+
+        /** {@return the bytes the source has handed out of {@code slot} since its last rewind} */
+        long usedBytes(int slot);
+
+        /**
+         * Opens {@code slot}'s next frame at the store's frame boundary, where the slot's
+         * previous submission is known complete. The shared ring's source does nothing: that
+         * ring's rewind belongs to the frame scheduler's confirmation tail, not to the store.
+         * The dedicated pool rewinds its slot region here, the one seat its discipline allows.
+         */
+        void beginSlot(int slot);
+
+        /** Releases what the source owns. The shared ring is not the store's to release. */
+        void delete();
     }
 
-    /** The production source: the context's stage 2 frame-linear ring. */
+    /** The A/B arm's source: the context's stage 2 frame-linear ring, shared with the geometry. */
     private static final class FrameLinearRingSource implements RingSource {
         private final FrameLinearRing ring;
 
@@ -133,6 +170,81 @@ final class InstanceDataStore {
         @Override
         public long buffer(int slot) {
             return this.ring.buffer(slot);
+        }
+
+        @Override
+        public String kind() {
+            return "shared";
+        }
+
+        @Override
+        public long usedBytes(int slot) {
+            return this.ring.used(slot);
+        }
+
+        @Override
+        public void beginSlot(int slot) {
+            // The shared ring's rewind is the confirmation tail's, called through the context;
+            // the store must not rewind a slot whose submission may still be reading it.
+        }
+
+        @Override
+        public void delete() {
+            // The ring and its buffers are the context's, not the store's.
+        }
+    }
+
+    /** The production source since the separation: the records' own pool (see {@link RecordsRing}). */
+    private static final class RecordsRingSource implements RingSource {
+        private final RecordsRing pool;
+
+        RecordsRingSource(RecordsRing pool) {
+            this.pool = pool;
+        }
+
+        @Override
+        public int slots() {
+            return this.pool.slots();
+        }
+
+        @Override
+        public long slotCapacity(int slot) {
+            return this.pool.slotCapacity(slot);
+        }
+
+        @Override
+        public long alloc(int slot, long size, long alignment) {
+            return this.pool.alloc(slot, size, alignment);
+        }
+
+        @Override
+        public long mappedAddress(int slot, long offset) {
+            return this.pool.mappedAddress(slot, offset);
+        }
+
+        @Override
+        public long buffer(int slot) {
+            return this.pool.buffer();
+        }
+
+        @Override
+        public String kind() {
+            return "dedicated";
+        }
+
+        @Override
+        public long usedBytes(int slot) {
+            return this.pool.used(slot);
+        }
+
+        @Override
+        public void beginSlot(int slot) {
+            this.pool.beginSlot(slot);
+        }
+
+        @Override
+        public void delete() {
+            this.pool.delete();
         }
     }
 
@@ -165,6 +277,19 @@ final class InstanceDataStore {
     private final int[] pendingLightmapLayouts;
     private int currentSlot;
 
+    /** Selections whose slice did not fit, per slot - the separation's headline counter. */
+    private final long[] selectFailures;
+    /** The largest window (in records) each slot has served in its current frame. */
+    private final int[] servedMaxRecords;
+    /** Records refused because the selection has no slice (a failed selection's fallout). */
+    private long refusalsNoSlice;
+    /** Records refused because the slice could not grow to hold them. */
+    private long refusalsGrow;
+    /** Records refused because the push block was missing or too short. */
+    private long refusalsBlock;
+    /** Records successfully written, over the store's life. */
+    private long recordsWritten;
+
     private VulkanContext context;
     private long descriptorSetLayout = VK_NULL_HANDLE;
     private long descriptorPool = VK_NULL_HANDLE;
@@ -186,6 +311,8 @@ final class InstanceDataStore {
         this.pendingLightmapViews = new long[this.slots];
         this.pendingLightmapSamplers = new long[this.slots];
         this.pendingLightmapLayouts = new int[this.slots];
+        this.selectFailures = new long[this.slots];
+        this.servedMaxRecords = new int[this.slots];
         this.descriptorSets = new long[this.slots];
         for (int slot = 0; slot < this.slots; slot++) {
             this.offsets[slot] = -1L;
@@ -194,16 +321,30 @@ final class InstanceDataStore {
     }
 
     /**
-     * Builds the production store over the context's frame-linear ring, with one descriptor set
-     * per ring slot.
+     * Builds the production store over the records' slice source, with one descriptor set
+     * per slot. The default source is the dedicated pool (the ring records separation, F-4);
+     * {@code celtium.vulkan.recordsDedicatedPool=false} selects the shared frame ring instead -
+     * the A/B arm, and the fallback when the pool's one buffer cannot be created, which is
+     * reported on the diagnostics line by the source kind it prints rather than hidden.
      *
      * @return the store, or {@code null} when its descriptor objects could not be created - the
      *         caller then keeps the direct fallback path
      */
     static InstanceDataStore create(VulkanContext context) {
-        FrameLinearRing ring = context.celtium$frameLinearRing();
-        InstanceDataStore store = new InstanceDataStore(new FrameLinearRingSource(ring),
-                storageBufferOffsetAlignment(context));
+        RingSource source = null;
+        if (Boolean.parseBoolean(System.getProperty("celtium.vulkan.recordsDedicatedPool", "true"))) {
+            try {
+                source = new RecordsRingSource(new RecordsRing(context));
+            } catch (RuntimeException | LinkageError failure) {
+                System.out.println("[Celtium] records pool could not be created (" + failure
+                        + "); the records fall back to the shared frame ring");
+                source = null;
+            }
+        }
+        if (source == null) {
+            source = new FrameLinearRingSource(context.celtium$frameLinearRing());
+        }
+        InstanceDataStore store = new InstanceDataStore(source, storageBufferOffsetAlignment(context));
         store.context = context;
         if (!store.createDescriptors()) {
             store.delete();
@@ -304,6 +445,7 @@ final class InstanceDataStore {
         if (offset < 0L) {
             this.offsets[slot] = -1L;
             this.capacities[slot] = 0;
+            this.selectFailures[slot]++;
         } else {
             this.offsets[slot] = offset;
             this.capacities[slot] = (int) (this.demand[slot] / RECORD_BYTES);
@@ -401,6 +543,15 @@ final class InstanceDataStore {
         if (slot < 0 || slot >= this.slots) {
             throw new IllegalArgumentException("slot " + slot);
         }
+        // The slot's previous submission is complete at this seat, so the dedicated pool may
+        // rewind its region now (the shared ring's source ignores this; its rewind is the
+        // confirmation tail's). Demand then decays to the largest window the finished frame
+        // actually served: inside a frame it still grows on demand, but one busy phase no
+        // longer taxes every later frame of the slot at its peak size.
+        this.ring.beginSlot(slot);
+        long servedBytes = (long) this.servedMaxRecords[slot] * RECORD_BYTES;
+        this.demand[slot] = Math.max((long) INITIAL_RECORDS * RECORD_BYTES, servedBytes);
+        this.servedMaxRecords[slot] = 0;
         this.boundThisFrame[slot] = false;
         if (this.lightmapWritePending[slot]) {
             this.lightmapWritePending[slot] = false;
@@ -431,13 +582,16 @@ final class InstanceDataStore {
      */
     int record(ByteBuffer pushBlock, int arrayIndex) {
         if (pushBlock == null || pushBlock.capacity() < MIN_BLOCK_BYTES) {
+            this.refusalsBlock++;
             return -1;
         }
         int slot = this.currentSlot;
         if (this.offsets[slot] < 0L) {
+            this.refusalsNoSlice++;
             return -1;
         }
         if (this.records[slot] + 1 > this.capacities[slot] && !this.grow(slot)) {
+            this.refusalsGrow++;
             return -1;
         }
         long target = this.ring.mappedAddress(slot, this.offsets[slot])
@@ -448,7 +602,12 @@ final class InstanceDataStore {
         if (arrayIndex >= 0) {
             MemoryUtil.memPutFloat(target + ARRAY_INDEX_OFFSET, Float.intBitsToFloat(arrayIndex));
         }
-        return this.records[slot]++;
+        int written = this.records[slot]++;
+        this.recordsWritten++;
+        if (this.records[slot] > this.servedMaxRecords[slot]) {
+            this.servedMaxRecords[slot] = this.records[slot];
+        }
+        return written;
     }
 
     /**
@@ -486,6 +645,56 @@ final class InstanceDataStore {
         return this.records[slot];
     }
 
+    /** {@return how many frame slots the store serves} */
+    int slots() {
+        return this.slots;
+    }
+
+    /** {@return the slice source's home: {@code dedicated} for the records pool, {@code shared} for the frame ring} */
+    String sourceKind() {
+        return this.ring.kind();
+    }
+
+    /** {@return the bytes the next selection of {@code slot} will ask for} */
+    long demandBytes(int slot) {
+        return this.demand[slot];
+    }
+
+    /** {@return how many of {@code slot}'s selections found no room for their slice} */
+    long selectFailures(int slot) {
+        return this.selectFailures[slot];
+    }
+
+    /** {@return the bytes the source has handed out of {@code slot} since its last rewind} */
+    long sourceUsedBytes(int slot) {
+        return this.ring.usedBytes(slot);
+    }
+
+    /** {@return the fixed capacity of {@code slot}'s home in the source} */
+    long sourceCapacityBytes(int slot) {
+        return this.ring.slotCapacity(slot);
+    }
+
+    /** {@return records refused because the selection had no slice} */
+    long refusalsNoSlice() {
+        return this.refusalsNoSlice;
+    }
+
+    /** {@return records refused because the slice could not grow to hold them} */
+    long refusalsGrow() {
+        return this.refusalsGrow;
+    }
+
+    /** {@return records refused because the push block was missing or too short} */
+    long refusalsBlock() {
+        return this.refusalsBlock;
+    }
+
+    /** {@return records successfully written over the store's life} */
+    long recordsWritten() {
+        return this.recordsWritten;
+    }
+
     /** {@return the set layout, so a record-reading pipeline can declare set 1} */
     long descriptorSetLayout() {
         return this.descriptorSetLayout;
@@ -509,7 +718,11 @@ final class InstanceDataStore {
         return this.offsets[this.currentSlot];
     }
 
-    /** Releases the descriptor objects. The ring and its buffers are not the store's to release. */
+    /**
+     * Releases the descriptor objects and the slice source's own home. The shared ring is not
+     * the store's to release (its source's delete is empty); the dedicated pool is, and is
+     * released here.
+     */
     void delete() {
         if (this.context != null && this.descriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
@@ -520,5 +733,6 @@ final class InstanceDataStore {
             vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
             this.descriptorSetLayout = VK_NULL_HANDLE;
         }
+        this.ring.delete();
     }
 }

@@ -19,6 +19,8 @@ class InstanceDataStoreTest {
         private final ByteBuffer[] memory;
         private final long[] cursors;
         private final long capacity;
+        /** Whether {@link #beginSlot} rewinds the cursor, modelling the dedicated pool. */
+        private boolean rewindOnBegin;
 
         TestRing(int slots, long capacityBytes) {
             this.memory = new ByteBuffer[slots];
@@ -27,6 +29,12 @@ class InstanceDataStoreTest {
             for (int slot = 0; slot < slots; slot++) {
                 this.memory[slot] = MemoryUtil.memAlloc((int) capacityBytes);
             }
+        }
+
+        /** Models the dedicated pool: the frame boundary rewinds the slot's region. */
+        TestRing rewindable() {
+            this.rewindOnBegin = true;
+            return this;
         }
 
         @Override
@@ -60,6 +68,34 @@ class InstanceDataStoreTest {
             return 0L;
         }
 
+        @Override
+        public String kind() {
+            return "test";
+        }
+
+        @Override
+        public long usedBytes(int slot) {
+            return this.cursors[slot];
+        }
+
+        @Override
+        public void beginSlot(int slot) {
+            if (this.rewindOnBegin) {
+                this.cursors[slot] = 0L;
+            }
+        }
+
+        @Override
+        public void delete() {
+            // Idempotent, like the production sources: the store's delete reaches here too.
+            for (int slot = 0; slot < this.memory.length; slot++) {
+                if (this.memory[slot] != null) {
+                    MemoryUtil.memFree(this.memory[slot]);
+                    this.memory[slot] = null;
+                }
+            }
+        }
+
         /** Simulates bytes earlier ring tenants already took in the slot. */
         void consume(int slot, long bytes) {
             this.cursors[slot] += bytes;
@@ -67,12 +103,6 @@ class InstanceDataStoreTest {
 
         int byteAt(int slot, long offset) {
             return MemoryUtil.memGetByte(MemoryUtil.memAddress(this.memory[slot]) + offset) & 0xFF;
-        }
-
-        void delete() {
-            for (ByteBuffer buffer : this.memory) {
-                MemoryUtil.memFree(buffer);
-            }
         }
     }
 
@@ -297,6 +327,78 @@ class InstanceDataStoreTest {
         long second = store.descriptorDynamicOffset();
         assertTrue(second > first);
         assertEquals(0L, second % 64L);
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void poolExhaustionRefusesCountsAndRecoversAtTheFrameBoundary() {
+        // The dedicated pool's shape (contract (a) at the store's level): a region exactly one
+        // initial slice deep. The first window is served; a second window in the same frame
+        // finds no room and is refused as a counted -1 - the caller's cue to draw directly, so
+        // the drawing survives - and the frame boundary rewinds the region so the next frame is
+        // served again. Exhaustion never throws and never corrupts what was written.
+        TestRing ring = new TestRing(2, 64L << 10).rewindable();
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        assertEquals(0, store.record(pushBlock(256, 1), -1));
+        assertEquals(1, store.record(pushBlock(256, 2), -1));
+        store.selectSlot(0);
+        assertEquals(1L, store.selectFailures(0));
+        assertEquals(-1, store.record(pushBlock(256, 3), -1));
+        assertEquals(1L, store.refusalsNoSlice());
+        store.beginFrame(0);
+        store.selectSlot(0);
+        assertEquals(0, store.record(pushBlock(256, 4), -1));
+        assertEquals(3L, store.recordsWritten());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void refusalsAreCountedByCause() {
+        // Contract (c) at the store's level: a refused record names its cause in the counters,
+        // so a leg can tell a missing slice from a slice that could not grow and from a bad
+        // block instead of reading one undifferentiated drop count.
+        TestRing ring = new TestRing(2, 96L << 10);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        assertEquals(-1, store.record(pushBlock(100, 1), -1));
+        assertEquals(-1, store.record(null, -1));
+        assertEquals(2L, store.refusalsBlock());
+        for (int i = 0; i < 256; i++) {
+            assertEquals(i, store.record(pushBlock(256, i & 0xFF), -1));
+        }
+        // The region fits the initial slice but not its growth: the 257th record and every
+        // later one in this selection are grow refusals (the failure latches per selection).
+        assertEquals(-1, store.record(pushBlock(256, 0xAB), -1));
+        assertEquals(-1, store.record(pushBlock(256, 0xCD), -1));
+        assertEquals(2L, store.refusalsGrow());
+        assertEquals(0L, store.refusalsNoSlice());
+        assertEquals(256L, store.recordsWritten());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void demandDecaysToTheLargestWindowTheFrameServed() {
+        // The demand ratchet's repair: demand still grows on use inside a frame, but the frame
+        // boundary resets it to the largest window that frame actually served (floored at the
+        // initial ask), so one busy phase stops taxing every later window of the slot.
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        for (int i = 0; i < 300; i++) {
+            assertEquals(i, store.record(pushBlock(256, i & 0xFF), -1));
+        }
+        assertEquals(512L * InstanceDataStore.RECORD_BYTES, store.demandBytes(0));
+        store.beginFrame(0);
+        assertEquals(300L * InstanceDataStore.RECORD_BYTES, store.demandBytes(0));
+        // A quiet frame decays demand back to the initial ask, not below it.
+        store.selectSlot(0);
+        assertEquals(0, store.record(pushBlock(256, 1), -1));
+        store.beginFrame(0);
+        assertEquals(256L * InstanceDataStore.RECORD_BYTES, store.demandBytes(0));
         store.delete();
         ring.delete();
     }
