@@ -170,6 +170,35 @@ class LandedFixGuardContractTest {
     }
 
     /**
+     * S3R-2 (entry pack 5-3): the GPU-generated issuance forms that read the shared vertex
+     * arena through the pass-head bind - E10-b's camera executor and the pack route's E10
+     * shadow issuance - address it as one buffer with global base vertices (the pass binds
+     * page 0), so both arm seats refuse a multi-page arena and the page-exact paths (the
+     * gated indirect chain, the merge-run and pack direct walks) draw those frames instead.
+     * A guard dropped at either seat misdraws every page-1 segment silently.
+     */
+    @Test
+    void generatedTerrainIssuanceDeclinesAMultiPageSharedArena() throws IOException {
+        String backend = read(BACKEND);
+        int head = backend.indexOf("private boolean celtium$gpuTerrainDrawPassHead(");
+        assertTrue(head >= 0, "the E10-b pass head bounds the camera seat's region");
+        int decline = backend.indexOf("sharedVertex.pageCount() > 1", head);
+        int arm = backend.indexOf("this.gpuTerrainDraw.passHead(", head);
+        assertTrue(decline > head && arm > decline,
+                "the E10-b pass head declines a multi-page shared arena before the"
+                        + " executor's generation dispatch is recorded");
+        int shadowTerm = backend.indexOf("shadowVertexArena.pageCount() == 1");
+        int shadowUse = backend.indexOf("&& shadowArenaSinglePage");
+        assertTrue(shadowTerm >= 0 && shadowUse > shadowTerm,
+                "the pack shadow seat computes the shared arena's single-page term and"
+                        + " spends it in the arm condition");
+        int cancel = backend.indexOf("this.shadowGpuTerrainDraw.cancelArmed();", shadowUse);
+        assertTrue(cancel > shadowUse && cancel - shadowUse < 800,
+                "a refused shadow arm still lands on the cancel path, leaving the"
+                        + " per-region loop to draw the stage");
+    }
+
+    /**
      * ad8513594 (BH10-07): delete()'s early returns detach the backend registration too - a
      * stalled teardown that skipped it left the mixins pointing at a dead backend. Three call
      * sites of the shared detach: the two early returns and the full path.

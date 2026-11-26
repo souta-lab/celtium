@@ -19065,9 +19065,18 @@ this.frameBufferOpen = false;
             // and disable it.
             boolean shadowIssuanceArmed = false;
             int shadowIssuanceVisited = 0;
+            // S3R-2 (entry pack 5-3): the generated commands address the shared
+            // vertex arena as one buffer with global base vertices - the pass
+            // binds page 0 at its head - so a multi-page arena cancels the arm
+            // like any other route the stage cannot take; the loop below then
+            // draws the stage per region, through the page-exact paths.
+            VulkanArena shadowVertexArena = this.terrain.sharedVertexArenaIfPresent();
+            boolean shadowArenaSinglePage = shadowVertexArena == null
+                    || shadowVertexArena.pageCount() == 1;
             if (shadowStage && this.shadowGpuTerrainDraw != null
                     && this.shadowGpuTerrainDraw.armed()) {
-                if (!packVariantArmed && glsmRegionTable && this.shadowGpuTerrainDrawGenerated
+                if (!packVariantArmed && glsmRegionTable && shadowArenaSinglePage
+                        && this.shadowGpuTerrainDrawGenerated
                         && this.shadowGpuTerrainDrawVisits
                                 <= modPipeline.celtium$glsmRegionTableSlots()) {
                     shadowIssuanceArmed = true;
@@ -20253,6 +20262,15 @@ this.frameBufferOpen = false;
         }
         this.gpuTerrainDrawFrame = this.frameId;
         try {
+            // S3R-2 (entry pack 5-3): the generated commands address the shared
+            // vertex arena as one buffer with global base vertices - the pass
+            // binds page 0 at its head - so a multi-page arena declines the
+            // arm like any other shape the executor cannot express; the region
+            // loop then draws the pass through the page-exact paths.
+            VulkanArena sharedVertex = this.terrain.sharedVertexArenaIfPresent();
+            if (sharedVertex != null && sharedVertex.pageCount() > 1) {
+                return false;
+            }
             if (this.gpuTerrainDraw == null) {
                 this.gpuTerrainDraw = new VulkanGpuTerrainDraw(this.context);
             }
