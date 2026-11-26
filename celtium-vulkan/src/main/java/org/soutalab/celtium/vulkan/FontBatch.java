@@ -321,14 +321,18 @@ public final class FontBatch {
     }
 
     /**
-     * Which witness closed the run, one slot per comparison in {@link #celtium$fontRunMatches}, in the order the
+     * Which comparison closed the run, one slot per comparison in {@link #celtium$fontRunMatches}, in the order the
      * method compares them. The question this answers is the one the run count raises: the world frame starts one run
-     * per string segment, and the only way to fold two segments is to know which of the sixteen values differs
-     * between them. Incremented once per closed run (94 a frame on the measured world scene), so it costs nothing.
+     * per string segment, and the only way to fold two segments is to know which value differs between them.
+     * Incremented once per closed run (94 a frame on the measured world scene), so it costs nothing.
+     * <p>
+     * Stage 8 (S8-d shrink): the slots are the shim's comparisons, not the seventeen hand-kept witnesses the batch
+     * carried before. The pipeline state a run was opened under is one {@link PipelineStateKey} now (slot
+     * {@code key}); what the key does not carry stays a named comparison of its own - the alpha pair the key has no
+     * slot for, and the binding the run submits under (texture, the conditional colour, scissor, target, matrices).
      */
-    private static final String[] WITNESS_NAMES = {"formatId", "stride", "drawMode", "texture", "colour",
-            "alphaTest", "alphaRef", "alphaFunc", "depthTest", "depthWrite", "blend", "cull", "colorMask", "scissor",
-            "target", "projection", "modelView"};
+    private static final String[] WITNESS_NAMES = {"key", "alphaRef", "alphaFunc", "texture", "colour",
+            "scissor", "target", "projection", "modelView"};
     private final int[] witnessMismatches = new int[WITNESS_NAMES.length];
 
     /** The run's vertices, owned by this batch and grown as needed; the font's own buffer is copied into it. */
@@ -344,21 +348,19 @@ public final class FontBatch {
     private static final boolean APPEND_DEBUG = Boolean.getBoolean("celtium.fontAppend.debug");
     private int appendLogged;
     private long pendingColorBits;
-    private boolean pendingAlphaTest;
+    /**
+     * The one state key the open run was started under (stage 8, S8-d shrink): the pipeline state the owner's view
+     * reported, packed by {@link PipelineStateKey#pack} from the view's own values - see
+     * {@link #celtium$fontStateKey}. Before the shrink the run's identity was seventeen hand-kept witness fields
+     * compared one by one; the key is that comparison in the upstream form, at the same granularity: the view never
+     * witnessed blend factors, the depth function, lighting or the shade model, so the pack is fed constants for
+     * those under its own erasure rules, and what the key has no slot for - the alpha reference and function - is
+     * kept as a raw comparison beside it, the same residual shape the model path keeps beside its key.
+     */
+    private PipelineStateKey pendingKey;
     private float pendingAlphaRef;
     /** The alpha comparison function the open run was started under; see {@link FontRunState#alphaFuncSelector()}. */
     private int pendingAlphaFunc;
-    /**
-     * The draw state the run will be submitted under, as read when the run was started. The owner's batch path reads
-     * the live state when it builds the group, so a run held across a change of any of these is drawn with the wrong
-     * one - see {@link FontRunState#depthTestEnabled()}.
-     */
-    private boolean pendingDepthTest = true;
-    private boolean pendingDepthWrite = true;
-    private boolean pendingBlend = true;
-    /** The encoded cull triple (enable, face, winding) the open run was appended under; see {@code cullState()}. */
-    private int pendingCull;
-    private int pendingColorMask = 0xF;
     private long pendingScissorKey;
     private boolean pendingActive;
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
@@ -541,21 +543,16 @@ public final class FontBatch {
                         + " pendingVerts=" + this.pendingVertexCount);
             }
             long colourBits = celtium$fontColourBits(view);
-            boolean alphaTest = view.alphaTestEnabled();
             float alphaRef = view.alphaFuncReference();
             int alphaFunc = view.alphaFuncSelector();
-            boolean depthTest = view.depthTestEnabled();
-            boolean depthWrite = view.depthWriteEnabled();
-            boolean blend = view.blendEnabled();
-            int cull = view.cullState();
-            int colorMask = view.colorMask();
             long scissorKey = view.scissorKey();
+            PipelineStateKey key = celtium$fontStateKey(view, formatId, vertexStride);
             if (this.pendingActive
-                    && !celtium$fontRunMatches(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
-                            alphaRef, alphaFunc, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view)) {
-                celtium$noteWitnessMismatch(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
-                        alphaRef, alphaFunc, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view);
-                if (celtium$drawStateDiffers(depthTest, depthWrite, blend, cull, colorMask, scissorKey)) {
+                    && !celtium$fontRunMatches(key, formatId, vertexStride, drawMode, texture, colourBits,
+                            alphaRef, alphaFunc, scissorKey, view)) {
+                celtium$noteWitnessMismatch(key, formatId, vertexStride, drawMode, texture, colourBits,
+                        alphaRef, alphaFunc, scissorKey, view);
+                if (!key.equals(this.pendingKey) || this.pendingScissorKey != scissorKey) {
                     this.flushedDrawState++;
                 }
                 celtium$flushPendingFontBatch("state-change");
@@ -567,14 +564,9 @@ public final class FontBatch {
                 this.pendingDrawMode = drawMode;
                 this.pendingTexture = texture;
                 this.pendingColorBits = colourBits;
-                this.pendingAlphaTest = alphaTest;
+                this.pendingKey = key;
                 this.pendingAlphaRef = alphaRef;
                 this.pendingAlphaFunc = alphaFunc;
-                this.pendingDepthTest = depthTest;
-                this.pendingDepthWrite = depthWrite;
-                this.pendingBlend = blend;
-                this.pendingCull = cull;
-                this.pendingColorMask = colorMask;
                 this.pendingScissorKey = scissorKey;
                 System.arraycopy(view.projection(), 0, this.pendingProjection, 0, 16);
                 System.arraycopy(view.modelView(), 0, this.pendingModelView, 0, 16);
@@ -685,77 +677,86 @@ public final class FontBatch {
         return quantised < 0 ? 0 : Math.min(quantised, 255);
     }
 
-    private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
-                                           boolean alphaTest, float alphaRef, int alphaFunc, boolean depthTest,
-                                           boolean depthWrite, boolean blend, int cull, int colorMask,
+    /**
+     * The shim's state key for one segment: the view's pipeline state packed into the upstream
+     * {@link PipelineStateKey}, the only state identity a run carries (stage 8, S8-d shrink).
+     * <p>
+     * The pack is fed the values the view actually witnesses - blend on/off, colour mask, depth test/write, the
+     * encoded cull triple, the alpha test and function. The values the view has never witnessed (blend factors and
+     * equations, the depth function, lighting, the shade model) are constants, under the pack's own erasure rules:
+     * the witness granularity is exactly the one the seventeen hand-kept fields compared before the shrink, no
+     * finer and no coarser. The format fold is the font path's own identity for (format id, stride); the key is
+     * only ever compared against keys built here, never against the model or batcher keys.
+     */
+    private static PipelineStateKey celtium$fontStateKey(FontRunState view, int formatId, int stride) {
+        return PipelineStateKey.pack(formatId * 1_000_003 ^ stride,
+                view.blendEnabled(), 0, 0, 0, 0, 0, 0,
+                view.colorMask(),
+                view.depthTestEnabled(), 0, view.depthWriteEnabled(),
+                view.cullState(),
+                view.alphaTestEnabled(), view.alphaFuncSelector(),
+                false, 0);
+    }
+
+    private boolean celtium$fontRunMatches(PipelineStateKey key, int formatId, int stride, int drawMode,
+                                           int texture, long colourBits, float alphaRef, int alphaFunc,
                                            long scissorKey, FontRunState view) {
-        // The matrix pair is part of the witness, exactly as it is for the normal path's group key: a run that spans a
-        // matrix change is drawn with one matrix for all of its quads. Leaving it out was measured as the garbled
+        // The matrix pair is part of the binding, exactly as it is for the normal path's group key: a run that spans
+        // a matrix change is drawn with one matrix for all of its quads. Leaving it out was measured as the garbled
         // menu - the button labels, the rotated splash text and the copyright line came out as blocks while the
         // unscaled footer text stayed legible, because the scaled and rotated draws were merged into a run opened
         // under a different transform.
         // The draw state is the same contract one step further out: the owner's batch path reads the live state when
-        // it builds the group, so a run held across a change of blend, depth, cull, colour mask or scissor is drawn
-        // under the state of its submission rather than of its first quad - and the tooltip's two passes are the
-        // measured case where that difference can be seen: the shadow pass is submitted inside the vanilla
-        // disableDepth/enableDepth bracket and the main pass is submitted after it.
-        return this.pendingFormatId == formatId && this.pendingStride == stride
-                && this.pendingDrawMode == drawMode && this.pendingTexture == texture
-                && (!celtium$colourWitnessNeeded(alphaRef) || this.pendingColorBits == colourBits)
-                && this.pendingAlphaTest == alphaTest
+        // it builds the group, so a run held across a change of the state the key carries - or of the scissor, which
+        // is binding rather than pipeline state - is drawn under the state of its submission rather than of its
+        // first quad, and the tooltip's two passes are the measured case where that difference can be seen: the
+        // shadow pass is submitted inside the vanilla disableDepth/enableDepth bracket and the main pass after it.
+        // The format and the draw mode are the run's own parameters, compared raw beside the key; the alpha
+        // reference and function are the key's residuals, compared raw for the same reason the model path keeps
+        // its residuals beside its key: the key has no slot for them, and a change of the function with the test
+        // disabled closes the run exactly as the hand-kept witness did.
+        return this.pendingKey.equals(key)
+                && this.pendingFormatId == formatId && this.pendingStride == stride
+                && this.pendingDrawMode == drawMode
                 && Float.compare(this.pendingAlphaRef, alphaRef) == 0
                 && this.pendingAlphaFunc == alphaFunc
-                && this.pendingDepthTest == depthTest && this.pendingDepthWrite == depthWrite
-                && this.pendingBlend == blend && this.pendingCull == cull
-                && this.pendingColorMask == colorMask && this.pendingScissorKey == scissorKey
+                && this.pendingTexture == texture
+                && (!celtium$colourWitnessNeeded(alphaRef) || this.pendingColorBits == colourBits)
+                && this.pendingScissorKey == scissorKey
                 && this.pendingTargetIdentity == view.targetIdentity()
                 && java.util.Arrays.equals(this.pendingProjection, view.projection())
                 && java.util.Arrays.equals(this.pendingModelView, view.modelView());
     }
 
     /**
-     * Counts which witness closed the run, in the same order {@link #celtium$fontRunMatches} compares them, and stops
-     * at the first difference: the run was closed by that one, and the ones after it were never asked.
+     * Counts which comparison closed the run, in the same order {@link #celtium$fontRunMatches} compares them, and
+     * stops at the first difference: the run was closed by that one, and the ones after it were never asked. A
+     * difference in the format or the draw mode is counted under {@code key}: the run's identity is its key and
+     * its parameters together.
      */
-    private void celtium$noteWitnessMismatch(int formatId, int stride, int drawMode, int texture, long colourBits,
-                                             boolean alphaTest, float alphaRef, int alphaFunc, boolean depthTest,
-                                             boolean depthWrite, boolean blend, int cull, int colorMask,
+    private void celtium$noteWitnessMismatch(PipelineStateKey key, int formatId, int stride, int drawMode,
+                                             int texture, long colourBits, float alphaRef, int alphaFunc,
                                              long scissorKey, FontRunState view) {
         int slot;
-        if (this.pendingFormatId != formatId) {
+        if (!this.pendingKey.equals(key) || this.pendingFormatId != formatId || this.pendingStride != stride
+                || this.pendingDrawMode != drawMode) {
             slot = 0;
-        } else if (this.pendingStride != stride) {
+        } else if (Float.compare(this.pendingAlphaRef, alphaRef) != 0) {
             slot = 1;
-        } else if (this.pendingDrawMode != drawMode) {
+        } else if (this.pendingAlphaFunc != alphaFunc) {
             slot = 2;
         } else if (this.pendingTexture != texture) {
             slot = 3;
         } else if (celtium$colourWitnessNeeded(alphaRef) && this.pendingColorBits != colourBits) {
             slot = 4;
-        } else if (this.pendingAlphaTest != alphaTest) {
-            slot = 5;
-        } else if (Float.compare(this.pendingAlphaRef, alphaRef) != 0) {
-            slot = 6;
-        } else if (this.pendingAlphaFunc != alphaFunc) {
-            slot = 7;
-        } else if (this.pendingDepthTest != depthTest) {
-            slot = 8;
-        } else if (this.pendingDepthWrite != depthWrite) {
-            slot = 9;
-        } else if (this.pendingBlend != blend) {
-            slot = 10;
-        } else if (this.pendingCull != cull) {
-            slot = 11;
-        } else if (this.pendingColorMask != colorMask) {
-            slot = 12;
         } else if (this.pendingScissorKey != scissorKey) {
-            slot = 13;
+            slot = 5;
         } else if (this.pendingTargetIdentity != view.targetIdentity()) {
-            slot = 14;
+            slot = 6;
         } else if (!java.util.Arrays.equals(this.pendingProjection, view.projection())) {
-            slot = 15;
+            slot = 7;
         } else {
-            slot = 16;
+            slot = 8;
         }
         this.witnessMismatches[slot]++;
     }
@@ -782,14 +783,6 @@ public final class FontBatch {
             out.append(WITNESS_NAMES[i]).append('=').append(this.witnessMismatches[i]);
         }
         return out.append(']').toString();
-    }
-
-    /** Whether the difference that closed the run was in the draw state rather than in colour/texture/matrices. */
-    private boolean celtium$drawStateDiffers(boolean depthTest, boolean depthWrite, boolean blend, int cull,
-                                             int colorMask, long scissorKey) {
-        return this.pendingDepthTest != depthTest || this.pendingDepthWrite != depthWrite
-                || this.pendingBlend != blend || this.pendingCull != cull
-                || this.pendingColorMask != colorMask || this.pendingScissorKey != scissorKey;
     }
 
     private void celtium$ensurePendingFontCapacity(int bytes) {
@@ -919,7 +912,7 @@ public final class FontBatch {
         // closed first, the nested flush finds no pending run and only re-offers what is still retained.
         Run run = new Run(this.pendingFormat, this.pendingStride, this.pendingFormatId,
                 this.pendingVerticesAddress, this.pendingVertexCount,
-                this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
+                this.pendingDrawMode, this.pendingTexture, this.pendingKey.alphaTestEnabled(), this.pendingAlphaRef,
                 matrixSnapshot(true), matrixSnapshot(false), this.pendingTargetIdentity, how);
         this.pendingActive = false;
         this.pendingBytesUsed = 0;
@@ -1119,13 +1112,17 @@ public final class FontBatch {
      * new counter may not appear in it.
      */
     public String celtium$fontStateSummary() {
+        // The pending run's draw state is read back out of its key (stage 8, S8-d shrink): the key is the only
+        // place the state is kept now. Before the first run is opened there is no key, and the line reports the
+        // same defaults the hand-kept fields were initialised with.
+        PipelineStateKey key = this.pendingKey;
         return "fontDrawStateFlushes=" + this.flushedDrawState
-                + " depthTest=" + this.pendingDepthTest
-                + " depthWrite=" + this.pendingDepthWrite
-                + " blend=" + this.pendingBlend
-                + " cull=" + org.soutalab.celtium.vulkan.VulkanCullState.describe(this.pendingCull)
-                + "(" + this.pendingCull + ")"
-                + " colorMask=" + Integer.toHexString(this.pendingColorMask)
+                + " depthTest=" + (key == null || key.depthTestEnabled())
+                + " depthWrite=" + (key == null || key.depthMask())
+                + " blend=" + (key == null || key.blendEnabled())
+                + " cull=" + org.soutalab.celtium.vulkan.VulkanCullState.describe(key == null ? 0 : key.cullState())
+                + "(" + (key == null ? 0 : key.cullState()) + ")"
+                + " colorMask=" + Integer.toHexString(key == null ? 0xF : key.colorMask())
                 + " scissor=" + Long.toHexString(this.pendingScissorKey);
     }
 
