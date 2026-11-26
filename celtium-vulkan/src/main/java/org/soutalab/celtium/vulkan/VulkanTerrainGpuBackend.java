@@ -22766,8 +22766,8 @@ this.frameBufferOpen = false;
     static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
     /** {@code -Dceltium.debug.groupCensus=true}: the drawn groups' families and depth/blend state, for the ordering scope. */
     static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
-    /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite. */
-    final long[] groupCensusCounts = new long[12];
+    /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite (5 families x 4 states = 20 buckets; index family*4 + blend*2 + depthWrite). */
+    final long[] groupCensusCounts = new long[20];
     long groupCensusMain;
     /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
     static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
