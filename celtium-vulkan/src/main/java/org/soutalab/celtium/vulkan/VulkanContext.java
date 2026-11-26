@@ -618,6 +618,33 @@ public final class VulkanContext {
      * cannot drift from the ledger's own window.
      */
     private long uploadBudgetFlushedKey = Long.MIN_VALUE;
+    /**
+     * The S3R-3 shared texture upload service (landing A): one staging pool and one FIFO queue
+     * for every verbatim full-level texture upload, replacing the per-texture staging buffers.
+     * The service is pure queue policy; this context owns its device seam - the backing buffer
+     * below, the batch recording, and the budget gate. Created lazily by
+     * {@link #celtium$textureUploadService()} because the backing needs the device.
+     */
+    private TextureUploadService textureUploadService;
+    private long textureStagingBuffer = VK_NULL_HANDLE;
+    private long textureStagingAddress;
+    /**
+     * Fence-path completion watermark for deferred batches: the highest batch serial a reclaim
+     * has confirmed. The timeline path reads its currency from the timeline's own counter; the
+     * fence path has no counter, so reclaims advance this instead, and texture staging stamps
+     * (batch serials there) are compared against it.
+     */
+    private long deferredConfirmedSerial;
+    /**
+     * The requests the budget gate has already noted as deferred, by identity: a queued request
+     * the gate is re-asked about (every flush re-forms batches from the head) must not be noted
+     * twice, and its submission settles exactly the note its deferral made.
+     */
+    private final java.util.Set<TextureUploadService.UploadRequest> textureDeferredNoted =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    /** The shared texture staging pool's size: two 64 MiB slabs' worth, covering the largest
+     * whole upload observed (the 4096x4224 font atlas, 69,206,016 B) with batching headroom. */
+    private static final long TEXTURE_STAGING_CAPACITY_BYTES = 128L << 20;
 
     /** {@return the upload budget ledger, creating it on first use}. */
     UploadBudgetLedger celtium$uploadBudget() {
@@ -628,6 +655,393 @@ public final class VulkanContext {
             this.uploadBudget = ledger;
         }
         return ledger;
+    }
+
+    /**
+     * {@return the shared texture upload service, creating it and its staging backing on first
+     * use}. The backing is one buffer of {@link #TEXTURE_STAGING_CAPACITY_BYTES} bound into the
+     * host-visible slab pool - the same shape the per-texture staging buffers used, one per
+     * texture; the service's slices replace those, so the buffer count falls as textures move
+     * onto this path, and the slab allocation is the pool's ordinary oversize handling.
+     */
+    TextureUploadService celtium$textureUploadService() {
+        TextureUploadService service = this.textureUploadService;
+        if (service != null) {
+            return service;
+        }
+        long buffer;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .size(TEXTURE_STAGING_CAPACITY_BYTES)
+                    .usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateBuffer(this.device, bufferInfo, null, handle), "vkCreateBuffer(texture staging)");
+            buffer = handle.get(0);
+            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(this.device, buffer, requirements);
+            SlabAllocator allocator = celtium$hostVisibleSlabs(requirements.memoryTypeBits());
+            SlabAllocator.SlabAllocation allocation = allocator.allocate(requirements.size(), requirements.alignment());
+            allocator.bindBuffer(buffer, allocation);
+            this.textureStagingAddress = allocator.mappedAddress(allocation);
+        }
+        this.textureStagingBuffer = buffer;
+        service = new TextureUploadService(TEXTURE_STAGING_CAPACITY_BYTES, 16L);
+        this.textureUploadService = service;
+        return service;
+    }
+
+    /** {@return the shared texture upload service, or null when no upload has created it yet}. */
+    TextureUploadService celtium$textureUploadServiceOrNull() {
+        return this.textureUploadService;
+    }
+
+    /**
+     * {@return the completion currency the texture staging pool's stamps are compared against}:
+     * the frame timeline's counter on the timeline path; on the fence path, the highest batch
+     * serial a reclaim has confirmed ({@link #deferredConfirmedSerial}).
+     */
+    private long celtium$textureUploadCompletedValue() {
+        return this.frameTimeline != null ? this.frameTimeline.completedValue() : this.deferredConfirmedSerial;
+    }
+
+    /**
+     * {@return the timeline value the deferred batch with {@code serial} will signal}, or 0 when
+     * no live entry carries it (already reclaimed, or the fence path, whose batches signal no
+     * timeline value).
+     */
+    private long celtium$deferredBatchTimelineValue(long serial) {
+        for (DeferredSubmit entry : this.deferredSubmits) {
+            if (entry.batch != null && entry.batch.serial == serial) {
+                return entry.batch.timelineValue;
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * The upload budget gate the texture service's gated flush consults (S3R-3 landing A,
+     * section 3-5 of the window record): a DEFERRABLE request issues while the window has room;
+     * over budget it is noted as deferred once (the identity set keeps a re-ask from noting it
+     * twice) and refused; when the ledger's deferral cap refuses the note, the request issues
+     * anyway - the cap is the starvation bound, and the ledger counts the forced issue itself.
+     * A request that was noted and later submits settles its note in the submitter.
+     */
+    private boolean celtium$textureUploadMayIssue(TextureUploadService.UploadRequest request) {
+        UploadBudgetLedger ledger = celtium$uploadBudget();
+        if (!ledger.wouldExceed(celtium$uploadBudgetWindowKey(), request.byteCount)) {
+            return true;
+        }
+        if (this.textureDeferredNoted.contains(request)) {
+            return false;
+        }
+        if (ledger.noteDeferred(request.byteCount)) {
+            this.textureDeferredNoted.add(request);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The texture service's batch submitter: write every request's bytes into its resolved
+     * staging slice, record the transitions and copies (and the mip chain where asked) into one
+     * command buffer from the context's own one-shot pool, and submit it through the NORMAL
+     * deferred entry ({@link #celtium$submitDeferred}) - the buffer is the context's own, so
+     * the D1 external entry, which exists for buffers another owner must never see recycled or
+     * quarantined, does not apply. The submission is flushed before the stamp is read, because
+     * the timeline value is only allocated at flush time.
+     *
+     * @return the completion stamp: the batch's timeline value, or its serial on the fence path
+     */
+    private long celtium$submitTextureBatch(java.util.List<TextureUploadService.ResolvedUpload> batch) {
+        VkCommandBuffer commandBuffer = beginCommands();
+        long batchBytes = 0L;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (TextureUploadService.ResolvedUpload resolved : batch) {
+                TextureUploadService.UploadRequest request = resolved.request;
+                MemoryUtil.memCopy(request.sourceAddress,
+                        this.textureStagingAddress + resolved.stagingOffset, request.byteCount);
+                if (request.generateMips) {
+                    celtium$recordTextureUploadWhole(commandBuffer, stack, request, resolved.stagingOffset);
+                } else {
+                    celtium$recordTextureUploadLevel(commandBuffer, stack, request, resolved.stagingOffset);
+                }
+                batchBytes += request.byteCount;
+            }
+        }
+        long token = celtium$submitDeferred(commandBuffer, 0L);
+        celtium$flushBatchedSubmits();
+        UploadBudgetLedger ledger = celtium$uploadBudget();
+        ledger.noteFlushed(celtium$uploadBudgetWindowKey(), batchBytes);
+        for (TextureUploadService.ResolvedUpload resolved : batch) {
+            if (this.textureDeferredNoted.remove(resolved.request)) {
+                ledger.noteDeferredIssued(resolved.request.byteCount);
+            }
+        }
+        if (this.frameTimeline != null) {
+            long value = celtium$deferredBatchTimelineValue(token);
+            if (value > 0L) {
+                return value;
+            }
+        }
+        return token;
+    }
+
+    /** The shader stages that may sample a mirrored texture (the texture path's SAMPLING_STAGES). */
+    private static final int TEXTURE_SAMPLING_STAGES =
+            VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+    /**
+     * Records one whole-image texture upload into the batch buffer, mirroring
+     * {@code VulkanGlTexture.copyToImage}'s level-0 recording exactly - entry barrier over every
+     * level with the whole-upload masks, the copy, the blit chain, the tail barrier - except the
+     * layout bookkeeping, which stays with the texture: the intermediate layouts the chain passes
+     * through are internal to this recording, and the texture records the final state itself.
+     */
+    private void celtium$recordTextureUploadWhole(VkCommandBuffer commandBuffer, MemoryStack stack,
+            TextureUploadService.UploadRequest request, long stagingOffset) {
+        TextureUploadService.Region region = request.region;
+        int levels = request.imageLevels;
+        int[] entryMasks = VulkanGlTexture.wholeUploadEntryBarrierMasks(
+                request.oldLayout != VK_IMAGE_LAYOUT_UNDEFINED);
+        org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .srcAccessMask(entryMasks[1])
+                .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(request.image);
+        barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1);
+        vkCmdPipelineBarrier(commandBuffer, entryMasks[0], VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+
+        org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+        copy.get(0).bufferOffset(stagingOffset).bufferRowLength(0).bufferImageHeight(0);
+        copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                .mipLevel(region.mipLevel).baseArrayLayer(region.baseLayer).layerCount(region.layerCount);
+        copy.get(0).imageOffset().set(region.x, region.y, 0);
+        copy.get(0).imageExtent().set(region.width, region.height, 1);
+        vkCmdCopyBufferToImage(commandBuffer, this.textureStagingBuffer, request.image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
+
+        int levelWidth = region.width;
+        int levelHeight = region.height;
+        for (int level = 1; level < levels; level++) {
+            int nextWidth = Math.max(1, levelWidth / 2);
+            int nextHeight = Math.max(1, levelHeight / 2);
+            if (level == 1) {
+                org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toSource =
+                        org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+                toSource.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                        .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                        .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                        .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .image(request.image);
+                toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toSource);
+            }
+            org.lwjgl.vulkan.VkImageBlit.Buffer blit = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+            blit.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1)
+                    .baseArrayLayer(0).layerCount(1);
+            blit.get(0).srcOffsets().get(0).set(0, 0, 0);
+            blit.get(0).srcOffsets().get(1).set(levelWidth, levelHeight, 1);
+            blit.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level)
+                    .baseArrayLayer(0).layerCount(1);
+            blit.get(0).dstOffsets().get(0).set(0, 0, 0);
+            blit.get(0).dstOffsets().get(1).set(nextWidth, nextHeight, 1);
+            vkCmdBlitImage(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toSrc =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toSrc.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(request.image);
+            toSrc.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toSrc);
+            levelWidth = nextWidth;
+            levelHeight = nextHeight;
+        }
+
+        barrier.get(0)
+                .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                .oldLayout(levels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .newLayout(request.newLayout);
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, TEXTURE_SAMPLING_STAGES, 0, null,
+                null, barrier);
+    }
+
+    /**
+     * Records one single-level texture upload into the batch buffer, mirroring
+     * {@code VulkanGlTexture.copyMipLevelToImage}'s recording: the level from its recorded
+     * layout to TRANSFER_DST, the copy, and straight back to the sampling layout.
+     */
+    private void celtium$recordTextureUploadLevel(VkCommandBuffer commandBuffer, MemoryStack stack,
+            TextureUploadService.UploadRequest request, long stagingOffset) {
+        TextureUploadService.Region region = request.region;
+        int previous = request.oldLayout;
+        org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .srcAccessMask(previous == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                        : VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .oldLayout(previous)
+                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(request.image);
+        barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, region.mipLevel, 1, 0, 1);
+        vkCmdPipelineBarrier(commandBuffer, TEXTURE_SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+
+        org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+        copy.get(0).bufferOffset(stagingOffset).bufferRowLength(0).bufferImageHeight(0);
+        copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                .mipLevel(region.mipLevel).baseArrayLayer(region.baseLayer).layerCount(region.layerCount);
+        copy.get(0).imageOffset().set(region.x, region.y, 0);
+        copy.get(0).imageExtent().set(region.width, region.height, 1);
+        vkCmdCopyBufferToImage(commandBuffer, this.textureStagingBuffer, request.image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
+
+        barrier.get(0)
+                .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .newLayout(request.newLayout);
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, TEXTURE_SAMPLING_STAGES, 0, null,
+                null, barrier);
+    }
+
+    /** Set while a texture flush driver runs, so a nested driver call (a poll inside an await) returns instead of recursing. */
+    private boolean textureFlushDriving;
+
+    /**
+     * Awaits one texture staging stamp: a timeline value on the timeline path, a batch serial on
+     * the fence path (where the deferred await's outcome matrix applies). A five-second bound,
+     * the frame path's bound; a timeout names the stall instead of proceeding against work the
+     * queue may still be reading.
+     */
+    private void celtium$awaitTextureStamp(long stamp) {
+        if (this.frameTimeline != null) {
+            if (!this.frameTimeline.awaitValue(stamp, 5_000_000_000L)) {
+                throw new IllegalStateException("texture upload flush blocked on timeline value " + stamp
+                        + " for 5s; the device did not confirm it");
+            }
+            return;
+        }
+        celtium$awaitDeferredSubmit(stamp, "texture upload flush");
+    }
+
+    /**
+     * The gated texture flush driver: submit what the budget gate allows, and drive an
+     * IMMEDIATE-class block (staging space held by in-flight batches) by awaiting the oldest
+     * in-flight stamp and flushing again, as the service's flush contract prescribes. Called at
+     * the texture call sites and from the deferred poll's tail; re-entrant calls return.
+     */
+    public void celtium$flushTextureUploads() {
+        TextureUploadService service = this.textureUploadService;
+        if (service == null || this.textureFlushDriving) {
+            return;
+        }
+        this.textureFlushDriving = true;
+        try {
+            TextureUploadService.FlushResult result = service.flush(celtium$textureUploadCompletedValue(),
+                    this::celtium$submitTextureBatch, this::celtium$textureUploadMayIssue);
+            int guard = 0;
+            while (result.blockedOnValue() > 0L && guard++ < 64) {
+                celtium$awaitTextureStamp(result.blockedOnValue());
+                result = service.flush(celtium$textureUploadCompletedValue(),
+                        this::celtium$submitTextureBatch, this::celtium$textureUploadMayIssue);
+            }
+        } finally {
+            this.textureFlushDriving = false;
+        }
+    }
+
+    /**
+     * Wait-drives the texture queue, ungated, until {@code drained} holds: flush, and whenever
+     * the queue is stuck behind in-flight staging slices, await the oldest stamp and flush
+     * again. The correctness seats (image destroy/recreate, the patch paths, the synchronous
+     * upload call sites) use this; a stall the awaits cannot clear names itself.
+     */
+    private void celtium$drainTextureUploads(java.util.function.BooleanSupplier drained) {
+        TextureUploadService service = this.textureUploadService;
+        if (service == null || this.textureFlushDriving) {
+            return;
+        }
+        this.textureFlushDriving = true;
+        try {
+            while (!drained.getAsBoolean()) {
+                TextureUploadService.FlushResult result = service.flush(celtium$textureUploadCompletedValue(),
+                        this::celtium$submitTextureBatch, null);
+                if (drained.getAsBoolean()) {
+                    break;
+                }
+                long oldest = service.stagingPool().oldestInFlightValue();
+                if (oldest > 0L) {
+                    celtium$awaitTextureStamp(oldest);
+                } else if (result.blockedOnValue() > 0L) {
+                    celtium$awaitTextureStamp(result.blockedOnValue());
+                } else {
+                    throw new IllegalStateException("texture upload drain made no progress: "
+                            + service.pendingRequests() + " request(s) queued, nothing in flight");
+                }
+            }
+        } finally {
+            this.textureFlushDriving = false;
+        }
+    }
+
+    /** Drains the texture queue completely: nothing queued and no staging slice in flight. */
+    public void celtium$drainTextureUploads() {
+        TextureUploadService service = this.textureUploadService;
+        if (service == null) {
+            return;
+        }
+        celtium$drainTextureUploads(() -> service.pendingRequests() == 0
+                && !service.stagingPool().hasOutstanding());
+    }
+
+    /**
+     * Enqueues one texture upload and drives it out under the synchronous seat's contract
+     * (window record section 3-5): the gated flush runs first; when the gate or staging space
+     * leaves this request queued, the caller cannot return with its bytes unlanded - the source
+     * buffer's lifetime and the texture's layout bookkeeping both assume submission - so the
+     * queue is wait-driven ungated until this request has issued. FIFO order means everything
+     * ahead of it issues first, which is the order the queue exists to keep.
+     */
+    public void celtium$enqueueTextureUpload(TextureUploadService.UploadRequest request) {
+        TextureUploadService service = celtium$textureUploadService();
+        service.enqueue(request);
+        celtium$flushTextureUploads();
+        if (service.isQueued(request)) {
+            celtium$drainTextureUploads(() -> !service.isQueued(request));
+        }
+    }
+
+    /** Destroys the shared texture staging backing; the slab allocation dies with its pool. */
+    private void destroyTextureStagingBacking() {
+        if (this.textureStagingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(this.device, this.textureStagingBuffer, null);
+            this.textureStagingBuffer = VK_NULL_HANDLE;
+        }
+        this.textureStagingAddress = 0L;
+        this.textureUploadService = null;
     }
 
     /**
@@ -1616,6 +2030,12 @@ public final class VulkanContext {
         // handling below are the entry's completion bookkeeping and run unchanged.
         entry.commandBuffer = null;
         entry.slotReclaim = null;
+        if (entry.batch != null && entry.batch.serial > this.deferredConfirmedSerial) {
+            // This reclaim is a confirmed completion of the batch's submission (the poll only
+            // reaches it past a confirmed head), so the fence path's completion watermark
+            // advances to its serial: the texture staging pool's stamps are batch serials there.
+            this.deferredConfirmedSerial = entry.batch.serial;
+        }
         if (entry.batch != null) {
             // The fence is the batch's: armed once for every entry it carried, it returns to the pool only when the
             // last entry reclaims - pooling it early would let a new submission arm a fence older entries still
@@ -2088,6 +2508,12 @@ public final class VulkanContext {
             this.deferredSubmits.poll();
             celtium$reclaimDeferred(head, false);
             reclaimed++;
+        }
+        // The texture queue's frame-side drive point: completions this poll confirmed may have
+        // freed staging space, and a budget-deferred batch is re-judged against the new window
+        // here rather than waiting for the next texture call site.
+        if (this.textureUploadService != null && this.textureUploadService.pendingRequests() > 0) {
+            celtium$flushTextureUploads();
         }
         return reclaimed;
     }
@@ -2773,6 +3199,7 @@ public final class VulkanContext {
                 this.sharedQuadIndexBuffer = null;
             }
             destroyStaging();
+            destroyTextureStagingBacking();
             if (ringDrained) {
                 destroyUploadRing();
             }
