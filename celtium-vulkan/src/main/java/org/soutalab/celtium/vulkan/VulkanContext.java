@@ -567,9 +567,25 @@ public final class VulkanContext {
      * depends on the device type, which is only known once the device is created.
      */
     private UploadBudgetLedger uploadBudget;
+    /**
+     * The exact frame key supplied for the budget window (layer 2): the terrain backend's {@code frameId},
+     * handed over at the frame's definition points by {@link #celtium$supplyUploadBudgetFrameKey(long)}.
+     * Meaningful only while {@link #uploadBudgetFrameKeySupplied} holds; before the first supply the
+     * window key falls back to the layer-1 derivation in {@link #celtium$uploadBudgetWindowKey()}.
+     */
+    private long uploadBudgetFrameKey;
+    private boolean uploadBudgetFrameKeySupplied;
+    /**
+     * The key the most recent flush accounting used: a mirror of the ledger's window key, kept so the
+     * producer side can read how much the window a key names has carried so far (the layer-2 drain's
+     * starvation rule reads it through {@link #celtium$uploadBudgetWindowBytes(long)}). Every
+     * {@code noteFlushed} call goes through the one site in {@link #flushUploads()}, so this mirror
+     * cannot drift from the ledger's own window.
+     */
+    private long uploadBudgetFlushedKey = Long.MIN_VALUE;
 
     /** {@return the upload budget ledger, creating it on first use}. */
-    private UploadBudgetLedger celtium$uploadBudget() {
+    UploadBudgetLedger celtium$uploadBudget() {
         UploadBudgetLedger ledger = this.uploadBudget;
         if (ledger == null) {
             ledger = new UploadBudgetLedger(celtium$uploadBudgetBytes(this.deviceType),
@@ -595,15 +611,46 @@ public final class VulkanContext {
     }
 
     /**
-     * {@return the budget window key for a flush happening now}: the timeline's last allocated value,
-     * so flushes between two batch submissions share one window. This is the frame key available
-     * inside the context today; a boundary flush attributes to the previous submission's window (the
-     * frame's own value is allocated when its batch is submitted, after the flush). The enforcement
-     * phase re-bases the key on the exact frame id - the ledger takes any key, so only this method
-     * changes there. Without a timeline (pre-Stage-2 paths) the flush count is the key.
+     * Supplies the exact frame key for the budget window (layer 2): the terrain backend's
+     * {@code frameId}, the same key {@code TerrainFrameBudget.beginFrame} runs on, so the terrain
+     * budget and the upload budget share one definition of a frame. Called at the frame's definition
+     * points - the deferred-upload drain at the head of {@code setupTerrain} (which runs inside the
+     * frame, before {@code frameId} advances) and the frame's own flush points in
+     * {@code FrameCoordinator}. A flush outside any frame (the settle paths) takes the last supplied
+     * key: it belongs to no frame by definition, and attributing it to the most recent one is the
+     * same lateness layer 1 had, never worse.
+     * <p>
+     * The key restarts with the backend's {@code frameId} when a world is released and a new backend
+     * is created; the ledger reads a changed key as a fresh window, which is the correct attribution
+     * for a new world's frames.
      */
-    private long celtium$uploadBudgetWindowKey() {
+    void celtium$supplyUploadBudgetFrameKey(long frameKey) {
+        this.uploadBudgetFrameKey = frameKey;
+        this.uploadBudgetFrameKeySupplied = true;
+    }
+
+    /**
+     * {@return the budget window key for a flush happening now}: the supplied exact frame key once
+     * one has been supplied (layer 2). Before the first supply - startup flushes ahead of the first
+     * {@code setupTerrain} - the layer-1 derivation stands: the timeline's last allocated value, so
+     * flushes between two batch submissions share one window, or the flush count without a timeline
+     * (pre-Stage-2 paths).
+     */
+    long celtium$uploadBudgetWindowKey() {
+        if (this.uploadBudgetFrameKeySupplied) {
+            return this.uploadBudgetFrameKey;
+        }
         return this.frameTimeline != null ? this.frameTimeline.lastAllocatedValue() : this.uploadFlushes;
+    }
+
+    /**
+     * {@return the bytes the budget window belonging to {@code frameKey} has carried so far}, or 0
+     * when that window has not opened yet. The ledger only exposes its current window, so this reads
+     * it through {@link #uploadBudgetFlushedKey}: a key that is not the last flushed key names a
+     * window with nothing in it.
+     */
+    long celtium$uploadBudgetWindowBytes(long frameKey) {
+        return frameKey == this.uploadBudgetFlushedKey ? celtium$uploadBudget().windowBytes() : 0L;
     }
 
     /**
@@ -4509,8 +4556,12 @@ public final class VulkanContext {
                 this.uploadCopiesFlushed += this.pendingUploads.size();
                 if (recordedBytes > 0L) {
                     // S3R-1 accounting: the bytes this flush actually recorded, charged to the current
-                    // budget window. Judgment only - nothing is deferred or dropped here.
-                    celtium$uploadBudget().noteFlushed(celtium$uploadBudgetWindowKey(), recordedBytes);
+                    // budget window. Judgment only - nothing is deferred or dropped here. The key is
+                    // mirrored into uploadBudgetFlushedKey so the layer-2 drain can read the window's
+                    // bytes back (celtium$uploadBudgetWindowBytes).
+                    long windowKey = celtium$uploadBudgetWindowKey();
+                    celtium$uploadBudget().noteFlushed(windowKey, recordedBytes);
+                    this.uploadBudgetFlushedKey = windowKey;
                 }
                 recyclePendingUploads();
                 celtium$releaseUploadSlotsAfterFlush(this.uploadSlotFree, this.uploadSlotCursor,
