@@ -206,4 +206,77 @@ class FrameLinearStagingRingAdapterTest {
     void constructorRejectsNull() {
         assertThrows(IllegalArgumentException.class, () -> new FrameLinearStagingRingAdapter(null));
     }
+
+    // S5-2 slot synchronisation (ringmap section 7 item 1, the integration plan's decided
+    // form): the backend selects the frame scheduler's slot explicitly at beginFrame, so the
+    // adapter must write exactly where it was told - never into the previous frame's slot,
+    // and never by silently restarting a slot the completion gate has not recycled.
+
+    @Test
+    void selectSlotMakesTheGivenSlotTheOnlyWriteTarget() {
+        FakeRing ring = new FakeRing(3, 64);
+        FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
+        adapter.selectSlot(2);
+        assertEquals(2, adapter.currentSlot());
+        long offset = adapter.allocate(4, 1);
+        assertEquals(2, ring.lastAllocSlot);
+        adapter.write(offset, direct((byte) 30, (byte) 31, (byte) 32, (byte) 33));
+        assertEquals(30, ring.read(2, 0));
+        assertEquals(33, ring.read(2, 3));
+        assertEquals(0, ring.read(0, 0));
+        assertEquals(0, ring.read(1, 0));
+        assertEquals(0, ring.used(0));
+        assertEquals(0, ring.used(1));
+    }
+
+    @Test
+    void selectSlotRejectsOutOfRangeSlots() {
+        FakeRing ring = new FakeRing(2, 64);
+        FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
+        assertThrows(IllegalArgumentException.class, () -> adapter.selectSlot(-1));
+        assertThrows(IllegalArgumentException.class, () -> adapter.selectSlot(2));
+        assertEquals(0, adapter.currentSlot());
+    }
+
+    @Test
+    void writesAfterReselectionNeverReachThePreviousFramesSlot() {
+        FakeRing ring = new FakeRing(2, 64);
+        FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
+        long first = adapter.allocate(4, 1);
+        adapter.write(first, direct((byte) 10, (byte) 11, (byte) 12, (byte) 13));
+        // The next frame's slot is selected explicitly; nothing of the new frame may land in
+        // the slot the previous frame is still being read from.
+        adapter.selectSlot(1);
+        long second = adapter.allocate(4, 1);
+        adapter.write(second, direct((byte) 20, (byte) 21, (byte) 22, (byte) 23));
+        assertEquals(4, ring.used(0));
+        assertEquals(10, ring.read(0, 0));
+        assertEquals(13, ring.read(0, 3));
+        assertEquals(0, ring.read(0, 4));
+        assertEquals(20, ring.read(1, 0));
+        assertEquals(23, ring.read(1, 3));
+    }
+
+    @Test
+    void selectSlotDoesNotResetTheSelectedSlot() {
+        FakeRing ring = new FakeRing(2, 64);
+        FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
+        assertEquals(0, adapter.allocate(16, 1));
+        adapter.selectSlot(1);
+        assertEquals(0, adapter.allocate(8, 1));
+        adapter.selectSlot(0);
+        // Selection only: slot 0's reservations continue where they left off. Recycling a
+        // slot back to offset 0 is the completion gate's act, never the selection's.
+        assertEquals(16, adapter.allocate(4, 1));
+    }
+
+    @Test
+    void selectSlotOfTheCurrentSlotIsANoOp() {
+        FakeRing ring = new FakeRing(2, 64);
+        FrameLinearStagingRingAdapter adapter = new FrameLinearStagingRingAdapter(ring);
+        assertEquals(0, adapter.allocate(16, 1));
+        adapter.selectSlot(0);
+        assertEquals(0, adapter.currentSlot());
+        assertEquals(16, adapter.allocate(4, 1));
+    }
 }

@@ -76,6 +76,18 @@ public final class DirectStagingRing implements StagingRing {
         this.cursor = 0;
     }
 
+    @Override
+    public void selectSlot(int slot) {
+        if (slot < 0 || slot >= this.slotCount) {
+            throw new IllegalArgumentException("slot " + slot + " of " + this.slotCount);
+        }
+        // Selection only (the interface contract): unlike advanceFrame's local recycling
+        // convenience above, an explicit selection does not touch the cursor - the headless
+        // ring keeps one cursor across slots, so a test that needs a recycled slot advances
+        // or builds a fresh ring, exactly as production relies on the owner's gate.
+        this.currentSlot = slot;
+    }
+
     /** Bytes reserved so far in the current slot (diagnostics and tests). */
     public long usedInCurrentSlot() {
         return this.cursor;

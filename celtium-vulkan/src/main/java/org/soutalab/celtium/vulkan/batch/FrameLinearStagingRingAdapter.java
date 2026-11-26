@@ -29,10 +29,12 @@ import java.nio.ByteBuffer;
  *   <li>{@link #advanceFrame} rotates only the adapter's own slot counter. It never calls the
  *   ring's {@code reset}, {@code hold} or {@code release}: recycling a slot is the frame-slot
  *   completion gate's alone ({@code VulkanContext.celtium$resetFrameLinearSlot}), and a second
- *   slot discipline inside the adapter is exactly what the unification removes. How the
- *   counter is kept in step with the frame scheduler's slot is a wiring decision for the lane
- *   that connects the batcher to the backend (S5-2); this class goes no further than the
- *   counter.</li>
+ *   slot discipline inside the adapter is exactly what the unification removes.</li>
+ *   <li>{@link #selectSlot} is the production slot discipline (S5-2, ringmap section 7 item 1
+ *   as decided by the integration plan): the backend selects the frame scheduler's slot
+ *   explicitly at {@code beginFrame} - the same single source {@code InstanceDataStore}
+ *   reads - and the adapter's own rotation is not used on that path. Selection only, like
+ *   {@code advanceFrame}: no reset, no hold.</li>
  * </ul>
  *
  * <p>One contract nuance is absorbed here: {@link StagingRing} allows a size of 0 (the batcher
@@ -118,5 +120,16 @@ public final class FrameLinearStagingRingAdapter implements StagingRing {
         // Selection only (see the class comment): the completion gate owns recycling, so the
         // ring is deliberately not reset here.
         this.currentSlot = (this.currentSlot + 1) % this.ring.slots();
+    }
+
+    @Override
+    public void selectSlot(int slot) {
+        if (slot < 0 || slot >= this.ring.slots()) {
+            throw new IllegalArgumentException("slot " + slot + " of " + this.ring.slots());
+        }
+        // Selection only (see the class comment): the named slot's allocator state is left
+        // exactly as the owner's discipline left it - recycling belongs to the completion
+        // gate, so re-selecting a slot continues its reservations, never restarts them.
+        this.currentSlot = slot;
     }
 }

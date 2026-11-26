@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.ByteBuffer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DirectStagingRingTest {
 
@@ -59,5 +60,27 @@ class DirectStagingRingTest {
         assertEquals(0, back.get(0));
         assertEquals(20, back.get(64));
         assertEquals(23, back.get(67));
+    }
+
+    @Test
+    void selectSlotSelectsTheNamedSlotsRegion() {
+        DirectStagingRing ring = new DirectStagingRing(3, 64);
+        ring.selectSlot(2);
+        assertEquals(2, ring.currentSlot());
+        long offset = ring.allocate(4, 1);
+        ring.write(offset, ByteBuffer.wrap(new byte[]{30, 31, 32, 33}));
+        ByteBuffer back = ring.buffer().duplicate();
+        assertEquals(0, back.get(0));
+        assertEquals(0, back.get(64));
+        assertEquals(30, back.get(128));
+        assertEquals(33, back.get(131));
+    }
+
+    @Test
+    void selectSlotRejectsOutOfRangeSlots() {
+        DirectStagingRing ring = new DirectStagingRing(2, 64);
+        assertThrows(IllegalArgumentException.class, () -> ring.selectSlot(-1));
+        assertThrows(IllegalArgumentException.class, () -> ring.selectSlot(2));
+        assertEquals(0, ring.currentSlot());
     }
 }

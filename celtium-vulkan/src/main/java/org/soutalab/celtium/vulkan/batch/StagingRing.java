@@ -51,4 +51,21 @@ public interface StagingRing {
      * of this contract.)
      */
     void advanceFrame();
+
+    /**
+     * Selects {@code slot} explicitly as the slot subsequent reservations and writes go to
+     * (S5-2, ringmap section 7 item 1 as decided by the integration plan): the production
+     * wiring does not let the ring count frames on its own - at {@code beginFrame} the backend
+     * hands the adapter the frame scheduler's slot ({@code VulkanTerrainGpuBackend}'s
+     * {@code frameSlot}, the same single source {@code InstanceDataStore.selectSlot} reads),
+     * so the slot the batcher writes is by construction the slot the completion gate recycles
+     * and the frame's submission reads.
+     *
+     * <p>Selection only, exactly like {@link #advanceFrame()}: this never recycles, resets or
+     * clears the slot - the slot's reservation state is whatever the owner's discipline left
+     * in it. Selecting the slot that is already current is a no-op.
+     *
+     * @throws IllegalArgumentException when {@code slot} is outside {@code [0, slotCount())}
+     */
+    void selectSlot(int slot);
 }
