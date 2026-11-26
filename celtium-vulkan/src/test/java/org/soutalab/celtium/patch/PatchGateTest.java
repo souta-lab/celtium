@@ -37,7 +37,7 @@ class PatchGateTest {
 
         assertEquals(snapshot, registered);
         assertEquals(snapshot, discovered, "the input list is not modified");
-        assertEquals(103, registered.size());
+        assertEquals(104, registered.size());
     }
 
     @Test
@@ -48,13 +48,13 @@ class PatchGateTest {
     }
 
     @Test
-    void skippingTweaksRemovesExactlyItsNineMembers() {
+    void skippingTweaksRemovesExactlyItsSixteenMembers() {
         List<String> discovered = allMembers();
         PatchLedger ledger = ledger(new Properties(), Map.of("celtium.patch.tweaks", "off"));
 
         List<String> registered = PatchGate.register(discovered, ledger);
 
-        assertEquals(87, registered.size());
+        assertEquals(88, registered.size());
         for (String member : PatchGroups.get("tweaks").members()) {
             assertFalse(registered.contains(member), member + " should have been filtered with its group");
         }
