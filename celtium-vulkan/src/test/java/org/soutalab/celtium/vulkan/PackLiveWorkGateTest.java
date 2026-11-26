@@ -122,8 +122,8 @@ class PackLiveWorkGateTest {
     /** The entry refuses a pass only when no route — legacy, vanilla Tier-A, or pack — has anything for it. */
     @Test
     void thePassEntryConsultsPackLiveWorkBeforeRefusing() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
         assertTrue(source.contains(
                         "if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass)"
                                 + " && !celtium$packHasLiveWork(pass)) {"),
@@ -133,8 +133,8 @@ class PackLiveWorkGateTest {
     /** The handoff shortcut's "nothing to draw" judgment must see the pack space too. */
     @Test
     void theHandoffShortcutConsultsPackLiveWork() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
         assertTrue(source.contains(
                         "if (handoffSource != 0L && !celtium$renderListsHaveGeometry(renderLists, pass)\n"
                                 + "                        && !celtium$packHasLiveWork(pass)) {"),
@@ -144,8 +144,8 @@ class PackLiveWorkGateTest {
     /** The host's answer is a peek at the existing pack executor, never a creation. */
     @Test
     void theHostPackPeekNeverCreatesAnEngine() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
         int start = source.indexOf("boolean hasPackLiveWork(TerrainRenderPass pass) {");
         assertTrue(start >= 0, "the host exposes the pack live-work peek");
         int end = source.indexOf("\n    }", start);
@@ -158,8 +158,8 @@ class PackLiveWorkGateTest {
     /** Live pack work is this pass' resident pack records or a pending deferred queue, and a disabled executor has none. */
     @Test
     void thePackExecutorPredicateReadsRecordsDeferredAndDisabled() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainPackEngine.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainPackEngine.java");
         int start = source.indexOf("boolean hasLiveWork() {");
         assertTrue(start >= 0, "the pack executor exposes its live-work predicate");
         int end = source.indexOf("\n    }", start);
@@ -178,8 +178,8 @@ class PackLiveWorkGateTest {
      */
     @Test
     void theBackendPackPeekHasNoStrideGuard() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
         int start = source.indexOf("private boolean celtium$packHasLiveWork(TerrainRenderPass pass) {");
         assertTrue(start >= 0, "the backend exposes the pack live-work test");
         int end = source.indexOf("\n    }", start);
@@ -193,8 +193,8 @@ class PackLiveWorkGateTest {
     /** The vanilla half of the entry judgment is unchanged: its peek keeps the stride guard and the host consult. */
     @Test
     void theVanillaPeekKeepsItsShape() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+        String source = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
         int start = source.indexOf("private boolean celtium$tierAHasLiveWork(TerrainRenderPass pass) {");
         assertTrue(start >= 0, "the backend still exposes the vanilla live-work test");
         int end = source.indexOf("\n    }", start);
@@ -203,6 +203,15 @@ class PackLiveWorkGateTest {
         assertTrue(body.contains("TerrainVertex16.STRIDE"),
                 "the vanilla test still turns non-16-byte passes away");
         assertTrue(body.contains("host.hasLiveWork(pass)"), "the vanilla test still defers to the host peek");
+    }
+
+    /**
+     * Reads a production source for the contracts above. Line endings are
+     * normalised to LF: the pinned shapes span lines, and a CRLF checkout
+     * (the Windows default) must pin the same shapes as an LF one.
+     */
+    private static String readSource(String repoRelative) throws IOException {
+        return Files.readString(findRepoFile(repoRelative)).replace("\r\n", "\n");
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
