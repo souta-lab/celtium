@@ -2209,6 +2209,36 @@ public final class VulkanContext {
         entries.clear();
     }
 
+    /**
+     * {@return whether deferred entries are still queued for the next
+     * {@link #celtium$flushBatchedSubmits()}}: work that has been recorded but not yet
+     * submitted. A teardown gate reads this because submitting is what turns a recorded
+     * reference into a completable one - destroying what an unsubmitted entry names
+     * would strand the entry itself, and flushing from inside a gate would hide the
+     * caller's own ordering bug (the flush belongs to the caller's settle, M4).
+     */
+    public boolean celtium$hasPendingBatchedSubmits() {
+        return !this.pendingBatchedSubmits.isEmpty();
+    }
+
+    /**
+     * {@return whether every submission this context has made is confirmed complete}:
+     * on a timeline device, the GPU-confirmed counter has reached the last allocated
+     * value; on the fence path, no deferred submission is outstanding - the counter
+     * only falls in {@link #celtium$reclaimDeferred}, which a poll or a bounded wait
+     * reaches only past a fence the driver has confirmed, so zero outstanding is the
+     * idle-confirmed state, not merely an unobserved one. Unsubmitted entries are not
+     * this method's subject (they are {@link #celtium$hasPendingBatchedSubmits()}'s):
+     * a caller composing the two answers has "nothing recorded, nothing in flight,
+     * nothing unconfirmed", which is the quiescence a destructive teardown requires
+     * (T3 design section 5.2, condition (4)).
+     */
+    public boolean celtium$isSubmissionCompleted() {
+        return this.frameTimeline != null
+                ? this.frameTimeline.completedValue() == this.frameTimeline.lastAllocatedValue()
+                : this.deferredSubmitsOutstanding == 0;
+    }
+
     /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */
     private static final int SUBMIT_CHUNK = 128;
 
@@ -5654,6 +5684,17 @@ public final class VulkanContext {
     /** {@return how many deferred buffers are waiting to be freed, and how many have been freed so far}. */
     public int[] celtium$retiredBufferCounts() {
         return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
+    }
+
+    /**
+     * {@return how many slab-backed buffers currently sit in the deferred retire
+     * list} - the list a host buffer's delete escapes into while a recording is
+     * open. A gate-passed teardown (T3 design section 5.2) reads it before and
+     * after its destroys: growth across them means a destroy took the deferred
+     * route despite the gate, which is a defect of the gate, not of the buffer.
+     */
+    public int celtium$retiredSlabBufferCount() {
+        return this.retiredSlabBuffers.size();
     }
 
     /** {@return {@code current} clamped so a retire tag never goes below the newest tag already handed out}. */

@@ -58,6 +58,14 @@ final class TerrainEngineA {
     private final TerrainUploadBudget budget;
     private final TerrainResidencyGate residencyGate;
     private final TerrainEngineAHost host;
+    /**
+     * The world epoch this executor was created in, stamped from the host at
+     * construction (T3 design section 5.2): once the host's paired reset
+     * advances the epoch, this executor belongs to a dead world and its entry
+     * points refuse to run (INV-4c) - a defensive backstop, since the reset
+     * also removes the executor from every reachable map.
+     */
+    private final long worldEpoch;
     // The residency gate's arming verdict (order (i)): by default the gate only
     // reports — Tier-A keeps arming while sections are missing, exactly as
     // before — and with -Dceltium.vulkan.terrainResidencyGate=enforce an
@@ -116,6 +124,7 @@ final class TerrainEngineA {
         this.budget = budget;
         this.residencyGate = residencyGate;
         this.host = host;
+        this.worldEpoch = host.worldEpoch();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -212,6 +221,12 @@ final class TerrainEngineA {
     }
 
     private RegisterAttempt attemptRegister(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        // Epoch guard first (INV-4c): an executor of a dead epoch refuses
+        // before any side effect - no residency expectation, no deferred
+        // queue entry, no store touch.
+        if (this.worldEpoch != this.host.worldEpoch()) {
+            return new RegisterAttempt(null, RegisterOutcome.REJECTED);
+        }
         if (this.disabled) {
             return new RegisterAttempt(null, RegisterOutcome.REJECTED);
         }
@@ -372,6 +387,11 @@ final class TerrainEngineA {
      */
     boolean prepareFrame(VkCommandBuffer commandBuffer, int slotIndex, float[] viewProjection,
                          double cameraX, double cameraY, double cameraZ) {
+        // Epoch guard (INV-4c), as in attemptRegister: a dead epoch's
+        // executor prepares nothing.
+        if (this.worldEpoch != this.host.worldEpoch()) {
+            return false;
+        }
         if (this.disabled) {
             return false;
         }

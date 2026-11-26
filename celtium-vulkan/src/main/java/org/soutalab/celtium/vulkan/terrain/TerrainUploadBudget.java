@@ -40,6 +40,20 @@ public final class TerrainUploadBudget {
     }
 
     /**
+     * Restores the just-constructed state - full frame allowance, no admitted
+     * bytes, no pending backlog: the epoch boundary of the paired reset (T3
+     * design section 5.2). The old world's backlog names uploads of engines
+     * that no longer exist; carrying it over would make the next world meet
+     * the cap early for work it never queued.
+     */
+    public void reset() {
+        this.remainingThisFrame = this.bytesPerFrame;
+        this.admittedThisFrame = 0;
+        this.pendingBytes = 0;
+        this.pendingUploads = 0;
+    }
+
+    /**
      * Tries to admit one upload of {@code bytes} into the current frame.
      *
      * @return true when admitted (the allowance is charged); false when it does not fit
