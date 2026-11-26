@@ -5007,6 +5007,13 @@ public final class VulkanContext {
      * until the next idle drain on a timeline-less device, and advancing the drain serial here to unstall
      * it would break the serial's contract - it only advances where the queue is idle, and the many
      * direct releases keyed on it (buffer/texture/host-buffer deletes) rely on exactly that.
+     * <p>
+     * For the ranges this drain itself releases, the next collection point is this call's own tail: when
+     * anything was freed, a closing {@link #celtium$collectSlabReleases()} runs before returning, so the
+     * ranges re-enter the ledgers in the same frame they were drained in. Without it they would wait for
+     * the next frame boundary's head-of-drain collect, and a burst arriving inside that frame would grow
+     * fresh slabs for ranges that are already GPU-dead - a one-frame lag on the slab peak that the drain
+     * fix's own measurement (a backlog-dominated peak) showed the burst pattern cannot afford.
      *
      * @return how many buffers were destroyed
      */
@@ -5028,6 +5035,11 @@ public final class VulkanContext {
             this.retiredSlabGatedDrains++;
             this.retiredSlabGatedFreed += freed;
             this.retiredBuffersDestroyed += freed;
+            // Drain-tail collect: the releases stacked above are keyed on the already-completed value,
+            // so they are collectable in this same pass. Collecting here returns their ranges to the
+            // ledgers now instead of at the next frame boundary's head-of-drain collect (see the method
+            // documentation for the one-frame peak lag that removes).
+            celtium$collectSlabReleases();
         }
         return freed;
     }
