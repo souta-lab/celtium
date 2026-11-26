@@ -24728,6 +24728,51 @@ this.frameBufferOpen = false;
      * @return whether the group was captured; a group that is not captured is drawn by the caller
      *         through the direct twin fallback
      */
+    // The capture half of the bindless slot dump instrument (see BindlessTextureBinding):
+    // while -Dceltium.debug.bindlessSlotDump is set, the first captures of every group and
+    // every capture of the dirt texture (gl 46, the video-settings background) are printed
+    // with the texture name, the form taken and the array index the record was written
+    // with, so a leg can compare what capture resolved against what the slot census found
+    // in the array. Bounded and off the production path when the property is absent.
+    private static final boolean CAPTURE_DUMP_ENABLED =
+            System.getProperty("celtium.debug.bindlessSlotDump") != null;
+    private static int captureDumpBudget = 400;
+
+    private static void celtium$logCaptureForSlotDump(int textureSlot, boolean textureInRecord,
+            int arrayIndex, ImmediateGroup group, VulkanDynamicMesh mesh,
+            java.nio.ByteBuffer push) {
+        if (!CAPTURE_DUMP_ENABLED || captureDumpBudget <= 0) {
+            return;
+        }
+        if (!textureInRecord && textureSlot != 46) {
+            return;
+        }
+        captureDumpBudget--;
+        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_CAPTURE gl=")
+                .append(textureSlot)
+                .append(" array=").append(textureInRecord)
+                .append(" index=").append(arrayIndex)
+                .append(" verts=").append(mesh.vertexCount())
+                .append(" stride=").append(mesh.layout().stride);
+        if (push != null && push.capacity() >= 128) {
+            java.nio.ByteBuffer view = push.duplicate();
+            line.append(" push100_127=");
+            for (int at = 100; at < 128; at++) {
+                line.append(String.format("%02x", view.get(at) & 0xff));
+            }
+        }
+        if (mesh.vertexCount() > 0) {
+            int stride = mesh.layout().stride;
+            java.nio.ByteBuffer vertices = org.lwjgl.system.MemoryUtil.memByteBuffer(
+                    mesh.vertexAddress(), Math.min(stride * 2, mesh.vertexCount() * stride));
+            line.append(" v0=");
+            for (int at = 0; at < stride; at++) {
+                line.append(String.format("%02x", vertices.get(at) & 0xff));
+            }
+        }
+        CeltiumLogLimiter.println(line.toString());
+    }
+
     private boolean celtium$tryCaptureBatchGroup(ImmediateGroup group, VulkanDynamicMesh mesh,
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
         if (this.batchBatcher == null || !celtium$batchEligible(group, mesh, prepared)) {
@@ -24811,6 +24856,7 @@ this.frameBufferOpen = false;
         celtium$ensureBatchSegment();
         int stateKey = celtium$internBatchState(group);
         int recordIndex = this.drawRecords.record(push, arrayIndex);
+        celtium$logCaptureForSlotDump(textureSlot, textureInRecord, arrayIndex, group, mesh, push);
         if (recordIndex < 0) {
             this.batchFallbackGroups++;
             return false;
