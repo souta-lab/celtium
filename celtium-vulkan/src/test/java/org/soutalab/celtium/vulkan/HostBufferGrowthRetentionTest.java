@@ -95,10 +95,10 @@ class HostBufferGrowthRetentionTest {
     @DisplayName("both Tier-A image buffers opt into retention at creation")
     void terrainEngineOptsBothBuffersIntoRetention() throws IOException {
         String source = read(TERRAIN_ENGINE_A_HOST);
-        assertTrue(source.contains("this.descBuffer.retainSupersededBuffers()"),
-                "the section-descriptor buffer (binding 6) retains its superseded buffers");
-        assertTrue(source.contains("this.factorBaseBuffer.retainSupersededBuffers()"),
-                "the factor-base buffer (binding 7) retains its superseded buffers");
+        assertTrue(source.contains("this.descBuffers[slotIndex].retainSupersededBuffers()"),
+                "each slot's section-descriptor buffer (binding 6) retains its superseded buffers");
+        assertTrue(source.contains("this.factorBaseBuffers[slotIndex].retainSupersededBuffers()"),
+                "each slot's factor-base buffer (binding 7) retains its superseded buffers");
     }
 
     private static String read(String repoRelative) throws IOException {

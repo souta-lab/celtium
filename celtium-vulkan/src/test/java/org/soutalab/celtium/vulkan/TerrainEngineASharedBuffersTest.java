@@ -18,10 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and the factor and sorted arenas (32 MiB each per pass, holding only that pass'
  * slice of the store's single cross-pass offset spaces). All four now live on the
  * host, created lazily at the same first touches, written at the store's own offsets,
- * and deleted only after every engine. The one desc upload is additionally keyed to
- * the frame: it runs at most once per frame, at the frame's first pass head, so a
- * store image that moves mid-frame never splits the frame's passes across two
- * images — the gate deciding that is a pure function and is driven directly below.
+ * and deleted only after every engine. Since T3 condition (2) the two images are
+ * per frame slot and are written only through the host's frame snapshot: a slot's
+ * snapshot is built once per recording from one atomic store capture, so a store
+ * image that moves mid-recording never splits the recording's passes across two
+ * images — the identity deciding that is a pure function and is driven directly
+ * below (the snapshot contract itself is pinned in {@code FrameSnapshotContractTest}).
  * The device-bound halves cannot run on a
  * CPU-only instance, so the ownership shape is pinned at the source layer, the shape
  * {@code HostBufferGrowthRetentionTest} and {@code FrameTargetSlabHousingTest}
@@ -41,40 +43,48 @@ class TerrainEngineASharedBuffersTest {
         String host = read(HOST);
         String engine = read(ENGINE);
         for (String field : new String[] {
-                "private VulkanHostBuffer descBuffer;",
-                "private VulkanHostBuffer factorBaseBuffer;",
                 "private VulkanHostBuffer factorBuffer;",
                 "private VulkanHostBuffer sortedBuffer;"}) {
             assertTrue(host.contains(field), "the host owns " + field);
             assertFalse(engine.contains(field), "no per-pass copy of " + field + " remains");
         }
-        assertTrue(host.contains("private long uploadedDescGeneration"),
-                "the one upload's generation tracking lives on the host");
+        assertTrue(host.contains("private final VulkanHostBuffer[] descBuffers"),
+                "the host owns the desc table, one copy per frame slot (T3 condition (2))");
+        assertTrue(host.contains("private final VulkanHostBuffer[] factorBaseBuffers"),
+                "the host owns the factor-base image, one copy per frame slot (T3 condition (2))");
+        assertFalse(engine.contains("descBuffers"),
+                "no engine names the slot image array: it reads its snapshot's handles");
+        assertFalse(engine.contains("factorBaseBuffers"),
+                "no engine names the slot image array: it reads its snapshot's handles");
+        assertTrue(host.contains("slotUploadedGenerations"),
+                "the per-slot upload generation tracking lives on the host");
         assertFalse(engine.contains("uploadedGeneration"),
                 "no per-engine upload tracking remains");
     }
 
     @Test
-    void theDescUploadLivesOnTheHostAlone() throws IOException {
+    void theSnapshotLivesOnTheHostAlone() throws IOException {
         String host = read(HOST);
         String engine = read(ENGINE);
-        assertTrue(host.contains("void uploadDescImageIfMoved(VulkanContext context)"),
-                "the host carries the one desc/factor-base upload");
-        assertTrue(host.contains("this.store.imageGeneration()"),
-                "the upload keys on the store's image generation");
+        assertTrue(host.contains(
+                        "FrameSnapshot prepareSlotSnapshot(VulkanContext context, int slotIndex, long recordingEpoch)"),
+                "the host carries the one snapshot builder");
+        assertTrue(host.contains("this.store.captureSnapshot()"),
+                "the snapshot is built from the store's one atomic capture");
         assertFalse(engine.contains("imageGeneration"),
                 "no engine re-uploads the image into a private copy anymore");
-        assertTrue(engine.contains("this.host.uploadDescImageIfMoved(this.context)"),
-                "the frame head reaches the shared upload through the host");
+        assertTrue(engine.contains(
+                        "this.host.prepareSlotSnapshot(this.context, slotIndex, recordingEpoch)"),
+                "the frame head reaches the snapshot through the host");
     }
 
     @Test
     void engineHandlesAndWritesGoThroughTheHost() throws IOException {
         String engine = read(ENGINE);
-        assertTrue(engine.contains("return this.host.descBufferHandle(this.context);"),
-                "binding 6 reads the shared desc table");
-        assertTrue(engine.contains("return this.host.factorBaseBufferHandle(this.context);"),
-                "binding 7 reads the shared factor-base image");
+        assertTrue(engine.contains("this.currentSnapshot.descBufferHandle()"),
+                "binding 6 reads the snapshot's desc table");
+        assertTrue(engine.contains("this.currentSnapshot.factorBaseBufferHandle()"),
+                "binding 7 reads the snapshot's factor-base image");
         assertTrue(engine.contains("return this.host.factorBuffer(this.context).buffer();"),
                 "binding 8 reads the shared factor arena");
         assertTrue(engine.contains(
@@ -97,7 +107,7 @@ class TerrainEngineASharedBuffersTest {
         int enginesDeleted = delete.indexOf("engine.delete()");
         assertTrue(enginesDeleted >= 0, "the host deletes its engines");
         for (String bufferDelete : new String[] {
-                "this.descBuffer.delete()", "this.factorBaseBuffer.delete()",
+                "this.descBuffers[slot].delete()", "this.factorBaseBuffers[slot].delete()",
                 "this.factorBuffer.delete()", "this.sortedBuffer.delete()"}) {
             assertTrue(delete.indexOf(bufferDelete) > enginesDeleted,
                     bufferDelete + " runs only after every engine is deleted");
@@ -107,21 +117,25 @@ class TerrainEngineASharedBuffersTest {
     }
 
     @Test
-    void descUploadIsDueAtCreationAndNotWithoutAMove() {
-        assertTrue(TerrainEngineAHost.descUploadDue(false, 0L, -1L, Long.MIN_VALUE, Long.MIN_VALUE),
-                "no buffer yet: the first touch creates and uploads");
-        assertFalse(TerrainEngineAHost.descUploadDue(true, 5L, 5L, 7L, 3L),
-                "the store image has not moved: nothing to upload");
+    void slotUploadIsDueAtCreationAndNotWithoutAMove() {
+        assertTrue(TerrainEngineAHost.slotUploadDue(false, 0L, -1L),
+                "no buffer yet: the slot's first snapshot creates and uploads");
+        assertFalse(TerrainEngineAHost.slotUploadDue(true, 5L, 5L),
+                "the slot already holds the captured generation: nothing to upload");
+        assertTrue(TerrainEngineAHost.slotUploadDue(true, 6L, 5L),
+                "the capture is a generation ahead of the slot's copy: upload");
     }
 
     @Test
-    void descUploadRunsAtMostOncePerFrame() {
-        assertTrue(TerrainEngineAHost.descUploadDue(true, 6L, 5L, 7L, 3L),
-                "the image moved and this frame has not uploaded yet: upload at its head");
-        assertFalse(TerrainEngineAHost.descUploadDue(true, 6L, 5L, 7L, 7L),
-                "the image moved again after this frame's upload: the frame keeps its image");
-        assertTrue(TerrainEngineAHost.descUploadDue(true, 7L, 6L, 8L, 7L),
-                "the next frame uploads the moved image at its head");
+    void aSnapshotServesItsRecordingAndIsRebuiltForTheNext() {
+        assertTrue(TerrainEngineAHost.snapshotCurrent(true, 3L, 7L, 3L, 7L),
+                "same recording epoch, same frame stamp: the standing snapshot serves"
+                        + " every pass of the recording");
+        assertFalse(TerrainEngineAHost.snapshotCurrent(true, 3L, 7L, 4L, 7L),
+                "the recording split and a new one began: a fresh snapshot is built,"
+                        + " so no pass reads the discarded recording's image");
+        assertFalse(TerrainEngineAHost.snapshotCurrent(true, 3L, 7L, 3L, 8L),
+                "a new frame stamp: a fresh snapshot is built at the new frame's head");
     }
 
     @Test
@@ -129,7 +143,7 @@ class TerrainEngineASharedBuffersTest {
         assertTrue(read(BACKEND).contains("host.noteTierAFrameHead(this.frameId);"),
                 "the pass head stamps the backend's frame id on the host");
         assertTrue(read(HOST).contains("void noteTierAFrameHead(long frameKey)"),
-                "the host carries the frame stamp the upload keys on");
+                "the host carries the frame stamp the snapshot identity keys on");
     }
 
     private static String read(String repoRelative) throws IOException {
