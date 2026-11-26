@@ -56,6 +56,27 @@ final class BackendDiagnostics {
                 + " textureUploadDeferredBytes=" + (service == null ? 0L : service.deferredBytesTotal());
     }
 
+    /**
+     * The mesh producer's own budget account counters (budget layer 2, option C): the resolved
+     * mesh budget and what the mesh side deferred against it. These are the mesh side's own
+     * numbers - before the account existed, a leg had to attribute mesh deferrals by subtracting
+     * the texture counter from the shared ledger's total, an identity that held per run by
+     * measurement, not by construction. Zero counts when no burst arrival has resolved the
+     * account yet - printed unconditionally, like the texture counters above; the budget value
+     * still resolves in that case, so the line names the budget a burst would meet.
+     */
+    private String meshUploadBudgetSummary() {
+        MeshUploadBudget account = b.celtium$meshUploadBudgetOrNull();
+        long budgetBytes = account != null ? account.budgetBytes()
+                : b.context == null ? 0L
+                        : MeshUploadBudget.resolveBudgetBytes(b.context.celtium$uploadBudget().budgetBytes());
+        return "meshUploadBudgetBytes=" + budgetBytes
+                + " meshUploadDeferredBytes=" + (account == null ? 0L : account.deferredTotalBytes())
+                + " meshUploadDeferredCount=" + (account == null ? 0L : account.deferredCount())
+                + " meshUploadDeferredOutstanding=" + (account == null ? 0L : account.deferredOutstandingBytes())
+                + " meshUploadDeferredCapForce=" + (account == null ? 0L : account.deferredCapForce());
+    }
+
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
@@ -262,6 +283,7 @@ final class BackendDiagnostics {
                 + " drained=" + b.deferredUploadDrainedOutputs
                 + " maxQueued=" + b.deferredUploadMaxQueued
                 + " maxDrain=" + b.deferredUploadMaxDrainOutputs + "]"
+                + " " + meshUploadBudgetSummary()
                 + " terrainIndirect=[offers=" + b.terrain.terrainIndirectOffers()
                 + " calls=" + b.terrain.terrainIndirectCalls()
                 + " draws=" + b.terrain.terrainIndirectDraws()

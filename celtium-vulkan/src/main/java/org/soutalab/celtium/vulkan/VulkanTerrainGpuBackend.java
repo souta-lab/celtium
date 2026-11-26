@@ -17012,16 +17012,43 @@ this.frameBufferOpen = false;
      * <p>
      * A burst of finished sections used to be uploaded inside one frame: the measured ATM3 world-only frame had
      * {@code setupTerrain} p95 2.2 ms and frame p95 15.9 ms against a 1.44 ms Celeritas frame, and the burst is what
-     * made the distribution, not the mean, expensive. The budget that answers that is the context's byte ledger
-     * ({@link UploadBudgetLedger}, sized by {@code celtium.vulkan.uploadBudgetMiB} - the one canonical budget
-     * property): a burst arrival whose real mesh bytes would take the frame's window over the budget is deferred
-     * here against the ledger's 16 MiB deferred cap, and the drain at the head of the next {@code setupTerrain} -
-     * which runs every frame - issues the backlog against the new window's room, so the queue cannot starve. The
-     * earlier per-frame count cap ({@code celtium.vulkan.uploadBudget}, 0 = off) is gone: its 0 meant the opposite
-     * of the byte property's 0 (unlimited), and with the drain spending bytes the count cap's role is absorbed by
-     * the ledger's remaining-room judgment.
+     * made the distribution, not the mean, expensive. The budget that answers that is the mesh producer's own
+     * account ({@link MeshUploadBudget}, resolving to the shared budget sized by
+     * {@code celtium.vulkan.uploadBudgetMiB} unless a mesh-only override is set): a burst arrival whose real mesh
+     * bytes would take the frame's window over the budget is deferred here against the account's 16 MiB deferred
+     * cap, and the drain at the head of the next {@code setupTerrain} - which runs every frame - issues the backlog
+     * against the new window's room, so the queue cannot starve. The window is charged at issue time - an arrival
+     * that goes through at once and every entry the drain issues - so the judgment reads the mesh work the frame
+     * has already carried; under the shared ledger it read a window the frame's charges had not reached yet, and
+     * the mesh side never deferred (OVERHAUL-BUDGET-MESH-STARVATION-DIAGNOSIS-2026-11-27). The earlier per-frame
+     * count cap ({@code celtium.vulkan.uploadBudget}, 0 = off) is gone: its 0 meant the opposite of the byte
+     * property's 0 (unlimited), and with the drain spending bytes the count cap's role is absorbed by the
+     * account's remaining-room judgment.
      */
     private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
+
+    /** The mesh producer's own budget account; resolved lazily, for the same reason the ledger is. */
+    private MeshUploadBudget meshUploadBudget;
+
+    /**
+     * {@return the mesh producer's budget account, resolving it on first use}: its budget falls
+     * back to the shared ledger's resolved budget, so the device-type defaults and the shared
+     * property apply unchanged unless a mesh-only override is set. Lazy because the shared budget
+     * depends on the device type, which is only known once the device is created.
+     */
+    MeshUploadBudget celtium$meshUploadBudget() {
+        MeshUploadBudget account = this.meshUploadBudget;
+        if (account == null) {
+            account = MeshUploadBudget.resolve(this.context.celtium$uploadBudget().budgetBytes());
+            this.meshUploadBudget = account;
+        }
+        return account;
+    }
+
+    /** {@return the mesh producer's budget account, or null when no judgment has resolved it yet}. */
+    MeshUploadBudget celtium$meshUploadBudgetOrNull() {
+        return this.meshUploadBudget;
+    }
     /**
      * What the upload budget did, so "the budget engaged" is a number rather than an inference from the flag.
      * <p>
@@ -17080,34 +17107,34 @@ this.frameBufferOpen = false;
 
     /**
      * The layer-2 producer judgment for one burst arrival of {@code weightBytes} under {@code frameKey}:
-     * defer it when issuing it would take the window over the budget and the deferred backlog's cap
-     * accepts it (the deferral is then accounted in the ledger). {@code false} - issue now - when the
-     * window has room, when the budget is unlimited, or when the cap refuses the deferral (the refusal
-     * itself is counted in the ledger's {@code deferredCapForce}).
+     * defer it when issuing it would take the mesh window over the budget and the deferred backlog's cap
+     * accepts it (the deferral is then accounted in the mesh account). {@code false} - issue now - when
+     * the window has room, when the budget is unlimited, or when the cap refuses the deferral (the refusal
+     * itself is counted in the account's {@code deferredCapForce}).
      */
-    static boolean celtium$tryDeferBurstArrival(UploadBudgetLedger ledger, long frameKey, long weightBytes) {
-        if (!ledger.wouldExceed(frameKey, weightBytes)) {
+    static boolean celtium$tryDeferBurstArrival(MeshUploadBudget account, long frameKey, long weightBytes) {
+        if (!account.wouldExceed(frameKey, weightBytes)) {
             return false;
         }
-        return ledger.noteDeferred(weightBytes);
+        return account.noteDeferred(weightBytes);
     }
 
     /**
      * Whether the deferred queue's head entry of {@code headBytes} may be issued under {@code frameKey}
-     * in this drain. The normal rule is the ledger's remaining room. The starvation escape stands behind
-     * it: when the window has carried nothing yet ({@code windowFlushedBytes} is 0) and this drain has
-     * issued nothing, an entry heavier than the whole budget can never become issuable by waiting - the
-     * window it waits on only fills through flushes of work that is itself waiting - so the head is
-     * issued once, unconditionally, and the excess lands in the window's overrun account at flush time.
+     * in this drain. The normal rule is the mesh window's remaining room. The starvation escape stands
+     * behind it: when the window has been charged nothing yet ({@code windowAccountedBytes} is 0) and
+     * this drain has issued nothing, an entry heavier than the whole budget can never become issuable by
+     * waiting - the window it waits on only fills through issues of work that is itself waiting - so the
+     * head is issued once, unconditionally, and its charge lands in the window like any other issue.
      * Once anything has flowed, the escape is closed and the entry waits for a fresh window like any
      * other.
      */
-    static boolean celtium$deferredEntryIssuable(UploadBudgetLedger ledger, long frameKey,
-            long windowFlushedBytes, long issuedThisDrainBytes, long headBytes) {
-        if (!ledger.wouldExceed(frameKey, headBytes)) {
+    static boolean celtium$deferredEntryIssuable(MeshUploadBudget account, long frameKey,
+            long windowAccountedBytes, long issuedThisDrainBytes, long headBytes) {
+        if (!account.wouldExceed(frameKey, headBytes)) {
             return true;
         }
-        return windowFlushedBytes <= 0L && issuedThisDrainBytes <= 0L;
+        return windowAccountedBytes <= 0L && issuedThisDrainBytes <= 0L;
     }
 
     /**
@@ -17126,15 +17153,15 @@ this.frameBufferOpen = false;
         if (this.deferredUploads.isEmpty()) {
             return;
         }
-        UploadBudgetLedger ledger = this.context.celtium$uploadBudget();
+        MeshUploadBudget account = celtium$meshUploadBudget();
         long frameKey = this.context.celtium$uploadBudgetWindowKey();
-        long windowFlushedBytes = this.context.celtium$uploadBudgetWindowBytes(frameKey);
         this.deferredUploadDrains++;
         int drained = 0;
         long issuedBytes = 0L;
         while (!this.deferredUploads.isEmpty()) {
             DeferredUpload entry = this.deferredUploads.peekFirst();
-            if (!celtium$deferredEntryIssuable(ledger, frameKey, windowFlushedBytes, issuedBytes, entry.bytes)) {
+            if (!celtium$deferredEntryIssuable(account, frameKey, account.windowBytes(frameKey),
+                    issuedBytes, entry.bytes)) {
                 break;
             }
             this.deferredUploads.pollFirst();
@@ -17148,7 +17175,10 @@ this.frameBufferOpen = false;
             }
             // The entry has left the backlog whether its upload succeeded or not - the region keeps
             // whatever it already had on a failure - so the deferral account settles here either way.
-            ledger.noteDeferredIssued(entry.bytes);
+            // The issue is charged to the mesh window at issue time either way too, so the next head
+            // in this drain - and any arrival later in the frame - is judged against it.
+            account.noteIssued(frameKey, entry.bytes);
+            account.noteDeferredIssued(entry.bytes);
             drained += taken;
             issuedBytes += entry.bytes;
         }
@@ -17209,17 +17239,18 @@ this.frameBufferOpen = false;
             Runnable graphUpdateTrigger) {
         // Only a burst is budgeted. A batch smaller than the threshold - the steady-state trickle, and the batch the
         // fixture's capture deadline waits on - goes straight through, so the deadline never sees a queue it must wait
-        // out, and the budget is never even asked. A larger arrival is judged by the byte ledger: it is spread over
+        // out, and the budget is never even asked. A larger arrival is judged by the mesh account: it is spread over
         // the following frames by the drain at the head of setupTerrain only when issuing it now would take the
         // frame's window over the budget and the deferred cap accepts the backlog; otherwise it goes through at
         // once, exactly like a small arrival.
         if (results.size() > UPLOAD_BURST) {
-            UploadBudgetLedger ledger = this.context.celtium$uploadBudget();
+            MeshUploadBudget account = celtium$meshUploadBudget();
             long weight = 0L;
             for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
                 weight += celtium$deferredUploadWeight(holder.output());
             }
-            if (celtium$tryDeferBurstArrival(ledger, this.context.celtium$uploadBudgetWindowKey(), weight)) {
+            long frameKey = this.context.celtium$uploadBudgetWindowKey();
+            if (celtium$tryDeferBurstArrival(account, frameKey, weight)) {
                 // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
                 // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
                 Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
@@ -17251,6 +17282,10 @@ this.frameBufferOpen = false;
                 }
                 return;
             }
+            // Issued now: charge the mesh window at arrival time, so a later burst in this frame is
+            // judged against what the frame has already carried. Without the charge the judgment
+            // read an empty window however many bursts the frame had already taken.
+            account.noteIssued(frameKey, weight);
         }
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = this.uploadQueueScratch;
         clearUploadScratch(queues);
@@ -18072,12 +18107,13 @@ this.frameBufferOpen = false;
             }
             this.deferredUploads.clear();
             if (droppedBytes > 0L) {
-                // The ledger belongs to the context, which outlives the world, so a backlog dropped here
-                // must leave its account here: otherwise the outstanding gauge would keep counting bytes
-                // no queue holds, and the next world's deferrals would meet the cap early. The account
-                // settles through its only exit, the issued side; the cumulative deferred totals are
-                // untouched, only the outstanding gauge returns to the truth.
-                this.context.celtium$uploadBudget().noteDeferredIssued(droppedBytes);
+                // The mesh account is this backend's own and a new world gets a fresh one, so no
+                // backlog can leak into the next world's cap; the settle here is for the counter
+                // summary printed at this teardown, which reads the account and must not report an
+                // outstanding backlog no queue holds. The account settles through its only exit, the
+                // issued side; the cumulative deferred totals are untouched, only the outstanding
+                // gauge returns to the truth.
+                celtium$meshUploadBudget().noteDeferredIssued(droppedBytes);
             }
         }
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when

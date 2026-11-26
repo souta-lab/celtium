@@ -21,12 +21,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The upload budget's layer 2 (design OVERHAUL-S3-REMAINDER-DESIGN §2.2): the producer-side deferral
- * protocol wired onto the layer-1 ledger. The judgment half is checked against the real
- * {@link UploadBudgetLedger} through the backend's static judgment functions; the wiring half is
- * pinned on the sources, because the producer and the drain live on the terrain backend, which needs
- * a device to instantiate.
+ * protocol. Since option C (OVERHAUL-BUDGET-MESH-STARVATION-DIAGNOSIS-2026-11-27) the mesh side judges
+ * against its own {@link MeshUploadBudget}, charged at issue time; the judgment half is checked against
+ * the real account through the backend's static judgment functions, and the wiring half is pinned on
+ * the sources, because the producer and the drain live on the terrain backend, which needs a device
+ * to instantiate.
  */
 class UploadBudgetLayer2Test {
+
+    private static final long CAP = UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES;
 
     // ------------------------------------------------------------------ weight
 
@@ -66,40 +69,56 @@ class UploadBudgetLayer2Test {
     /** A burst that fits the window is issued now; nothing is accounted as deferred. */
     @Test
     void burstWithinBudgetIssuesNow() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(1000L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(ledger, 7L, 600L));
-        assertEquals(0L, ledger.deferredCount());
-        assertEquals(0L, ledger.deferredOutstandingBytes());
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 600L));
+        assertEquals(0L, account.deferredCount());
+        assertEquals(0L, account.deferredOutstandingBytes());
     }
 
     /** A burst that would take the window over the budget is deferred and accounted. */
     @Test
     void burstOverBudgetDefersAndAccounts() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(1000L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        ledger.noteFlushed(7L, 800L);
-        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(ledger, 7L, 300L));
-        assertEquals(300L, ledger.deferredOutstandingBytes());
-        assertEquals(300L, ledger.deferredTotalBytes());
-        assertEquals(1L, ledger.deferredCount());
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        account.noteIssued(7L, 800L);
+        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 300L));
+        assertEquals(300L, account.deferredOutstandingBytes());
+        assertEquals(300L, account.deferredTotalBytes());
+        assertEquals(1L, account.deferredCount());
     }
 
     /** When the deferred cap refuses, the arrival is issued now and the refusal is the counted fact. */
     @Test
     void capRefusalForcesAnImmediateIssue() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(100L, 50L);
-        ledger.noteFlushed(7L, 90L);
-        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(ledger, 7L, 60L));
-        assertEquals(1L, ledger.deferredCapForce());
-        assertEquals(0L, ledger.deferredOutstandingBytes());
-        assertEquals(0L, ledger.deferredCount());
+        MeshUploadBudget account = new MeshUploadBudget(100L, 50L);
+        account.noteIssued(7L, 90L);
+        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 60L));
+        assertEquals(1L, account.deferredCapForce());
+        assertEquals(0L, account.deferredOutstandingBytes());
+        assertEquals(0L, account.deferredCount());
     }
 
     /** An unlimited budget (the property's 0) never defers, whatever arrives. */
     @Test
     void unlimitedBudgetNeverDefers() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(0L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(ledger, 7L, 1L << 30));
-        assertEquals(0L, ledger.deferredCount());
+        MeshUploadBudget account = new MeshUploadBudget(0L, CAP);
+        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 1L << 30));
+        assertEquals(0L, account.deferredCount());
+    }
+
+    /**
+     * The option-C behavior the shared ledger could not produce: a burst issued now charges the
+     * window at arrival time, so a second burst in the same frame - small enough to pass on its
+     * own - is deferred on the first burst's charge.
+     */
+    @Test
+    void arrivalChargingMakesALaterBurstInTheSameFrameDefer() {
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        assertFalse(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 600L),
+                "the first burst fits and is issued now");
+        account.noteIssued(7L, 600L);
+        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 500L),
+                "the second burst is judged against the first burst's charge");
+        assertEquals(500L, account.deferredOutstandingBytes());
     }
 
     // ------------------------------------------------------------------ drain judgment
@@ -107,10 +126,10 @@ class UploadBudgetLayer2Test {
     /** The head entry issues while the window has room for it, and waits once the room is gone. */
     @Test
     void drainHeadFollowsTheWindowsRemainingRoom() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(1000L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        ledger.noteFlushed(7L, 800L);
-        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 7L, 800L, 0L, 200L));
-        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 7L, 800L, 0L, 201L));
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        account.noteIssued(7L, 800L);
+        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(account, 7L, 800L, 0L, 200L));
+        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(account, 7L, 800L, 0L, 201L));
     }
 
     /**
@@ -120,28 +139,50 @@ class UploadBudgetLayer2Test {
      */
     @Test
     void starvationEscapeIssuesAnOversizedHeadOnce() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(100L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 9L, 0L, 0L, 250L),
+        MeshUploadBudget account = new MeshUploadBudget(100L, CAP);
+        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(account, 9L, 0L, 0L, 250L),
                 "an empty window issues its oversized head");
-        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 9L, 0L, 250L, 250L),
+        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(account, 9L, 0L, 250L, 250L),
                 "the escape fires once per drain, not once per entry");
-        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 9L, 1L, 0L, 250L),
+        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(account, 9L, 1L, 0L, 250L),
                 "a window that has carried anything is not starving");
     }
 
     /** The full round trip: defer under one frame, drain under the next, the account returns to 0. */
     @Test
     void deferThenDrainRoundTripSettlesTheAccount() {
-        UploadBudgetLedger ledger = new UploadBudgetLedger(1000L, UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
-        ledger.noteFlushed(7L, 800L);
-        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(ledger, 7L, 300L));
-        assertEquals(300L, ledger.deferredOutstandingBytes());
-        // The next frame's window has carried nothing yet, so its flushed bytes read as 0 and the
-        // entry fits the fresh window outright.
-        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(ledger, 8L, 0L, 0L, 300L));
-        ledger.noteDeferredIssued(300L);
-        assertEquals(0L, ledger.deferredOutstandingBytes());
-        assertEquals(300L, ledger.deferredTotalBytes(), "the cumulative totals survive the round trip");
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        account.noteIssued(7L, 800L);
+        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 300L));
+        assertEquals(300L, account.deferredOutstandingBytes());
+        // The next frame's window has been charged nothing yet, so the entry fits it outright.
+        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(
+                account, 8L, account.windowBytes(8L), 0L, 300L));
+        account.noteIssued(8L, 300L);
+        account.noteDeferredIssued(300L);
+        assertEquals(0L, account.deferredOutstandingBytes());
+        assertEquals(300L, account.deferredTotalBytes(), "the cumulative totals survive the round trip");
+        assertEquals(300L, account.windowBytes(8L), "the drain's issue is charged to the new window");
+    }
+
+    /**
+     * The drain charges its own issues as it goes: after the first head is issued, the second head
+     * is judged against the charged window and waits, instead of both spending the same room.
+     */
+    @Test
+    void drainChargesItsIssuesAgainstLaterHeads() {
+        MeshUploadBudget account = new MeshUploadBudget(1000L, CAP);
+        account.noteIssued(7L, 800L);
+        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 300L));
+        assertTrue(VulkanTerrainGpuBackend.celtium$tryDeferBurstArrival(account, 7L, 800L));
+        // Frame 8: the first head fits the fresh window and is issued; its charge lands at once.
+        assertTrue(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(
+                account, 8L, account.windowBytes(8L), 0L, 300L));
+        account.noteIssued(8L, 300L);
+        account.noteDeferredIssued(300L);
+        assertFalse(VulkanTerrainGpuBackend.celtium$deferredEntryIssuable(
+                account, 8L, account.windowBytes(8L), 300L, 800L),
+                "the second head waits: the first issue already spent 300 of the window");
     }
 
     // ------------------------------------------------------------------ wiring pins
@@ -163,20 +204,24 @@ class UploadBudgetLayer2Test {
                 "both of the frame's flush points supply the key");
     }
 
-    /** (b) The drain supplies the key, asks the judgment, and settles each issued entry's account. */
+    /** (b) The drain supplies the key, asks the mesh account, charges its issues and settles them. */
     @Test
-    void drainAndProducerAreWiredToTheLedger() throws IOException {
+    void drainAndProducerAreWiredToTheMeshAccount() throws IOException {
         String backend = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
         assertTrue(backend.contains("this.context.celtium$supplyUploadBudgetFrameKey(this.frameId)"),
                 "the drain is the frame's definition point for the key");
-        assertTrue(backend.contains("celtium$tryDeferBurstArrival(ledger, this.context.celtium$uploadBudgetWindowKey(), weight)"),
-                "the producer judgment asks the ledger with the batch weight");
-        assertTrue(backend.contains("celtium$deferredEntryIssuable(ledger, frameKey, windowFlushedBytes, issuedBytes, entry.bytes)"),
-                "the drain judges its head entry");
-        assertTrue(backend.contains("ledger.noteDeferredIssued(entry.bytes)"),
+        assertTrue(backend.contains("celtium$tryDeferBurstArrival(account, frameKey, weight)"),
+                "the producer judgment asks the mesh account with the batch weight");
+        assertTrue(backend.contains("account.noteIssued(frameKey, weight)"),
+                "a burst issued now is charged to the mesh window at arrival time");
+        assertTrue(backend.contains("celtium$deferredEntryIssuable(account, frameKey, account.windowBytes(frameKey),"),
+                "the drain judges its head entry against the mesh window's own charges");
+        assertTrue(backend.contains("account.noteIssued(frameKey, entry.bytes)"),
+                "a drained entry's issue is charged to the mesh window");
+        assertTrue(backend.contains("account.noteDeferredIssued(entry.bytes)"),
                 "an issued entry leaves the backlog's account");
-        assertTrue(backend.contains("this.context.celtium$uploadBudget().noteDeferredIssued(droppedBytes)"),
+        assertTrue(backend.contains("celtium$meshUploadBudget().noteDeferredIssued(droppedBytes)"),
                 "a backlog dropped at world teardown settles its account");
     }
 
@@ -191,6 +236,25 @@ class UploadBudgetLayer2Test {
                 "the count cap's field and its gates are gone");
         assertTrue(backend.contains("Integer.getInteger(\"celtium.vulkan.uploadBurstThreshold\", 32)"),
                 "the burst threshold remains as the arrival-shape gate");
+    }
+
+    /** (d) The summary carries the mesh side's own deferred counters, not a subtraction. */
+    @Test
+    void meshCountersAreInTheSummary() throws IOException {
+        String diagnostics = Files.readString(findRepoFile(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java"));
+        assertTrue(diagnostics.contains("meshUploadBudgetBytes="),
+                "the summary names the resolved mesh budget");
+        assertTrue(diagnostics.contains("meshUploadDeferredBytes="),
+                "the summary carries the mesh side's deferred bytes");
+        assertTrue(diagnostics.contains("meshUploadDeferredCount="),
+                "the summary carries the mesh side's deferred count");
+        assertTrue(diagnostics.contains("meshUploadDeferredCapForce="),
+                "the summary carries the mesh side's cap refusals");
+        String backend = Files.readString(findRepoFile(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+        assertTrue(backend.contains("celtium$meshUploadBudgetOrNull()"),
+                "the diagnostics read the account without resolving it");
     }
 
     private static int countOccurrences(String text, String needle) {
