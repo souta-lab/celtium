@@ -60,12 +60,24 @@ class ImmediateStandardStateTest {
     }
 
     @Test
-    void branchKeyFoldsOnlyTheParticleFamily() {
+    void branchKeyFoldsTheParticleBlendPairAndThePass() {
         long key = 123456789L;
-        long folded = key * 31L + ((long) VK10.VK_BLEND_FACTOR_SRC_ALPHA << 20)
+        long pass = 0x350000000035L;
+        long particle = key * 31L + ((long) VK10.VK_BLEND_FACTOR_SRC_ALPHA << 20)
                 + VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        assertEquals(folded, VulkanTerrainGpuBackend.celtium$immediateBranchKey(5, key));
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$immediateBranchKey(2, key));
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$immediateBranchKey(1, key));
+        assertEquals(passFold(particle, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(5, key, pass));
+        assertEquals(passFold(key, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(2, key, pass));
+        assertEquals(passFold(key, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(1, key, pass));
+    }
+
+    /** The pass fold of {@code celtium$immediateBranchKey}, restated: the mix, then the fold under the line bit. */
+    private static long passFold(long branch, long pass) {
+        long mix = pass;
+        mix ^= mix >>> 33;
+        mix *= 0xff51afd7ed558ccdL;
+        mix ^= mix >>> 33;
+        long flag = branch & VulkanTerrainGpuBackend.LINE_KEY_BIT;
+        return ((branch & ~VulkanTerrainGpuBackend.LINE_KEY_BIT) * 31L + mix)
+                & ~VulkanTerrainGpuBackend.LINE_KEY_BIT | flag;
     }
 }
