@@ -4145,6 +4145,15 @@ public final class VulkanContext {
     }
 
     /**
+     * {@return the per-frame linear ring when one has been created, without creating it} - the
+     * diagnostics peek: a summary line must be able to say "absent" without spending the ring's
+     * two slot buffers to do so.
+     */
+    public org.soutalab.celtium.vulkan.hal.FrameLinearRing celtium$frameLinearRingOrNull() {
+        return this.frameLinearRing;
+    }
+
+    /**
      * Resets one frame slot's linear-ring slice. Called only from the backend's slot-confirmation tail
      * ({@code VulkanTerrainGpuBackend.celtium$noteSlotConfirmed}) - the one method every confirmation
      * route (the slot wait, the completion poll, the deferred submits' reclaim, a device-wide idle) runs

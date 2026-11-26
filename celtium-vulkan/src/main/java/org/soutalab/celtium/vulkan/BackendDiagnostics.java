@@ -77,6 +77,66 @@ final class BackendDiagnostics {
                 + " meshUploadDeferredCapForce=" + (account == null ? 0L : account.deferredCapForce());
     }
 
+    /**
+     * The shared frame ring's per-slot state (ring records separation, observation point 1):
+     * bytes handed out, the high-water mark between resets, the holds still standing and whether
+     * a confirmed reset is deferred behind them. This is the reading that separates the
+     * separation record's seat 1 (a reset that can never apply because a hold never releases)
+     * from seat 2 (plain consumption pressure): holds standing at rest name the first, a cursor
+     * pinned at capacity with no holds names the second. Read through the non-creating peek - a
+     * summary must not create the ring to report its absence. Printed unconditionally.
+     */
+    private String frameRingSummary() {
+        org.soutalab.celtium.vulkan.hal.FrameLinearRing ring =
+                b.context == null ? null : b.context.celtium$frameLinearRingOrNull();
+        if (ring == null) {
+            return "absent";
+        }
+        StringBuilder out = new StringBuilder();
+        for (int slot = 0; slot < ring.slots(); slot++) {
+            if (slot > 0) {
+                out.append(';');
+            }
+            out.append('s').append(slot)
+                    .append(":used=").append(ring.used(slot))
+                    .append(",high=").append(ring.highWater(slot))
+                    .append(",holds=").append(ring.holds(slot))
+                    .append(",deferred=").append(ring.resetDeferred(slot));
+        }
+        return out.toString();
+    }
+
+    /**
+     * The records store's state (ring records separation, F-4 instruments, merged with the
+     * bindless leg diagnosis section 2.7's observation points): which home the records live in,
+     * per slot the remembered demand, the bytes the home has handed out against its capacity and
+     * the selections that found no room, and the refusal split - no slice, growth, bad block -
+     * kept apart from the batch route's own drop counts, so a leg can tell a records refusal
+     * (drawing survives on the direct path) from a draw that was actually lost. The end-of-run
+     * reading is also the residual-holds evidence's other half: {@code selectFail} climbing while
+     * {@code used} sits at capacity is the exhaustion signature, whatever home the records use.
+     * Printed unconditionally.
+     */
+    private String recordsStoreSummary() {
+        InstanceDataStore store = b.drawRecords;
+        if (store == null) {
+            return "absent";
+        }
+        StringBuilder out = new StringBuilder("pool=").append(store.sourceKind());
+        for (int slot = 0; slot < store.slots(); slot++) {
+            out.append(";s").append(slot)
+                    .append(":demand=").append(store.demandBytes(slot))
+                    .append(",used=").append(store.sourceUsedBytes(slot))
+                    .append(",cap=").append(store.sourceCapacityBytes(slot))
+                    .append(",selectFail=").append(store.selectFailures(slot));
+        }
+        out.append(";refused=noSlice").append(store.refusalsNoSlice())
+                .append("/grow").append(store.refusalsGrow())
+                .append("/block").append(store.refusalsBlock())
+                .append(",written=").append(store.recordsWritten());
+        return out.toString();
+    }
+
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
@@ -125,6 +185,8 @@ final class BackendDiagnostics {
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " " + b.context.uploadBatchSummary()
                 + " " + (b.frameArena == null ? "frameArena=not-created" : b.frameArena.describe())
+                + " frameRing=[" + frameRingSummary() + "]"
+                + " recordsStore=[" + recordsStoreSummary() + "]"
                 + " frameArenaFallbackGroups=" + b.submissionStatistics.frameArenaFallbackGroups()
                 + " frameSlots=" + b.FRAME_SLOTS + " frameSlotReuseWaits=" + b.scheduler.slotReuseWaits()
                 + " slotPolls=" + b.scheduler.slotPolls() + " slotPollConfirms=" + b.scheduler.slotPollConfirms()

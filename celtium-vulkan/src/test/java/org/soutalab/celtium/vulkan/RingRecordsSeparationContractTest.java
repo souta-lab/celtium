@@ -31,6 +31,8 @@ class RingRecordsSeparationContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
     private static final String STORE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/InstanceDataStore.java";
+    private static final String DIAGNOSTICS =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative)).replace("\r\n", "\n");
@@ -141,5 +143,32 @@ class RingRecordsSeparationContractTest {
                         + " while it waits for its target's pass");
         assertTrue(body.contains("this.frameArena.openMesh()"),
                 "the arena remains the next home down for a group the ring does not take");
+    }
+
+    @Test
+    @DisplayName("the verify line carries the ring's per-slot state and the records store's counters")
+    void theVerifyLineCarriesTheSeparationInstruments() throws IOException {
+        String diagnostics = read(DIAGNOSTICS);
+        String line = methodBody(diagnostics, "String verificationSummary()");
+        assertTrue(line.contains("\" frameRing=[\" + frameRingSummary() + \"]\""),
+                "every CELTIUM_VERIFY sample names the shared ring's per-slot state, so a leg"
+                        + " reads the time series instead of one terminal snapshot");
+        assertTrue(line.contains("\" recordsStore=[\" + recordsStoreSummary() + \"]\""),
+                "every CELTIUM_VERIFY sample names the records store's counters");
+        String ring = methodBody(diagnostics, "private String frameRingSummary()");
+        assertTrue(ring.contains("ring.used(slot)") && ring.contains("ring.highWater(slot)")
+                        && ring.contains("ring.holds(slot)") && ring.contains("ring.resetDeferred(slot)"),
+                "the ring segment reads used, high-water, holds and the deferred flag per slot:"
+                        + " the four numbers that separate a held reset from plain pressure");
+        assertTrue(ring.contains("celtium$frameLinearRingOrNull()"),
+                "the ring is read through the non-creating peek, never created by the summary");
+        String records = methodBody(diagnostics, "private String recordsStoreSummary()");
+        assertTrue(records.contains("store.sourceKind()") && records.contains("store.demandBytes(slot)")
+                        && records.contains("store.selectFailures(slot)")
+                        && records.contains("store.refusalsNoSlice()")
+                        && records.contains("store.refusalsGrow()")
+                        && records.contains("store.refusalsBlock()"),
+                "the records segment reads the pool kind, per-slot demand and select failures,"
+                        + " and the refusal split - the diagnosis section 2.7 observation points");
     }
 }
