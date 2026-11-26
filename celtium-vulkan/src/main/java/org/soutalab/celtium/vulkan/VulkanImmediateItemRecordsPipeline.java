@@ -249,29 +249,6 @@ public final class VulkanImmediateItemRecordsPipeline {
         return this.lit;
     }
 
-    /**
-     * Creates the record-reading twin of a lit variant: same pipeline state, same per-texture set at set 0, with the
-     * draw records at set 1 and the vertex stage reading its block from them.
-     */
-    public static VulkanImmediateItemRecordsPipeline createRecords(VulkanContext context, long renderPass,
-                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
-                            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
-        VulkanImmediateItemRecordsPipeline result = new VulkanImmediateItemRecordsPipeline(context, renderPass, colorBlend,
-                depthTest, depthWrite, cull, depthCompareOp, true);
-        result.colorAttachments = Math.max(1, colorAttachments);
-        result.records = true;
-        result.recordsLayout = recordsSetLayout;
-        try {
-            result.createPipelineLayout();
-            result.createPipeline();
-        } catch (RuntimeException | LinkageError error) {
-            VulkanImmediateTextureRecordsPipeline.BUILD_ROLLBACKS.incrementAndGet();
-            result.delete();
-            throw error;
-        }
-        return result;
-    }
-
     /** {@return the render pass this pipeline was built for}. */
     public long celtium$renderPass() {
         return this.renderPass;
