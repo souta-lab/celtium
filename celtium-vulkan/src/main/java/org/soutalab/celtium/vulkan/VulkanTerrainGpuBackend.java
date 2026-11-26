@@ -12792,6 +12792,12 @@ this.frameBufferOpen = false;
             // destroyed while a recording lived), which is why the drain moved to this boundary.
             if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
                 this.context.celtium$runRetiredCleanups();
+                // The slab retire list's per-frame drain sits at the same seat, under the same guard: its
+                // only other exit hangs off waitForIdle, which no frame boundary calls, so a burst's worth
+                // of retired slab buffers starved there while steady rendering ran (the drain inside the
+                // context gates each entry on the submission sequence, because this boundary is not a
+                // queue-idle point).
+                this.context.celtium$drainRetiredSlabBuffers();
             }
         } catch (RuntimeException | LinkageError error) {
             // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.

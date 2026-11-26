@@ -4751,8 +4751,39 @@ public final class VulkanContext {
      */
     private final java.util.Map<Integer, SlabAllocator> deviceLocalImageSlabsByType =
             new java.util.HashMap<Integer, SlabAllocator>();
-    /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}: (handle, allocation). */
-    private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
+    /**
+     * One slab-backed buffer handed to the deferred list by {@link #celtium$retireSlabBuffer}: the handle to
+     * destroy, the sub-allocation to hand back, and the submission sequence current when it retired. The
+     * sequence is the destruction gate the gated drain ({@link #celtium$drainRetiredSlabBuffers()}) reads:
+     * the recording that could name the buffer is submitted after it retired, so the entry may only be
+     * destroyed once the completed sequence has passed the tagged one - the same rule
+     * {@link #celtium$runRetiredCleanups()} applies to its deferred destroys. Tags are non-decreasing in
+     * list order (the retire point clamps each new tag to the previous one), so the entries a drain may
+     * destroy are always a prefix of the list.
+     */
+    static final class RetiredSlabBuffer {
+        final long handle;
+        final SlabAllocator.SlabAllocation allocation;
+        final long sequence;
+        final long retiredNanos;
+
+        RetiredSlabBuffer(long handle, SlabAllocator.SlabAllocation allocation, long sequence,
+                long retiredNanos) {
+            this.handle = handle;
+            this.allocation = allocation;
+            this.sequence = sequence;
+            this.retiredNanos = retiredNanos;
+        }
+    }
+
+    /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}. */
+    private final java.util.ArrayList<RetiredSlabBuffer> retiredSlabBuffers =
+            new java.util.ArrayList<RetiredSlabBuffer>();
+    /** The newest tag handed to a retired slab entry, so a later tag can be clamped monotone. */
+    private long lastRetiredSlabSequence;
+    /** How many gated drains destroyed at least one entry, and how many entries they destroyed in total. */
+    private long retiredSlabGatedDrains;
+    private long retiredSlabGatedFreed;
     /**
      * The fallback slab completion currency, for a device without a frame timeline. The primary currency is
      * the frame timeline (Stage 2): a deferred slab release is keyed on the timeline's last allocated value
@@ -4821,13 +4852,11 @@ public final class VulkanContext {
         // passes the keyed value - the same completion fact the raw path's vkFreeMemory here relied on,
         // stated through the currency instead (see slabReleaseSerial).
         for (int i = 0; i < this.retiredSlabBuffers.size(); i++) {
-            Object[] entry = this.retiredSlabBuffers.get(i);
-            long handle = ((Long) entry[0]).longValue();
-            SlabAllocator.SlabAllocation allocation = (SlabAllocator.SlabAllocation) entry[1];
+            RetiredSlabBuffer entry = this.retiredSlabBuffers.get(i);
             if (device != null) {
-                vkDestroyBuffer(device, handle, null);
+                vkDestroyBuffer(device, entry.handle, null);
             }
-            allocation.owner().release(allocation, celtium$slabReleaseValue());
+            entry.allocation.owner().release(entry.allocation, celtium$slabReleaseValue());
             freed++;
         }
         this.retiredSlabBuffers.clear();
@@ -4845,6 +4874,93 @@ public final class VulkanContext {
     /** {@return how many deferred buffers are waiting to be freed, and how many have been freed so far}. */
     public int[] celtium$retiredBufferCounts() {
         return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
+    }
+
+    /** {@return {@code current} clamped so a retire tag never goes below the newest tag already handed out}. */
+    static long celtium$clampRetireSequence(long lastTag, long current) {
+        return current < lastTag ? lastTag : current;
+    }
+
+    /**
+     * Destroys the prefix of {@code entries} whose retire tag the completed sequence has passed, handing
+     * each destroyed entry to {@code destroyer} in list order. An entry is eligible exactly when its tag is
+     * strictly below {@code completedSequence}: the submission that was current at its retirement, and the
+     * one after it (the recording that could name the buffer), must both be confirmed. Tags are
+     * non-decreasing, so the first ineligible entry ends the prefix.
+     *
+     * @return how many entries were destroyed
+     */
+    static int celtium$drainEligibleSlabPrefix(java.util.List<RetiredSlabBuffer> entries,
+            long completedSequence, java.util.function.Consumer<RetiredSlabBuffer> destroyer) {
+        int drained = 0;
+        java.util.Iterator<RetiredSlabBuffer> it = entries.iterator();
+        while (it.hasNext()) {
+            RetiredSlabBuffer entry = it.next();
+            if (entry.sequence >= completedSequence) {
+                break;
+            }
+            it.remove();
+            destroyer.accept(entry);
+            drained++;
+        }
+        return drained;
+    }
+
+    /**
+     * Destroys the retired slab buffers whose naming submissions have been confirmed, and hands their
+     * sub-allocations back as deferred releases. This is the per-frame drive point the retire list was
+     * missing: its only other exit, {@link #celtium$destroyRetiredBuffers()}, hangs off
+     * {@code waitForIdle()}, which no frame boundary calls - so while steady rendering ran, a burst's
+     * worth of retired host buffers (21,672 of 21,697 live allocations in the measured leg) sat in this
+     * list un-drained for over 99 seconds, the pools stayed exhausted with zero pending deferred
+     * releases, and the refusal propagated as a crash on the cloud draw. The caller is the frame
+     * boundary, where no recording is open; the sequence gate below covers the submissions that are
+     * still in flight there, which the boundary is not.
+     * <p>
+     * Releases are keyed on the already-completed value ({@link #celtium$slabCompletedValue()}), not on
+     * {@link #celtium$slabReleaseValue()}: a gate-passed entry is provably GPU-dead, so its range may be
+     * collected at the next collection point. Keying on the release value instead would stall the range
+     * until the next idle drain on a timeline-less device, and advancing the drain serial here to unstall
+     * it would break the serial's contract - it only advances where the queue is idle, and the many
+     * direct releases keyed on it (buffer/texture/host-buffer deletes) rely on exactly that.
+     *
+     * @return how many buffers were destroyed
+     */
+    public int celtium$drainRetiredSlabBuffers() {
+        if (this.retiredSlabBuffers.isEmpty()) {
+            return 0;
+        }
+        celtium$collectSlabReleases();
+        final VkDevice device = this.device;
+        final long completedValue = celtium$slabCompletedValue();
+        int freed = celtium$drainEligibleSlabPrefix(this.retiredSlabBuffers, currentCompletedSequence(),
+                entry -> {
+                    if (device != null) {
+                        vkDestroyBuffer(device, entry.handle, null);
+                    }
+                    entry.allocation.owner().release(entry.allocation, completedValue);
+                });
+        if (freed > 0) {
+            this.retiredSlabGatedDrains++;
+            this.retiredSlabGatedFreed += freed;
+            this.retiredBuffersDestroyed += freed;
+        }
+        return freed;
+    }
+
+    /**
+     * {@return the slab retire list's state and the gated drain's totals}: how many entries are waiting,
+     * the age of the oldest one, and how much the gated drain has destroyed. The pool summary beside it
+     * counts a retired range as live until a drain releases it, so without this line a leg cannot tell a
+     * pool held by live objects from one held by retire backlog.
+     */
+    public String celtium$slabDrainSummary() {
+        int waiting = this.retiredSlabBuffers.size();
+        long oldestAgeMillis = waiting == 0 ? 0L
+                : (System.nanoTime() - this.retiredSlabBuffers.get(0).retiredNanos) / 1000000L;
+        return "slabDrain=[waiting=" + waiting + ",oldestAgeMillis=" + oldestAgeMillis
+                + ",gatedDrains=" + this.retiredSlabGatedDrains + ",gatedFreed=" + this.retiredSlabGatedFreed
+                + "]";
     }
 
     /**
@@ -5025,7 +5141,9 @@ public final class VulkanContext {
             celtium$retireBuffer(handle, VK_NULL_HANDLE, site);
             return;
         }
-        this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
+        long sequence = celtium$clampRetireSequence(this.lastRetiredSlabSequence, currentSubmitSequence());
+        this.lastRetiredSlabSequence = sequence;
+        this.retiredSlabBuffers.add(new RetiredSlabBuffer(handle, allocation, sequence, System.nanoTime()));
         if (this.retiredBufferSites.size() < 8) {
             this.retiredBufferSites.add(site);
             System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " slab=true outstanding="
