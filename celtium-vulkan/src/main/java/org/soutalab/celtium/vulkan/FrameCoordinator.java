@@ -133,6 +133,9 @@ public final class FrameCoordinator {
         // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
         // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
+        // The frame's own flush attributes to the frame's own budget window (upload budget layer 2):
+        // supply the exact frame key before flushing.
+        this.host.context().celtium$supplyUploadBudgetFrameKey(this.host.frameId());
         this.host.context().flushUploads();
         if (this.host.frameBufferOpen()) {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
@@ -213,6 +216,7 @@ public final class FrameCoordinator {
             this.host.commandState().reset();
             return;
         }
+        this.host.context().celtium$supplyUploadBudgetFrameKey(this.host.frameId());
         this.host.context().flushUploads();
         // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
         this.host.recordFrameEndTimestamp();
