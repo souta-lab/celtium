@@ -388,6 +388,19 @@ public final class VulkanImmediateTextureRecordsPipeline {
         return this.pipelineLayout;
     }
 
+    /**
+     * {@return the push-constant block size this variant's fragment stage declares}: the
+     * bindless array variant's fragment stage is the one records-pair fragment that still
+     * reads the push range - the alpha test selector and reference, the tint and the fog
+     * block, the same bytes its vertex stage reads out of the record - so an entry captured
+     * against it pushes the full block off its own record. The per-texture variant's
+     * fragment stage reads those inputs through varyings and declares no push block, so
+     * it pushes nothing.
+     */
+    public int celtium$pushConstantBytes() {
+        return this.arrayRecords ? PUSH_CONSTANT_BYTES : 0;
+    }
+
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
     public static VulkanImmediateTextureRecordsPipeline createForPosition(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,

@@ -3686,10 +3686,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         final int recordsSet;
         /**
          * Bytes of an entry's own record pushed per entry, or 0 when the family's fragment stage
-         * reads nothing from the push range (the texture, block and particle records pairs read
-         * everything through varyings). The colour family and both item forms read theirs - the
-         * colour fragment its alpha and fog, the item fragments the alpha reference, the tint
-         * and the fog (and, lit, the displaced combine reference) - so their entries push.
+         * reads nothing from the push range (the block and particle records pairs read everything
+         * through varyings, and so does the texture family's per-texture pair). The colour family
+         * and both item forms read theirs - the colour fragment its alpha and fog, the item
+         * fragments the alpha reference, the tint and the fog (and, lit, the displaced combine
+         * reference) - so their entries push. So does the texture family's bindless array pair:
+         * its vertex stage reads the record, but its fragment stage is the older push form and
+         * reads the alpha test selector and reference, the tint and the fog out of the push
+         * range - the same bytes at the head of the record - so an array entry pushes the full
+         * block off its own record.
          */
         final int pushBytes;
         /**
@@ -24775,6 +24780,7 @@ this.frameBufferOpen = false;
                     arraySet = binding.descriptorSet();
                     twinHandle = arrayTwin.celtium$handle();
                     twinLayout = arrayTwin.celtium$pipelineLayout();
+                    pushBytes = arrayTwin.celtium$pushConstantBytes();
                 }
             }
         }

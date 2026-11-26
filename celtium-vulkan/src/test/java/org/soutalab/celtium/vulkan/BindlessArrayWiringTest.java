@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -151,6 +152,63 @@ class BindlessArrayWiringTest {
                 "the CELTIUM_BATCH_ROUTE line prints the array-captured count");
         assertTrue(backend.contains("this.batchArrayCapturedGroups++;"),
                 "the count is incremented on an array capture");
+    }
+
+    /**
+     * The texture family answers its push size per variant, in the colour family's shape:
+     * the array variant's fragment stage declares the family's 208-byte push block (it is
+     * the one records-pair fragment that still reads the push range), the per-texture
+     * variant declares none.
+     */
+    @Test
+    void texturePipelineAnswersPushBytesPerVariant() throws IOException {
+        String pipeline = read(PIPELINE);
+        assertTrue(pipeline.contains("public int celtium$pushConstantBytes()"),
+                "the texture family carries the push-size answer, like the colour family's");
+        assertTrue(pipeline.contains("return this.arrayRecords ? PUSH_CONSTANT_BYTES : 0;"),
+                "the answer is the variant's own: the full block for the array variant, none otherwise");
+        assertTrue(pipeline.contains("PUSH_CONSTANT_BYTES = 208"),
+                "the block is the 208 bytes the array fragment's push range spans");
+    }
+
+    /**
+     * The capture carries the array twin's push size into the entry's binding: without it
+     * the sink never pushes and the array fragment draws with an unset push range (the
+     * verification leg's VUID 08601). The per-texture form keeps the initial zero - beside
+     * the initializer, only the item branch, the colour branch and the array adoption
+     * assign the local.
+     */
+    @Test
+    void captureCarriesTheArrayTwinsPushBytes() throws IOException {
+        String backend = read(BACKEND);
+        int capture = backend.indexOf("private boolean celtium$tryCaptureBatchGroup(");
+        int intern = backend.indexOf("private int celtium$internBatchState(", capture);
+        assertTrue(capture >= 0 && intern > capture, "the capture region is located");
+        String body = backend.substring(capture, intern);
+        int adopted = body.indexOf("captureTwin = arrayTwin;");
+        int carried = body.indexOf("pushBytes = arrayTwin.celtium$pushConstantBytes();");
+        assertTrue(adopted >= 0 && carried > adopted,
+                "adopting the array twin carries its push size into the entry's binding");
+        assertEquals(1, occurrences(body, "pushBytes = value.pushBytes();"),
+                "the item branch's assignment stands unchanged, the only one of its shape");
+        assertEquals(1, occurrences(body, "pushBytes = value.celtium$pushConstantBytes();"),
+                "the colour branch's assignment stands unchanged, the only one of its shape");
+        assertTrue(body.contains("int pushBytes = 0;"),
+                "the per-texture form still starts from zero");
+    }
+
+    /**
+     * The binding's premise, corrected with the fix: the array pair's fragment reads the
+     * push range, so the old blanket claim that the texture pairs read everything through
+     * varyings must not come back.
+     */
+    @Test
+    void bindingPremiseNamesTheArrayPair() throws IOException {
+        String backend = read(BACKEND);
+        assertFalse(backend.contains("the texture, block and particle records pairs"),
+                "the old premise lumped the texture family into the varying-only pairs");
+        assertTrue(backend.contains("the texture family's bindless array pair"),
+                "the corrected premise names the array pair as a pushing form");
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
