@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.lwjgl.system.MemoryUtil;
@@ -8,6 +10,7 @@ import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
 import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
+import org.soutalab.celtium.vulkan.terrain.TerrainSlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
 
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
@@ -250,6 +253,44 @@ final class TerrainEngineAHost {
                     slabBytes, org.soutalab.celtium.vulkan.terrain.TerrainSlabAllocator.DEFAULT_MAX_SLABS, true);
         }
         return this.geometrySlabAllocator;
+    }
+
+    /**
+     * {@return the terrainGeometry entry of the context's slab pool summary} (BO convergence design
+     * §5.1): the device side is the shared geometry allocator's live slab count and used bytes, the
+     * logical side is the shared store ledger's slab count and live bytes, and every executor's created
+     * slab buffer count is listed in pass-ordinal order. One census reading then sets the device count
+     * against the logical count - the two sides of the cross-pass sharing lever's effect formula - and
+     * shows how the per-pass device buffers multiply it. The device allocator is created lazily with the
+     * first slab buffer, so before that the device side reads as zero against the ledger's own numbers.
+     */
+    String terrainSlabSummary() {
+        SlabAllocator allocator = this.geometrySlabAllocator;
+        StringBuilder summary = new StringBuilder("terrainGeometry(type=")
+                .append(allocator == null ? -1 : allocator.memoryTypeIndex()).append(')');
+        summary.append(":usedBytes=").append(allocator == null ? 0L : allocator.usedBytes())
+                .append(",slabs=").append(allocator == null ? 0 : allocator.liveSlabCount())
+                .append(",oversizedSlabs=").append(allocator == null ? 0 : allocator.oversizedSlabCount())
+                .append(",oversizedSlabSizes=").append(VulkanContext.oversizedSlabSizesText(
+                        allocator == null ? new long[0] : allocator.oversizedSlabSizes()));
+        TerrainSlabAllocator logical = this.store.geometryAllocator();
+        summary.append(",logicalSlabs=").append(logical.slabCount())
+                .append(",logicalLiveBytes=").append(logical.liveBytes())
+                .append(",engineSlabBuffers=[");
+        List<Map.Entry<TerrainRenderPass, TerrainEngineA>> entries =
+                new ArrayList<>(this.engines.entrySet());
+        entries.sort((left, right) -> Integer.compare(
+                this.ordinals.getOrDefault(left.getKey(), Integer.MAX_VALUE),
+                this.ordinals.getOrDefault(right.getKey(), Integer.MAX_VALUE)));
+        boolean first = true;
+        for (Map.Entry<TerrainRenderPass, TerrainEngineA> entry : entries) {
+            if (!first) {
+                summary.append(',');
+            }
+            first = false;
+            summary.append(entry.getValue().liveSlabBufferCount());
+        }
+        return summary.append(']').toString();
     }
 
     /**

@@ -406,6 +406,20 @@ public final class SlabAllocator {
     }
 
     /**
+     * {@return the size in bytes of every dedicated oversized slab currently held, in creation order}. The
+     * census reported only the count, but the dispositions that turn on oversized slabs - absorbing them
+     * into a larger ordinary slab size, or retiring the step-growth source - turn on how big each one is
+     * (BO convergence design §5.1), so the sizes ride the same summary as the count.
+     */
+    public long[] oversizedSlabSizes() {
+        long[] sizes = new long[this.oversizedSlabs.size()];
+        for (int i = 0; i < sizes.length; i++) {
+            sizes[i] = this.oversizedSlabs.get(i).size;
+        }
+        return sizes;
+    }
+
+    /**
      * Frees every slab, ordinary and oversized, mapped or not. This is teardown, not a release: allocations that
      * were never released are freed along with the rest, because once the allocator is gone nothing can collect them.
      * Idempotent, and safe to call after the context is gone (destroying the logical device frees its children

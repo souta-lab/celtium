@@ -554,6 +554,17 @@ final class TerrainEngineA {
     // Buffers
     // ----------------------------------------------------------------------------------
 
+    /** {@return how many of this pass' slab buffers have been created} (the census's per-pass device count). */
+    int liveSlabBufferCount() {
+        int count = 0;
+        for (SlabBuffer buffer : this.slabBuffers) {
+            if (buffer != null) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private SlabBuffer slabBuffer(int slab) {
         while (this.slabBuffers.size() <= slab) {
             this.slabBuffers.add(null);

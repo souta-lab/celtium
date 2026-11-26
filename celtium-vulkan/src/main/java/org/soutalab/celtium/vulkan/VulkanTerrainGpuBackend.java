@@ -1190,6 +1190,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
         // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
         context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
+        // BO convergence design §5.1: the slab pool summary gains the terrain geometry allocator's row
+        // from the host that owns it, so a census reading can set the device slab count against the
+        // logical ledger. The host is created with the renderer and may be absent (Tier-A disabled), in
+        // which case the summary simply carries no terrain entry.
+        context.celtium$setTerrainSlabSummarySource(() -> {
+            TerrainEngineAHost host = this.terrain.terrainAHost();
+            return host == null ? null : host.terrainSlabSummary();
+        });
         // setupTerrain's phases: the bracket that owns most of the world pass is in the shared renderer module, which
         // cannot see FramePassTimings; it times through this sink instead, installed here so only the Vulkan path pays
         // for it and only while the pass timings are enabled.

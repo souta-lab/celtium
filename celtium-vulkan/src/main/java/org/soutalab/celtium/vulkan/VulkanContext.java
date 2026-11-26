@@ -4563,6 +4563,19 @@ public final class VulkanContext {
         this.recordingOpenProbe = probe;
     }
 
+    /**
+     * The terrain geometry entry of {@link #celtium$slabPoolSummary()}, supplied by the terrain backend:
+     * the geometry slab allocator belongs to the terrain host, not to this context, so the context cannot
+     * read its numbers itself - the backend that owns the host registers this source and the summary
+     * appends what it returns (BO convergence design §5.1). Null until the backend registers it.
+     */
+    private java.util.function.Supplier<String> terrainSlabSummarySource;
+
+    /** Installs the terrain geometry slab summary source (the terrain backend owns the allocator). */
+    public void celtium$setTerrainSlabSummarySource(java.util.function.Supplier<String> source) {
+        this.terrainSlabSummarySource = source;
+    }
+
     private int pipelineDestroyLogs;
     private int pipelineDestroysWhileRecording;
 
@@ -5032,14 +5045,26 @@ public final class VulkanContext {
      * tell a full pool from a fragmented one. Each entry also splits the ordinary and fixed-page ledgers:
      * the r10 leg's refusing pool was one of these allocators, but its ordinary ledger sat at the cap with a
      * 16384-byte largest free run while the aggregated entry showed slabs=16 and a 15.3 MB largest free run
-     * from the fixed ledger, so the aggregate alone could not attribute the refusal.
+     * from the fixed ledger, so the aggregate alone could not attribute the refusal. Each entry also names
+     * every oversized slab's size, and the terrain geometry allocator's entry (registered by the terrain
+     * backend, which owns it) closes the bracket: without it the summary's slab counts could not be set
+     * against the terrain ledger's own numbers, which is the comparison the BO convergence measurement
+     * turns on (BO convergence design §5.1).
      */
     public String celtium$slabPoolSummary() {
         StringBuilder summary = new StringBuilder("slabPools=[");
         boolean first = true;
         first = appendSlabPoolSummary(summary, "deviceLocal", this.deviceLocalSlabsByType, first);
         first = appendSlabPoolSummary(summary, "hostVisible", this.hostVisibleSlabsByType, first);
-        appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        first = appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        java.util.function.Supplier<String> terrainSource = this.terrainSlabSummarySource;
+        String terrainEntry = terrainSource == null ? null : terrainSource.get();
+        if (terrainEntry != null && !terrainEntry.isEmpty()) {
+            if (!first) {
+                summary.append(' ');
+            }
+            summary.append(terrainEntry);
+        }
         return summary.append(']').toString();
     }
 
@@ -5067,9 +5092,23 @@ public final class VulkanContext {
                     .append(",fixedUsedBytes=").append(allocator.fixedUsedBytes())
                     .append(",fixedFreeBytes=").append(allocator.fixedFreeBytes())
                     .append(",fixedLargestFreeRun=").append(allocator.fixedLargestFreeRun())
-                    .append(",oversizedSlabs=").append(allocator.oversizedSlabCount());
+                    .append(",oversizedSlabs=").append(allocator.oversizedSlabCount())
+                    .append(",oversizedSlabSizes=")
+                    .append(oversizedSlabSizesText(allocator.oversizedSlabSizes()));
         }
         return first;
+    }
+
+    /** {@return slab sizes formatted as {@code [a,b,c]} for the pool summary's oversized size list}. */
+    static String oversizedSlabSizesText(long[] sizes) {
+        StringBuilder text = new StringBuilder("[");
+        for (int i = 0; i < sizes.length; i++) {
+            if (i > 0) {
+                text.append(',');
+            }
+            text.append(sizes[i]);
+        }
+        return text.append(']').toString();
     }
 
     /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
