@@ -19761,6 +19761,16 @@ this.frameBufferOpen = false;
         // executor's IndirectCount draws instead (recordDraws at the pass tail).
         TerrainEngineA tierAEngine = celtium$terrainAPassHead(pass, matrices, occlusionCamera);
         boolean tierAArmed = tierAEngine != null;
+        // R-21 / R-55, Step C: this pass' Tier-A ignition verdict, counted once
+        // per pass per frame under the per-pass path terrain.engine.<pass> —
+        // fast when the executor armed (the region loop's per-batch draws are
+        // replaced by its IndirectCount draws), fallback when the legacy loop
+        // draws the pass. Per-pass names only: the bare terrain.engine name is
+        // never counted here, so the two granularities cannot double-count.
+        FallbackPaths.Handle terrainEnginePath =
+                FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE + "." + pass.name());
+        terrainEnginePath.attempt();
+        terrainEnginePath.verdict(tierAArmed);
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
