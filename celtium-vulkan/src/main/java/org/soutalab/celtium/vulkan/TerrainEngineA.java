@@ -349,14 +349,43 @@ final class TerrainEngineA {
             int[] slabCounts = this.store.slabRecordCounts();
             boolean any = false;
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                // R-20 bundled form: phase 1 fills every non-empty slab's
+                // counts, then a single barrier carries all of those fills
+                // (and the host writes admitted above) into the compute
+                // stage, phase 2 dispatches every slab, and a single barrier
+                // carries the compute writes into the indirect draws. Both
+                // barriers keep the exact stage/access masks of the per-slab
+                // pair they replace; the only barriers removed sat between
+                // one slab's dispatch and the next slab's fill/dispatch,
+                // where no cross-slab dependency exists (counts, outputs and
+                // descriptor sets are per-slab, and the shared desc table
+                // and geometry slabs are read-only during the dispatch).
                 for (int s = 0; s < slabCounts.length; s++) {
                     if (slabCounts[s] == 0) {
                         continue;
                     }
-                    dispatchSlab(stack, commandBuffer, slot, s, slabCounts[s], planes,
-                            (float) cameraX, (float) cameraY, (float) cameraZ);
+                    fillSlabCounts(stack, commandBuffer, slot, s, slabCounts[s]);
                     slot.armed[s] = true;
                     any = true;
+                }
+                if (any) {
+                    VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
+                            .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                            .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                    vkCmdPipelineBarrier(commandBuffer,
+                            VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, barrier, null, null);
+                    for (int s = 0; s < slabCounts.length; s++) {
+                        if (slabCounts[s] == 0) {
+                            continue;
+                        }
+                        dispatchSlabCull(stack, commandBuffer, slot, s, planes,
+                                (float) cameraX, (float) cameraY, (float) cameraZ);
+                    }
+                    barrier.get(0).srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
+                            .dstAccessMask(VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+                    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, barrier, null, null);
                 }
             }
             this.framesPrepared++;
@@ -389,18 +418,29 @@ final class TerrainEngineA {
         }
     }
 
-    private void dispatchSlab(MemoryStack stack, VkCommandBuffer commandBuffer, Slot slot, int slab,
-                              int slabRecords, float[] planes, float cameraX, float cameraY, float cameraZ) {
+    /**
+     * Phase 1 of the bundled cull: the host-side stream/descriptor preparation
+     * for one slab, then the fill that zeroes its draw counts. The fill is the
+     * only command this records; the barrier that makes it (and the frame's
+     * host writes) visible to the cull dispatch is the single pass-wide one in
+     * {@link #prepareFrame}.
+     */
+    private void fillSlabCounts(MemoryStack stack, VkCommandBuffer commandBuffer, Slot slot, int slab,
+                                int slabRecords) {
         int capacity = Math.max(MIN_STREAM_COMMANDS, slabRecords * SectionDesc.BUCKETS);
         ensureStreamBuffers(slot, slab, capacity);
         ensureDescriptors(stack, slot, slab);
         vkCmdFillBuffer(commandBuffer, slot.counts[slab].buffer(), 0L, 8L, 0);
-        VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
-                .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
-                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-        vkCmdPipelineBarrier(commandBuffer,
-                VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, barrier, null, null);
+    }
+
+    /**
+     * Phase 2 of the bundled cull: binds the cull pipeline and one slab's
+     * descriptor set and records its dispatch. The dispatch work size covers
+     * the whole store and the shader filters by (passOrdinal, slab), exactly
+     * as the per-slab form did.
+     */
+    private void dispatchSlabCull(MemoryStack stack, VkCommandBuffer commandBuffer, Slot slot, int slab,
+                                  float[] planes, float cameraX, float cameraY, float cameraZ) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipelineLayout, 0,
                 stack.longs(slot.descriptorSets[slab]), null);
@@ -419,10 +459,6 @@ final class TerrainEngineA {
         push.clear();
         vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
         vkCmdDispatch(commandBuffer, (this.store.recordCount() + WORKGROUP - 1) / WORKGROUP, 1, 1);
-        barrier.get(0).srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
-                .dstAccessMask(VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, barrier, null, null);
     }
 
     /**
