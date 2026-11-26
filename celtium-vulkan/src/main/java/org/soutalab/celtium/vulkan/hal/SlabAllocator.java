@@ -383,7 +383,7 @@ public final class SlabAllocator {
 
     /** Cumulative allocations the fixed-page pool has served (see {@link FixedPagePool#serveCount()}). */
     public long fixedPageServeCount() {
-        return this.fixedPages.serveCount();
+        return this.fixedPool.serveCount();
     }
 
     /** Bytes held by live allocations in the ordinary ledger alone (see {@link #usedBytes()} for the total). */
