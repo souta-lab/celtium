@@ -12752,7 +12752,7 @@ this.frameBufferOpen = false;
      * pair the family historically asserted, folded in by multiplication so a particle state and
      * a colour state never share an entry.
      */
-    private static long celtium$immediateBranchKey(int format, long key) {
+    static long celtium$immediateBranchKey(int format, long key) {
         return format == VulkanImmediateFormats.PARTICLE
                 ? key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
                 : key;
@@ -13001,7 +13001,7 @@ this.frameBufferOpen = false;
      * the cull face GL_BACK with GL_CCW winding, the texture environment MODULATE and the
      * target the delivered frame, matching the defaults a vanilla scene presents.
      */
-    private static int[] celtium$immediateStandardState(int blend, boolean depthTest, boolean depthWrite,
+    static int[] celtium$immediateStandardState(int blend, boolean depthTest, boolean depthWrite,
             boolean cull, boolean lit) {
         int[] signature = new int[ModelReplayFastPath.SIGNATURE];
         if (blend != 0) {
@@ -13187,13 +13187,6 @@ this.frameBufferOpen = false;
         this.isolationMesh = null;
         released += releaseDirect(this.descriptorProbe == null ? null : () -> this.descriptorProbe.delete());
         this.descriptorProbe = null;
-        // The UI test quad's pipeline is built in drawUiTestQuad against the terrain pass, not against the standalone UI
-        // pass the window keeps, and it draws into the terrain colour image - so it belongs to this set, whatever its
-        // name suggests. Its mesh is created with it and is used by nothing else.
-        released += releaseDirect(this.uiPipeline == null ? null : () -> this.uiPipeline.delete());
-        this.uiPipeline = null;
-        released += releaseImmediateMesh(this.uiMesh);
-        this.uiMesh = null;
         return released;
     }
 
@@ -17377,10 +17370,10 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Roadmap S4/S6 wiring: when enabled, the first non-terrain geometry (a textured quad built through
-     * {@link VulkanDynamicMesh} and drawn by {@link VulkanUiPipeline}) is recorded into the same render pass as the
-     * terrain, so the whole path - dynamic vertex stream, second pipeline, second texture binding, blending and
-     * push constants - is exercised inside the frame that the validation harness already checks.
+     * When enabled, the immediate-draw isolation quad is recorded into the terrain pass alongside the terrain,
+     * so the frame the validation harness checks carries a draw whose expected pixels are known exactly.
+     * {@code -Dceltium.vulkan.uiTest=true}; a measurement switch, never a mode. (The switch's name predates the
+     * removal of the UI test quad it originally also gated.)
      */
     private static final boolean UI_TEST = Boolean.getBoolean("celtium.vulkan.uiTest");
     private final boolean uiTestEnabled = UI_TEST;
@@ -17493,9 +17486,6 @@ this.frameBufferOpen = false;
     private String lastPairCentre = "";
     /** Lines the flip trace has written; bounded so a scene that never settles cannot fill the log. */
     private int splashFlipLogs;
-    private VulkanUiPipeline uiPipeline;
-    private VulkanDynamicMesh uiMesh;
-
     private void recordHandoff(long nanos) {
         this.handoffNanos += nanos;
         this.handoffSamples++;
@@ -21191,9 +21181,8 @@ this.frameBufferOpen = false;
         }
 
         if (this.uiTestEnabled && pass.isSorted()) {
-            drawUiTestQuad(primitiveType);
-            // The isolation test runs with the UI quad so the frame carries both a known-good draw and the pipeline
-            // under test, which is what makes the pixel result conclusive.
+            // The isolation draw is a known-good draw recorded into the same present as the pipeline under test,
+            // which is what makes the pixel result conclusive.
             drawImmediateIsolationQuad();
         }
 
@@ -25262,54 +25251,6 @@ this.frameBufferOpen = false;
 
 
     /**
-     * Records the non-terrain test geometry: one textured quad in normalised device coordinates, drawn with the UI
-     * pipeline into the terrain colour image. The projection and model-view are identities, so the quad lands in a
-     * fixed corner regardless of the camera, which makes the pixel check in the harness unambiguous.
-     */
-    private void drawUiTestQuad(ChunkPrimitiveType primitiveType) {
-        try {
-            VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
-            if (terrain == null) {
-                return;
-            }
-            if (this.uiPipeline == null) {
-                this.uiPipeline = VulkanUiPipeline.create(this.context, terrain.renderPass());
-                this.uiMesh = new VulkanDynamicMesh(this.context);
-            }
-            if (this.atlasTexture == null) {
-                return;
-            }
-            this.uiMesh.begin(VulkanDynamicMesh.Layout.positionTexLightColor());
-            float u = 1.0f / 32.0f;
-            float v = 1.0f / 32.0f;
-            addQuadVertex(-0.95f, 0.95f, 0.0f, 0.0f);
-            addQuadVertex(-0.55f, 0.95f, u, 0.0f);
-            addQuadVertex(-0.55f, 0.55f, u, v);
-            addQuadVertex(-0.95f, 0.55f, 0.0f, v);
-            this.uiMesh.index(0);
-            this.uiMesh.index(1);
-            this.uiMesh.index(2);
-            this.uiMesh.index(0);
-            this.uiMesh.index(2);
-            this.uiMesh.index(3);
-            this.uiPipeline.bindTexture(this.atlasTexture);
-            ByteBuffer push = MemoryUtil.memAlloc(128);
-            try {
-                // Identity projection and model-view: the vertices above are already in clip space.
-                putIdentity(push, 0);
-                putIdentity(push, 64);
-                this.uiPipeline.draw(this.commandBuffer, this.uiMesh, push,
-                    this.immediateBindCache);
-            } finally {
-                MemoryUtil.memFree(push);
-            }
-        } catch (RuntimeException | LinkageError error) {
-            this.terrainStatistics.notePassErrors();
-            record("ui test quad failed: " + describe(error));
-        }
-    }
-
-    /**
      * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
      * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
      */
@@ -25401,25 +25342,6 @@ this.frameBufferOpen = false;
         }
     }
 
-
-
-
-
-    private void addQuadVertex(float x, float y, float u, float v) {
-        this.uiMesh.nextVertex();
-        this.uiMesh.putPosition(x, y, 0.0f);
-        this.uiMesh.putUv(u, v);
-        this.uiMesh.putLight(0, 240);
-        this.uiMesh.putColor(255, 255, 255, 255);
-    }
-
-    private static void putIdentity(ByteBuffer target, int offset) {
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                target.putFloat(offset + ((column * 4) + row) * 4, column == row ? 1.0f : 0.0f);
-            }
-        }
-    }
 
 
 
