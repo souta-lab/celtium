@@ -400,9 +400,28 @@ public final class TerrainSectionStore {
      * phantom slabs and create real slab buffers for them.
      */
     public synchronized int[] slabRecordCounts() {
+        return countSlabs(false, 0);
+    }
+
+    /**
+     * Live record counts per geometry slab id for one pass only, in the same
+     * shape as {@link #slabRecordCounts()}. This is the form an executor arms
+     * from (T3 stage 1, empty-copy removal): a slab holding only other passes'
+     * records can produce no draws for this pass — the cull shader filters by
+     * (pass, slab) — so arming it only materialized an empty device slab
+     * buffer on this pass' side. Pack-space records stay excluded, as above.
+     */
+    public synchronized int[] slabRecordCounts(int passOrdinal) {
+        return countSlabs(true, passOrdinal);
+    }
+
+    private int[] countSlabs(boolean onePass, int passOrdinal) {
         int[] counts = new int[Math.max(1, this.geometryAllocator.slabCount())];
         for (Registration registration : this.records) {
             if (registration.pack()) {
+                continue;
+            }
+            if (onePass && registration.key.passOrdinal() != passOrdinal) {
                 continue;
             }
             int slab = (int) registration.desc.slabId;
