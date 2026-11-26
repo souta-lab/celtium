@@ -144,7 +144,7 @@ final class ModPrograms {
      */
     PreparedImmediate celtium$modPrepared(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program,
                                                   int programId, int formatId, PreparedImmediate standard) {
-        if (!(standard.pipeline instanceof VulkanImmediateTexturePipeline like)) {
+        if (!(standard.pipeline instanceof VulkanImmediateTextureRecordsPipeline like)) {
             return celtium$modFailure(programId, "the batch's own variant is "
                     + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
         }

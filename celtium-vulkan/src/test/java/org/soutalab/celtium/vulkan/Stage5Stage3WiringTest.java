@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The Stage 5 stage 3 (bindless) wiring contracts, pinned by source reading in the house style:
  * the connections this stage exists to make - the context owning the binding, the registry
  * feeding it, the model path resolving through it, the frame loop's completion gate advancing
- * its releases, the unified store under the indirect run, and the overflow counter reaching the
+ * its releases, the unified store under the record draws, and the overflow counter reaching the
  * diagnostic line - are exactly the parts a device-less test cannot execute, so they are pinned
  * as source facts the conformance audit can re-check. Behaviour that CAN run headless lives in
  * {@link InstanceDataStoreTest} and the bindless package's own tests.
@@ -30,8 +30,6 @@ class Stage5Stage3WiringTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java";
     private static final String MODEL_REPLAY =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java";
-    private static final String INDIRECT_RUNS =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/IndirectImmediateRuns.java";
     private static final String DIAGNOSTICS =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java";
     private static final String STORE =
@@ -135,9 +133,14 @@ class Stage5Stage3WiringTest {
                 "the single-buffer store's production construction is gone");
         assertFalse(backend.contains("drawRecords.reset()"),
                 "the per-window reset of the single-buffer store is gone");
-        String runs = read(INDIRECT_RUNS);
-        assertEquals(3, occurrences(runs, "b.drawRecords.descriptorDynamicOffset()"),
-                "all three run families bind the records set with its slice's dynamic offset");
+        // Stage 5 stage 6: the runs class that bound the set at its flush sites is deleted;
+        // the binding seats are the batch sink, the twin-draw bind helper and the particle
+        // fallback, each reading the slice's current dynamic offset at bind time.
+        assertTrue(backend.contains("drawRecords.descriptorDynamicOffset()"),
+                "the records set is bound with its slice's dynamic offset at the draw seats");
+        assertFalse(Files.exists(findRepoRoot().resolve(
+                        "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/IndirectImmediateRuns.java")),
+                "the indirect run class itself is deleted");
     }
 
     /** Section 3.2 plan B: the store's layout is the unified set 1 over ring slices, no own buffer. */

@@ -10,7 +10,7 @@ package org.soutalab.celtium.vulkan;
  * <p>Counters whose owner already exists are read from that owner and are not duplicated here: the texture copy
  * census belongs to TextureCopyService, the publication counters to PublishedFrameTextures, the registry's mirror
  * and upload counters to VulkanTextureRegistry, and the descriptor/pipeline counters to
- * VulkanImmediateTexturePipeline.
+ * VulkanImmediateTextureRecordsPipeline.
  */
 public final class TextureStatistics {
 

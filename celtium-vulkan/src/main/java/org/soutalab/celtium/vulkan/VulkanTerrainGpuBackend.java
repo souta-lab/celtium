@@ -25084,7 +25084,7 @@ this.frameBufferOpen = false;
                 // entry is one group's captures of one record).
                 long address = context.celtium$frameLinearRing().mappedAddress(frameSlot,
                         drawRecords.descriptorDynamicOffset()
-                                + (long) firstInstance * ImmediateDrawRecords.RECORD_BYTES);
+                                + (long) firstInstance * InstanceDataStore.RECORD_BYTES);
                 vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }

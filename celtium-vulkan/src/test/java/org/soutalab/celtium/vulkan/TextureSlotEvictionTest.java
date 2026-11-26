@@ -24,7 +24,7 @@ class TextureSlotEvictionTest {
 
     private static String texturePipelineSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTexturePipeline.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java"));
     }
 
     /** The eviction loop: from its head to the miss-allocation counter that follows it. */

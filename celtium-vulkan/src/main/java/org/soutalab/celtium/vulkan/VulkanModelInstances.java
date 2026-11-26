@@ -775,7 +775,7 @@ final class VulkanModelInstances {
                         .pName(stack.UTF8("main"));
                 stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
                         .pName(stack.UTF8("main"));
-                // The ITEM layout the model cache builds: position, colour, texture, normal (VulkanImmediateItemPipeline).
+                // The ITEM layout the model cache builds: position, colour, texture, normal (VulkanImmediateItemRecordsPipeline).
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes = VkVertexInputAttributeDescription.calloc(4, stack);

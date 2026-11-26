@@ -94,7 +94,7 @@ final class PassExecutor {
     }
 
     private static final VulkanDynamicMesh.Layout FULLSCREEN_QUAD_LAYOUT =
-            new VulkanDynamicMesh.Layout(VulkanImmediateTexturePipeline.POSITION_TEX_BYTES, 0, 12, -1, -1, -1);
+            new VulkanDynamicMesh.Layout(VulkanImmediateTextureRecordsPipeline.POSITION_TEX_BYTES, 0, 12, -1, -1, -1);
 
     private final VulkanContext context;
     private final RenderTargetRegistry targetRegistry;

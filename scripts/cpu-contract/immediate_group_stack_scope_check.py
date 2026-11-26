@@ -85,10 +85,15 @@ def main():
     body, body_end = brace_body(method, method.index(scoped))
     require('group frame begins before first viewport/native bind',
             body.index(scoped) < body.index('celtium$setGroupViewport(groupStack, group,'))
-    require('texture pipeline draw is inside bounded group scope',
-            'value.draw(this.commandBuffer, mesh, push, bindDescriptor, this.immediateBindCache)' in body)
-    require('item/block pipeline draws are inside bounded group scope',
-            body.count('value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache)') >= 2)
+    # Stage 5 stage 6: the per-family per-group draws are deleted with their pipeline
+    # classes; an uncaptured quad group of any family is drawn by the generalized direct
+    # twin fallback and a non-quad group by the emitter fallback, both called inside this
+    # same bounded scope (each helper's own stack frame nests inside the group frame -
+    # the bounded lifetime this check exists for).
+    require('direct twin fallback draw is issued inside bounded group scope',
+            'celtium$drawGroupDirect(group, mesh, prepared, push)' in body)
+    require('non-quad emitter fallback draw is issued inside bounded group scope',
+            'celtium$emitNonQuadGroup(group, mesh, prepared, push)' in body)
     # Stage 5 S5-3: the particle family's per-group pipeline form is deleted; an uncaptured
     # particle group is drawn by the backend fallback helper, whose only call site must stay
     # inside this same bounded scope (its bind arrays allocate from stackGet(), which resolves
@@ -97,10 +102,6 @@ def main():
             'celtium$drawParticleGroupFallback(group, mesh, prepared, push)' in body)
     require('mod-program draw is inside bounded group scope',
             'value.draw(this.commandBuffer, mesh, this.immediateBindCache)' in body)
-    require('base pipeline draw is inside bounded group scope',
-            '((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache)' in body)
-    require('indirect consume stays inside the group scope, so a run flush it triggers lands on the group frame',
-            'celtium$tryEnqueueIndirect(group, mesh, prepared, push)' in body)
     require('no control-flow exits inside group scope can bypass close',
             'continue;' not in body and 'return;' not in body)
     require('group frame closes before draw-count accounting',

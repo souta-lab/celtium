@@ -76,8 +76,8 @@ final class FrameStatsReport {
             return;
         }
         // Snapshotted before the report is built, so the deltas describe the frames this report covers.
-        long pipelineBindTotal = VulkanImmediateTexturePipeline.PIPELINE_BIND_NANOS;
-        long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
+        long pipelineBindTotal = VulkanImmediateTextureRecordsPipeline.PIPELINE_BIND_NANOS;
+        long descriptorBindTotal = VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
         long submitDelta = b.immediateSubmitNanos - this.lastImmediateSubmitNanos;
@@ -101,16 +101,16 @@ final class FrameStatsReport {
         this.lastArenaPromotions = b.frameArena == null ? 0 : b.frameArena.promotions();
         this.lastArenaBlocked = b.frameArena == null ? 0 : b.frameArena.blockedOpenings();
         this.lastArenaFallbacks = b.submissionStatistics.frameArenaFallbackGroups();
-        long itemPipelineDelta = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS - this.lastItemPipelineNanos;
-        long itemDescriptorDelta = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS - this.lastItemDescriptorNanos;
-        long itemViewDelta = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS - this.lastItemViewNanos;
-        long itemPushDelta = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS - this.lastItemPushNanos;
-        long itemMeshDelta = VulkanImmediateItemPipeline.ITEM_MESH_NANOS - this.lastItemMeshNanos;
-        this.lastItemPipelineNanos = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS;
-        this.lastItemDescriptorNanos = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS;
-        this.lastItemViewNanos = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS;
-        this.lastItemPushNanos = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS;
-        this.lastItemMeshNanos = VulkanImmediateItemPipeline.ITEM_MESH_NANOS;
+        long itemPipelineDelta = VulkanImmediateItemRecordsPipeline.ITEM_PIPELINE_NANOS - this.lastItemPipelineNanos;
+        long itemDescriptorDelta = VulkanImmediateItemRecordsPipeline.ITEM_DESCRIPTOR_NANOS - this.lastItemDescriptorNanos;
+        long itemViewDelta = VulkanImmediateItemRecordsPipeline.ITEM_VIEW_NANOS - this.lastItemViewNanos;
+        long itemPushDelta = VulkanImmediateItemRecordsPipeline.ITEM_PUSH_NANOS - this.lastItemPushNanos;
+        long itemMeshDelta = VulkanImmediateItemRecordsPipeline.ITEM_MESH_NANOS - this.lastItemMeshNanos;
+        this.lastItemPipelineNanos = VulkanImmediateItemRecordsPipeline.ITEM_PIPELINE_NANOS;
+        this.lastItemDescriptorNanos = VulkanImmediateItemRecordsPipeline.ITEM_DESCRIPTOR_NANOS;
+        this.lastItemViewNanos = VulkanImmediateItemRecordsPipeline.ITEM_VIEW_NANOS;
+        this.lastItemPushNanos = VulkanImmediateItemRecordsPipeline.ITEM_PUSH_NANOS;
+        this.lastItemMeshNanos = VulkanImmediateItemRecordsPipeline.ITEM_MESH_NANOS;
         long preTransformedDelta = b.immediateStatistics.preTransformedGroups() - this.lastPreTransformed;
         long matrixSplitsDelta = b.immediateStatistics.matrixSplits() - this.lastMatrixSplits;
         this.lastPreTransformed = b.immediateStatistics.preTransformedGroups();
@@ -135,12 +135,12 @@ final class FrameStatsReport {
         this.lastBlockDrawNanos = b.blockDrawNanos;
         this.lastParticleDrawNanos = b.particleDrawNanos;
         this.lastGenericDrawNanos = b.genericDrawNanos;
-        long viewDelta = VulkanImmediateTexturePipeline.VIEW_NANOS - this.lastViewNanos;
-        long pushDelta = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS - this.lastPushCallNanos;
-        long meshDelta = VulkanImmediateTexturePipeline.MESH_BIND_NANOS - this.lastMeshBindNanos;
-        this.lastViewNanos = VulkanImmediateTexturePipeline.VIEW_NANOS;
-        this.lastPushCallNanos = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS;
-        this.lastMeshBindNanos = VulkanImmediateTexturePipeline.MESH_BIND_NANOS;
+        long viewDelta = VulkanImmediateTextureRecordsPipeline.VIEW_NANOS - this.lastViewNanos;
+        long pushDelta = VulkanImmediateTextureRecordsPipeline.PUSH_CALL_NANOS - this.lastPushCallNanos;
+        long meshDelta = VulkanImmediateTextureRecordsPipeline.MESH_BIND_NANOS - this.lastMeshBindNanos;
+        this.lastViewNanos = VulkanImmediateTextureRecordsPipeline.VIEW_NANOS;
+        this.lastPushCallNanos = VulkanImmediateTextureRecordsPipeline.PUSH_CALL_NANOS;
+        this.lastMeshBindNanos = VulkanImmediateTextureRecordsPipeline.MESH_BIND_NANOS;
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 

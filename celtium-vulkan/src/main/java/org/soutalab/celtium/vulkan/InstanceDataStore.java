@@ -57,7 +57,8 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
  * {@code minStorageBufferOffsetAlignment}, which is what makes their offsets legal dynamic
  * offsets.
  *
- * <p>Record semantics are {@link ImmediateDrawRecords#record(ByteBuffer, int)}'s exactly: 256-byte
+ * <p>Record semantics are the legacy standalone store's exactly (its class was deleted in
+ * Stage 5 stage 6 and this store is the record layout's only home now): 256-byte
  * stride, the family's push block copied verbatim with the rest of the record zeroed, and the
  * bindless array index as float bits at offset 216 when one is given. A selection whose slice
  * cannot be allocated refuses records for the whole window (the caller keeps the per-group path);
@@ -69,8 +70,11 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
  */
 final class InstanceDataStore {
 
-    /** Bytes per record; one stride for both immediate families, as in {@link ImmediateDrawRecords}. */
-    static final int RECORD_BYTES = ImmediateDrawRecords.RECORD_BYTES;
+    /**
+     * Bytes per record; one stride for both immediate families. The literal was the legacy
+     * standalone store's constant until Stage 5 stage 6 moved it here with the deletion.
+     */
+    static final int RECORD_BYTES = 256;
 
     /** Records a fresh slot asks room for; the slice doubles on demand from here. */
     private static final int INITIAL_RECORDS = 256;
@@ -177,7 +181,7 @@ final class InstanceDataStore {
      * per ring slot.
      *
      * @return the store, or {@code null} when its descriptor objects could not be created - the
-     *         caller then keeps the per-group path, as with {@link ImmediateDrawRecords#create()}
+     *         caller then keeps the direct fallback path
      */
     static InstanceDataStore create(VulkanContext context) {
         FrameLinearRing ring = context.celtium$frameLinearRing();
@@ -334,7 +338,8 @@ final class InstanceDataStore {
     }
 
     /**
-     * Appends one record to the selected slot, with {@link ImmediateDrawRecords}' semantics.
+     * Appends one record to the selected slot, with the record semantics the class
+     * documentation states.
      *
      * @param pushBlock a block of at least 208 bytes; as much of it as the record stride holds
      *                  is copied and the rest of the record is zeroed

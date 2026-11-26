@@ -9203,7 +9203,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * pixels</b>, and that negative is the measurement that mattered: the group colour never was pure blue, so the
      * colour did not come from the push block at all. It came from the vertex data, read as a colour attribute by a
      * pipeline that had been built as {@code POSITION_TEX_COLOR} whatever variant it was asked for - see
-     * {@code VulkanImmediateTexturePipeline.allocate}. Kept because it is
+     * {@code VulkanImmediateTextureRecordsPipeline.allocate}. Kept because it is
      * still the only counter that would catch a *deliberate* pure-blue group, but it must never again be read as
      * "the path did not paint those pixels": the instrument's premise (the drawn colour is the group colour) is
      * exactly what was false.

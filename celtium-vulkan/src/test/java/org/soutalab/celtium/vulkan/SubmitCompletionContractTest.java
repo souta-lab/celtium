@@ -17,9 +17,9 @@ class SubmitCompletionContractTest {
     }
 
     @Test void descriptorAllocationMustPropagateDeviceLoss() {
-        assertTrue(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_ERROR_DEVICE_LOST));
-        assertFalse(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_SUCCESS));
-        assertFalse(VulkanImmediateTexturePipeline.descriptorResultIsDeviceLost(VK_ERROR_OUT_OF_DEVICE_MEMORY));
+        assertTrue(VulkanImmediateTextureRecordsPipeline.descriptorResultIsDeviceLost(VK_ERROR_DEVICE_LOST));
+        assertFalse(VulkanImmediateTextureRecordsPipeline.descriptorResultIsDeviceLost(VK_SUCCESS));
+        assertFalse(VulkanImmediateTextureRecordsPipeline.descriptorResultIsDeviceLost(VK_ERROR_OUT_OF_DEVICE_MEMORY));
     }
 
     /**

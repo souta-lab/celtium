@@ -26,7 +26,7 @@ class EvictedDescriptorRebuildTest {
 
     private static String texturePipelineSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTexturePipeline.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java"));
     }
 
     private static String backendSource() throws IOException {

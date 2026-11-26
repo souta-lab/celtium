@@ -17,17 +17,17 @@ package org.soutalab.celtium.vulkan;
  * <em>and</em> its byte width, because two of these formats differ in nothing else.
  * <pre>
  * DefaultVertexFormats             elements                                          width  id  pipeline
- * POSITION_COLOR                   pos3f col4ub                                       16    1  VulkanImmediatePipeline
- * POSITION_TEX_COLOR               pos3f tex2f col4ub                                 24    2  VulkanImmediateTexturePipeline
- * BLOCK                            pos3f col4ub tex2f lightmap2s                      28    3  VulkanImmediateBlockPipeline
- * ITEM                             pos3f col4ub tex2f nrm3b pad1b                     28    4  VulkanImmediateItemPipeline
+ * POSITION_COLOR                   pos3f col4ub                                       16    1  VulkanImmediateColourRecordsPipeline
+ * POSITION_TEX_COLOR               pos3f tex2f col4ub                                 24    2  VulkanImmediateTextureRecordsPipeline
+ * BLOCK                            pos3f col4ub tex2f lightmap2s                      28    3  VulkanImmediateBlockRecordsPipeline
+ * ITEM                             pos3f col4ub tex2f nrm3b pad1b                     28    4  VulkanImmediateItemRecordsPipeline
  * PARTICLE_POSITION_TEX_COLOR_LMAP pos3f tex2f col4ub lightmap2s                     28    5  VulkanImmediateParticleRecordsPipeline
- * POSITION_TEX                     pos3f tex2f                                        20    6  VulkanImmediateTexturePipeline, colourless
- * POSITION                         pos3f                                              12    7  VulkanImmediateTexturePipeline, one attribute
- * POSITION_TEX_COLOR_NORMAL        pos3f tex2f col4ub nrm3b pad1b                     28    8  VulkanImmediateTexturePipeline, tex+colour
- * POSITION_TEX_NORMAL              pos3f tex2f nrm3b pad1b                            24    9  VulkanImmediateTexturePipeline, colourless+tex
+ * POSITION_TEX                     pos3f tex2f                                        20    6  VulkanImmediateTextureRecordsPipeline, colourless
+ * POSITION                         pos3f                                              12    7  VulkanImmediateTextureRecordsPipeline, one attribute
+ * POSITION_TEX_COLOR_NORMAL        pos3f tex2f col4ub nrm3b pad1b                     28    8  VulkanImmediateTextureRecordsPipeline, tex+colour
+ * POSITION_TEX_NORMAL              pos3f tex2f nrm3b pad1b                            24    9  VulkanImmediateTextureRecordsPipeline, colourless+tex
  * OLDMODEL_POSITION_TEX_NORMAL     pos3f tex2f nrm3b pad1b                            24    9  the same; the element lists are identical
- * POSITION_NORMAL                  pos3f nrm3b pad1b                                  16   10  VulkanImmediateTexturePipeline, position only
+ * POSITION_NORMAL                  pos3f nrm3b pad1b                                  16   10  VulkanImmediateTextureRecordsPipeline, position only
  * POSITION_TEX_LMAP_COLOR          pos3f tex2f lightmap2s col4ub                      28   -   refused by name, unused in vanilla
  *
  * The widths are the runtime ones: vanilla's {@code VertexFormat.addElement} advances by the element's own

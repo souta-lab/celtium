@@ -29,11 +29,12 @@ class ImmediateMultiColorPassContractTest {
 
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
-    private static final String INDIRECT =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/IndirectImmediateRuns.java";
+    private static final String HOST =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateRecordsPipelines.java";
     private static final String[] PIPELINE_CLASSES = {
-            "VulkanImmediatePipeline", "VulkanImmediateTexturePipeline", "VulkanImmediateBlockPipeline",
-            "VulkanImmediateItemPipeline", "VulkanImmediateParticleRecordsPipeline"};
+            "VulkanImmediateColourRecordsPipeline", "VulkanImmediateTextureRecordsPipeline",
+            "VulkanImmediateBlockRecordsPipeline", "VulkanImmediateItemRecordsPipeline",
+            "VulkanImmediateParticleRecordsPipeline"};
 
     @Test
     @DisplayName("the colour fold is the identity at one colour, for plain and line keys alike")
@@ -113,15 +114,16 @@ class ImmediateMultiColorPassContractTest {
     }
 
     @Test
-    @DisplayName("record-reading twins inherit the colour count with the pass they inherit")
-    void recordsTwinsInheritTheColorCount() throws IOException {
-        String indirect = read(INDIRECT);
-        assertEquals(2, count(indirect, "celtium$colorAttachments()"),
-                "both createRecords calls (colour and item) hand the source pipeline's count down");
-        String textured = read("celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/"
-                + "VulkanImmediateTexturePipeline.java");
-        assertTrue(textured.contains("pipeline.colorAttachments = state.celtium$colorAttachments();"),
-                "createRecordsLike copies the count from the pipeline it twins");
+    @DisplayName("the twins receive the colour count as a creation argument from the host dispatch")
+    void twinsReceiveTheColorCountFromTheDispatch() throws IOException {
+        // Stage 5 stage 6: there is no source pipeline to inherit from - the twins are the
+        // only forms, and the host's creation dispatch hands every family the prepare's
+        // target colour count as a creation argument, beside the record store's layout.
+        String host = read(HOST);
+        assertTrue(count(host, "recordsLayout, targetColors") >= 4,
+                "the texture, item, block and colour factories all receive the count");
+        assertTrue(host.contains("celtium$recordsParticlePipeline(format, key, pass,"),
+                "the particle family receives it through its dedicated accessor");
     }
 
     private static String read(String repoRelative) throws IOException {

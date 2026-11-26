@@ -110,7 +110,7 @@ class ModProgramAttributeSourceTest {
         assertEquals(VK_FORMAT_R8G8B8A8_UNORM, VulkanModProgramPipeline.Source.COLOR.format);
         assertEquals(VulkanModProgramPipeline.Source.TEXCOORD.offset + 8,
                 VulkanModProgramPipeline.Source.COLOR.offset);
-        assertEquals(VulkanImmediateTexturePipeline.VERTEX_BYTES,
+        assertEquals(VulkanImmediateTextureRecordsPipeline.VERTEX_BYTES,
                 VulkanModProgramPipeline.Source.COLOR.offset + 4,
                 "the colour ends at the stride; a fifth byte would be the next vertex's position");
     }
@@ -299,7 +299,7 @@ class ModProgramAttributeSourceTest {
                 VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION));
         // The position field (three floats at offset 0) ends exactly at the layout's stride; a fourth float
         // would be the next vertex.
-        assertEquals(VulkanImmediateTexturePipeline.POSITION_BYTES,
+        assertEquals(VulkanImmediateTextureRecordsPipeline.POSITION_BYTES,
                 VulkanModProgramPipeline.Source.POSITION.offset + 12,
                 "the position field ends at the position-only stride");
     }

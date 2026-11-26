@@ -1147,7 +1147,7 @@ public final class VulkanTerrainPipeline {
                     + " liveView=0x" + Long.toHexString(liveView) + " liveKey=0x" + Long.toHexString(liveKey)
                     + " liveGen=" + generationOf(this.boundAtlas) + " liveSize=" + this.boundAtlas.width() + "x"
                     + this.boundAtlas.height() + " liveFull=" + this.boundAtlas.hasFullContent()
-                    + " registryOfSameSize=" + VulkanImmediateTexturePipeline.registryImageOfSize(
+                    + " registryOfSameSize=" + VulkanImmediateTextureRecordsPipeline.registryImageOfSize(
                             this.boundAtlas.width(), this.boundAtlas.height())
                     + " verdict=" + (dead ? "DEAD_IMAGE" : stale ? "STALE_BINDING" : "fresh"));
         }

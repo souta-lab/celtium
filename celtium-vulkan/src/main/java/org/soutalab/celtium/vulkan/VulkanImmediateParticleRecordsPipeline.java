@@ -189,7 +189,7 @@ public final class VulkanImmediateParticleRecordsPipeline {
             result.createPipelineLayout(recordsSetLayout);
             result.createPipeline();
         } catch (RuntimeException | LinkageError error) {
-            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            VulkanImmediateTextureRecordsPipeline.BUILD_ROLLBACKS.incrementAndGet();
             result.delete();
             throw error;
         }

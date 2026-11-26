@@ -361,8 +361,8 @@ final class BackendDiagnostics {
                 + " regHitCalls=" + VulkanTextureRegistry.HIT_CALLS
                 + " regAnnouncedSkips=" + VulkanTextureRegistry.ANNOUNCED_SKIPS
                 + " prepBranchMillis=" + (b.immediateStatistics.prepBranchNanos() / 1000000L)
-                + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
-                + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + b.immediateStatistics.clearOrderFlushes()
+                + " descriptorHits=" + VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_HITS
+                + " descriptorMisses=" + VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + b.immediateStatistics.clearOrderFlushes()
                 + " clearOrderZeroMask=" + b.clearOrderFlushesZeroMask
                 + " clearOrderSkipped=" + b.clearOrderSkipped + " clearOrderNoTargetMask=" + b.clearOrderNoTargetMask
                 + " mainClearsQueued=" + b.mainClearsQueuedCount()
@@ -409,7 +409,7 @@ final class BackendDiagnostics {
                 // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
                 // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
                 // expected; the injected-failure leg is what distinguishes "nothing failed" from "not wired".
-                + " pipelineBuildRollbacks=" + VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.get()
+                + " pipelineBuildRollbacks=" + VulkanImmediateTextureRecordsPipeline.BUILD_ROLLBACKS.get()
                 + " inPlaceRefreshes=" + (b.textureRegistry != null ? b.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (b.textureRegistry != null ? b.textureRegistry.mirrorCount() : 0)
                 + " externalImages=[" + (b.textureRegistry != null
@@ -727,7 +727,7 @@ final class BackendDiagnostics {
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
                 // in every run, and "the counter is in a log line nobody read" is how a bound stays invisible.
-                + " immediateDescriptors=[" + VulkanImmediateTexturePipeline.descriptorPoolSummary() + "]"
+                + " immediateDescriptors=[" + VulkanImmediateTextureRecordsPipeline.descriptorPoolSummary() + "]"
                 // Task-46: the authoritative "what renders now" fields - the real driver, from the device that
                 // renders. The old GL bootstrap probe also has a glRenderer/vulkanDevice pair and those describe a
                 // different, earlier question (the GL identity and the interop contract); this is the live one.
@@ -1100,16 +1100,16 @@ final class BackendDiagnostics {
                 if (pipelineSummary.length() > 0) {
                     pipelineSummary.append(" | ");
                 }
-                if (pipeline instanceof VulkanImmediateTexturePipeline texture) {
+                if (pipeline instanceof VulkanImmediateTextureRecordsPipeline texture) {
                     pipelineSummary.append("texture blends=").append(texture.celtium$blends())
                             .append(" depthWrite=").append(texture.celtium$depthWrites())
                             .append(" depthTest=").append(texture.celtium$depthTests())
                             .append(" blend=").append(texture.celtium$colorBlend().describe());
-                } else if (pipeline instanceof VulkanImmediateItemPipeline item) {
+                } else if (pipeline instanceof VulkanImmediateItemRecordsPipeline item) {
                     pipelineSummary.append("item blends=").append(item.celtium$blends())
                             .append(" depthWrite=").append(item.celtium$depthWrites())
                             .append(" depthTest=").append(item.celtium$depthTests());
-                } else if (pipeline instanceof VulkanImmediatePipeline colour) {
+                } else if (pipeline instanceof VulkanImmediateColourRecordsPipeline colour) {
                     pipelineSummary.append("colour blends=").append(colour.celtium$blends())
                             .append(" depthWrite=").append(colour.celtium$depthWrites())
                             .append(" depthTest=").append(colour.celtium$depthTests());
@@ -1225,7 +1225,7 @@ final class BackendDiagnostics {
             // groups, it reported y ranges of 100+ NDC units for quads whose real extent is 0.9, which is how a
             // correct quad came to be described as a frame-covering wedge. The vertices, the per-vertex clip
             // positions and the model-view are all printed now, so the reading can be checked rather than believed.
-            int stride = mesh.layout() != null ? mesh.layout().stride : VulkanImmediatePipeline.VERTEX_BYTES;
+            int stride = mesh.layout() != null ? mesh.layout().stride : VulkanImmediateColourRecordsPipeline.VERTEX_BYTES;
             float[] mvp = new float[16];
             for (int column = 0; column < 4; column++) {
                 for (int row = 0; row < 4; row++) {
@@ -1351,7 +1351,7 @@ final class BackendDiagnostics {
                     + " pipeline=0x" + (group.prepared == null || group.prepared.pipeline == null ? "0"
                             : Integer.toHexString(System.identityHashCode(group.prepared.pipeline)))
                     + " renderPass=0x" + (group.prepared != null
-                            && group.prepared.pipeline instanceof VulkanImmediatePipeline immediate
+                            && group.prepared.pipeline instanceof VulkanImmediateColourRecordsPipeline immediate
                                     ? Long.toHexString(immediate.celtium$renderPass()) : "?")
                     // The rectangle the group carries for its viewport and its clip. The capture is what the draw
                     // applies (BH-09/OPT-10), so a group whose captured clip is empty or narrower than its quad is

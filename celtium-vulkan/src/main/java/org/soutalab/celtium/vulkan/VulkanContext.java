@@ -4237,7 +4237,7 @@ public final class VulkanContext {
     private static final int REQUIRED_SAMPLES = 1;
     /**
      * The largest push-constant block the immediate path uses: the lit ITEM layout's 256 bytes
-     * ({@code VulkanImmediateItemPipeline.PUSH_CONSTANT_BYTES_LIT}) - the shared 128, the five-vec4 lighting payload,
+     * ({@code VulkanImmediateItemRecordsPipeline.PUSH_CONSTANT_BYTES_LIT}) - the shared 128, the five-vec4 lighting payload,
      * the light-map coordinate pair at 208 and the fog block at 224/240. The fog-carrying POSITION layout spends 208.
      * <p>
      * This number is the device contract, not a report: a device whose {@code maxPushConstantsSize} is below it is

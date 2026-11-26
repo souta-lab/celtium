@@ -44,7 +44,7 @@ public final class VulkanModProgramPipeline {
     /**
      * A field of the batch's vertex stream a program attribute can read, with the format and offset the immediate
      * path's own pipelines declare for it: position at 0, the UV's two floats at 12, the colour's four bytes at 20
-     * (the POSITION_TEX_COLOR layout, 24 bytes - {@code VulkanImmediateTexturePipeline}'s own attribute descriptions
+     * (the POSITION_TEX_COLOR layout, 24 bytes - {@code VulkanImmediateTextureRecordsPipeline}'s own attribute descriptions
      * say the same numbers). A wrong offset here reads a neighbour's bytes and draws the wrong picture without any
      * Vulkan error, so the numbers are asserted by {@code ModProgramAttributeSourceTest}.
      */
@@ -256,7 +256,7 @@ public final class VulkanModProgramPipeline {
     /** The set a token resolved on routes whose set names the textures alone (push, dynamic). */
     private long samplerTokenSet;
     private boolean samplerTokenSetResolved;
-    /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTexturePipeline). */
+    /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTextureRecordsPipeline). */
     private static final int MAX_SETS = 64;
     private static final int MAX_POOLS = 64;
 
@@ -492,7 +492,7 @@ public final class VulkanModProgramPipeline {
 
     /** Builds the pipeline with the render state of {@code like}; throws on a Vulkan failure. */
     public static VulkanModProgramPipeline create(VulkanContext context, ModProgramRegistry.Program program,
-                                                  int formatId, VulkanImmediateTexturePipeline like) {
+                                                  int formatId, VulkanImmediateTextureRecordsPipeline like) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
                 lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer(),
@@ -521,7 +521,7 @@ public final class VulkanModProgramPipeline {
      * translator does not lower.
      */
     public static VulkanModProgramPipeline create(VulkanContext context, ModProgramRegistry.Program program,
-                                                  int formatId, VulkanImmediateTexturePipeline like,
+                                                  int formatId, VulkanImmediateTextureRecordsPipeline like,
                                                   long renderPass, int colorAttachments) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
@@ -1054,10 +1054,10 @@ public final class VulkanModProgramPipeline {
                     .pName(stack.UTF8("main"));
 
             int stride = formatId == VulkanImmediateFormats.POSITION_TEX_COLOR
-                    ? VulkanImmediateTexturePipeline.VERTEX_BYTES
+                    ? VulkanImmediateTextureRecordsPipeline.VERTEX_BYTES
                     : formatId == VulkanImmediateFormats.POSITION
-                            ? VulkanImmediateTexturePipeline.POSITION_BYTES
-                            : VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
+                            ? VulkanImmediateTextureRecordsPipeline.POSITION_BYTES
+                            : VulkanImmediateTextureRecordsPipeline.POSITION_TEX_BYTES;
             List<ModGlslTranslator.Attribute> declared = this.attributes;
             boolean constant = readsConstant(declared, formatId);
             VkVertexInputBindingDescription.Buffer binding =

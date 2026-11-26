@@ -20,14 +20,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * equivalence points against the deleted push variant (read as source, the shape the sibling contract
  * tests established for device-bound mechanisms), the order classification's pure decision exercised
  * directly, and the wiring - the probe's moved vehicle, the twin factory's state coverage, and the
- * dedicated accessor on {@code IndirectImmediateRuns} the stage-6 hand-off names.
+ * dedicated accessor on its host class - {@code IndirectImmediateRuns} at this stage,
+ * {@code ImmediateRecordsPipelines} since the stage-6 relocation this file's last section pins.
  */
 class ParticleRecordsTwinContractTest {
 
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
-    private static final String INDIRECT =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/IndirectImmediateRuns.java";
+    private static final String HOST =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateRecordsPipelines.java";
     private static final String TWIN =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateParticleRecordsPipeline.java";
     private static final String RECORDS_VERT =
@@ -195,8 +196,10 @@ class ParticleRecordsTwinContractTest {
     @DisplayName("the classification is what the capture hands the batcher as its ordered flag")
     void classificationFeedsTheCapture() throws IOException {
         String backend = read(BACKEND);
-        assertTrue(backend.contains("boolean ordered = !particle || !celtium$batchOrderFree(group);"),
-                "only a particle group may be captured unordered, and only when its order is free");
+        // Stage 5 stage 6 widened the classification to every family's capture, with the
+        // UI/font guard kept: the particle term of the rule is the one this contract pins.
+        assertTrue(backend.contains("boolean ordered = particle ? !celtium$batchOrderFree(group)"),
+                "a particle group may be captured unordered, and only when its order is free");
         assertTrue(backend.contains("recordIndex, ordered, vertices"),
                 "the verdict reaches captureQuads as the ordered argument");
     }
@@ -240,24 +243,24 @@ class ParticleRecordsTwinContractTest {
     @Test
     @DisplayName("the blend state the twin is built with is the batch's captured own (BH-07)")
     void blendComesFromTheCapturedState() throws IOException {
-        String backend = read(BACKEND);
-        int branch = backend.indexOf("celtium$recordsParticlePipeline(");
+        String host = read(HOST);
+        int branch = host.indexOf("celtium$recordsParticlePipeline(");
         assertTrue(branch >= 0, "the creation path resolves the twin through the dedicated accessor");
-        assertTrue(backend.substring(branch, branch + 300).contains("celtium$blendState(state)"),
+        assertTrue(host.substring(branch, branch + 300).contains("celtium$blendState(state)"),
                 "the blend handed to the factory is mapped from the captured state, never asserted");
     }
 
     @Test
     @DisplayName("the accessor builds with the family's depth and cull constants and the record store's layout")
     void accessorBuildsWithTheFamilyConstants() throws IOException {
-        String indirect = read(INDIRECT);
-        assertTrue(indirect.contains("celtium$recordsParticlePipeline(int format, long key, long pass,"),
-                "the dedicated accessor exists on the runs class (the stage-6 relocation hand-off)");
-        assertTrue(indirect.contains("celtium$immediateBranchKey(format, key, pass)"),
+        String host = read(HOST);
+        assertTrue(host.contains("celtium$recordsParticlePipeline(int format, long key, long pass,"),
+                "the dedicated accessor exists on the records host (the stage-6 relocation, performed)");
+        assertTrue(host.contains("celtium$immediateBranchKey(format, key, pass)"),
                 "the accessor derives its cache key through the pass-keyed branch fold (R-06)");
-        assertTrue(indirect.contains("true, false, VulkanCullState.NONE, depthCompareOp,"),
+        assertTrue(host.contains("true, false, VulkanCullState.NONE, depthCompareOp,"),
                 "depth test on, depth writes off, no culling: the family's asserted constants");
-        assertTrue(indirect.contains("b.drawRecords.descriptorSetLayout(), colorAttachments);"),
+        assertTrue(host.contains("b.drawRecords.descriptorSetLayout(), colorAttachments);"),
                 "the twin is built against the record store's layout with the pass's colour count");
     }
 

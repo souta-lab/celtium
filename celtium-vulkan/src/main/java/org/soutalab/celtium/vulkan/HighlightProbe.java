@@ -80,7 +80,7 @@ final class HighlightProbe {
         int stride = mesh.layout().stride;
         int vertices = mesh.vertexCount();
         long base = mesh.vertexAddress();
-        if (stride < VulkanImmediatePipeline.VERTEX_BYTES || vertices != 4 || base == 0L
+        if (stride < VulkanImmediateColourRecordsPipeline.VERTEX_BYTES || vertices != 4 || base == 0L
                 || org.lwjgl.system.MemoryUtil.memGetInt(base + 12) != 0x80ffffff) {
             return;
         }
@@ -133,7 +133,7 @@ final class HighlightProbe {
                 // The handle the draw will bind. draw() returns silently for a zero handle, and a group that leaves no
                 // pixels while being counted as drawn is exactly what that silence looks like from outside.
                 + " pipeline=0x" + Integer.toHexString(System.identityHashCode(pipeline))
-                + " handle=0x" + (pipeline instanceof VulkanImmediatePipeline colour
+                + " handle=0x" + (pipeline instanceof VulkanImmediateColourRecordsPipeline colour
                         ? Long.toHexString(colour.celtium$handle()) : "other")
                 + " vertexBuffer=0x" + Long.toHexString(mesh.vertexBuffer())
                 + " indexBuffer=0x" + Long.toHexString(mesh.indexBuffer())
@@ -155,8 +155,8 @@ final class HighlightProbe {
         if (!PROBE_HIGHLIGHT_BORROW || !group.probePoisoned || this.probeLastPrepared == null || prepared == null) {
             return prepared;
         }
-        if (!(prepared.pipeline instanceof VulkanImmediatePipeline)
-                || !(this.probeLastPrepared.pipeline instanceof VulkanImmediatePipeline borrowed)) {
+        if (!(prepared.pipeline instanceof VulkanImmediateColourRecordsPipeline)
+                || !(this.probeLastPrepared.pipeline instanceof VulkanImmediateColourRecordsPipeline borrowed)) {
             return prepared;
         }
         if (this.probeBorrowPrints < 3) {

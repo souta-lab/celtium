@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The item, block and particle pipelines keep the textured family's cache shape - a bounded
  * {@code setsByTextureView} map, eldest eviction on a miss, retirement into the completion-gated free that
  * counts recorded uses only - but the landed guard asked the question only of
- * {@code VulkanImmediateTexturePipeline}, so a queued sibling group whose set was evicted with its texture
+ * {@code VulkanImmediateTextureRecordsPipeline}, so a queued sibling group whose set was evicted with its texture
  * key unchanged still bound the freed set. These assertions pin the repair's pieces: each sibling pipeline
  * answers the still-cached query from its own cache map, the draw loop admits the sibling case to the same
  * {@code evicted} term (with the pair key those caches are keyed by, recomputed from the wrappers current
@@ -38,8 +38,8 @@ class SiblingEvictedDescriptorRebuildTest {
     @Test
     void eachSiblingPipelineAnswersStillCachedFromItsOwnCacheMap() throws IOException {
         String[] pipelines = {
-                "VulkanImmediateItemPipeline.java",
-                "VulkanImmediateBlockPipeline.java",
+                "VulkanImmediateItemRecordsPipeline.java",
+                "VulkanImmediateBlockRecordsPipeline.java",
                 "VulkanImmediateParticleRecordsPipeline.java",
         };
         for (String pipeline : pipelines) {
@@ -89,7 +89,7 @@ class SiblingEvictedDescriptorRebuildTest {
     @Test
     void rebuildBranchCanRebuildBlockAndParticleGroups() throws IOException {
         String source = backendSource();
-        int dispatch = source.indexOf("} else if (prepared.pipeline instanceof VulkanImmediateItemPipeline itemPipeline) {");
+        int dispatch = source.indexOf("} else if (prepared.pipeline instanceof VulkanImmediateItemRecordsPipeline itemPipeline) {");
         assertTrue(dispatch >= 0, "the rebuild dispatch is present");
         int block = source.indexOf("blockPipeline.descriptorSetFor(currentTexture, this.lightmapTexture)", dispatch);
         assertTrue(block > dispatch, "a block group is rebuilt with its texture and the light map");

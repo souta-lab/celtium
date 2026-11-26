@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * The record-reading shader declares the same block as an {@code std430} struct, and the backend writes it by copying
  * the push block. Nothing in the type system holds those two together, so this test reads the shader and sums the
  * declared members: mat4 plus three vec4s plus the alpha/colour vec4 plus the fog block. If either side gains or loses a
- * member, the sum stops matching {@link ImmediateDrawRecords#RECORD_BYTES} and this fails instead of producing a picture
+ * member, the sum stops matching {@link InstanceDataStore#RECORD_BYTES} and this fails instead of producing a picture
  * that is quietly a few bytes out of phase. The lit struct is checked the same way, and a third test holds the lit push
  * block's declared range to the last offset its vertex stage declares - the fog block at 224/240 is what made that block
  * 256 bytes, and a range shorter than the declaration is a pipeline-creation error rather than a wrong picture.
@@ -25,7 +25,7 @@ class ImmediateDrawRecordAbiTest {
 
     @Test
     void theRecordIsThePushBlockAndTheShaderAgreesWithIt() throws IOException {
-        assertEquals(256, ImmediateDrawRecords.RECORD_BYTES,
+        assertEquals(256, InstanceDataStore.RECORD_BYTES,
                 "the record is the widest push block of the immediate families (the lit ITEM block's 256 bytes)");
         Path shader = findShader("immediate_tex_color_records.vert");
         String source = Files.readString(shader);
@@ -41,7 +41,7 @@ class ImmediateDrawRecordAbiTest {
         bytes += 64L * count(body, "mat4 ");
         bytes += 16L * count(body, "vec4 ");
         bytes += 16L * count(body, "vec2 ");
-        assertEquals(ImmediateDrawRecords.RECORD_BYTES, bytes,
+        assertEquals(InstanceDataStore.RECORD_BYTES, bytes,
                 "the shader's DrawRecord must be exactly one record long: member sizes are checked against RECORD_BYTES");
         int matrixOffset = source.indexOf("mat4 u_ProjectionMatrix;");
         int alphaOffset = source.indexOf("vec4 u_AlphaColour;");
@@ -62,7 +62,7 @@ class ImmediateDrawRecordAbiTest {
         long bytes = 64L * count(body, "mat4 ") + 16L * count(body, "vec4 ") + 16L * count(body, "vec2 ");
         // The lit block's 256 bytes: the lighting payload, the light coordinate, the bindless index's slot and the fog
         // block. The two families share one record array, so the unlit struct pads to the same stride.
-        assertEquals(ImmediateDrawRecords.RECORD_BYTES, bytes,
+        assertEquals(InstanceDataStore.RECORD_BYTES, bytes,
                 "the lit struct must be one record long, padded to the shared stride");
     }
 
@@ -82,7 +82,7 @@ class ImmediateDrawRecordAbiTest {
         assertTrue(last >= 0, "the lit vertex stage declares explicit offsets");
         assertEquals(240, last, "the fog block's params are the last member the lit vertex stage declares");
         assertEquals(256, widest, "the lit block ends at 256 bytes");
-        assertEquals(256, VulkanImmediateItemPipeline.celtium$pushBytesLit(),
+        assertEquals(256, VulkanImmediateItemRecordsPipeline.celtium$pushBytesLit(),
                 "the pipeline's declared range must cover the whole block: a shorter range is a pipeline-creation error");
     }
 

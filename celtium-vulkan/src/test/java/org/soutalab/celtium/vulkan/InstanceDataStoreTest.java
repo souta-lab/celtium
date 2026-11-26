@@ -125,7 +125,7 @@ class InstanceDataStoreTest {
     }
 
     @Test
-    void recordLayoutMatchesTheImmediateDrawRecordsStride() {
+    void recordLayoutMatchesTheStoreStride() {
         TestRing ring = new TestRing(2, 1L << 20);
         InstanceDataStore store = store(ring);
         store.selectSlot(0);
