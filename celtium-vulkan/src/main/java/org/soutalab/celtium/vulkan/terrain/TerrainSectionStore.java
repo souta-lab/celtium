@@ -438,6 +438,20 @@ public final class TerrainSectionStore {
         return out;
     }
 
+    /**
+     * Whether one pass holds any live pack-space records. The lightweight
+     * form of {@link #packRecords(int)} for the terrain pass entry's gates:
+     * the entry asks this per pass per frame, so no list is built.
+     */
+    public synchronized boolean hasPackRecords(int passOrdinal) {
+        for (Registration registration : this.records) {
+            if (registration.pack() && registration.key.passOrdinal() == passOrdinal) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The pack arena a desc slab id belongs to, or null outside the pack range. */
     public synchronized PackArena packArenaOfSlab(int descSlabId) {
         int arenaIndex = (descSlabId - PACK_SLAB_BASE) / TerrainSlabAllocator.DEFAULT_MAX_SLABS;
