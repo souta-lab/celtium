@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
 import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
+import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
+import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkSortOutput;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
@@ -1850,6 +1852,48 @@ public final class TerrainRenderer {
         }
     }
 
+    /**
+     * Whether a pass' vertex type is a foreign (pack) format the Tier-A
+     * machinery can serve as a format variant (R-17 candidate 2-MIN): the
+     * presented type is none of the three types celtium itself defines. The
+     * variant stores the type's own encoder output byte-for-byte, so any
+     * single interleaved format qualifies by construction; the built-in
+     * types keep their existing routes (the 16-byte Tier-A form, and the
+     * legacy route for VANILLA_LIKE / COMPACT).
+     */
+    static boolean packVariantEligible(ChunkVertexType vertexType) {
+        return vertexType != ChunkMeshFormats.VANILLA_LIKE
+                && vertexType != ChunkMeshFormats.COMPACT
+                && vertexType != ChunkMeshFormats.TERRAIN_A16;
+    }
+
+    /**
+     * Registers one freshly built foreign-format section into the resident
+     * table's pack space (R-17 candidate 2-MIN): the mesher assembles the
+     * presented stream at the pass format's own stride and the pack executor
+     * uploads it unconverted. A failure leaves the section on the legacy
+     * route only, exactly as {@link #registerTierA}.
+     */
+    private void registerTierAPack(ChunkBuildOutput build, TerrainRenderPass pass, BuiltSectionMeshParts mesh) {
+        try {
+            int stride = pass.vertexType().getVertexFormat().getStride();
+            org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher.BuiltSectionA built =
+                    this.terrainAHost.mesher().build(build.render.getChunkX(), build.render.getChunkY(),
+                            build.render.getChunkZ(), this.terrainAHost.ordinalFor(pass), mesh, 0, stride);
+            if (built != null) {
+                this.terrainAHost.packEngineFor(this.context, pass)
+                        .register(built, this.terrainAHost.nextGeneration());
+            }
+        } catch (RuntimeException error) {
+            this.terrainAHost.noteBuildException(build.render.getChunkX(), build.render.getChunkY(),
+                    build.render.getChunkZ(), pass);
+            if (!this.terrainARegisterFailurePrinted) {
+                this.terrainARegisterFailurePrinted = true;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_A_REGISTER_FAILED reason=" + error);
+            }
+        }
+    }
+
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
             java.util.Map<TerrainRenderPass, SectionRenderDataStorage> cache) {
         SectionRenderDataStorage existing = cache.get(pass);
@@ -1902,6 +1946,13 @@ public final class TerrainRenderer {
                             && meshEntry.getKey().vertexType().getVertexFormat().getStride()
                                     == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
                         registerTierA(build, meshEntry.getKey(), mesh);
+                    } else if (this.terrainAHost != null
+                            && packVariantEligible(meshEntry.getKey().vertexType())) {
+                        // Registration-gate generalization (R-17 candidate
+                        // 2-MIN): a foreign presented format registers as a
+                        // Tier-A format variant in the pack space instead of
+                        // falling out of the resident table entirely.
+                        registerTierAPack(build, meshEntry.getKey(), mesh);
                     } else if (this.terrainAHost != null) {
                         // Stride gate (order (i)): this section never reaches
                         // registerTierA while the stride differs — count it as
