@@ -24770,7 +24770,7 @@ this.frameBufferOpen = false;
                 line.append(String.format("%02x", vertices.get(at) & 0xff));
             }
         }
-        CeltiumLogLimiter.println(line.toString());
+        System.out.println(line.toString());
     }
 
     private boolean celtium$tryCaptureBatchGroup(ImmediateGroup group, VulkanDynamicMesh mesh,
