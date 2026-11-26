@@ -45,7 +45,10 @@ public final class CeltiumLogLimiter extends PrintStream {
             "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE", "CELTIUM_PRESENT",
             // DIAGNOSTIC ONLY (devlocalimage-plateau-diag branch; never lands): the pair census prints
             // one line per allocation and would be cut at 16 by the per-tag bound.
-            "CELTIUM_PAIR_CENSUS");
+            "CELTIUM_PAIR_CENSUS",
+            // DIAGNOSTIC ONLY (pack-white-diag branch; never lands): the pair dump prints one line per
+            // chain pair (200+) and would be cut at 16 by the per-tag bound.
+            "CELTIUM_CHAIN_FRAME_DUMP");
     private static final Map<String, AtomicLong> COUNTS = new ConcurrentHashMap<String, AtomicLong>();
     private static volatile boolean summaryHookInstalled;
 
