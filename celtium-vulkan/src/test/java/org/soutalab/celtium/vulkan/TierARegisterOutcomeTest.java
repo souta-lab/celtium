@@ -46,7 +46,7 @@ class TierARegisterOutcomeTest {
         String source = engineSource();
         assertTrue(source.contains("new RegisterAttempt(null, RegisterOutcome.REJECTED)"),
                 "a disabled executor (and a failed attempt) classifies rejected");
-        int queued = source.indexOf("this.deferred.addLast(built);");
+        int queued = source.indexOf("this.deferred.offer(built, generation);");
         int deferred = source.indexOf("RegisterOutcome.DEFERRED");
         assertTrue(queued >= 0 && deferred > queued,
                 "the deferred outcome is returned only after the section is queued");
