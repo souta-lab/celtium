@@ -2432,6 +2432,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The font domain's fragment of the verification line (refactoring plan R2, stage 1). */
     final FontStatistics fontStats = new FontStatistics(this.fontBatch);
+
+    // SCRATCH (stage-8 S8-d ABAB; this branch never lands): the glyph-direct arm switch and the
+    // font-path CPU instrument. A run with -Dceltium.scratch.fontDirect=true submits every glyph
+    // segment straight through submitImmediateBatch at the append seat, bypassing FontBatch; the
+    // counters accumulate client-thread CPU time inside celtium$fontAppend and
+    // celtium$flushPendingFontBatch, which between them carry the whole font path in both arms.
+    private static final boolean FONT_DIRECT_SCRATCH = Boolean.getBoolean("celtium.scratch.fontDirect");
+    private static final java.lang.management.ThreadMXBean THREAD_MX_SCRATCH =
+            java.lang.management.ManagementFactory.getThreadMXBean();
+    private long fontPathCpuNanosScratch;
+    private long fontAppendCallsScratch;
+    private long fontFlushCallsScratch;
+
+    private static long fontCpuNowScratch() {
+        return THREAD_MX_SCRATCH.isCurrentThreadCpuTimeSupported()
+                ? THREAD_MX_SCRATCH.getCurrentThreadCpuTime() : System.nanoTime();
+    }
     /**
      * Font runs the sink refused, i.e. runs FontBatch now keeps in its retention queue and offers again.
      * <p>
@@ -9211,9 +9228,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
             int vertexCount, int drawMode) {
-        // The pending run, its boundary rule and the retention queue moved to FontBatch (R3b).
-        return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
-                drawMode);
+        long startedScratch = fontCpuNowScratch();
+        try {
+            if (FONT_DIRECT_SCRATCH) {
+                // SCRATCH B arm: the segment goes directly to the generic immediate path (the same
+                // submission the glyph capture's own fallback makes when an append is refused).
+                return submitImmediateBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
+                        drawMode);
+            }
+            // The pending run, its boundary rule and the retention queue moved to FontBatch (R3b).
+            return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
+                    drawMode);
+        } finally {
+            this.fontPathCpuNanosScratch += fontCpuNowScratch() - startedScratch;
+            this.fontAppendCallsScratch++;
+        }
     }
 
     /**
@@ -9329,10 +9358,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * submission's own entry flush cannot see it again.
      */
     private void celtium$flushPendingFontBatch(String how) {
-        this.fontBatch.celtium$flushPendingFontBatch(how);
+        long startedScratch = fontCpuNowScratch();
+        try {
+            this.fontBatch.celtium$flushPendingFontBatch(how);
+        } finally {
+            this.fontPathCpuNanosScratch += fontCpuNowScratch() - startedScratch;
+            this.fontFlushCallsScratch++;
+        }
     }
     public String celtium$fontBatchSummary() {
-        return this.fontBatch.celtium$fontBatchSummary();
+        return this.fontBatch.celtium$fontBatchSummary()
+                + " fontPathCpuMs=" + (this.fontPathCpuNanosScratch / 1_000_000L)
+                + " fontPathCalls=" + this.fontAppendCallsScratch + "/" + this.fontFlushCallsScratch
+                + " fontDirect=" + FONT_DIRECT_SCRATCH;
     }
 
     /**
