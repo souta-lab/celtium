@@ -10,8 +10,14 @@ loading frame was pure white. GL's `updateDisplay` presents everything drawn sin
 to do the same.
 
 This is a source-order contract, because the flush itself is a Vulkan queue submission that no CPU-only test can
-observe. It checks, inside `celtium$presentFrame`, that the pending drain runs after `ensureSwapchain()` and before
-the `lastFrameReachedQueue` gate - an ordering that cannot regress without this check failing. It also checks that
+observe. It checks, inside `celtium$presentFrame`, that the pending drain runs after the swap point's ensure and
+before the `lastFrameReachedQueue` gate - an ordering that cannot regress without this check failing. The ensure
+at the swap point is the existence-only `ensureSwapchainForPresent()` since R-06 split the swap point in two:
+the full `ensureSwapchain()` consumes a pending rebuild, and consuming it at the head would drop the swapchain
+generation the frame being presented borrowed (the ordering the transition frame's
+VUID-vkCmdDrawIndexed-renderPass-02684 and VUID-vkQueueSubmit-pCommandBuffers-00070 were measured on), so the
+rebuild is consumed by `consumeSwapchainRebuild()` after the present attempt instead - and this check pins that
+half of the split as well. It also checks that
 a finish follows the drain before the gate: the drain records into the unified frame buffer, and a buffer nobody
 finishes is never queued, so drained groups would miss the very present that drained them (defect B4, proven on
 paper in OVERHAUL-B4-HARM-2026-11-26; the post-drain finish is what PRESENT_DRAIN_FINISH_GUARD gates, default on
@@ -66,17 +72,34 @@ def main():
     present = (method(present_source, "public boolean celtium$presentFrame()")
                + method(present_source, "private boolean celtium$presentFrameImpl()")
                + method(present_source, "private boolean celtium$presentFrameBody()"))
-    check("ensureSwapchain()" in present, "presentFrame no longer ensures a swapchain")
+    check("ensureSwapchainForPresent()" in present,
+          "presentFrame no longer ensures a swapchain at the swap point")
+    check("ensureSwapchain()" not in present,
+          "the present chain must not call the full ensureSwapchain(): it consumes a pending rebuild, and "
+          "consuming it at the swap point's head drops the generation the presented frame borrowed (R-06)")
+    check("consumeSwapchainRebuild()" in present,
+          "presentFrame no longer consumes a pending swapchain rebuild after the present attempt")
     check("flushPendingBeforeGlDraw()" in present,
           "presentFrame does not drain pending immediate work before presenting")
     check("PRESENT_FLUSH_PENDING" in present,
           "the drain must keep an opt-out switch for comparison legs")
     drain = present.index("flushPendingBeforeGlDraw()")
-    swap = present.index("ensureSwapchain()")
+    swap = present.index("ensureSwapchainForPresent()")
     gate = present.index("if (!backend.lastFrameReachedQueue)")
     check(swap < drain < gate,
-          "the drain must run after ensureSwapchain() and before the completed-frame gate "
+          "the drain must run after ensureSwapchainForPresent() and before the completed-frame gate "
           "- a drain placed after the gate still presents a frame behind")
+    # R-06: the rebuild consumption waits until the present attempt has been submitted against the
+    # generation this frame borrowed. The attempt is presentDirect for a borrowed image and
+    # presentImage for the composite fallback; the consumption follows both. The tokens carry the
+    # backend.swapchain receiver because the drain block's comment names presentDirect() in prose,
+    # ahead of the gate.
+    attempt = min(present.index("backend.swapchain.presentDirect("),
+                  present.index("backend.swapchain.presentImage("))
+    consume = present.index("consumeSwapchainRebuild()")
+    check(gate < attempt < consume,
+          "the swapchain rebuild must be consumed after the present attempt - consuming it before the "
+          "attempt drops the borrowed generation under the live present (R-06)")
     # B4: the drain records into the unified frame buffer, which is only queued by a finish. Without a
     # finish between the drain and the gate, the drained groups stay in the open buffer and miss this
     # present - one frame late on the composite path, and on the direct-present path recorded against
