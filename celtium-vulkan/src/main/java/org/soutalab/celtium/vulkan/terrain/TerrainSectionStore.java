@@ -537,15 +537,63 @@ public final class TerrainSectionStore {
 
     /** Live pack-space record counts, indexed by desc slab id (pack range only). */
     public synchronized int[] packSlabRecordCounts() {
+        return countPackSlabs(false, 0);
+    }
+
+    /**
+     * Live pack-space record counts for one pass only, in the same shape as
+     * {@link #packSlabRecordCounts()}: the per-pass form a snapshot freezes
+     * (T3 condition (2)), so one pass' dispatch never sizes its streams from
+     * another pass' pack records.
+     */
+    public synchronized int[] packSlabRecordCounts(int passOrdinal) {
+        return countPackSlabs(true, passOrdinal);
+    }
+
+    private int[] countPackSlabs(boolean onePass, int passOrdinal) {
         int size = PACK_SLAB_BASE + Math.max(1, this.packArenas.size())
                 * TerrainSlabAllocator.DEFAULT_MAX_SLABS;
         int[] counts = new int[size];
         for (Registration registration : this.records) {
-            if (registration.pack()) {
+            if (registration.pack() && (!onePass || registration.key.passOrdinal() == passOrdinal)) {
                 counts[(int) registration.desc.slabId]++;
             }
         }
         return counts;
+    }
+
+    /**
+     * One atomic capture of the store's published shape (T3 condition (2)):
+     * the image generation, the record count, the packed desc and
+     * factor-base images, and the per-pass slab counts of both spaces, all
+     * read under the store lock in one pass. A frame that reads a capture
+     * reads a single generation's numbers throughout, even while other
+     * threads keep registering; the capture's arrays are its own copies, so
+     * later mutations never rewrite a capture already handed out. The
+     * per-pass arrays are indexed by pass ordinal; a pass holding no record
+     * at capture time has no entry (an index at or beyond the length).
+     */
+    public record SnapshotData(long generation, int recordCount, int[] descImage, int[] factorBaseImage,
+                               int[][] vanillaSlabCounts, int[][] packSlabCounts) {
+    }
+
+    /** Captures the published shape atomically; see {@link SnapshotData}. */
+    public synchronized SnapshotData captureSnapshot() {
+        packIfDirty();
+        int passes = 0;
+        for (Registration registration : this.records) {
+            passes = Math.max(passes, registration.key.passOrdinal() + 1);
+        }
+        int[][] vanilla = new int[passes][];
+        int[][] pack = new int[passes][];
+        for (int pass = 0; pass < passes; pass++) {
+            vanilla[pass] = countSlabs(true, pass);
+            pack[pass] = countPackSlabs(true, pass);
+        }
+        return new SnapshotData(this.imageGeneration, this.records.size(),
+                java.util.Arrays.copyOf(this.descImage, this.descImage.length),
+                java.util.Arrays.copyOf(this.factorBaseImage, this.factorBaseImage.length),
+                vanilla, pack);
     }
 
     /** The pack records of one pass, in record order. */

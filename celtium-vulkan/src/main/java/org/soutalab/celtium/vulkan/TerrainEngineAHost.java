@@ -40,6 +40,14 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
  * copy of all four — the two images byte-identical duplicates, the two arenas
  * 32 MiB each per pass — for no reader's benefit.
  * <p>
+ * The two images are per-frame-slot since T3 condition (2): each frame slot
+ * owns its copy, written only when that slot's snapshot is prepared — after
+ * the slot's previous submission completed, by the frame-slot contract — and
+ * immutable for the rest of the recording. What a recording reads is a
+ * {@link FrameSnapshot}: the store's shape captured atomically at the slot's
+ * first prepare of the recording, handles and counts together, so no
+ * dispatch ever mixes a frozen image with live counts (INV-2a/2b).
+ * <p>
  * Deferred arena releases are stamped and collected in the context's slab
  * completion currency ({@link VulkanContext#celtium$slabReleaseValue()} /
  * {@link VulkanContext#celtium$slabCompletedValue()}): on a timeline device
@@ -81,16 +89,26 @@ final class TerrainEngineAHost {
     private SlabAllocator geometrySlabAllocator;
     private VulkanHostBuffer sharedIndexBuffer;
     // Resident GPU images of the store (host-visible, written through the
-    // mapping), shared by every pass (R-15; see the class javadoc).
-    private VulkanHostBuffer descBuffer;
-    private VulkanHostBuffer factorBaseBuffer;
-    private long uploadedDescGeneration = -1;
-    // Frame keying of the desc upload: the backend stamps the current frame at
-    // its Tier-A pass heads, and the upload runs at most once per frame, so
-    // every pass of a frame reads the one image the frame started with. A
-    // generation that moves mid-frame uploads at the next frame's first head.
+    // mapping), one copy per frame slot since T3 condition (2) (R-15's
+    // sharing stands across passes; the slot is the lifetime unit, see the
+    // class javadoc).
+    private final VulkanHostBuffer[] descBuffers =
+            new VulkanHostBuffer[FrameSubmissionScheduler.FRAME_SLOTS];
+    private final VulkanHostBuffer[] factorBaseBuffers =
+            new VulkanHostBuffer[FrameSubmissionScheduler.FRAME_SLOTS];
+    // Per-slot snapshot bookkeeping: the snapshot each slot's current
+    // recording reads, the recording identity it was built under, and the
+    // store generation last uploaded into the slot's buffers.
+    private final FrameSnapshot[] slotSnapshots =
+            new FrameSnapshot[FrameSubmissionScheduler.FRAME_SLOTS];
+    private final long[] slotSnapshotEpochs = new long[FrameSubmissionScheduler.FRAME_SLOTS];
+    private final long[] slotSnapshotFrameKeys = new long[FrameSubmissionScheduler.FRAME_SLOTS];
+    private final long[] slotUploadedGenerations = new long[FrameSubmissionScheduler.FRAME_SLOTS];
+    // Frame keying of the snapshot: the backend stamps the current frame at
+    // its Tier-A pass heads, and the stamp is one component of the snapshot
+    // identity, so a new frame never inherits the previous frame's snapshot
+    // even where a recording were to span the boundary.
     private long descFrameKey = Long.MIN_VALUE;
-    private long descUploadedFrameKey = Long.MIN_VALUE;
     private VulkanHostBuffer factorBuffer;
     private VulkanHostBuffer sortedBuffer;
 
@@ -320,98 +338,192 @@ final class TerrainEngineAHost {
     }
 
     /**
-     * The shared SectionDesc table itself, for the cull compute's descriptor
-     * bookkeeping, or {@code null} before the first upload. Callers reach this
-     * only after an upload call in the same frame head, the engine's previous
-     * precondition for its private copy.
+     * The SectionDesc table of one frame slot, for the cull compute's
+     * descriptor bookkeeping, or {@code null} before the slot's first
+     * snapshot. Callers reach this only after a snapshot call for the same
+     * slot in the same recording, the engine's precondition for naming it.
      */
-    VulkanHostBuffer descBuffer() {
-        return this.descBuffer;
+    VulkanHostBuffer descBuffer(int slotIndex) {
+        return this.descBuffers[slotIndex];
     }
 
-    /** Raw VkBuffer of the shared desc table (graphics binding 6), uploading the store image first if it moved. */
-    long descBufferHandle(VulkanContext context) {
-        uploadDescImageIfMoved(context);
-        return this.descBuffer == null ? 0L : this.descBuffer.buffer();
+    /**
+     * One recording's frozen view of the store (T3 condition (2)): the image
+     * generation, the record count, the slot's desc and factor-base buffer
+     * handles, and the per-pass slab counts of both spaces, captured
+     * atomically from the store when the snapshot was built. Every count a
+     * dispatch or an arming reads comes from here, never from the live
+     * store, so a registration landing mid-recording cannot split the
+     * recording's passes across two generations (INV-2a).
+     */
+    static final class FrameSnapshot {
+        private static final int[] NO_COUNTS = new int[0];
+
+        private final long generation;
+        private final int recordCount;
+        private final long descBufferHandle;
+        private final long factorBaseBufferHandle;
+        private final int slotIndex;
+        private final int[][] vanillaSlabCounts;
+        private final int[][] packSlabCounts;
+
+        private FrameSnapshot(long generation, int recordCount, long descBufferHandle,
+                              long factorBaseBufferHandle, int slotIndex,
+                              int[][] vanillaSlabCounts, int[][] packSlabCounts) {
+            this.generation = generation;
+            this.recordCount = recordCount;
+            this.descBufferHandle = descBufferHandle;
+            this.factorBaseBufferHandle = factorBaseBufferHandle;
+            this.slotIndex = slotIndex;
+            this.vanillaSlabCounts = vanillaSlabCounts;
+            this.packSlabCounts = packSlabCounts;
+        }
+
+        long generation() {
+            return this.generation;
+        }
+
+        /** The store's record count at capture time: every pass' dispatch width and push count. */
+        int recordCount() {
+            return this.recordCount;
+        }
+
+        /** Raw VkBuffer of this slot's desc table (graphics binding 6). */
+        long descBufferHandle() {
+            return this.descBufferHandle;
+        }
+
+        /** Raw VkBuffer of this slot's factor-base image (graphics binding 7). */
+        long factorBaseBufferHandle() {
+            return this.factorBaseBufferHandle;
+        }
+
+        int slotIndex() {
+            return this.slotIndex;
+        }
+
+        /**
+         * The frozen per-slab record counts of one vanilla pass: only that
+         * pass' records are counted, so the pass arms no slab it holds
+         * nothing in (prescription B's empty-copy removal, kept by M2). A
+         * pass with no record at capture time reads as all zero.
+         */
+        int[] vanillaSlabCounts(int passOrdinal) {
+            return passOrdinal >= 0 && passOrdinal < this.vanillaSlabCounts.length
+                    ? this.vanillaSlabCounts[passOrdinal] : NO_COUNTS;
+        }
+
+        /** The frozen per-slab record counts of one pack pass, indexed by desc slab id. */
+        int[] packSlabCounts(int passOrdinal) {
+            return passOrdinal >= 0 && passOrdinal < this.packSlabCounts.length
+                    ? this.packSlabCounts[passOrdinal] : NO_COUNTS;
+        }
     }
 
-    /** Raw VkBuffer of the shared factor-base image (graphics binding 7), uploading first if it moved. */
-    long factorBaseBufferHandle(VulkanContext context) {
-        uploadDescImageIfMoved(context);
-        return this.factorBaseBuffer == null ? 0L : this.factorBaseBuffer.buffer();
+    /** Whether a slot's standing snapshot already serves this recording: same epoch, same frame stamp. */
+    static boolean snapshotCurrent(boolean exists, long snapshotEpoch, long snapshotFrameKey,
+                                   long recordingEpoch, long frameKey) {
+        return exists && snapshotEpoch == recordingEpoch && snapshotFrameKey == frameKey;
+    }
+
+    /** Whether a slot's buffers must take the captured image: not created yet, or a generation behind. */
+    static boolean slotUploadDue(boolean bufferExists, long generation, long uploadedGeneration) {
+        return !bufferExists || generation != uploadedGeneration;
+    }
+
+    /**
+     * Whether draws armed under {@code armedRecordingEpoch} may issue in the
+     * recording {@code recordingEpoch} (INV-2c): only the very recording
+     * that produced a slot's indirect streams may issue them. An unarmed
+     * slot carries -1, which no real epoch (counting up from 0) equals.
+     */
+    static boolean drawEpochCurrent(long armedRecordingEpoch, long recordingEpoch) {
+        return armedRecordingEpoch == recordingEpoch;
+    }
+
+    /**
+     * The snapshot {@code slotIndex}' current recording reads, building it on
+     * the recording's first prepare: the store's shape is captured
+     * atomically and uploaded into the slot's own desc and factor-base
+     * buffers. A re-call within the same recording — the frame's other
+     * passes and stages — returns the standing snapshot untouched, so the
+     * whole recording reads one generation. A later recording (a new epoch,
+     * or a new frame stamp) builds afresh from the store as it then stands.
+     * The slot's buffers are written only here, and a slot's recording
+     * starts only after its previous submission completed (the frame-slot
+     * contract), so no in-flight submission reads bytes being rewritten
+     * (INV-2b).
+     */
+    FrameSnapshot prepareSlotSnapshot(VulkanContext context, int slotIndex, long recordingEpoch) {
+        FrameSnapshot current = this.slotSnapshots[slotIndex];
+        if (snapshotCurrent(current != null, this.slotSnapshotEpochs[slotIndex],
+                this.slotSnapshotFrameKeys[slotIndex], recordingEpoch, this.descFrameKey)) {
+            return current;
+        }
+        TerrainSectionStore.SnapshotData data = this.store.captureSnapshot();
+        uploadSlotImage(context, slotIndex, data);
+        FrameSnapshot snapshot = new FrameSnapshot(data.generation(), data.recordCount(),
+                this.descBuffers[slotIndex].buffer(), this.factorBaseBuffers[slotIndex].buffer(),
+                slotIndex, data.vanillaSlabCounts(), data.packSlabCounts());
+        this.slotSnapshots[slotIndex] = snapshot;
+        this.slotSnapshotEpochs[slotIndex] = recordingEpoch;
+        this.slotSnapshotFrameKeys[slotIndex] = this.descFrameKey;
+        return snapshot;
+    }
+
+    /**
+     * Writes one capture into a slot's desc and factor-base buffers, unless
+     * the slot already holds that generation. The buffers are named by
+     * Tier-A descriptor sets (bindings 6 and 7) that are only rewritten at a
+     * pass head, under conditions, for the current frame slot — so a set can
+     * keep naming a grown-away handle long after the growth. Retiring the
+     * old handle at growth let the context's retired-buffer drain destroy a
+     * buffer a live set still named (VUID-08114, diagnosed 2026-11-26). Both
+     * buffers are small (sections x 48B / x 4B) and growth is geometric, so
+     * keeping every superseded buffer until delete() costs a bounded,
+     * negligible amount of slab space; delete() below destroys them all at
+     * host teardown.
+     */
+    private void uploadSlotImage(VulkanContext context, int slotIndex,
+                                 TerrainSectionStore.SnapshotData data) {
+        if (!slotUploadDue(this.descBuffers[slotIndex] != null, data.generation(),
+                this.slotUploadedGenerations[slotIndex])) {
+            return;
+        }
+        int[] descImage = data.descImage();
+        int[] factorBaseImage = data.factorBaseImage();
+        long descBytes = Math.max(48L, (long) descImage.length * 4L);
+        if (this.descBuffers[slotIndex] == null) {
+            this.descBuffers[slotIndex] = new VulkanHostBuffer(context, descBytes,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            this.factorBaseBuffers[slotIndex] = new VulkanHostBuffer(context,
+                    Math.max(4L, (long) factorBaseImage.length * 4L), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            this.descBuffers[slotIndex].retainSupersededBuffers();
+            this.factorBaseBuffers[slotIndex].retainSupersededBuffers();
+        } else {
+            this.descBuffers[slotIndex].ensureCapacity(descBytes);
+            this.factorBaseBuffers[slotIndex].ensureCapacity(
+                    Math.max(4L, (long) factorBaseImage.length * 4L));
+        }
+        long descAddress = this.descBuffers[slotIndex].mappedAddress();
+        for (int i = 0; i < descImage.length; i++) {
+            MemoryUtil.memPutInt(descAddress + (long) i * 4L, descImage[i]);
+        }
+        long factorAddress = this.factorBaseBuffers[slotIndex].mappedAddress();
+        for (int i = 0; i < factorBaseImage.length; i++) {
+            MemoryUtil.memPutInt(factorAddress + (long) i * 4L, factorBaseImage[i]);
+        }
+        this.slotUploadedGenerations[slotIndex] = data.generation();
     }
 
     /**
      * Stamps the frame the backend's Tier-A pass heads are serving, at the pass
-     * head, before any engine prepares. The desc upload keys on this stamp;
-     * stamping the same frame again is a no-op in effect.
+     * head, before any engine prepares. The stamp is one component of the
+     * snapshot identity (see {@link #prepareSlotSnapshot}); stamping the same
+     * frame again is a no-op in effect.
      */
     void noteTierAFrameHead(long frameKey) {
         this.descFrameKey = frameKey;
-    }
-
-    /**
-     * Whether the desc image uploads now: at creation, or when the store image
-     * has moved and this frame has not uploaded yet. A move after the frame's
-     * upload waits for the next frame, so no pass of a frame reads a different
-     * image than the passes before it in that frame.
-     */
-    static boolean descUploadDue(boolean bufferExists, long generation, long uploadedGeneration,
-                                 long frameKey, long uploadedFrameKey) {
-        if (!bufferExists) {
-            return true;
-        }
-        if (generation == uploadedGeneration) {
-            return false;
-        }
-        return frameKey != uploadedFrameKey;
-    }
-
-    /**
-     * Re-uploads the store's desc and factor-base images into the shared buffers
-     * when the store's image generation has moved, at most once per frame (see
-     * {@link #descUploadDue}). The store packs every pass' records into the one
-     * image, so one upload serves every pass; before the sharing, each engine
-     * re-uploaded the identical image into its own copy, once per pass per
-     * generation move, and a mid-frame move could split the frame's passes
-     * across two images.
-     */
-    void uploadDescImageIfMoved(VulkanContext context) {
-        long generation = this.store.imageGeneration();
-        if (!descUploadDue(this.descBuffer != null, generation, this.uploadedDescGeneration,
-                this.descFrameKey, this.descUploadedFrameKey)) {
-            return;
-        }
-        int[] descImage = this.store.descImage();
-        int[] factorBaseImage = this.store.factorBaseImage();
-        long descBytes = Math.max(48L, (long) descImage.length * 4L);
-        if (this.descBuffer == null) {
-            this.descBuffer = new VulkanHostBuffer(context, descBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            this.factorBaseBuffer = new VulkanHostBuffer(context, Math.max(4L, (long) factorBaseImage.length * 4L),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            // These two buffers are named by Tier-A descriptor sets (bindings 6 and 7) that are only
-            // rewritten at a pass head, under conditions, for the current frame slot - so a set can keep
-            // naming a grown-away handle long after the growth. Retiring the old handle at growth let the
-            // context's retired-buffer drain destroy a buffer a live set still named (VUID-08114,
-            // diagnosed 2026-11-26). Both buffers are small (sections x 48B / x 4B) and growth is
-            // geometric, so keeping every superseded buffer until delete() costs a bounded, negligible
-            // amount of slab space; delete() below destroys them all at host teardown.
-            this.descBuffer.retainSupersededBuffers();
-            this.factorBaseBuffer.retainSupersededBuffers();
-        } else {
-            this.descBuffer.ensureCapacity(descBytes);
-            this.factorBaseBuffer.ensureCapacity(Math.max(4L, (long) factorBaseImage.length * 4L));
-        }
-        long descAddress = this.descBuffer.mappedAddress();
-        for (int i = 0; i < descImage.length; i++) {
-            MemoryUtil.memPutInt(descAddress + (long) i * 4L, descImage[i]);
-        }
-        long factorAddress = this.factorBaseBuffer.mappedAddress();
-        for (int i = 0; i < factorBaseImage.length; i++) {
-            MemoryUtil.memPutInt(factorAddress + (long) i * 4L, factorBaseImage[i]);
-        }
-        this.uploadedDescGeneration = generation;
-        this.descUploadedFrameKey = this.descFrameKey;
     }
 
     /**
@@ -510,14 +622,19 @@ final class TerrainEngineAHost {
         this.packEngines.clear();
         // The shared resident buffers (R-15) are read by every pass' draws and
         // cull dispatches until the engines are gone, so they go here too, with
-        // the other shared resources, after every engine.
-        if (this.descBuffer != null) {
-            this.descBuffer.delete();
-            this.descBuffer = null;
-        }
-        if (this.factorBaseBuffer != null) {
-            this.factorBaseBuffer.delete();
-            this.factorBaseBuffer = null;
+        // the other shared resources, after every engine. The desc and
+        // factor-base images are per frame slot (T3 condition (2)): every
+        // slot's copy goes, and the snapshots that named them with it.
+        for (int slot = 0; slot < this.descBuffers.length; slot++) {
+            if (this.descBuffers[slot] != null) {
+                this.descBuffers[slot].delete();
+                this.descBuffers[slot] = null;
+            }
+            if (this.factorBaseBuffers[slot] != null) {
+                this.factorBaseBuffers[slot].delete();
+                this.factorBaseBuffers[slot] = null;
+            }
+            this.slotSnapshots[slot] = null;
         }
         if (this.factorBuffer != null) {
             this.factorBuffer.delete();

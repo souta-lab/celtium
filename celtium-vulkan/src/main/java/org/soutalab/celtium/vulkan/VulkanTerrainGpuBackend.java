@@ -1921,6 +1921,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The reset discards the push constants the cache believes are still in this buffer.
                 VulkanPushCache.SHARED.invalidate();
                 this.commandState.reset();
+                // The reset discards the recording: a new recording epoch (INV-2c).
+                this.recordingEpoch++;
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
                 this.frameBufferOpen = false;
@@ -2921,6 +2923,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     // pass head armed for the current frame, keyed by pass identity. The map is
     // rebuilt when the frame id moves, so prepareFrame runs once per pass per frame.
     private long terrainAArmedFrame = -1L;
+    private long terrainAArmedSlot = -1L;
+    private long terrainAArmedEpoch = -1L;
+    /**
+     * The recording epoch (T3 condition (2), INV-2c): how many times the
+     * unified command buffer's current recording has been (re)started or
+     * discarded. It advances when a recording is finished, when a fresh one
+     * begins, and at every reset that discards the standing recording, so a
+     * mid-frame split — the recovery and abandon paths — always lands the
+     * next pass head in a new epoch. The Tier-A executors arm their
+     * indirect streams under the epoch of the recording that produced them
+     * and refuse to issue them into any other; the armed map below is keyed
+     * by it for the same reason. It counts recordings, not submissions, and
+     * is unrelated to the context's completed-submission epoch.
+     */
+    private long recordingEpoch;
     private final java.util.Map<TerrainRenderPass, TerrainEngineA> terrainAArmedEngines =
             new java.util.IdentityHashMap<>();
     private boolean terrainAFailed;
@@ -13279,6 +13296,9 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
+        // The recording ends here: whatever records next is a new recording,
+        // so Tier-A streams armed into this one stop being issuable (INV-2c).
+        this.recordingEpoch++;
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
@@ -14341,6 +14361,8 @@ this.frameBufferOpen = false;
                     // The reset discards the push constants the cache believes are still in this buffer.
                     VulkanPushCache.SHARED.invalidate();
                     this.commandState.reset();
+                    // The reset discards the recording: a new recording epoch (INV-2c).
+                    this.recordingEpoch++;
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
                 this.frameBufferOpen = false;
@@ -14416,6 +14438,8 @@ this.frameBufferOpen = false;
                             // The reset discards the push constants the cache believes are still in this buffer.
                             VulkanPushCache.SHARED.invalidate();
                             this.commandState.reset();
+                            // The reset discards the recording: a new recording epoch (INV-2c).
+                            this.recordingEpoch++;
                             this.abandonedWindowRecordings++;
                         }
                         this.targetStatistics.addWindowFlushRetainedBatches(retained);
@@ -19144,7 +19168,8 @@ this.frameBufferOpen = false;
                             && packHost.store().recordCount() <= modPipeline.celtium$glsmRegionTableSlots()
                             && candidate.prepareFrame(this.commandBuffer, this.frameSlot,
                                     celtium$gpuTerrainCensusVp(matrices, shadowStage),
-                                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z)) {
+                                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
+                                    this.recordingEpoch)) {
                         packEngine = candidate;
                         // Re-read after the drain: sections this
                         // prepareFrame admitted are resident now, and
@@ -19307,7 +19332,7 @@ this.frameBufferOpen = false;
                                     (record.key.sectionY() * 16 - camera.intY) - camera.fracY,
                                     (record.key.sectionZ() * 16 - camera.intZ) - camera.fracZ);
                         }
-                        packEngine.recordDraws(this.commandBuffer, this.frameSlot);
+                        packEngine.recordDraws(this.commandBuffer, this.frameSlot, this.recordingEpoch);
                         drawnSections += packVariantRecords.size();
                     }
                 }
@@ -20507,9 +20532,12 @@ this.frameBufferOpen = false;
         if (this.terrainAFailed || this.commandBuffer == null) {
             return null;
         }
-        if (this.terrainAArmedFrame != this.frameId) {
+        if (this.terrainAArmedFrame != this.frameId || this.terrainAArmedSlot != this.frameSlot
+                || this.terrainAArmedEpoch != this.recordingEpoch) {
             this.terrainAArmedEngines.clear();
             this.terrainAArmedFrame = this.frameId;
+            this.terrainAArmedSlot = this.frameSlot;
+            this.terrainAArmedEpoch = this.recordingEpoch;
         }
         TerrainEngineA armed = this.terrainAArmedEngines.get(pass);
         if (armed != null) {
@@ -20540,7 +20568,7 @@ this.frameBufferOpen = false;
             TerrainEngineA engine = host.engineFor(this.context, pass);
             boolean ok = engine.prepareFrame(this.commandBuffer, this.frameSlot,
                     celtium$gpuTerrainCensusVp(matrices),
-                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z);
+                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z, this.recordingEpoch);
             if (!ok) {
                 return null;
             }
@@ -21436,7 +21464,7 @@ this.frameBufferOpen = false;
             // IndirectCount draws over the resident slabs (bindings 6/7/8 were
             // written at the pass head; the pipeline and push matrices bound for
             // this pass are the Tier-A variant's, selected by the 16-byte stride).
-            tierAEngine.recordDraws(this.commandBuffer, this.frameSlot);
+            tierAEngine.recordDraws(this.commandBuffer, this.frameSlot, this.recordingEpoch);
         }
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
@@ -21952,10 +21980,14 @@ this.frameBufferOpen = false;
                         // The pair refused (exists() was false between the check above and the call): the buffer we
                         // opened is abandoned rather than submitted, so the recording state has to unwind here.
                         this.commandState.reset();
+                        // The unwind discards the recording: a new recording epoch (INV-2c).
+                        this.recordingEpoch++;
                     }
                 } catch (RuntimeException | LinkageError error) {
                     if (!this.frameBufferOpen && this.commandState.recording()) {
                         this.commandState.reset();
+                        // The unwind discards the recording: a new recording epoch (INV-2c).
+                        this.recordingEpoch++;
                     }
                     record("standalone game clear failed for identity=0x" + Long.toHexString(identity)
                             + ": " + describe(error));
@@ -24079,6 +24111,8 @@ this.frameBufferOpen = false;
             // of a draw that is issued, counted and leaves no pixels. The sky plane is exactly that first draw.
             VulkanPushCache.SHARED.invalidate();
             this.commandState.begin();
+            // A fresh recording begins: a new recording epoch (INV-2c).
+            this.recordingEpoch++;
             // The flag the retire drain guard reads. It was declared ("set at its begin") and only ever cleared, so
             // celtium$recordingOpen() was blind to the frame's own recording and rc.24's guard never fired - which is
             // why the tester's black screen came back after that fix with the same VUID (objects bound to an open
