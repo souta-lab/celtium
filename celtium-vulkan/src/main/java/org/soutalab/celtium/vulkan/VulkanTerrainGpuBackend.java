@@ -1191,6 +1191,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
         // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
         context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
+        // T3 design section 2.3: the store's pending-retirement checkpoint hangs off the context's
+        // post-flush hook, so the stamp is taken only at a point where the batch is known accepted -
+        // never at the present boundary itself, which S5-D1 may leave with the batch still pending.
+        // The host is peeked, not created: with Tier-A disabled there is no host and the hook is a no-op.
+        context.celtium$setPostBatchFlushHook(() -> {
+            TerrainEngineAHost host = this.terrain.terrainAHost();
+            if (host != null) {
+                host.drainPendingRetirements();
+            }
+        });
         // BO convergence design §5.1: the slab pool summary gains the terrain geometry allocator's row
         // from the host that owns it, so a census reading can set the device slab count against the
         // logical ledger. The host is created with the renderer and may be absent (Tier-A disabled), in
@@ -13386,6 +13396,18 @@ this.frameBufferOpen = false;
             // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
             // destroyed while a recording lived), which is why the drain moved to this boundary.
             if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
+                // The pending-retirement checkpoint's fallback seat (T3 design section 2.3): a frame
+                // whose batch was empty never passes through the post-flush hook, so the ledger would
+                // stall on menu screens. When the boundary flush did run, the hook already drained
+                // and this is a no-op on an empty ledger; while S5-D1 holds the batch for the direct
+                // present the pending batch is observable here and the checkpoint must not fire -
+                // the stamp would name a submission the queue has not accepted (INV-1b).
+                if (!this.context.celtium$hasPendingBatchedSubmits()) {
+                    TerrainEngineAHost host = this.terrain.terrainAHost();
+                    if (host != null) {
+                        host.drainPendingRetirements();
+                    }
+                }
                 this.context.celtium$runRetiredCleanups();
                 // The slab retire list's per-frame drain sits at the same seat, under the same guard: its
                 // only other exit hangs off waitForIdle, which no frame boundary calls, so a burst's worth

@@ -65,8 +65,8 @@ class TerrainSectionStoreTest {
         var second = mesher.build(4, 5, 6, 0, parts(1, 0, true), 0);
         assertNotNull(first);
         assertNotNull(second);
-        var regFirst = store.register(first, 11);
-        var regSecond = store.register(second, 12);
+        var regFirst = store.register(first, 11, 11);
+        var regSecond = store.register(second, 12, 12);
         assertNotNull(regFirst);
         assertNotNull(regSecond);
         assertEquals(2, store.recordCount());
@@ -102,7 +102,7 @@ class TerrainSectionStoreTest {
         BuiltSectionMeshParts sortedParts = new BuiltSectionMeshParts(vertices, indices, null, ranges, null);
         var built = mesher.build(9, 9, 9, 0, sortedParts, 0);
         assertNotNull(built);
-        var registration = store.register(built, 21);
+        var registration = store.register(built, 21, 21);
         assertNotNull(registration);
         assertNotNull(registration.sorted);
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(9, 9, 9, 0);
@@ -110,27 +110,27 @@ class TerrainSectionStoreTest {
 
         // Same size: the range is kept and the desc image does not move.
         assertEquals(TerrainSectionStore.SortedUpdate.IN_PLACE,
-                store.updateSorted(key, indices.getLength(), 22));
+                store.updateSorted(key, indices.getLength()));
         assertEquals(generationBefore, store.imageGeneration());
 
         // Different size: a new range is allocated and the desc follows it.
         assertEquals(TerrainSectionStore.SortedUpdate.RESIZED,
-                store.updateSorted(key, indices.getLength() + 24, 23));
+                store.updateSorted(key, indices.getLength() + 24));
         assertEquals(indices.getLength() + 24, registration.sorted.byteSize);
         assertEquals(registration.sorted.byteOffset / 4, registration.desc.sortedIndexBase);
         assertTrue(store.imageGeneration() > generationBefore);
 
         assertEquals(TerrainSectionStore.SortedUpdate.NOT_REGISTERED,
-                store.updateSorted(new TerrainSectionStore.Key(1, 1, 1, 0), 24, 24));
+                store.updateSorted(new TerrainSectionStore.Key(1, 1, 1, 0), 24));
     }
 
     @Test
     void unregisterSwapsTheLastRecordIntoTheHole() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1);
-        store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2);
-        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0), 5));
+        store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1);
+        store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2, 2);
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0)));
         assertEquals(1, store.recordCount());
         SectionDesc packed = SectionDesc.unpack(store.descImage(), 0);
         assertEquals(2, packed.sectionX, "the surviving record is packed at index 0");
@@ -143,9 +143,9 @@ class TerrainSectionStoreTest {
     void duplicateRegistrationIsRefused() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(7, 7, 7, 0, parts(1, 0, true), 0), 1));
+        assertNotNull(store.register(mesher.build(7, 7, 7, 0, parts(1, 0, true), 0), 1, 1));
         assertThrows(IllegalStateException.class,
-                () -> store.register(mesher.build(7, 7, 7, 0, parts(1, 0, true), 0), 2));
+                () -> store.register(mesher.build(7, 7, 7, 0, parts(1, 0, true), 0), 2, 2));
     }
 
     private static BuiltSectionMeshParts partsForStride(int quadsPosX, int quadsUnassigned, int stride) {
@@ -193,9 +193,9 @@ class TerrainSectionStoreTest {
     void packRegistrationLivesInItsOwnArenaWithoutAFactor() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        var vanilla = store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1);
-        var packFirst = store.register(mesher.build(2, 0, 0, 1, partsForStride(3, 0, 44), 0, 44), 2);
-        var packSecond = store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3);
+        var vanilla = store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1);
+        var packFirst = store.register(mesher.build(2, 0, 0, 1, partsForStride(3, 0, 44), 0, 44), 2, 2);
+        var packSecond = store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3, 3);
         assertNotNull(vanilla);
         assertNotNull(packFirst);
         assertNotNull(packSecond);
@@ -223,8 +223,8 @@ class TerrainSectionStoreTest {
     void aSecondStrideOpensASecondPackArena() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        var wide = store.register(mesher.build(0, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 1);
-        var narrow = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 28), 0, 28), 2);
+        var wide = store.register(mesher.build(0, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 1, 1);
+        var narrow = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 28), 0, 28), 2, 2);
         assertNotNull(wide);
         assertNotNull(narrow);
         assertEquals(TerrainSectionStore.PACK_SLAB_BASE, wide.desc.slabId);
@@ -236,10 +236,13 @@ class TerrainSectionStoreTest {
     void packUnregisterReleasesBackIntoThePackArena() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(0, 0, 0, 1, partsForStride(2, 0, 44), 0, 44), 1));
-        assertNotNull(store.unregister(new TerrainSectionStore.Key(0, 0, 0, 1), 5));
+        assertNotNull(store.register(mesher.build(0, 0, 0, 1, partsForStride(2, 0, 44), 0, 44), 1, 1));
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(0, 0, 0, 1)));
+        // The new form: removal only pends the ranges; the checkpoint stamp at
+        // the same value the old form deferred against is what releases them.
+        store.stampPendingRetirements(5);
         store.collectReleased(5);
-        var again = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 6);
+        var again = store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 6, 6);
         assertNotNull(again);
         assertEquals(0, again.packGeometry.byteOffset, "the released pack range is reused");
         assertEquals(1, store.recordCount());
@@ -251,9 +254,9 @@ class TerrainSectionStoreTest {
         TerrainSectionStore store = new TerrainSectionStore();
         // Two vanilla passes register into the same first slab; a pack record
         // of the second pass (foreign stride) must leak into neither count.
-        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
-        assertNotNull(store.register(mesher.build(2, 0, 0, 1, parts(1, 0, true), 0), 2));
-        assertNotNull(store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, parts(1, 0, true), 0), 2, 2));
+        assertNotNull(store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3, 3));
 
         assertEquals(2, store.slabRecordCounts()[0],
                 "the store-wide form counts both vanilla passes, as before");
@@ -265,7 +268,7 @@ class TerrainSectionStoreTest {
         }
 
         // Removal moves only the owning pass' count.
-        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0), 5));
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0)));
         assertEquals(0, store.slabRecordCounts(0)[0]);
         assertEquals(1, store.slabRecordCounts(1)[0]);
         assertEquals(1, store.slabRecordCounts()[0]);

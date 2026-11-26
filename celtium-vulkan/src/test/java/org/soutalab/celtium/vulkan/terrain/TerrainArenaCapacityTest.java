@@ -45,7 +45,7 @@ class TerrainArenaCapacityTest {
         int registered = 0;
         TerrainSectionStore.RegisterResult failure = null;
         for (int i = 0; i < 600; i++) {
-            var result = store.registerDiagnosed(built(mesher, i, 0, 0, i % 3, 1024), 1);
+            var result = store.registerDiagnosed(built(mesher, i, 0, 0, i % 3, 1024), 1, 1);
             if (result.registration() == null) {
                 failure = result;
                 break;
@@ -77,7 +77,7 @@ class TerrainArenaCapacityTest {
             for (int i = 0; i < 82; i++) {
                 int quads = 256 + ((i * 977 + pass * 331) % 7937);
                 totalQuads += quads;
-                var result = store.registerDiagnosed(built(mesher, i, pass, 0, pass, quads), 1);
+                var result = store.registerDiagnosed(built(mesher, i, pass, 0, pass, quads), 1, 1);
                 assertNotNull(result.registration(),
                         "section " + i + " of pass " + pass + " (" + quads + " quads) refused: "
                                 + result.failure());
@@ -101,14 +101,17 @@ class TerrainArenaCapacityTest {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
         for (int i = 0; i < 300; i++) {
-            assertNotNull(store.register(built(mesher, i, 0, 0, 0, 1024), 1));
+            assertNotNull(store.register(built(mesher, i, 0, 0, 0, 1024), 1, 1));
         }
         for (int i = 0; i < 300; i += 2) {
-            assertNotNull(store.unregister(new TerrainSectionStore.Key(i, 0, 0, 0), 5));
+            assertNotNull(store.unregister(new TerrainSectionStore.Key(i, 0, 0, 0)));
         }
+        // The old form's "deferred at stamp 5, collected at 5" in the new form:
+        // removal pends, the checkpoint stamps at 5, then collection at 5 bites.
+        store.stampPendingRetirements(5);
         store.collectReleased(5);
         for (int i = 300; i < 450; i++) {
-            var result = store.registerDiagnosed(built(mesher, i, 0, 0, 0, 1024), 6);
+            var result = store.registerDiagnosed(built(mesher, i, 0, 0, 0, 1024), 6, 6);
             assertNotNull(result.registration(), "post-churn section " + i + " refused: " + result.failure());
         }
         assertEquals(300, store.recordCount());

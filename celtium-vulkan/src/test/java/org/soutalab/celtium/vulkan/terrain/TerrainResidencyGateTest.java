@@ -69,7 +69,7 @@ class TerrainResidencyGateTest {
         assertNotNull(built);
         gate.expect(key(7, 0));
         gate.noteMissing(key(7, 0), TerrainResidencyGate.Reason.DEFERRED);
-        assertNotNull(store.register(built, 1));
+        assertNotNull(store.register(built, 1, 1));
         gate.noteResident(key(7, 0));
 
         TerrainResidencyGate.Report report = gate.verify(0, store);
@@ -102,7 +102,7 @@ class TerrainResidencyGateTest {
         // One bucket past the uint16 SectionDesc cap is oversize, not arena-full.
         var oversize = mesher.build(11, 0, 0, 0, parts(SectionDesc.MAX_BUCKET_QUADS + 1), 0);
         assertNotNull(oversize);
-        TerrainSectionStore.RegisterResult result = store.registerDiagnosed(oversize, 1);
+        TerrainSectionStore.RegisterResult result = store.registerDiagnosed(oversize, 1, 1);
         assertEquals(TerrainSectionStore.RegisterFailure.OVERSIZE, result.failure());
         assertNull(result.registration());
     }

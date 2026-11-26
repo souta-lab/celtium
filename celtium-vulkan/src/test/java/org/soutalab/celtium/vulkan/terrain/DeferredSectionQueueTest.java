@@ -146,7 +146,7 @@ class DeferredSectionQueueTest {
         BuiltSectionMeshParts registered = parts(1, 3, false);
         BuiltSectionMeshParts queued = parts(1, 4, false);
         BuiltSectionMeshParts other = parts(1, 5, false);
-        var registration = store.register(mesher.build(7, 7, 7, 0, registered, 0), 1L);
+        var registration = store.register(mesher.build(7, 7, 7, 0, registered, 0), 1L, 1L);
         assertNotNull(registration);
         // The same key waits in the queue (an older build), behind an
         // unrelated live entry at the head.

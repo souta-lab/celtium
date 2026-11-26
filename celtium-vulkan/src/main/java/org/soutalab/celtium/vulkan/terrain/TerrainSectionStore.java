@@ -26,8 +26,12 @@ import java.util.Set;
  *       the desc's {@code sortedIndexBase} is in indices.</li>
  * </ul>
  *
- * Removal is swap-with-last in the desc image, and arena ranges are freed deferred
- * against the frame timeline (see {@link TerrainSlabAllocator}).
+ * Removal is swap-with-last in the desc image. A removed record's arena ranges are
+ * not freed at removal time: they enter the pending-retirement ledger and are
+ * released deferred against the frame timeline only when a frame-boundary
+ * checkpoint stamps the ledger ({@link #stampPendingRetirements}), so a range is
+ * never stamped with a timeline value whose submission is not yet known accepted
+ * (T3 design section 2.3, INV-1a/1b/1c; see {@link TerrainSlabAllocator}).
  */
 public final class TerrainSectionStore {
     /** Quad-space capacity of one slab: a full 64 MiB geometry slab of 64-byte quads. */
@@ -149,6 +153,32 @@ public final class TerrainSectionStore {
     private final HashMap<Key, Registration> byKey = new HashMap<>();
     /** Keys with an allocated-but-unpublished record (the two-phase form, {@link #allocateDiagnosed}). */
     private final Set<Key> pendingKeys = new HashSet<>();
+
+    /**
+     * One retired arena range awaiting its checkpoint stamp: the allocation plus
+     * the allocator that owns it. Keeping the allocator itself in the entry is
+     * what makes the ledger correspondence structural (INV-1c): a range can only
+     * ever be released back into the arena it was allocated from — the vanilla
+     * geometry/quad-space/factor/sorted allocators, or one pack arena's pair.
+     */
+    private record PendingRetirement(TerrainSlabAllocator allocator,
+                                     TerrainSlabAllocator.Allocation allocation) {
+    }
+
+    /**
+     * Ranges retired by {@link #unregister} / {@link #updateSorted} but not yet
+     * stamped. Until {@link #stampPendingRetirements} runs, no allocator has
+     * heard of these releases at all: the ranges stay fully live, so no
+     * collection horizon — not even {@code Long.MAX_VALUE} — can reuse them.
+     */
+    private final List<PendingRetirement> pendingRetirements = new ArrayList<>();
+
+    /** Adds one range to the pending-retirement ledger; a null range is not an entry. */
+    private void pend(TerrainSlabAllocator allocator, TerrainSlabAllocator.Allocation allocation) {
+        if (allocation != null) {
+            this.pendingRetirements.add(new PendingRetirement(allocator, allocation));
+        }
+    }
     private int[] descImage = new int[0];
     private int[] factorBaseImage = new int[0];
     private boolean imageDirty = true;
@@ -192,11 +222,14 @@ public final class TerrainSectionStore {
     /**
      * Registers one built section, assigning its slab placement.
      *
+     * @param completedStamp the completion currency's current value, used only
+     *        by the collect-before-fail retry of {@link #allocateDiagnosed}
      * @return the registration, or {@code null} when the section is Tier-A ineligible
      *         (oversize) or an arena is exhausted; on failure nothing is allocated
      */
-    public synchronized Registration register(AsyncSectionMesher.BuiltSectionA built, long generation) {
-        return registerDiagnosed(built, generation).registration();
+    public synchronized Registration register(AsyncSectionMesher.BuiltSectionA built, long generation,
+                                              long completedStamp) {
+        return registerDiagnosed(built, generation, completedStamp).registration();
     }
 
     /**
@@ -204,8 +237,9 @@ public final class TerrainSectionStore {
      * leak counters (order (i)): oversize and arena exhaustion used to be the
      * same silent {@code null}.
      */
-    public synchronized RegisterResult registerDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation) {
-        AllocationResult allocated = allocateDiagnosed(built, generation);
+    public synchronized RegisterResult registerDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation,
+                                                         long completedStamp) {
+        AllocationResult allocated = allocateDiagnosed(built, generation, completedStamp);
         if (allocated.pending() == null) {
             return new RegisterResult(null, allocated.failure());
         }
@@ -220,8 +254,17 @@ public final class TerrainSectionStore {
      * are not yet written. The caller writes the bytes, then publishes; on
      * any failure in between it discards instead (see
      * {@link #discardUnpublished}).
+     * <p>
+     * Collect-before-fail (T3 review M3): when the first attempt comes back
+     * {@link RegisterFailure#ARENA_FULL}, ranges whose release the completion
+     * currency already covers may still be sitting uncollected in the
+     * allocators, so the store collects once at {@code completedStamp} and
+     * retries the allocation once before reporting the failure. An
+     * {@link RegisterFailure#OVERSIZE} refusal is never retried: collection
+     * cannot change it.
      */
-    public synchronized AllocationResult allocateDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation) {
+    public synchronized AllocationResult allocateDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation,
+                                                           long completedStamp) {
         Key key = new Key(built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
         if (this.byKey.containsKey(key) || this.pendingKeys.contains(key)) {
             throw new IllegalStateException("section already registered: " + key);
@@ -232,6 +275,12 @@ public final class TerrainSectionStore {
         AllocationResult result = built.stride != 16
                 ? allocatePack(built, key, generation)
                 : allocateVanilla(built, key, generation);
+        if (result.pending() == null && result.failure() == RegisterFailure.ARENA_FULL) {
+            collectReleased(completedStamp);
+            result = built.stride != 16
+                    ? allocatePack(built, key, generation)
+                    : allocateVanilla(built, key, generation);
+        }
         if (result.pending() != null) {
             this.pendingKeys.add(key);
         }
@@ -411,11 +460,15 @@ public final class TerrainSectionStore {
     }
 
     /**
-     * Removes a record, deferring its arena ranges to {@code releaseTimeline}.
+     * Removes a record. Its arena ranges are not released here: they enter the
+     * pending-retirement ledger and are only handed to their allocators,
+     * stamped, at the next frame-boundary checkpoint
+     * ({@link #stampPendingRetirements}) — the stamp must never be taken from
+     * a value whose submission is not yet known accepted (INV-1b).
      *
      * @return the removed registration, or {@code null} when the key is unknown
      */
-    public synchronized Registration unregister(Key key, long releaseTimeline) {
+    public synchronized Registration unregister(Key key) {
         Registration removed = this.byKey.remove(key);
         if (removed == null) {
             return null;
@@ -428,19 +481,43 @@ public final class TerrainSectionStore {
         }
         if (removed.pack()) {
             PackArena arena = packArenaOfSlab((int) removed.desc.slabId);
-            arena.geometry.freeDeferred(removed.packGeometry, releaseTimeline);
-            arena.quadSpace.freeDeferred(removed.packQuadSpace, releaseTimeline);
+            pend(arena.geometry, removed.packGeometry);
+            pend(arena.quadSpace, removed.packQuadSpace);
         } else {
-            this.geometryAllocator.freeDeferred(removed.geometry, releaseTimeline);
-            this.quadSpaceAllocator.freeDeferred(removed.quadSpace, releaseTimeline);
-            this.factorAllocator.freeDeferred(removed.factor, releaseTimeline);
+            pend(this.geometryAllocator, removed.geometry);
+            pend(this.quadSpaceAllocator, removed.quadSpace);
+            pend(this.factorAllocator, removed.factor);
         }
-        if (removed.sorted != null) {
-            this.sortedAllocator.freeDeferred(removed.sorted, releaseTimeline);
-        }
+        pend(this.sortedAllocator, removed.sorted);
         this.imageDirty = true;
         this.imageGeneration++;
         return removed;
+    }
+
+    /**
+     * The frame-boundary checkpoint for the pending-retirement ledger: every
+     * pended range is released into its own allocator, deferred against
+     * {@code releaseStamp}, and the ledger empties. This is the store's one
+     * {@code freeDeferred} call site (INV-1a; {@link #discardUnpublished}'s
+     * immediate {@code free} of never-published ranges is the licensed
+     * exception). The caller must only invoke this where the stamp is known
+     * to name an accepted submission (INV-1b) and follows it with
+     * {@link #collectReleased} at the matching completed value.
+     *
+     * @return how many ranges were stamped
+     */
+    public synchronized int stampPendingRetirements(long releaseStamp) {
+        int stamped = this.pendingRetirements.size();
+        for (PendingRetirement pending : this.pendingRetirements) {
+            pending.allocator().freeDeferred(pending.allocation(), releaseStamp);
+        }
+        this.pendingRetirements.clear();
+        return stamped;
+    }
+
+    /** How many retired ranges still await their checkpoint stamp (census). */
+    public synchronized int pendingRetirementCount() {
+        return this.pendingRetirements.size();
     }
 
     public enum SortedUpdate { NOT_REGISTERED, IN_PLACE, RESIZED, ARENA_FULL }
@@ -449,11 +526,12 @@ public final class TerrainSectionStore {
      * Re-points one record's sorted-index range at a re-sorted index buffer of
      * {@code byteSize} bytes (translucent re-sort, wave-2 item 4). Same size keeps
      * the existing allocation ({@link SortedUpdate#IN_PLACE}); a different size
-     * frees the old range deferred and allocates a new one, updating the desc's
-     * {@code sortedIndexBase} ({@link SortedUpdate#RESIZED}). The caller re-uploads
+     * pends the old range on the retirement ledger (see {@link #unregister}) and
+     * allocates a new one, updating the desc's {@code sortedIndexBase}
+     * ({@link SortedUpdate#RESIZED}). The caller re-uploads
      * the bytes at the resulting allocation either way.
      */
-    public synchronized SortedUpdate updateSorted(Key key, long byteSize, long releaseTimeline) {
+    public synchronized SortedUpdate updateSorted(Key key, long byteSize) {
         Registration registration = this.byKey.get(key);
         if (registration == null) {
             return SortedUpdate.NOT_REGISTERED;
@@ -465,9 +543,7 @@ public final class TerrainSectionStore {
         if (next == null) {
             return SortedUpdate.ARENA_FULL;
         }
-        if (registration.sorted != null) {
-            this.sortedAllocator.freeDeferred(registration.sorted, releaseTimeline);
-        }
+        pend(this.sortedAllocator, registration.sorted);
         registration.sorted = next;
         registration.desc.sortedIndexBase = next.byteOffset / 4;
         this.imageDirty = true;

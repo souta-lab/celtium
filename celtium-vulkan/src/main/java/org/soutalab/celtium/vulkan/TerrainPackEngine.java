@@ -183,7 +183,8 @@ final class TerrainPackEngine {
     private TerrainSectionStore.Registration upload(AsyncSectionMesher.BuiltSectionA built, long generation) {
         // Two-phase registration, the vanilla executor's form (T3 design
         // section 4.2): allocate, write every byte, then publish.
-        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation);
+        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation,
+                this.context.celtium$slabCompletedValue());
         TerrainSectionStore.PendingRegistration pending = allocated.pending();
         if (pending == null) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(
@@ -218,14 +219,13 @@ final class TerrainPackEngine {
     }
 
     /** Re-uploads a section's sorted indices after a translucent re-sort. */
-    boolean updateSorted(TerrainSectionStore.Key key, org.embeddedt.embeddium.impl.common.util.NativeBuffer indices,
-                         long releaseTimeline) {
+    boolean updateSorted(TerrainSectionStore.Key key, org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
         if (this.disabled || indices == null) {
             return false;
         }
         try {
             TerrainSectionStore.SortedUpdate result =
-                    this.store.updateSorted(key, indices.getLength(), releaseTimeline);
+                    this.store.updateSorted(key, indices.getLength());
             if (result == TerrainSectionStore.SortedUpdate.NOT_REGISTERED
                     || result == TerrainSectionStore.SortedUpdate.ARENA_FULL) {
                 return false;

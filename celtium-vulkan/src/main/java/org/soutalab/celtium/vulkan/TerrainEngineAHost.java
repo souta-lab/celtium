@@ -290,7 +290,9 @@ final class TerrainEngineAHost {
             first = false;
             summary.append(entry.getValue().liveSlabBufferCount());
         }
-        return summary.append(']').toString();
+        summary.append(']');
+        summary.append(",pendingRetirements=").append(this.store.pendingRetirementCount());
+        return summary.toString();
     }
 
     /**
@@ -458,6 +460,20 @@ final class TerrainEngineAHost {
                 : Math.max(0, this.generation - 2);
     }
 
+    /**
+     * The frame-boundary checkpoint for the store's pending-retirement ledger
+     * (T3 design section 2.3): stamp every pended range with the release
+     * currency, then collect what the completion currency already covers, in
+     * that order. The backend calls this only from the seats where the stamp
+     * is known to name an accepted submission — the context's post-flush hook
+     * and the boundary fallback for batch-less frames (INV-1b) — never from
+     * the removal paths themselves.
+     */
+    void drainPendingRetirements() {
+        this.store.stampPendingRetirements(releaseStamp());
+        this.store.collectReleased(completedStamp());
+    }
+
     /** Re-uploads one pass' sorted indices for a section after a translucent re-sort. */
     void updateSortedSection(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass,
                              org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
@@ -468,20 +484,26 @@ final class TerrainEngineAHost {
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
         TerrainPackEngine packEngine = this.packEngines.get(pass);
         if (packEngine != null) {
-            packEngine.updateSorted(key, indices, releaseStamp());
+            packEngine.updateSorted(key, indices);
             return;
         }
         TerrainEngineA engine = this.engines.get(pass);
         if (engine != null) {
-            engine.updateSorted(key, indices, releaseStamp());
+            engine.updateSorted(key, indices);
         }
     }
 
-    /** Removes every pass' record of one section, deferred against the completion currency. */
+    /**
+     * Removes every pass' record of one section. The records' ranges retire
+     * onto the store's pending ledger; the boundary checkpoint
+     * ({@link #drainPendingRetirements}) stamps and collects them — removal
+     * itself no longer collects, so collection happens only at the two
+     * licensed points (the checkpoint, and allocate's collect-before-fail).
+     */
     void unregisterSection(int sectionX, int sectionY, int sectionZ) {
         for (int ordinal : this.ordinals.values()) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
-            this.store.unregister(key, releaseStamp());
+            this.store.unregister(key);
             this.residencyGate.forget(key);
             // The deferred queues are invalidated with the record (T3
             // design section 4.2): a queued build of an unregistered
@@ -496,7 +518,6 @@ final class TerrainEngineAHost {
                 engine.cancelDeferred(key);
             }
         }
-        this.store.collectReleased(completedStamp());
     }
 
     void delete(VulkanContext context) {

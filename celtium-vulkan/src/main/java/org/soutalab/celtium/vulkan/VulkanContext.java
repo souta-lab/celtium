@@ -459,6 +459,16 @@ public final class VulkanContext {
      * poll flushes first: waiting on an unsubmitted batch would read as a stall that is really just "not submitted yet".
      */
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
+    /**
+     * Runs at the one point a batch flush is known accepted — the success tail of
+     * {@link #celtium$flushBatchedSubmits()} — and only when no recording is open
+     * and no batch is pending anymore. The terrain backend registers its
+     * pending-retirement checkpoint here (T3 design section 2.3): that is what
+     * keeps the checkpoint stamp from ever naming a submission the queue has not
+     * accepted, including while S5-D1 holds a frame's batch for the direct
+     * present (INV-1b). Registered once, when the backend is constructed.
+     */
+    private Runnable postBatchFlushHook;
     private final java.util.ArrayList<DeferredSubmit> flushBatchScratch = new java.util.ArrayList<DeferredSubmit>();
     private SharedBatch pendingBatch;
     /** Serial of the most recent batch this context created; the next takes the next value (item 529, I3). */
@@ -2207,6 +2217,28 @@ public final class VulkanContext {
             }
         }
         entries.clear();
+        // The batch is accepted and committed: this is the one point a checkpoint
+        // may stamp against the submission currency. The failure path above never
+        // reaches here, and the guards keep the stamp from firing while a
+        // recording is still open or a later batch is already pending (INV-1b).
+        Runnable flushHook = this.postBatchFlushHook;
+        if (flushHook != null && !celtium$recordingOpen() && !celtium$hasPendingBatchedSubmits()) {
+            flushHook.run();
+        }
+    }
+
+    /** Whether a batch of deferred submits is queued but not yet flushed to the queue. */
+    public boolean celtium$hasPendingBatchedSubmits() {
+        return !this.pendingBatchedSubmits.isEmpty();
+    }
+
+    /**
+     * Registers the post-flush checkpoint hook (see {@link #postBatchFlushHook}).
+     * Called once, by the terrain backend's constructor; a later registration
+     * replaces the earlier one.
+     */
+    public void celtium$setPostBatchFlushHook(Runnable hook) {
+        this.postBatchFlushHook = hook;
     }
 
     /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */

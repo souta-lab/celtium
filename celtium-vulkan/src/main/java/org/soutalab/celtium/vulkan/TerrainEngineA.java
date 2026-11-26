@@ -247,7 +247,8 @@ final class TerrainEngineA {
         // Two-phase registration (T3 design section 4.2): allocate the
         // record's ranges, write every byte, and only then publish — a
         // snapshot can never name a record whose bytes are not yet in place.
-        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation);
+        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation,
+                this.context.celtium$slabCompletedValue());
         TerrainSectionStore.PendingRegistration pending = allocated.pending();
         if (pending == null) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(
@@ -285,8 +286,8 @@ final class TerrainEngineA {
         return registration;
     }
 
-    TerrainSectionStore.Registration unregister(TerrainSectionStore.Key key, long releaseTimeline) {
-        return this.store.unregister(key, releaseTimeline);
+    TerrainSectionStore.Registration unregister(TerrainSectionStore.Key key) {
+        return this.store.unregister(key);
     }
 
     boolean isRegistered(TerrainSectionStore.Key key) {
@@ -315,14 +316,13 @@ final class TerrainEngineA {
      *
      * @return whether the resident record now carries these indices
      */
-    boolean updateSorted(TerrainSectionStore.Key key, org.embeddedt.embeddium.impl.common.util.NativeBuffer indices,
-                         long releaseTimeline) {
+    boolean updateSorted(TerrainSectionStore.Key key, org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
         if (this.disabled || indices == null) {
             return false;
         }
         try {
             TerrainSectionStore.SortedUpdate result =
-                    this.store.updateSorted(key, indices.getLength(), releaseTimeline);
+                    this.store.updateSorted(key, indices.getLength());
             if (result == TerrainSectionStore.SortedUpdate.NOT_REGISTERED
                     || result == TerrainSectionStore.SortedUpdate.ARENA_FULL) {
                 return false;
