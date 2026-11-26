@@ -111,8 +111,36 @@ final class PresentSwapchain {
      * It used to be created as a side effect of the diagnostic probe, which meant turning the probe off silently turned
      * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
      * needs to present calls this instead, so the probe is only a probe.
+     * <p>
+     * This is the full form - rebuild consumption, then existence - and its callers are the ones that run before any
+     * borrow is taken (the borrow path, the probe), where consuming a generation change is safe because the borrow is
+     * acquired after it. The swap point splits the two halves instead ({@link #ensureSwapchainForPresent()} at its
+     * head, {@link #consumeSwapchainRebuild()} after its present attempt): the frame it presents already holds its
+     * borrow by then.
      */
     boolean ensureSwapchain() {
+        consumeSwapchainRebuildVerdicts();
+        return ensureSwapchainExists(true);
+    }
+
+    /**
+     * The swap point's own ensure, at the head of {@code celtium$presentFrameBody}: existence only, no rebuild
+     * consumption. The frame that body is about to present holds a borrow of the current generation, so consuming a
+     * generation change here would drop that generation under the borrow before the drain, the frame-buffer finish
+     * and the present attempt have run - the ordering R-06 removes (VUID-vkQueueSubmit-pCommandBuffers-00070, and
+     * the transition frame's VUID-vkCmdDrawIndexed-renderPass-02684). The consumption runs at the end of the same
+     * body instead, after the present attempt ({@link #consumeSwapchainRebuild()}).
+     */
+    private boolean ensureSwapchainForPresent() {
+        return ensureSwapchainExists(false);
+    }
+
+    /**
+     * Consumes the swapchain's own rebuild verdicts: the present-mode staleness and the {@code rebuildDecision}
+     * verdicts. The drops are idempotent - a verdict whose swapchain is already gone consumes nothing - so a
+     * consumption that follows one in the same frame is a no-op.
+     */
+    private void consumeSwapchainRebuildVerdicts() {
         // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
         // so the only way to honour it is a new swapchain. Dropping it here routes the rebuild through exactly the
         // path an out-of-date surface takes - the acquire semaphores, the per-image render-finished semaphores and the
@@ -125,8 +153,8 @@ final class PresentSwapchain {
             releaseSwapchainForRebuild();
             backend.submissionStatistics.notePresentModeRebuilds();
         }
-        // The swapchain's own verdicts, consumed here because this is the one place that runs before every present
-        // and owns the drop: an out-of-date acquire or present, a retired acquisition and a presenter failure all
+        // The swapchain's own verdicts, consumed by the places that own the drop (the ensure, and the swap point's
+        // end step): an out-of-date acquire or present, a retired acquisition and a presenter failure all
         // used to set a flag no production code read, so the rebuild they asked for never happened - an out-of-date
         // whose cause was not an extent change presented-failed every frame forever, and retired acquisitions
         // leaked an image each until the acquire blocked for good (bughunt LANE-05 #1). A lost surface is the
@@ -146,6 +174,51 @@ final class PresentSwapchain {
                 backend.submissionStatistics.noteOutOfDateRebuilds();
             }
         }
+    }
+
+    /**
+     * The swap point's rebuild consumption (R-06): the verdict drops and the extent drop, in the ensure's own
+     * order, run by {@code celtium$presentFrameBody} after the present attempt and before the next frame's borrow
+     * is taken. A swapchain dropped here is not recreated here - the borrow that follows in the same body creates
+     * it through the full ensure, and a swap point that takes no borrow leaves it to the next ensure, exactly as a
+     * rebuild consumed inside {@link #ensureSwapchain()} leaves it to that call's own creation step.
+     */
+    private void consumeSwapchainRebuild() {
+        if (backend.swapchain == null) {
+            return;
+        }
+        consumeSwapchainRebuildVerdicts();
+        if (backend.swapchain == null) {
+            return;
+        }
+        int[] drawable = backend.cachedWindowFramebufferSize();
+        if (drawable[0] > 0 && drawable[1] > 0) {
+            dropSwapchainOnExtentMismatch(drawable[0], drawable[1]);
+        }
+    }
+
+    /** Drops the swapchain when the surface would give a fresh one a different extent. The caller guarantees one exists. */
+    private void dropSwapchainOnExtentMismatch(int framebufferWidth, int framebufferHeight) {
+        // The size the surface would give a fresh swapchain is the authority, not the driver's out-of-date report.
+        // The check used to be gated on frameId, which only advances at a world frame boundary
+        // (captureWorldSnapshot) - so a window that was resized while the menu was up (which is what a real launch
+        // does: the window is created small and then sized to the display) kept the swapchain from its first
+        // present. The present blit is bottom-anchored and never scaled, so it then showed the frame's lower left
+        // clipped by the smaller swapchain: measured on the user's own session, the menu appeared shifted with its
+        // right side and logo cut off, and going fullscreen did not change it. A present-time check costs one
+        // surface-capabilities query per presented frame and is what makes the swapchain follow the window.
+        // The rebuild is back to unconditional: the Wayland rejection was not the new swapchain but SDL's own
+        // window swap presenting on the same wl_surface (stubbed in CeltiumGllessSdlSwapTransformer), so a resize
+        // can keep following the window at full resolution.
+        if (!backend.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
+            backend.record("the surface extent no longer matches the " + backend.swapchain.width() + "x"
+                    + backend.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
+                    + "x" + framebufferHeight + "), rebuilding it");
+            releaseSwapchainForRebuild();
+        }
+    }
+
+    private boolean ensureSwapchainExists(boolean consumeExtentMismatch) {
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
         //
@@ -179,22 +252,8 @@ final class PresentSwapchain {
             return false;
         }
         if (backend.swapchain != null) {
-            // The size the surface would give a fresh swapchain is the authority, not the driver's out-of-date report.
-            // The check used to be gated on frameId, which only advances at a world frame boundary
-            // (captureWorldSnapshot) - so a window that was resized while the menu was up (which is what a real launch
-            // does: the window is created small and then sized to the display) kept the swapchain from its first
-            // present. The present blit is bottom-anchored and never scaled, so it then showed the frame's lower left
-            // clipped by the smaller swapchain: measured on the user's own session, the menu appeared shifted with its
-            // right side and logo cut off, and going fullscreen did not change it. A present-time check costs one
-            // surface-capabilities query per presented frame and is what makes the swapchain follow the window.
-            // The rebuild is back to unconditional: the Wayland rejection was not the new swapchain but SDL's own
-            // window swap presenting on the same wl_surface (stubbed in CeltiumGllessSdlSwapTransformer), so a resize
-            // can keep following the window at full resolution.
-            if (!backend.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
-                backend.record("the surface extent no longer matches the " + backend.swapchain.width() + "x"
-                        + backend.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
-                        + "x" + framebufferHeight + "), rebuilding it");
-                releaseSwapchainForRebuild();
+            if (consumeExtentMismatch) {
+                dropSwapchainOnExtentMismatch(framebufferWidth, framebufferHeight);
             }
             if (backend.swapchain != null) {
                 forwardPendingPresentedDumps();
@@ -632,9 +691,13 @@ final class PresentSwapchain {
             backend.presentSkipsByReason[0]++;
             return false;
         }
-        if (!ensureSwapchain()) {
-            // The swapchain is created here rather than only by the diagnostic probe: "anything that needs to present calls
-            // this" is what that method's own contract says, and this is the second caller it was written for.
+        if (!ensureSwapchainForPresent()) {
+            // Existence only (R-06): this call must not consume a pending rebuild - the frame being presented
+            // holds a borrow of the current generation, and dropping that generation here, before the drain and
+            // the present below have run, is the ordering the end-of-body consumption exists to prevent. The
+            // swapchain is still created here rather than only by the diagnostic probe: "anything that needs to
+            // present calls this" is what the ensure contract says, and this is the second caller it was written
+            // for.
             backend.presentSkipReason = "swapchain unavailable";
             backend.presentSkips++;
             backend.presentSkipsByReason[1]++;
@@ -835,6 +898,13 @@ final class PresentSwapchain {
             } else {
                 backend.presentFailures++;
             }
+            // R-06: the present attempt is complete - the drain, the frame-buffer finish and the present itself
+            // have all been submitted against the generation this frame borrowed - so the generation change the
+            // swapchain's verdicts asked for is consumed now, before the next frame's borrow is taken below.
+            // Consuming it at the head of this body instead dropped the generation under the live borrow, which
+            // is the ordering VUID-vkQueueSubmit-pCommandBuffers-00070 and the transition frame's
+            // VUID-vkCmdDrawIndexed-renderPass-02684 were measured on.
+            consumeSwapchainRebuild();
             // The present released the frame's borrow on every path through presentDirect: borrow the
             // next frame's image now, so the rendering that starts when this call returns attaches the
             // swapchain image from its first pass.
