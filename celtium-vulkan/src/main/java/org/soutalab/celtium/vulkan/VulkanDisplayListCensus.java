@@ -110,11 +110,6 @@ public final class VulkanDisplayListCensus {
         }
     }
 
-    /** {@return how many compile sites had no list identity}. */
-    public static synchronized long originsWithUnknownList() {
-        return originsWithUnknownList;
-    }
-
     /** {@return whether this list's compile-time texture has been recorded already}. */
     public static synchronized boolean compileTextureKnown(int list) {
         return COMPILE_TEXTURES.containsKey(list);
@@ -138,12 +133,6 @@ public final class VulkanDisplayListCensus {
             System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_COMPILE_TEXTURE list=" + list + " texture="
                     + value(texture) + " unit=" + value(unit));
         }
-    }
-
-    /** {@return the texture recorded while this list was compiled, or 0 when it is unknown}. */
-    public static synchronized int compileTextureOf(int list) {
-        int texture = COMPILE_TEXTURES.get(list);
-        return texture <= 0 ? 0 : texture;
     }
 
     /** {@return the textures recorded per list and the lists whose texture could not be read}. */
@@ -203,11 +192,6 @@ public final class VulkanDisplayListCensus {
         return NativeTextureBindings.current().texture2d(0);
     }
 
-    /** {@return the recorded origin of a list, or null}. */
-    public static synchronized String originOf(int list) {
-        return ORIGINS.get(list);
-    }
-
     /** {@return the recorded origins, for the run summary}. */
     public static synchronized String origins() {
         StringBuilder text = new StringBuilder();
@@ -263,11 +247,6 @@ public final class VulkanDisplayListCensus {
         return replaysWithPassClosed;
     }
 
-    /** Called by the renderer when a frame opens or closes, so the replays can be split by phase. */
-    public static void setFrameOpen(boolean open) {
-        frameOpen = open;
-    }
-
     /** {@return replays that happened while a frame was open}. */
     public static synchronized long replaysWithFrameOpen() {
         return replaysWithFrameOpen;
@@ -280,21 +259,6 @@ public final class VulkanDisplayListCensus {
 
 
 
-    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet TEXTURE_LOGGED =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
-
-    private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet MATRIX_LOGGED =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
-
-    /** {@return whether the model matrix of this list has been logged already}. */
-    public static synchronized boolean matrixLogged(int list) {
-        return MATRIX_LOGGED.add(list);
-    }
-
-    /** {@return the bound texture of this list has been logged already}. */
-    public static synchronized boolean textureLogged(int list) {
-        return !TEXTURE_LOGGED.add(list);
-    }
     private static long cancelled;
     /** Per-list cancelled replay counts; primitive for the same reason as {@link #REPLAYS}. */
     private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap CANCELLED_PER_LIST =
@@ -525,11 +489,6 @@ public final class VulkanDisplayListCensus {
     /** {@return how many distinct lists have been replayed}. */
     public static synchronized int distinctLists() {
         return distinctLists;
-    }
-
-    /** {@return how many replays carried no list identity and were kept out of the per-list counts}. */
-    public static synchronized long replaysWithUnknownList() {
-        return replaysWithUnknownList;
     }
 
     /** {@return the per-list counts, largest first, capped so the summary stays one line}. */
