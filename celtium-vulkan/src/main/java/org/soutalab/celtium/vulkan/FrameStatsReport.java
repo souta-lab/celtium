@@ -1,9 +1,9 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * The {@code -Dceltium.vulkan.frameStats=true} report: frame intervals, bracket timings and per-family counters,
- * printed as one CELTIUM_FRAME_STATS line every 120 frames. Moved out of {@link VulkanTerrainGpuBackend} unchanged
- * (2026-11-06).
+ * The frame-stats report (the backend's {@code FRAME_STATS} switch, resolved through the harness):
+ * frame intervals, bracket timings and per-family counters, printed as one CELTIUM_FRAME_STATS line
+ * every 120 frames. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
  */
 final class FrameStatsReport {
     private final VulkanTerrainGpuBackend b;
@@ -12,7 +12,7 @@ final class FrameStatsReport {
         this.b = backend;
     }
 
-    /** {@code -Dceltium.vulkan.frameStats=true}'s report: frame intervals and the previous report's counter values. */
+    /** The frame-stats report's frame intervals and the previous report's counter values. */
     final long[] frameIntervals = new long[120];
     /** How many frame-statistic lines this run has printed, so per-frame means can be reported. */
     long debugFrameReports;

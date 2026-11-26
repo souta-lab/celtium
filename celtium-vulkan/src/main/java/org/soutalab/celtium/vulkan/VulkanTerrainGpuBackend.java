@@ -3831,11 +3831,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
-     * {@code -Dceltium.vulkan.frameStats=true}: report the real interval between completed frames, once every 120
-     * frames. Each bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
+     * The frame-stats report's switch, resolved through {@link HarnessConfig} like every other repeating
+     * instrument's: {@code frameStats=true} in the harness file, or the legacy
+     * {@code -Dceltium.vulkan.frameStats=true} spelling with the master switch on. It used to be a raw
+     * {@code Boolean.getBoolean} read here, which the harness file could not name at all - the audit and
+     * re-measurement runs that set it in the file printed no CELTIUM_FRAME_STATS lines for exactly that
+     * reason. When on: report the real interval between completed frames, once every 120 frames. Each
+     * bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
      * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
      */
-    static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
+    static final boolean FRAME_STATS = HarnessConfig.bool("frameStats", false);
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
     static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
