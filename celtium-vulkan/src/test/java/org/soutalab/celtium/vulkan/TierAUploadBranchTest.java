@@ -78,7 +78,7 @@ class TierAUploadBranchTest {
         String source = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainRenderer.java"));
         assertTrue(source.contains(
-                        "if (!tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass())))"),
+                        "if (tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass())))"),
                 "the legacy fallback of an offer is decided by the predicate over outcome and taint");
         assertTrue(source.contains("this.terrainAHost.taintPass(meshEntry.getKey());"),
                 "a rejected offer taints its pass at offer time");
