@@ -151,6 +151,18 @@ final class InstanceDataStore {
     /** The lightmap (view, sampler) last written into each slot's set; 0 = unwritten. */
     private final long[] lightmapViews;
     private final long[] lightmapSamplers;
+    /**
+     * Whether the slot's set has been bound into the open recording since the slot's frame
+     * began. While this stands, a lightmap write for the slot is deferred (see
+     * {@link #bindLightmap}): the set is inside a command buffer that is still recording, and
+     * updating it there is the contract violation the frame-1 validation group measured.
+     */
+    private final boolean[] boundThisFrame;
+    /** A lightmap write deferred because the slot's set was already bound; one per slot. */
+    private final boolean[] lightmapWritePending;
+    private final long[] pendingLightmapViews;
+    private final long[] pendingLightmapSamplers;
+    private final int[] pendingLightmapLayouts;
     private int currentSlot;
 
     private VulkanContext context;
@@ -169,6 +181,11 @@ final class InstanceDataStore {
         this.growFailed = new boolean[this.slots];
         this.lightmapViews = new long[this.slots];
         this.lightmapSamplers = new long[this.slots];
+        this.boundThisFrame = new boolean[this.slots];
+        this.lightmapWritePending = new boolean[this.slots];
+        this.pendingLightmapViews = new long[this.slots];
+        this.pendingLightmapSamplers = new long[this.slots];
+        this.pendingLightmapLayouts = new int[this.slots];
         this.descriptorSets = new long[this.slots];
         for (int slot = 0; slot < this.slots; slot++) {
             this.offsets[slot] = -1L;
@@ -299,15 +316,45 @@ final class InstanceDataStore {
 
     /**
      * Points the current slot's set 1 binding 1 at the frame's lightmap, keyed per slot on the
-     * last written (view, sampler). A slot's set is rewritten only on a selection after its
-     * previous frame completed - the same completion gate that lets the slot be selected again -
-     * so the write never lands under a submitted command buffer.
+     * last written (view, sampler).
+     *
+     * <p>The completion gate covers only half of this write's safety. A slot is selected again
+     * only after its previous frame completed, so a write here never lands under a
+     * <em>submitted</em> command buffer - but since Stage 5 stage 6 recorded the record
+     * families directly into the frame's unified buffer, the slot's set can already be bound
+     * into the command buffer that is <em>still recording</em> when a later window of the same
+     * frame asks for a different lightmap (an earlier window bound the set, the lightmap was
+     * reallocated mid-frame, and this call then rewrote the set under the open recording). That
+     * is the frame-1 validation group the separation record fixed: the recording's back half
+     * invalidated and the frame lost. The gate says nothing about that case, so this method no
+     * longer relies on it alone: once the slot's set has been bound in the slot's current frame
+     * (the bind seats report it through {@link #noteSetBound}), a changed lightmap is not
+     * written here at all. The request is remembered and {@link #beginFrame} applies it at the
+     * slot's next frame boundary, before that frame's recording begins - the one seat where
+     * the slot's previous submission is known complete and nothing is recording yet. A lightmap
+     * switch can therefore land one frame late; the switch points (load, resource reload) are
+     * exactly the scenes where that costs nothing visible.
      */
     void bindLightmap(long imageView, long sampler, int imageLayout) {
         int slot = this.currentSlot;
         if (imageView == VK_NULL_HANDLE) {
             return;
         }
+        if (this.boundThisFrame[slot]) {
+            // The set is inside the open recording: remember the newest request and let the
+            // frame boundary apply it. A request that returns to the written value simply
+            // overwrites the remembered one and is then a no-op when applied.
+            this.pendingLightmapViews[slot] = imageView;
+            this.pendingLightmapSamplers[slot] = sampler;
+            this.pendingLightmapLayouts[slot] = imageLayout;
+            this.lightmapWritePending[slot] = true;
+            return;
+        }
+        writeLightmap(slot, imageView, sampler, imageLayout);
+    }
+
+    /** Writes the slot's binding 1, unless the slot already holds exactly this lightmap. */
+    private void writeLightmap(int slot, long imageView, long sampler, int imageLayout) {
         if (this.lightmapViews[slot] == imageView && this.lightmapSamplers[slot] == sampler) {
             return;
         }
@@ -332,9 +379,44 @@ final class InstanceDataStore {
         }
     }
 
+    /**
+     * Records that the current slot's set has just been bound into the open recording. Every
+     * seat that binds the records set ({@code vkCmdBindDescriptorSets} over
+     * {@link #descriptorSet()}) must call this: it is what makes {@link #bindLightmap} defer
+     * instead of rewriting a bound set, so a bind seat added without it reopens the frame-1
+     * invalidation this class now guards against.
+     */
+    void noteSetBound() {
+        this.boundThisFrame[this.currentSlot] = true;
+    }
+
+    /**
+     * Opens the store's side of a frame slot's new frame: the slot's previous submission has
+     * completed and its next recording has not begun (the backend calls this from the recording
+     * start, after the slot's completion wait). The bound mark from the slot's last frame is
+     * cleared and a lightmap write deferred during that frame is applied now - before any
+     * recording of the new frame can bind the set again.
+     */
+    void beginFrame(int slot) {
+        if (slot < 0 || slot >= this.slots) {
+            throw new IllegalArgumentException("slot " + slot);
+        }
+        this.boundThisFrame[slot] = false;
+        if (this.lightmapWritePending[slot]) {
+            this.lightmapWritePending[slot] = false;
+            writeLightmap(slot, this.pendingLightmapViews[slot], this.pendingLightmapSamplers[slot],
+                    this.pendingLightmapLayouts[slot]);
+        }
+    }
+
     /** {@return the lightmap view last bound into the slot's set (0 when none), for tests} */
     long boundLightmapView(int slot) {
         return this.lightmapViews[slot];
+    }
+
+    /** {@return the lightmap view whose write is deferred for the slot (0 when none), for tests} */
+    long pendingLightmapView(int slot) {
+        return this.lightmapWritePending[slot] ? this.pendingLightmapViews[slot] : 0L;
     }
 
     /**

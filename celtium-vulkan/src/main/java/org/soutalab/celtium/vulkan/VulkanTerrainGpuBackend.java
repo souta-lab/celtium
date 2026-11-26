@@ -24250,6 +24250,14 @@ this.frameBufferOpen = false;
             // in flight from reporting fiction.
             updateTimings();
         }
+        if (this.drawRecords != null) {
+            // The records store's frame boundary for this slot: its previous submission has
+            // completed (a pending one was waited on above), and this recording has not begun,
+            // so a lightmap write deferred while the slot's set was bound into the last frame's
+            // recording can be applied here - the one seat where it lands under neither a
+            // recording nor an executing command buffer.
+            this.drawRecords.beginFrame(this.frameSlot);
+        }
         // No VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT: the flag tells the driver it may free the buffer's internal
         // allocations, and this buffer is reset and re-begun every frame - so the release is paid every frame and the
         // allocations are re-made every frame. The spec allows either; keeping them is the reuse the frame wants. The
@@ -24454,6 +24462,9 @@ this.frameBufferOpen = false;
                             this.immediatePipeline.celtium$pipelineLayout(), 0,
                             stack.longs(this.drawRecords.descriptorSet()),
                             stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
+                    // The records set is now inside the open recording: a later window's
+                    // lightmap change must defer to the frame boundary, not rewrite it here.
+                    this.drawRecords.noteSetBound();
                     org.lwjgl.vulkan.VK10.vkCmdPushConstants(this.commandBuffer,
                             this.immediatePipeline.celtium$pipelineLayout(),
                             org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, push);
@@ -24893,6 +24904,7 @@ this.frameBufferOpen = false;
             vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     twin.celtium$pipelineLayout(), 1, stack.longs(this.drawRecords.descriptorSet()),
                     stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
+            this.drawRecords.noteSetBound();
             mesh.bindAndDrawInstanced(this.commandBuffer, recordIndex);
         }
         // The binds above bypass the flush's bind cache: whatever it believes is bound no longer is.
@@ -24956,6 +24968,7 @@ this.frameBufferOpen = false;
         vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 twin.layout, twin.recordsSet, stack.longs(this.drawRecords.descriptorSet()),
                 stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
+        this.drawRecords.noteSetBound();
         if (twin.pushBytes > 0) {
             vkCmdPushConstants(this.commandBuffer, twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                     org.lwjgl.system.MemoryUtil.memByteBuffer(
@@ -25135,6 +25148,7 @@ this.frameBufferOpen = false;
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                     this.twin.recordsSet, this.stack.longs(drawRecords.descriptorSet()),
                     this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
+            drawRecords.noteSetBound();
             if (this.twin.recordsSet != 0 && this.textureSlot != Integer.MIN_VALUE && !this.textureDropped) {
                 // A pipeline bind disturbs the sets bound under an incompatible layout, and the executor
                 // does not re-ask for the texture across a pipeline change: rebind the current texture's

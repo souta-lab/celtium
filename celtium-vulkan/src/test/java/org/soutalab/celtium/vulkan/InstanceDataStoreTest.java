@@ -204,6 +204,85 @@ class InstanceDataStoreTest {
     }
 
     @Test
+    void lightmapRewriteAfterBindIsDeferredToTheFrameBoundary() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        // Before the slot's set is bound into the recording, a lightmap write lands at once.
+        store.bindLightmap(111L, 222L, 0);
+        assertEquals(111L, store.boundLightmapView(0));
+        assertEquals(0L, store.pendingLightmapView(0));
+        // Once the set is bound, a changed lightmap must not be rewritten under the open
+        // recording: the request is remembered and the set keeps the written value.
+        store.noteSetBound();
+        store.bindLightmap(333L, 444L, 0);
+        assertEquals(111L, store.boundLightmapView(0));
+        assertEquals(333L, store.pendingLightmapView(0));
+        // The slot's next frame boundary applies the deferred write.
+        store.beginFrame(0);
+        assertEquals(333L, store.boundLightmapView(0));
+        assertEquals(0L, store.pendingLightmapView(0));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void deferredLightmapWriteKeepsOnlyTheNewestRequest() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        store.bindLightmap(111L, 222L, 0);
+        store.noteSetBound();
+        store.bindLightmap(333L, 444L, 0);
+        store.bindLightmap(555L, 666L, 0);
+        assertEquals(555L, store.pendingLightmapView(0));
+        store.beginFrame(0);
+        assertEquals(555L, store.boundLightmapView(0));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void lightmapDeferralIsPerSlot() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        store.bindLightmap(111L, 222L, 0);
+        store.noteSetBound();
+        store.bindLightmap(333L, 444L, 0);
+        assertEquals(333L, store.pendingLightmapView(0));
+        // Slot 1's set was never bound, so its write is immediate even while slot 0 defers.
+        store.selectSlot(1);
+        store.bindLightmap(777L, 888L, 0);
+        assertEquals(777L, store.boundLightmapView(1));
+        assertEquals(0L, store.pendingLightmapView(1));
+        // Slot 0's deferred write still waits for slot 0's own boundary.
+        assertEquals(111L, store.boundLightmapView(0));
+        store.beginFrame(0);
+        assertEquals(333L, store.boundLightmapView(0));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void frameBoundaryWithoutADeferredWriteReopensImmediateWrites() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        store.bindLightmap(111L, 222L, 0);
+        store.noteSetBound();
+        // No change was requested while bound: the boundary changes nothing in the set, but
+        // it clears the bound mark, so the new frame's writes are immediate again.
+        store.beginFrame(0);
+        assertEquals(111L, store.boundLightmapView(0));
+        assertEquals(0L, store.pendingLightmapView(0));
+        store.bindLightmap(333L, 444L, 0);
+        assertEquals(333L, store.boundLightmapView(0));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
     void sliceOffsetsHonorTheAlignment() {
         TestRing ring = new TestRing(2, 1L << 20);
         InstanceDataStore store = new InstanceDataStore(ring, 64L);
