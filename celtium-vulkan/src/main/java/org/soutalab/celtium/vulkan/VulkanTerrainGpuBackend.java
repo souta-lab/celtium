@@ -16874,7 +16874,14 @@ this.frameBufferOpen = false;
     long deferredUploadMaxQueued;
     long deferredUploadMaxDrainOutputs;
 
-    /** One region's deferred outputs, with the graph trigger that arrives with the batch and their byte weight. */
+    /**
+     * One region's deferred outputs, with the graph trigger that arrives with the batch and their byte weight.
+     * <p>
+     * The outputs are this backend's own copies, taken at deferral time by {@link #celtium$copyForDeferral}:
+     * the caller deletes the originals as soon as {@code uploadMeshes} returns, so a queue that held the
+     * originals would drain into freed buffers. The queue owns the copies' lifetime - an entry's outputs are
+     * deleted when the entry leaves the queue, at the drain or at the world-teardown drop alike.
+     */
     private static final class DeferredUpload {
         final RenderRegion region;
         final List<ChunkTaskOutput> outputs;
@@ -16912,6 +16919,90 @@ this.frameBufferOpen = false;
             }
         }
         return weight;
+    }
+
+    /**
+     * {@return a backend-owned copy of one output, for the deferred queue}: the native payload - each built
+     * mesh's vertex and index buffers, each sort mesh's index buffer - is copied into fresh
+     * {@link NativeBuffer}s; everything else (the section, the build info, the sort state, the ranges) is
+     * carried over by reference, because the caller's delete frees only the native buffers.
+     * <p>
+     * The copy is what the {@code uploadMeshes} contract requires of a backend that does not consume the
+     * data inside the call ("Consume/copy native output data before the caller deletes those outputs"):
+     * {@code RenderSectionManager} deletes every result right after {@code uploadMeshes} returns, so a
+     * deferred entry that referenced the originals would be read at the drain after its buffers were freed -
+     * the failure the budget-C confirmation leg measured (regionUploadFailures of "Buffer has been deleted",
+     * with the sections lost for good because they had already been committed as built). The copy's cost is
+     * bounded by the deferral itself: it is taken only for a batch the account actually deferred, and the
+     * backlog's cap bounds the total held. What stays deferred is the upload - the arena allocation, the
+     * staging and the registration in {@code uploadRegion} - which is the work the budget exists to spread.
+     * <p>
+     * An output of any other shape carries no native payload under this definition and is returned as it
+     * is; the queue's delete helper ({@link #celtium$deleteDeferredCopy}) mirrors that split, so the queue
+     * only ever deletes what this copy made.
+     */
+    static ChunkTaskOutput celtium$copyForDeferral(ChunkTaskOutput output) {
+        if (output instanceof ChunkBuildOutput build) {
+            Reference2ReferenceOpenHashMap<TerrainRenderPass, BuiltSectionMeshParts> copied =
+                    new Reference2ReferenceOpenHashMap<>();
+            try {
+                for (Reference2ReferenceMap.Entry<TerrainRenderPass, BuiltSectionMeshParts> entry
+                        : build.meshes.reference2ReferenceEntrySet()) {
+                    BuiltSectionMeshParts parts = entry.getValue();
+                    if (parts == null) {
+                        copied.put(entry.getKey(), null);
+                        continue;
+                    }
+                    NativeBuffer indexCopy = parts.indexBuffer() != null
+                            ? NativeBuffer.copy(parts.indexBuffer().getDirectBuffer()) : null;
+                    copied.put(entry.getKey(), new BuiltSectionMeshParts(
+                            NativeBuffer.copy(parts.vertexBuffer().getDirectBuffer()), indexCopy,
+                            parts.sortState(), parts.ranges(), parts.rdhFactors()));
+                }
+            } catch (RuntimeException failure) {
+                // A half-made copy owns nothing yet but its buffers; free them before the failure travels.
+                for (BuiltSectionMeshParts parts : copied.values()) {
+                    if (parts != null) {
+                        parts.free();
+                    }
+                }
+                throw failure;
+            }
+            return new ChunkBuildOutput(build.render, build.info, copied, build.buildTime);
+        }
+        if (output instanceof ChunkSortOutput sort) {
+            Reference2ReferenceOpenHashMap<TerrainRenderPass, ChunkSortOutput.SortedMesh> copied =
+                    new Reference2ReferenceOpenHashMap<>();
+            try {
+                for (Reference2ReferenceMap.Entry<TerrainRenderPass, ChunkSortOutput.SortedMesh> entry
+                        : sort.meshes.reference2ReferenceEntrySet()) {
+                    ChunkSortOutput.SortedMesh mesh = entry.getValue();
+                    copied.put(entry.getKey(), mesh == null ? null
+                            : new ChunkSortOutput.SortedMesh(
+                                    NativeBuffer.copy(mesh.indexData().getDirectBuffer())));
+                }
+            } catch (RuntimeException failure) {
+                for (ChunkSortOutput.SortedMesh mesh : copied.values()) {
+                    if (mesh != null) {
+                        mesh.indexData().free();
+                    }
+                }
+                throw failure;
+            }
+            return new ChunkSortOutput(sort.render, sort.buildTime, copied);
+        }
+        return output;
+    }
+
+    /**
+     * Deletes one queued output when it is one of this backend's deferral copies
+     * ({@link #celtium$copyForDeferral}); an output the copy returned as it was stays the caller's, whose
+     * own delete already covered it.
+     */
+    private static void celtium$deleteDeferredCopy(ChunkTaskOutput output) {
+        if (output instanceof ChunkBuildOutput || output instanceof ChunkSortOutput) {
+            output.delete();
+        }
     }
 
     /**
@@ -16981,6 +17072,12 @@ this.frameBufferOpen = false;
                 // The same rule the unbudgeted loop follows: one region's failure is counted, the rest still go.
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
+            } finally {
+                // The entry's outputs are this backend's own copies (see DeferredUpload): their lifetime
+                // ends with the entry, on a failed upload as much as on a successful one.
+                for (ChunkTaskOutput output : entry.outputs) {
+                    celtium$deleteDeferredCopy(output);
+                }
             }
             // The entry has left the backlog whether its upload succeeded or not - the region keeps
             // whatever it already had on a failure - so the deferral account settles here either way.
@@ -17062,34 +17159,55 @@ this.frameBufferOpen = false;
             if (celtium$tryDeferBurstArrival(account, frameKey, weight)) {
                 // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
                 // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
+                // The queue takes its own copies of the outputs (celtium$copyForDeferral): the caller deletes
+                // the originals as soon as this call returns, and the drain reads the payload frames later.
                 Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
                 queued.clear();
-                for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
-                    ChunkTaskOutput output = holder.output();
-                    List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
-                    if (queue == null) {
-                        queue = new ArrayList<>();
-                        queued.put(output.render.getRegion(), queue);
+                boolean copied = true;
+                try {
+                    for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
+                        ChunkTaskOutput output = celtium$copyForDeferral(holder.output());
+                        List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
+                        if (queue == null) {
+                            queue = new ArrayList<>();
+                            queued.put(output.render.getRegion(), queue);
+                        }
+                        queue.add(output);
                     }
-                    queue.add(output);
-                }
-                for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
-                        : queued.reference2ReferenceEntrySet()) {
-                    long entryWeight = 0L;
-                    for (ChunkTaskOutput output : entry.getValue()) {
-                        entryWeight += celtium$deferredUploadWeight(output);
+                } catch (RuntimeException copyFailure) {
+                    // A copy that cannot be taken must not lose the batch: the copies made so far are this
+                    // backend's own and are freed here, the deferral is settled back out of the account, and
+                    // the originals - still the caller's, still alive - are issued below like any burst the
+                    // account refused, charged by the same noteIssued line that follows this block.
+                    for (List<ChunkTaskOutput> queue : queued.values()) {
+                        for (ChunkTaskOutput output : queue) {
+                            celtium$deleteDeferredCopy(output);
+                        }
                     }
-                    this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(),
-                            graphUpdateTrigger, entryWeight));
+                    queued.clear();
+                    account.noteDeferredIssued(weight);
+                    record("deferred upload copy failed; the burst is issued instead: " + copyFailure);
+                    copied = false;
                 }
-                // The lists moved to the queue; the map itself is done with.
-                queued.clear();
-                this.deferredUploadBatches++;
-                this.deferredUploadOutputs += results.size();
-                if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
-                    this.deferredUploadMaxQueued = this.deferredUploads.size();
+                if (copied) {
+                    for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
+                            : queued.reference2ReferenceEntrySet()) {
+                        long entryWeight = 0L;
+                        for (ChunkTaskOutput output : entry.getValue()) {
+                            entryWeight += celtium$deferredUploadWeight(output);
+                        }
+                        this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(),
+                                graphUpdateTrigger, entryWeight));
+                    }
+                    // The lists moved to the queue; the map itself is done with.
+                    queued.clear();
+                    this.deferredUploadBatches++;
+                    this.deferredUploadOutputs += results.size();
+                    if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
+                        this.deferredUploadMaxQueued = this.deferredUploads.size();
+                    }
+                    return;
                 }
-                return;
             }
             // Issued now: charge the mesh window at arrival time, so a later burst in this frame is
             // judged against what the frame has already carried. Without the charge the judgment
@@ -17913,6 +18031,11 @@ this.frameBufferOpen = false;
             long droppedBytes = 0L;
             for (DeferredUpload entry : this.deferredUploads) {
                 droppedBytes += entry.bytes;
+                // The dropped entries' outputs are this backend's own copies (see DeferredUpload);
+                // dropping the queue ends their lifetime here.
+                for (ChunkTaskOutput output : entry.outputs) {
+                    celtium$deleteDeferredCopy(output);
+                }
             }
             this.deferredUploads.clear();
             if (droppedBytes > 0L) {
