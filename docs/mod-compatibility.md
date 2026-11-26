@@ -380,7 +380,7 @@ real addons name so internal refactors fail loudly rather than silently breaking
 
 | ID | Internal class | Addon consumer & status |
 |---|---|---|
-| III-1 | `VintageBlockRenderer` | Celeritas Leaf Culling (`VintageBlockRendererMixin`) shadows `currentState`/`currentBlockAccess`/`renderQuadList` and `@Redirect`s `renderQuadList` in both `renderBlock` and `renderModel`. **Known gap:** `renderBlock` delegates to `renderModel` since the Demonica Tier B split (`9b3623db7`), so its `renderBlock` `@Redirect` (default `require = 1`) has no target |
+| III-1 | `VintageBlockRenderer` | Celeritas Leaf Culling (`VintageBlockRendererMixin`) shadows `currentState`/`currentBlockAccess`/`renderQuadList` and `@Redirect`s `renderQuadList` in both `renderBlock` and `renderModel`. **Known gap (kept open):** `renderBlock` delegates to `renderModel` since the Demonica Tier B split (`9b3623db7`), so its `renderBlock` `@Redirect` (default `require = 1`) has no target and the addon in its current form fails to apply at startup. Leaf culling itself is built into celtium natively (option `leafCullingMode`, default `SOLID`), so III-1 is closed by the native implementation, not by restoring the connection surface |
 | III-2 | `CeleritasVideoOptionsController` | Celeritas Extra (`MixinOptionsController`) shadows pages/scroll/button/layout members and hooks `init`/`createTabFrame`/`applyChanges` — present |
 | III-3 | `CeleritasVideoOptionsScreen` | Celeritas Extra (`MixinOptionsScreen`) accesses `controller` and hooks `initGui`/`drawScreen`/`mouseClicked` — present |
 | III-4 | `ScrollableFrame` | Celeritas Extra (`MixinScrollableFrame`) accesses `horizontalScrollBar`/`verticalScrollBar`/`viewPortDimension` and hooks `mouseScrolled` — present |
