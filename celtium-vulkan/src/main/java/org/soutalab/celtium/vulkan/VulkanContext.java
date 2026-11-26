@@ -4762,10 +4762,10 @@ public final class VulkanContext {
      * framebuffer - so it is kept apart from {@link #deviceLocalImageSlabsByType}: its growth cannot
      * refuse the shared image pool's bounded tenants (the frame's own images, the default pair, the
      * mirrored textures), and a refusal names this pool, so the holding is attributable on sight. One
-     * pool per memory type, created lazily. The ordinary cap of 24 slabs (1.5 GiB) is a ceiling, not a
+     * pool per memory type, created lazily. The ordinary cap of 48 slabs (3.0 GiB) is a ceiling, not a
      * reservation - slabs only grow under demand - and reaching it is an escalation, not a number to
-     * chase: it is the exhaustion detector for a population whose total demand is only measurable by a
-     * completed pack build.
+     * chase: it is the exhaustion detector for this population. The cap stands at the plateau the
+     * diagnosis leg measured on the BSL scene (40 slabs live, build completed) with a 1.2 margin.
      */
     private final java.util.Map<Integer, SlabAllocator> frameTargetImageSlabsByType =
             new java.util.HashMap<Integer, SlabAllocator>();
@@ -5046,7 +5046,7 @@ public final class VulkanContext {
      * {@code memoryTypeBits}}, created on first use. The dedicated pool of prescription (f): only the
      * GL-less frame target's chain-pair and shared-depth images allocate here (see {@link GllessFrameTarget});
      * every other image stays in {@link #celtium$deviceLocalImageSlabs}, whose bounded tenants this
-     * population must not be able to starve. Ordinary slabs are capped at 24 per type, so the live
+     * population must not be able to starve. Ordinary slabs are capped at 48 per type, so the live
      * {@code vkAllocateMemory} count for the chain-pair population is bounded by the cap (plus one
      * dedicated slab per live oversized image) - the cap is the exhaustion detector, and reaching it
      * escalates rather than degrading silently.
@@ -5056,7 +5056,7 @@ public final class VulkanContext {
                 "the frame-target image slab pool");
         SlabAllocator allocator = this.frameTargetImageSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, "frameTargetImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 24,
+            allocator = new SlabAllocator(this, "frameTargetImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 48,
                     false);
             this.frameTargetImageSlabsByType.put(Integer.valueOf(type), allocator);
         }

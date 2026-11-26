@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * family R-54 had housed into it; raising the cap to 12 only moved the refusal to 773 MB live, because
  * chain pairs are held per framebuffer identity with no count bound and a pack build keeps minting
  * identities until it completes. These pins read the sources so the separation cannot dissolve
- * silently: the context owns a {@code frameTargetImage} pool capped at 24 slabs beside the shared
+ * silently: the context owns a {@code frameTargetImage} pool capped at 48 slabs beside the shared
  * image pool (cap unchanged at 8), the one allocator dispatches on the caller's pool flag, chain pairs
  * and the shared depth store are the dedicated population, the frame itself and the default pair stay
  * in the shared pool, and the dedicated pool is destroyed, collected and summarised with the others.
@@ -27,12 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FrameTargetPoolSeparationTest {
 
     @Test
-    void theContextOwnsADedicatedFrameTargetImagePoolCappedAt24() throws IOException {
+    void theContextOwnsADedicatedFrameTargetImagePoolCappedAt48() throws IOException {
         String factory = methodSlice(contextSource(),
                 "public SlabAllocator celtium$frameTargetImageSlabs(int memoryTypeBits)", 1200);
         assertTrue(factory.contains("new SlabAllocator(this, \"frameTargetImage\", type, "
-                        + "SlabAllocator.DEFAULT_SLAB_SIZE, 24,"),
-                "the dedicated pool is named frameTargetImage, uses the standard 64 MiB slab and caps at 24");
+                        + "SlabAllocator.DEFAULT_SLAB_SIZE, 48,"),
+                "the dedicated pool is named frameTargetImage, uses the standard 64 MiB slab and caps at 48");
         assertTrue(factory.contains("this.frameTargetImageSlabsByType"),
                 "the dedicated pool is held per memory type, like the other image pool");
     }
