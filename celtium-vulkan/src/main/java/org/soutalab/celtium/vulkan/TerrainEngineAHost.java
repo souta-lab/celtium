@@ -11,6 +11,7 @@ import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
 import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
 
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
 /**
  * Owns the Tier-A terrain state for one backend: the shared
@@ -27,6 +28,14 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
  * {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}. Both are created lazily and
  * deleted here, after every engine, because the allocator's slabs are the
  * engines' slab buffers' memory.
+ * <p>
+ * The resident store images and arenas are shared the same way (R-15): the
+ * SectionDesc table and the factor-base image are one store image every pass
+ * reads identically, and the factor and sorted arenas are partial images of
+ * the store's single cross-pass offset spaces, so one buffer per kind holds
+ * the union at the store's own offsets. Until R-15 each engine kept a private
+ * copy of all four — the two images byte-identical duplicates, the two arenas
+ * 32 MiB each per pass — for no reader's benefit.
  * <p>
  * Deferred arena releases are stamped and collected in the context's slab
  * completion currency ({@link VulkanContext#celtium$slabReleaseValue()} /
@@ -66,6 +75,13 @@ final class TerrainEngineAHost {
     private VulkanContext context;
     private SlabAllocator geometrySlabAllocator;
     private VulkanHostBuffer sharedIndexBuffer;
+    // Resident GPU images of the store (host-visible, written through the
+    // mapping), shared by every pass (R-15; see the class javadoc).
+    private VulkanHostBuffer descBuffer;
+    private VulkanHostBuffer factorBaseBuffer;
+    private long uploadedDescGeneration = -1;
+    private VulkanHostBuffer factorBuffer;
+    private VulkanHostBuffer sortedBuffer;
 
     AsyncSectionMesher mesher() {
         return this.mesher;
@@ -186,6 +202,95 @@ final class TerrainEngineAHost {
     }
 
     /**
+     * The shared SectionDesc table itself, for the cull compute's descriptor
+     * bookkeeping, or {@code null} before the first upload. Callers reach this
+     * only after an upload call in the same frame head, the engine's previous
+     * precondition for its private copy.
+     */
+    VulkanHostBuffer descBuffer() {
+        return this.descBuffer;
+    }
+
+    /** Raw VkBuffer of the shared desc table (graphics binding 6), uploading the store image first if it moved. */
+    long descBufferHandle(VulkanContext context) {
+        uploadDescImageIfMoved(context);
+        return this.descBuffer == null ? 0L : this.descBuffer.buffer();
+    }
+
+    /** Raw VkBuffer of the shared factor-base image (graphics binding 7), uploading first if it moved. */
+    long factorBaseBufferHandle(VulkanContext context) {
+        uploadDescImageIfMoved(context);
+        return this.factorBaseBuffer == null ? 0L : this.factorBaseBuffer.buffer();
+    }
+
+    /**
+     * Re-uploads the store's desc and factor-base images into the shared buffers
+     * when the store's image generation has moved. The store packs every pass'
+     * records into the one image, so one upload serves every pass; before the
+     * sharing, each engine re-uploaded the identical image into its own copy,
+     * once per pass per generation move.
+     */
+    void uploadDescImageIfMoved(VulkanContext context) {
+        long generation = this.store.imageGeneration();
+        if (generation == this.uploadedDescGeneration && this.descBuffer != null) {
+            return;
+        }
+        int[] descImage = this.store.descImage();
+        int[] factorBaseImage = this.store.factorBaseImage();
+        long descBytes = Math.max(48L, (long) descImage.length * 4L);
+        if (this.descBuffer == null) {
+            this.descBuffer = new VulkanHostBuffer(context, descBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            this.factorBaseBuffer = new VulkanHostBuffer(context, Math.max(4L, (long) factorBaseImage.length * 4L),
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            // These two buffers are named by Tier-A descriptor sets (bindings 6 and 7) that are only
+            // rewritten at a pass head, under conditions, for the current frame slot - so a set can keep
+            // naming a grown-away handle long after the growth. Retiring the old handle at growth let the
+            // context's retired-buffer drain destroy a buffer a live set still named (VUID-08114,
+            // diagnosed 2026-11-26). Both buffers are small (sections x 48B / x 4B) and growth is
+            // geometric, so keeping every superseded buffer until delete() costs a bounded, negligible
+            // amount of slab space; delete() below destroys them all at host teardown.
+            this.descBuffer.retainSupersededBuffers();
+            this.factorBaseBuffer.retainSupersededBuffers();
+        } else {
+            this.descBuffer.ensureCapacity(descBytes);
+            this.factorBaseBuffer.ensureCapacity(Math.max(4L, (long) factorBaseImage.length * 4L));
+        }
+        long descAddress = this.descBuffer.mappedAddress();
+        for (int i = 0; i < descImage.length; i++) {
+            MemoryUtil.memPutInt(descAddress + (long) i * 4L, descImage[i]);
+        }
+        long factorAddress = this.factorBaseBuffer.mappedAddress();
+        for (int i = 0; i < factorBaseImage.length; i++) {
+            MemoryUtil.memPutInt(factorAddress + (long) i * 4L, factorBaseImage[i]);
+        }
+        this.uploadedDescGeneration = generation;
+    }
+
+    /**
+     * The factor arena shared by every pass (graphics binding 8), created lazily
+     * at its first touch, as the per-engine copies were. The store's one factor
+     * allocator manages the whole arena offset space across passes and writes
+     * never collide, so the shared buffer holds every pass' bytes at the same
+     * offsets the private images held them.
+     */
+    VulkanHostBuffer factorBuffer(VulkanContext context) {
+        if (this.factorBuffer == null) {
+            this.factorBuffer = new VulkanHostBuffer(context, 32L * 1024 * 1024,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        }
+        return this.factorBuffer;
+    }
+
+    /** The sorted-index arena shared by every pass, the factor arena's twin. */
+    VulkanHostBuffer sortedBuffer(VulkanContext context) {
+        if (this.sortedBuffer == null) {
+            this.sortedBuffer = new VulkanHostBuffer(context,
+                    this.store.sortedAllocator().slabBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        }
+        return this.sortedBuffer;
+    }
+
+    /**
      * The value deferred store releases are stamped with: the context's slab
      * release value once an engine has been created against one. Before that
      * no section can be registered, so the generation counter the interim
@@ -234,6 +339,25 @@ final class TerrainEngineAHost {
             engine.delete();
         }
         this.engines.clear();
+        // The shared resident buffers (R-15) are read by every pass' draws and
+        // cull dispatches until the engines are gone, so they go here too, with
+        // the other shared resources, after every engine.
+        if (this.descBuffer != null) {
+            this.descBuffer.delete();
+            this.descBuffer = null;
+        }
+        if (this.factorBaseBuffer != null) {
+            this.factorBaseBuffer.delete();
+            this.factorBaseBuffer = null;
+        }
+        if (this.factorBuffer != null) {
+            this.factorBuffer.delete();
+            this.factorBuffer = null;
+        }
+        if (this.sortedBuffer != null) {
+            this.sortedBuffer.delete();
+            this.sortedBuffer = null;
+        }
         // After every engine: the shared allocator's slabs are the engines' slab
         // buffers' memory, so they are freed last (its delete is teardown,
         // freeing live slabs outright), and the shared index buffer is read by

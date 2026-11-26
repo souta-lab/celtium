@@ -71,10 +71,9 @@ final class TerrainEngineA {
     private long pipeline;
     private boolean disabled;
 
-    // Resident GPU images of the store (host-visible, written through the mapping).
-    private VulkanHostBuffer descBuffer;
-    private VulkanHostBuffer factorBaseBuffer;
-    private long uploadedGeneration = -1;
+    // The resident GPU images of the store (desc table, factor bases) and the
+    // factor / sorted arenas are the host's, shared by every pass (R-15): this
+    // executor reaches them through the host's accessors below.
     // Geometry slabs (wave-2 item 3): each slab's VkBuffer is bound to a dedicated
     // allocation of the host's shared hal SlabAllocator (SlabAllocator.bindBuffer),
     // not to a private vkAllocateMemory as a VulkanHostBuffer would make. The
@@ -84,8 +83,6 @@ final class TerrainEngineA {
     // shared maximum instead of multiplying it by the pass count, and the host —
     // not this engine — deletes it, after every engine's slab buffers.
     private final List<SlabBuffer> slabBuffers = new ArrayList<>();
-    private VulkanHostBuffer factorBuffer;
-    private VulkanHostBuffer sortedBuffer;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
     private final ArrayDeque<AsyncSectionMesher.BuiltSectionA> deferred = new ArrayDeque<>();
@@ -244,13 +241,13 @@ final class TerrainEngineA {
         long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
         MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
         if (built.rdhFactors != null) {
-            long factorAddress = factorBuffer().mappedAddress() + registration.factor.byteOffset;
+            long factorAddress = this.host.factorBuffer(this.context).mappedAddress() + registration.factor.byteOffset;
             for (int i = 0; i < built.rdhFactors.length; i++) {
                 MemoryUtil.memPutInt(factorAddress + (long) i * 4L, built.rdhFactors[i]);
             }
         }
         if (built.sortedIndices != null && registration.sorted != null) {
-            long sortedAddress = sortedBuffer().mappedAddress() + registration.sorted.byteOffset;
+            long sortedAddress = this.host.sortedBuffer(this.context).mappedAddress() + registration.sorted.byteOffset;
             MemoryUtil.memCopy(MemoryUtil.memAddress(built.sortedIndices.getDirectBuffer()),
                     sortedAddress, built.sortedIndices.getLength());
         }
@@ -267,19 +264,17 @@ final class TerrainEngineA {
 
     /** Raw VkBuffer of the resident desc table, for graphics binding 6. */
     long descBufferHandle() {
-        uploadDescImageIfMoved();
-        return this.descBuffer == null ? 0L : this.descBuffer.buffer();
+        return this.host.descBufferHandle(this.context);
     }
 
     /** Raw VkBuffer of the factor-base image, for graphics binding 7. */
     long factorBaseBufferHandle() {
-        uploadDescImageIfMoved();
-        return this.factorBaseBuffer == null ? 0L : this.factorBaseBuffer.buffer();
+        return this.host.factorBaseBufferHandle(this.context);
     }
 
     /** Raw VkBuffer of the factor arena, for graphics binding 8. */
     long factorBufferHandle() {
-        return factorBuffer().buffer();
+        return this.host.factorBuffer(this.context).buffer();
     }
 
     /**
@@ -302,7 +297,7 @@ final class TerrainEngineA {
                 return false;
             }
             TerrainSectionStore.Registration registration = this.store.get(key);
-            long address = sortedBuffer().mappedAddress() + registration.sorted.byteOffset;
+            long address = this.host.sortedBuffer(this.context).mappedAddress() + registration.sorted.byteOffset;
             MemoryUtil.memCopy(MemoryUtil.memAddress(indices.getDirectBuffer()), address, indices.getLength());
             return true;
         } catch (RuntimeException error) {
@@ -369,7 +364,7 @@ final class TerrainEngineA {
             if (RESIDENCY_ENFORCE && !report.complete()) {
                 return false;
             }
-            uploadDescImageIfMoved();
+            this.host.uploadDescImageIfMoved(this.context);
             if (this.store.recordCount() == 0) {
                 return false;
             }
@@ -494,7 +489,7 @@ final class TerrainEngineA {
                 vkCmdBindIndexBuffer(commandBuffer, sharedIndexBuffer().buffer(), 0L, VK_INDEX_TYPE_UINT32);
                 VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.bucketOut[s].buffer(), 0L,
                         slot.counts[s].buffer(), 0L, maxDraws, COMMAND_BYTES);
-                vkCmdBindIndexBuffer(commandBuffer, sortedBuffer().buffer(), 0L, VK_INDEX_TYPE_UINT32);
+                vkCmdBindIndexBuffer(commandBuffer, this.host.sortedBuffer(this.context).buffer(), 0L, VK_INDEX_TYPE_UINT32);
                 VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.sortedOut[s].buffer(), 0L,
                         slot.counts[s].buffer(), 4L, maxDraws, COMMAND_BYTES);
                 any = true;
@@ -509,42 +504,6 @@ final class TerrainEngineA {
     // ----------------------------------------------------------------------------------
     // Buffers
     // ----------------------------------------------------------------------------------
-
-    private void uploadDescImageIfMoved() {
-        long generation = this.store.imageGeneration();
-        if (generation == this.uploadedGeneration && this.descBuffer != null) {
-            return;
-        }
-        int[] descImage = this.store.descImage();
-        int[] factorBaseImage = this.store.factorBaseImage();
-        long descBytes = Math.max(48L, (long) descImage.length * 4L);
-        if (this.descBuffer == null) {
-            this.descBuffer = new VulkanHostBuffer(this.context, descBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            this.factorBaseBuffer = new VulkanHostBuffer(this.context, Math.max(4L, (long) factorBaseImage.length * 4L),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            // These two buffers are named by Tier-A descriptor sets (bindings 6 and 7) that are only
-            // rewritten at a pass head, under conditions, for the current frame slot - so a set can keep
-            // naming a grown-away handle long after the growth. Retiring the old handle at growth let the
-            // context's retired-buffer drain destroy a buffer a live set still named (VUID-08114,
-            // diagnosed 2026-11-26). Both buffers are small (sections x 48B / x 4B) and growth is
-            // geometric, so keeping every superseded buffer until delete() costs a bounded, negligible
-            // amount of slab space; delete() below destroys them all at engine teardown.
-            this.descBuffer.retainSupersededBuffers();
-            this.factorBaseBuffer.retainSupersededBuffers();
-        } else {
-            this.descBuffer.ensureCapacity(descBytes);
-            this.factorBaseBuffer.ensureCapacity(Math.max(4L, (long) factorBaseImage.length * 4L));
-        }
-        long descAddress = this.descBuffer.mappedAddress();
-        for (int i = 0; i < descImage.length; i++) {
-            MemoryUtil.memPutInt(descAddress + (long) i * 4L, descImage[i]);
-        }
-        long factorAddress = this.factorBaseBuffer.mappedAddress();
-        for (int i = 0; i < factorBaseImage.length; i++) {
-            MemoryUtil.memPutInt(factorAddress + (long) i * 4L, factorBaseImage[i]);
-        }
-        this.uploadedGeneration = generation;
-    }
 
     private SlabBuffer slabBuffer(int slab) {
         while (this.slabBuffers.size() <= slab) {
@@ -653,22 +612,6 @@ final class TerrainEngineA {
         }
     }
 
-    private VulkanHostBuffer factorBuffer() {
-        if (this.factorBuffer == null) {
-            this.factorBuffer = new VulkanHostBuffer(this.context, 32L * 1024 * 1024,
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        }
-        return this.factorBuffer;
-    }
-
-    private VulkanHostBuffer sortedBuffer() {
-        if (this.sortedBuffer == null) {
-            this.sortedBuffer = new VulkanHostBuffer(this.context,
-                    this.store.sortedAllocator().slabBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-        }
-        return this.sortedBuffer;
-    }
-
     /**
      * The static quad index buffer, owned by the host and shared by every pass
      * (designer audit 2026-11-25, Stage 4 item 5-②): its contents depend only on
@@ -702,7 +645,7 @@ final class TerrainEngineA {
 
     private void ensureDescriptors(MemoryStack stack, Slot slot, int slab) {
         if (slot.descriptorSets[slab] != 0L
-                && slot.describedDesc[slab] == this.descBuffer.buffer()
+                && slot.describedDesc[slab] == this.host.descBuffer().buffer()
                 && slot.describedBucket[slab] == slot.bucketOut[slab].buffer()
                 && slot.describedSorted[slab] == slot.sortedOut[slab].buffer()
                 && slot.describedCounts[slab] == slot.counts[slab].buffer()) {
@@ -724,7 +667,7 @@ final class TerrainEngineA {
             check(vkAllocateDescriptorSets(device, setInfo, handle), "allocate terrain-a descriptor set");
             slot.descriptorSets[slab] = handle.get(0);
         }
-        VulkanHostBuffer[] buffers = {this.descBuffer, slot.bucketOut[slab], slot.sortedOut[slab], slot.counts[slab]};
+        VulkanHostBuffer[] buffers = {this.host.descBuffer(), slot.bucketOut[slab], slot.sortedOut[slab], slot.counts[slab]};
         VkDescriptorBufferInfo.Buffer infos = VkDescriptorBufferInfo.calloc(4, stack);
         VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(4, stack);
         for (int i = 0; i < 4; i++) {
@@ -733,7 +676,7 @@ final class TerrainEngineA {
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).pBufferInfo(infos.slice(i, 1));
         }
         vkUpdateDescriptorSets(device, writes, null);
-        slot.describedDesc[slab] = this.descBuffer.buffer();
+        slot.describedDesc[slab] = this.host.descBuffer().buffer();
         slot.describedBucket[slab] = slot.bucketOut[slab].buffer();
         slot.describedSorted[slab] = slot.sortedOut[slab].buffer();
         slot.describedCounts[slab] = slot.counts[slab].buffer();
@@ -791,16 +734,14 @@ final class TerrainEngineA {
                 if (slot.counts[s] != null) slot.counts[s].delete();
             }
         }
-        if (this.descBuffer != null) this.descBuffer.delete();
-        if (this.factorBaseBuffer != null) this.factorBaseBuffer.delete();
         for (SlabBuffer slab : this.slabBuffers) {
             if (slab != null) slab.delete();
         }
-        // The slab allocator and the shared index buffer are the host's, shared
-        // with the other passes' engines: the host deletes them after every
-        // engine, so nothing is freed here while a sibling pass still draws.
-        if (this.factorBuffer != null) this.factorBuffer.delete();
-        if (this.sortedBuffer != null) this.sortedBuffer.delete();
+        // The slab allocator, the shared index buffer and the shared resident
+        // buffers (desc table, factor bases, factor and sorted arenas, R-15)
+        // are the host's, shared with the other passes' engines: the host
+        // deletes them after every engine, so nothing is freed here while a
+        // sibling pass still draws.
         if (this.pipeline != 0L) {
             vkDestroyPipeline(device, this.pipeline, null);
         }
