@@ -53,6 +53,15 @@ final class TerrainEngineAHost {
     private final TerrainResidencyGate residencyGate = new TerrainResidencyGate();
     private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
     private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
+    /**
+     * Pass ordinals tainted by a Tier-A rejection (R-55, Step B): a rejected
+     * section lives on the legacy route alone, so while its pass is tainted the
+     * pass must not arm — the resident table does not hold the section and an
+     * armed pass would draw without it. Keyed by ordinal; registration and the
+     * pass head run on different threads, so the set is concurrent.
+     */
+    private final java.util.Set<Integer> taintedPassOrdinals =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     private long generation;
     private VulkanContext context;
     private SlabAllocator geometrySlabAllocator;
@@ -85,6 +94,30 @@ final class TerrainEngineAHost {
     void noteBuildException(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass) {
         this.residencyGate.noteMissing(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinalFor(pass)),
                 TerrainResidencyGate.Reason.BUILD_EXCEPTION);
+    }
+
+    /** Taints one pass (R-55, Step B): Tier-A rejected a section of it, so the section is legacy-only. */
+    void taintPass(TerrainRenderPass pass) {
+        this.taintedPassOrdinals.add(ordinalFor(pass));
+    }
+
+    /** Whether this pass is tainted. A pass with no ordinal yet was never offered a section, so it is clean. */
+    boolean isPassTainted(TerrainRenderPass pass) {
+        Integer ordinal = this.ordinals.get(pass);
+        return ordinal != null && this.taintedPassOrdinals.contains(ordinal);
+    }
+
+    /**
+     * Consumes one per-frame residency verification (R-55, Step B): a complete
+     * report — every expected section of the pass resident in the store —
+     * clears the pass' taint, because the fact the taint recorded (a section
+     * missing from the resident table) no longer holds. An incomplete report
+     * changes nothing.
+     */
+    void noteResidencyReport(TerrainResidencyGate.Report report) {
+        if (report.complete()) {
+            this.taintedPassOrdinals.remove(report.passOrdinal());
+        }
     }
 
     long nextGeneration() {

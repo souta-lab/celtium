@@ -19621,7 +19621,8 @@ this.frameBufferOpen = false;
      * Tier-A pass head (wave-2 item 1): records this pass' cull dispatch into the
      * frame's command buffer, outside the render pass, and returns the armed
      * executor, or {@code null} when Tier-A is off, the store has no records for
-     * drawing yet, or the executor disabled itself. Runs once per pass per frame;
+     * drawing yet, the executor disabled itself, or the pass is tainted by a
+     * Tier-A rejection (R-55, Step B). Runs once per pass per frame;
      * repeat calls within the frame answer from the armed map.
      */
     private TerrainEngineA celtium$terrainAPassHead(TerrainRenderPass pass, ChunkRenderMatrices matrices,
@@ -19647,6 +19648,16 @@ this.frameBufferOpen = false;
                     celtium$gpuTerrainCensusVp(matrices),
                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z);
             if (!ok) {
+                return null;
+            }
+            if (host.isPassTainted(pass)) {
+                // R-55, Step B: Tier-A rejected a section of this pass, so
+                // that section lives on the legacy route alone; arming would
+                // draw the pass from the resident table only and the rejected
+                // section would vanish. prepareFrame still ran above — the
+                // deferred queue drains and the residency verification that
+                // clears the taint keeps running — only the arm is withheld,
+                // until the gate verifies the pass complete.
                 return null;
             }
             this.terrainAArmedEngines.put(pass, engine);
