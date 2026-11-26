@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.LongSupplier;
 
 /**
  * A pure ledger for fixed-size slabs, sub-allocated in page-sized units. This class knows nothing about Vulkan: it
@@ -18,7 +19,12 @@ import java.util.TreeMap;
  * {@code maxSlabs}. A full pool is never grown by copying: copying a slab would move every offset inside it, and an
  * offset is exactly what a buffer or image was bound with, so a move would silently invalidate bindings that are
  * already recorded. The only growth is a new, empty slab appended after the existing ones; existing allocations
- * never change slab or offset.
+ * never change slab or offset. One step runs before the append when the owner has wired a completion-currency
+ * source ({@link #setCompletedValueSource}): while deferred releases are pending, they are collected first and
+ * the search retried, because a slab the owner mirrors costs a whole device memory allocation and is never given
+ * back - appending one for ranges the GPU has already finished with would raise the owner's memory peak for
+ * bytes that were free in everything but bookkeeping. The collection is gated by the same timeline values as
+ * every other drive point, so a release whose value has not completed stays pending and the growth proceeds.
  * <p>
  * <b>Placement:</b> first fit within a size class, inside slabs dedicated to a size band. A request whose paged
  * size reaches a sixteenth of a slab is <i>large</i>: slabs are scanned newest first, so a large
@@ -107,6 +113,14 @@ public final class SlabPool {
     /** Membership view of {@link #deferredReleases}, for rejecting a second release of the same allocation. */
     private final Set<Allocation> deferredPending = new HashSet<Allocation>();
 
+    /**
+     * The owner's completion-currency source, consulted only at the growth point of {@link #allocate}:
+     * while deferred releases are pending, the pool collects them against this value before it appends a
+     * slab. Null when the owner has not wired one, in which case growth never collects - the behaviour
+     * this ledger had before the hook existed.
+     */
+    private LongSupplier completedValueSource;
+
     private long usedBytes;
 
     /**
@@ -162,7 +176,9 @@ public final class SlabPool {
      * Slabs are searched in the request's size-class order (large: newest first; small: creation order) and free
      * runs in offset order; the first run that can hold the aligned request wins. When no slab fits and the pool
      * is below its cap, exactly one new slab is appended and the search is retried against it - appended, never
-     * copied into, so the offsets of everything already allocated stay put.
+     * copied into, so the offsets of everything already allocated stay put. When a completion-currency source
+     * is wired and deferred releases are pending, the append is preceded by one collection against that source
+     * and one retry of the search (see the class documentation's growth paragraph).
      *
      * @param sizeBytes the requested size; must be positive
      * @param alignment the required offset alignment; must be at least 1 and need not be a power of two
@@ -190,6 +206,18 @@ public final class SlabPool {
         if (this.freeRunsBySlab.size() >= this.maxSlabs) {
             // At the cap no slab of this band can be grown, so segregation yields: any slab may serve.
             return tryAllocate(pagedSize, sizeBytes, alignment, large, -1);
+        }
+        if (this.completedValueSource != null && !this.deferredReleases.isEmpty()) {
+            // Collect before grow: ranges whose deferred releases the completion currency has already
+            // passed are capacity this pool already owns, and the slab about to be appended is one the
+            // owner mirrors with a whole device memory allocation and never gives back. A release whose
+            // value has not completed is not collected here - the gate is the timeline value, exactly as
+            // at every other collection drive point - and the growth below proceeds without it.
+            collectCompleted(this.completedValueSource.getAsLong());
+            allocation = tryAllocate(pagedSize, sizeBytes, alignment, large, band);
+            if (allocation != null) {
+                return allocation;
+            }
         }
         addSlab(band);
         return tryAllocate(pagedSize, sizeBytes, alignment, large, band);
@@ -260,6 +288,15 @@ public final class SlabPool {
             }
         }
         return released;
+    }
+
+    /**
+     * Wires the completion-currency source consulted at the growth point of {@link #allocate} (see the
+     * class documentation's growth paragraph). The owner sets this once, at construction; the value is
+     * read only when an allocation is about to append a slab while deferred releases are pending.
+     */
+    public void setCompletedValueSource(LongSupplier completedValueSource) {
+        this.completedValueSource = completedValueSource;
     }
 
     /** Number of slabs the pool currently holds; grows lazily up to {@link #maxSlabs()}. */
