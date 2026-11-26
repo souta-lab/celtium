@@ -4145,8 +4145,10 @@ public final class VulkanContext {
     }
 
     /**
-     * Resets one frame slot's linear-ring slice. Called only from the frame-slot wait's success paths - the
-     * wait is the confirmation that the slot's submission completed, which is the ring's reuse gate - so a
+     * Resets one frame slot's linear-ring slice. Called only from the backend's slot-confirmation tail
+     * ({@code VulkanTerrainGpuBackend.celtium$noteSlotConfirmed}) - the one method every confirmation
+     * route (the slot wait, the completion poll, the deferred submits' reclaim, a device-wide idle) runs
+     * through once the slot's submission is confirmed complete, which is the ring's reuse gate - so a
      * reset can never hand the CPU bytes the GPU still reads. A context whose ring was never created has
      * nothing to reset.
      */

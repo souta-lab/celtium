@@ -26625,9 +26625,9 @@ this.frameBufferOpen = false;
     private boolean waitForSlot(int slot) {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
             if (slot >= 0 && slot < FRAME_SLOTS) {
-                // Nothing of this slot's is in flight, so the GPU is done with its linear-ring slices: this
-                // "not pending" answer is one of the confirmations the ring's reset gate (Stage 2) accepts.
-                this.context.celtium$resetFrameLinearSlot(slot);
+                // Nothing of this slot's is in flight. If it ever carried a submission, that submission's
+                // confirmation already recycled its linear ring at the confirmation itself
+                // (celtium$noteSlotConfirmed), so there is nothing left to reset here.
                 celtium$drainBindlessReleases();
             }
             return true;
@@ -26722,7 +26722,6 @@ this.frameBufferOpen = false;
                 // value covered. A device the wait reported lost surfaces from the poll instead: the poll's
                 // counter read is where the loss is detected on this path.
                 this.context.celtium$pollDeferredSubmits();
-                this.context.celtium$resetFrameLinearSlot(slot);
                 celtium$drainBindlessReleases();
                 return true;
             }
@@ -26807,9 +26806,8 @@ this.frameBufferOpen = false;
             } else {
                 celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
             }
-            // The slot's submission is confirmed, in whichever shape the confirmation arrived: its
-            // linear-ring slices are the GPU's no longer (Stage 2's reset gate).
-            this.context.celtium$resetFrameLinearSlot(slot);
+            // The confirmation above - direct, or inside the reclaim callback the poll just ran - has
+            // already recycled the slot's linear ring at the confirmation tail.
             celtium$drainBindlessReleases();
             return true;
         }
@@ -26818,7 +26816,7 @@ this.frameBufferOpen = false;
     /**
      * Advances the bindless binding's deferred releases against the merged completion currency
      * (Stage 5 stage 3, section 3.5). Called only from {@link #waitForSlot(int)}'s success exits -
-     * the frame loop's one completion gate, the same confirmations the linear-ring reset rides -
+     * the frame loop's one completion gate -
      * so a retired texture's array slot is freed only once the counter says every submission that
      * could still sample it has completed. The peek form is deliberate: a frame that never created
      * the binding has nothing to drain.
@@ -26951,6 +26949,12 @@ this.frameBufferOpen = false;
      * The bookkeeping one confirmed slot completion makes true: the fence was observed signalled (or the device
      * reported lost, which is completion-equivalent for pending purposes), so the slot may be re-recorded and every
      * resource gated on its sequence may be released.
+     * <p>
+     * Every route that confirms a slot runs through this one tail - the slot wait's success exits, the
+     * completion poll, the deferred submits' reclaim callback, a device-wide idle - so the per-frame
+     * linear ring's reset hangs off this method rather than off any one route: the confirmation recorded
+     * here is exactly the reset gate's precondition (Stage 2), and a route that confirms without passing
+     * here does not exist.
      */
     private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
         long submitNanos = this.slotSubmitNanos[slot];
@@ -26960,6 +26964,13 @@ this.frameBufferOpen = false;
         }
         this.slotDeferredTokens[slot] = 0;
         this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
+        // Stage 2's reset gate, seated at the confirmation itself: the slot's linear-ring slices are the
+        // GPU's no longer, whichever route observed the completion. The wait-only wiring this replaces
+        // left poll-confirmed slots unrecycled - the poll is the dominant confirmation route and never
+        // enters the wait - so their ring cursor accumulated across reuses until the slot pinned at
+        // capacity and every record of a window was refused (the stage-4 legs' droppedDraws). The reset
+        // stays hold-aware: a consumer still holding slices of this slot defers it to its last release.
+        this.context.celtium$resetFrameLinearSlot(slot);
         // Queue order: this submission's completion implies every earlier one finished too, and the
         // scheduler's noteCompleted records exactly that.
         if (this.slotCommandStates[slot].state() == VulkanCommandBufferState.State.PENDING) {

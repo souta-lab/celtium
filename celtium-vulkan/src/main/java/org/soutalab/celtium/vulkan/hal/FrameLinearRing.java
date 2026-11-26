@@ -50,9 +50,11 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * <p>
  * The reset gate is the class's one safety rule, and it is not this class's to waive: {@link #reset(int)} may
  * only be called once the submission that read the slot's slices has been confirmed complete. The backend's
- * frame-slot wait is that confirmation - it returns only when the slot's own submission is done - and it is the
- * wait, not this class, that calls the reset (through {@code VulkanContext.celtium$resetFrameLinearSlot}). A
- * slot whose wait has not confirmed is never reset, so the CPU never overwrites bytes the GPU still reads.
+ * slot-confirmation tail is that confirmation - every route that observes a slot's submission complete
+ * (the slot wait, the completion poll, the deferred submits' reclaim, a device-wide idle) runs through
+ * it - and it is the tail, not this class, that calls the reset (through
+ * {@code VulkanContext.celtium$resetFrameLinearSlot}). A slot whose submission has not been confirmed
+ * complete is never reset, so the CPU never overwrites bytes the GPU still reads.
  * A consumer that may outlive its frame (an immediate group held for another render target) additionally
  * {@link #hold(int)}s the slot; a confirmed reset that arrives under a hold is deferred by the allocator and
  * applied when the last hold is released, so held slices are never overwritten either.
