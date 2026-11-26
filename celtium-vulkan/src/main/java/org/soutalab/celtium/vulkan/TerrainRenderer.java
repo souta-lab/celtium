@@ -1824,20 +1824,26 @@ public final class TerrainRenderer {
     }
 
     /**
-     * Registers one freshly built section into the Tier-A resident table. A failure
-     * leaves the section on the legacy route only — the upload that called this must
-     * not fail with it — and is printed once, since a shape rejection here is a build
-     * bug, not a runtime condition.
+     * Registers one freshly built section into the Tier-A resident table and
+     * classifies the outcome for the upload branch (R-55, Step A). A failure
+     * leaves the section on the legacy route only — the upload that called this
+     * must not fail with it — and is printed once, since a shape rejection here
+     * is a build bug, not a runtime condition. An empty section (the mesher
+     * returns no built form when the parts hold no quads) is classified
+     * accepted: there is nothing to draw on either route, so the legacy upload
+     * is skipped for it as well and it taints nothing.
      */
-    private void registerTierA(ChunkBuildOutput build, TerrainRenderPass pass, BuiltSectionMeshParts mesh) {
+    private TerrainEngineA.RegisterOutcome registerTierA(ChunkBuildOutput build, TerrainRenderPass pass,
+            BuiltSectionMeshParts mesh) {
         try {
             org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher.BuiltSectionA built =
                     this.terrainAHost.mesher().build(build.render.getChunkX(), build.render.getChunkY(),
                             build.render.getChunkZ(), this.terrainAHost.ordinalFor(pass), mesh, 0);
-            if (built != null) {
-                this.terrainAHost.engineFor(this.context, pass)
-                        .register(built, this.terrainAHost.nextGeneration());
+            if (built == null) {
+                return TerrainEngineA.RegisterOutcome.ACCEPTED;
             }
+            return this.terrainAHost.engineFor(this.context, pass)
+                    .registerClassified(built, this.terrainAHost.nextGeneration());
         } catch (RuntimeException error) {
             // Counted per section for the residency gate (order (i)): a build
             // exception used to be a permanent, uninstrumented Tier-A leak.
@@ -1847,7 +1853,20 @@ public final class TerrainRenderer {
                 this.terrainARegisterFailurePrinted = true;
                 System.out.println("[Celtium] CELTIUM_TERRAIN_A_REGISTER_FAILED reason=" + error);
             }
+            return TerrainEngineA.RegisterOutcome.REJECTED;
         }
+    }
+
+    /**
+     * The upload branch predicate (R-55, Step A/B): the legacy upload is
+     * skipped exactly when Tier-A took the section — accepted now or deferred
+     * into its upload queue — and its pass is not tainted. A rejected section
+     * keeps its legacy upload, and so does every section of a tainted pass:
+     * while any section of the pass is legacy-only the pass draws from the
+     * legacy route, so all of its sections must be present there.
+     */
+    static boolean tierAUploadSkipsLegacy(TerrainEngineA.RegisterOutcome outcome, boolean passTainted) {
+        return outcome != TerrainEngineA.RegisterOutcome.REJECTED && !passTainted;
     }
 
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
@@ -1861,13 +1880,26 @@ public final class TerrainRenderer {
         return created;
     }
 
+    /**
+     * One Tier-A offer of the running upload (R-55, Step A): the mesh, its pass
+     * and the classified registration outcome. The legacy-upload decision is
+     * deferred until every offer of the upload has been classified, so it is
+     * made once, over the whole upload, instead of per mesh inside the build
+     * loop.
+     */
+    private record TierAOffer(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts mesh,
+                              TerrainEngineA.RegisterOutcome outcome) {
+    }
+
     /** Scratch lists for {@link #uploadRegion}: rebuilt at the head of each call and never retained. */
     private final java.util.ArrayList<TerrainRenderer.PendingMesh> uploadPendingScratch = new java.util.ArrayList<>();
+    private final java.util.ArrayList<TierAOffer> uploadTierAOffersScratch = new java.util.ArrayList<>();
     private final java.util.HashMap<TerrainRenderPass, SectionRenderDataStorage> uploadStorageScratch =
             new java.util.HashMap<>();
 
     void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
         List<TerrainRenderer.PendingMesh> pending = this.uploadPendingScratch;
+        List<TierAOffer> tierAOffers = this.uploadTierAOffersScratch;
         // A previous call that threw before its tail released its meshes leaves them here holding a section's parts.
         // Releasing them before the clear keeps the scratch's ownership rule: nothing in it outlives a call.
         if (!pending.isEmpty()) {
@@ -1876,6 +1908,10 @@ public final class TerrainRenderer {
             }
             pending.clear();
         }
+        // Offers own nothing (the meshes stay with their build outputs), but a
+        // call that threw mid-loop must not leak its offers into the next
+        // call's decisions.
+        tierAOffers.clear();
         boolean needIndexBuffer = false;
         // Resolved once for the whole upload: it used to be looked up again for every mesh.
         TerrainRenderer.RegionResources meshResources = resourcesFor(this.context, region, vertexStride());
@@ -1896,26 +1932,38 @@ public final class TerrainRenderer {
                         continue;
                     }
                     needIndexBuffer |= mesh.indexBuffer() != null;
-                    pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
-                            meshResources.sectionFirstColor, meshResources));
                     if (this.terrainAHost != null
                             && meshEntry.getKey().vertexType().getVertexFormat().getStride()
                                     == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
-                        registerTierA(build, meshEntry.getKey(), mesh);
-                    } else if (this.terrainAHost != null) {
-                        // Stride gate (order (i)): this section never reaches
-                        // registerTierA while the stride differs — count it as
-                        // a permanent leak instead of leaving it invisible.
-                        // The comparison is against the PASS' own vertex format
-                        // (arch-phase1-fix): the gate used to compare
-                        // vertexStride(), which the backend sets to the
-                        // configuration's common (primitive-aligned LCM) stride
-                        // — 64 for a TerrainVertex16-only configuration — so it
-                        // never equalled 16, registerTierA was never called, the
-                        // resident store stayed empty and Tier-A drew nothing
-                        // (Phase 1 gate leg 2026-11-25: no terrain at all).
-                        this.terrainAHost.noteStrideGate(build.render.getChunkX(), build.render.getChunkY(),
-                                build.render.getChunkZ(), meshEntry.getKey());
+                        // R-55, Step A: the mesh is offered to Tier-A and its
+                        // legacy fate is decided after the loop, once every
+                        // offer of this upload is classified.
+                        TerrainEngineA.RegisterOutcome outcome = registerTierA(build, meshEntry.getKey(), mesh);
+                        if (outcome == TerrainEngineA.RegisterOutcome.REJECTED) {
+                            // Step B: the section is legacy-only, so its pass
+                            // must not arm until the residency gate verifies
+                            // it complete — the resident table lacks it.
+                            this.terrainAHost.taintPass(meshEntry.getKey());
+                        }
+                        tierAOffers.add(new TierAOffer(build.render.getSectionIndex(), meshEntry.getKey(), mesh, outcome));
+                    } else {
+                        pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
+                                meshResources.sectionFirstColor, meshResources));
+                        if (this.terrainAHost != null) {
+                            // Stride gate (order (i)): this section never reaches
+                            // registerTierA while the stride differs — count it as
+                            // a permanent leak instead of leaving it invisible.
+                            // The comparison is against the PASS' own vertex format
+                            // (arch-phase1-fix): the gate used to compare
+                            // vertexStride(), which the backend sets to the
+                            // configuration's common (primitive-aligned LCM) stride
+                            // — 64 for a TerrainVertex16-only configuration — so it
+                            // never equalled 16, registerTierA was never called, the
+                            // resident store stayed empty and Tier-A drew nothing
+                            // (Phase 1 gate leg 2026-11-25: no terrain at all).
+                            this.terrainAHost.noteStrideGate(build.render.getChunkX(), build.render.getChunkY(),
+                                    build.render.getChunkZ(), meshEntry.getKey());
+                        }
                     }
                 }
             } else if (output instanceof ChunkSortOutput) {
@@ -1942,7 +1990,21 @@ public final class TerrainRenderer {
             }
         }
 
-        if (pending.isEmpty()) {
+        // R-55, Step A/B: the offers' legacy fate is decided here, with every
+        // offer of this upload already classified and every rejection of this
+        // upload already counted into the pass taints — so a section offered
+        // earlier in the same upload is not skipped into a pass that a later
+        // offer of the same upload tainted.
+        boolean tierAOffersProcessed = !tierAOffers.isEmpty();
+        for (TierAOffer offer : tierAOffers) {
+            if (!tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass()))) {
+                pending.add(TerrainRenderer.PendingMesh.obtain(offer.sectionIndex(), offer.pass(), offer.mesh(), null,
+                        meshResources.sectionFirstColor, meshResources));
+            }
+        }
+        tierAOffers.clear();
+
+        if (pending.isEmpty() && !tierAOffersProcessed) {
             return;
         }
 

@@ -161,6 +161,26 @@ final class TerrainEngineA {
     // ----------------------------------------------------------------------------------
 
     /**
+     * The classified outcome of one registration offer (R-55, Step A): whether
+     * Tier-A took the section now ({@link #ACCEPTED}), took it into the deferred
+     * upload queue ({@link #DEFERRED}), or did not take it at all
+     * ({@link #REJECTED} — ineligible, an arena exhausted, or the executor
+     * disabled). The renderer's upload branch stands on this classification:
+     * accepted and deferred sections are Tier-A's, so their legacy upload is
+     * skipped; a rejected section stays on the legacy route alone and taints
+     * its pass (Step B).
+     */
+    enum RegisterOutcome {
+        ACCEPTED,
+        DEFERRED,
+        REJECTED
+    }
+
+    /** One registration offer's result: the registration (null unless accepted) and its classification. */
+    private record RegisterAttempt(TerrainSectionStore.Registration registration, RegisterOutcome outcome) {
+    }
+
+    /**
      * Registers one built section, uploading its bytes into the slab/factor/sorted
      * buffers. Admission is metered by the upload budget: a section that does not fit
      * this frame's budget is queued and completed by a later {@link #prepareFrame}.
@@ -170,8 +190,20 @@ final class TerrainEngineA {
      *         {@link #isRegistered} for the deferred case)
      */
     TerrainSectionStore.Registration register(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        return attemptRegister(built, generation).registration();
+    }
+
+    /**
+     * Registers one built section like {@link #register} and reports the
+     * classified outcome instead of the registration (R-55, Step A).
+     */
+    RegisterOutcome registerClassified(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        return attemptRegister(built, generation).outcome();
+    }
+
+    private RegisterAttempt attemptRegister(AsyncSectionMesher.BuiltSectionA built, long generation) {
         if (this.disabled) {
-            return null;
+            return new RegisterAttempt(null, RegisterOutcome.REJECTED);
         }
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(
                 built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
@@ -186,12 +218,14 @@ final class TerrainEngineA {
                     // in prepareFrame will refuse it forever (head-of-line).
                     this.residencyGate.noteHeadOfLine(key);
                 }
-                return null;
+                return new RegisterAttempt(null, RegisterOutcome.DEFERRED);
             }
-            return upload(built, generation);
+            TerrainSectionStore.Registration registration = upload(built, generation);
+            return new RegisterAttempt(registration,
+                    registration != null ? RegisterOutcome.ACCEPTED : RegisterOutcome.REJECTED);
         } catch (RuntimeException error) {
             disable("register", error);
-            return null;
+            return new RegisterAttempt(null, RegisterOutcome.REJECTED);
         }
     }
 
@@ -329,6 +363,9 @@ final class TerrainEngineA {
             // prints it, and in enforce mode an incomplete pass does not arm.
             TerrainResidencyGate.Report report = this.residencyGate.verify(this.passOrdinal, this.store);
             this.lastResidencyReport = report;
+            // R-55, Step B: the same verification is the taint's clearing
+            // signal — a complete pass has no legacy-only section left.
+            this.host.noteResidencyReport(report);
             if (RESIDENCY_ENFORCE && !report.complete()) {
                 return false;
             }
