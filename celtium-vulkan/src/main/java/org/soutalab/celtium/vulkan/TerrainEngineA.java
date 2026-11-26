@@ -2,7 +2,6 @@ package org.soutalab.celtium.vulkan;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import org.lwjgl.system.MemoryStack;
@@ -13,6 +12,7 @@ import static org.lwjgl.vulkan.VK10.*;
 
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
+import org.soutalab.celtium.vulkan.terrain.DeferredSectionQueue;
 import org.soutalab.celtium.vulkan.terrain.SectionDesc;
 import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
@@ -30,9 +30,10 @@ import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
  * <p>
  * Registration uploads are metered by the {@link TerrainUploadBudget}: when a frame's
  * budget is spent, registrations queue inside the engine and complete in
- * {@link #prepareFrame} as later frames admit them. A queued section's built buffers
- * stay owned by the caller until {@link #isRegistered} reports it resident — the same
- * shape as the legacy renderer's pending meshes, which live until upload completes.
+ * {@link #prepareFrame} as later frames admit them. A queued section's payload is
+ * copied into the queue's own memory at deferral (copy-on-defer, T3 design
+ * section 4.2), so the caller may free its built buffers as soon as the register
+ * call returns, whatever the outcome — the queue never holds a borrowed buffer.
  * <p>
  * The graphics side (the Tier-A pipeline with {@code terrain_a.vert}, descriptor set 0
  * extended with bindings 6/7/8 for the desc table, factor bases and factor arena) is
@@ -85,8 +86,7 @@ final class TerrainEngineA {
     private final List<SlabBuffer> slabBuffers = new ArrayList<>();
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
-    private final ArrayDeque<AsyncSectionMesher.BuiltSectionA> deferred = new ArrayDeque<>();
-    private long deferredGeneration;
+    private final DeferredSectionQueue deferred = new DeferredSectionQueue();
 
     private long framesPrepared;
     private long framesDrawn;
@@ -218,10 +218,14 @@ final class TerrainEngineA {
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(
                 built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
         this.residencyGate.expect(key);
+        // A fresh offer supersedes any queued build of the same section:
+        // the section was rebuilt, so the queued bytes are stale whatever
+        // this offer's outcome (the queue's replace discipline, T3 design
+        // section 4.2). The offer itself re-queues below when it defers.
+        this.deferred.cancel(key);
         try {
             if (!this.budget.tryAdmit(built.slabBytes())) {
-                this.deferred.addLast(built);
-                this.deferredGeneration = generation;
+                this.deferred.offer(built, generation);
                 this.residencyGate.noteMissing(key, TerrainResidencyGate.Reason.DEFERRED);
                 if (built.slabBytes() > this.budget.bytesPerFrame()) {
                     // Larger than a whole frame's budget: the FIFO head admission
@@ -240,30 +244,44 @@ final class TerrainEngineA {
     }
 
     private TerrainSectionStore.Registration upload(AsyncSectionMesher.BuiltSectionA built, long generation) {
-        TerrainSectionStore.RegisterResult result = this.store.registerDiagnosed(built, generation);
-        TerrainSectionStore.Registration registration = result.registration();
-        if (registration == null) {
+        // Two-phase registration (T3 design section 4.2): allocate the
+        // record's ranges, write every byte, and only then publish — a
+        // snapshot can never name a record whose bytes are not yet in place.
+        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation);
+        TerrainSectionStore.PendingRegistration pending = allocated.pending();
+        if (pending == null) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(
                     built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
-            this.residencyGate.noteMissing(key, result.failure() == TerrainSectionStore.RegisterFailure.OVERSIZE
+            this.residencyGate.noteMissing(key, allocated.failure() == TerrainSectionStore.RegisterFailure.OVERSIZE
                     ? TerrainResidencyGate.Reason.OVERSIZE : TerrainResidencyGate.Reason.ARENA_FULL);
             return null;
         }
-        this.residencyGate.noteResident(registration.key);
-        SlabBuffer slab = slabBuffer(registration.geometry.slabId);
-        long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
-        MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
-        if (built.rdhFactors != null) {
-            long factorAddress = this.host.factorBuffer(this.context).mappedAddress() + registration.factor.byteOffset;
-            for (int i = 0; i < built.rdhFactors.length; i++) {
-                MemoryUtil.memPutInt(factorAddress + (long) i * 4L, built.rdhFactors[i]);
+        TerrainSectionStore.Registration registration = pending.registration();
+        try {
+            SlabBuffer slab = slabBuffer(registration.geometry.slabId);
+            long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
+            MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
+            if (built.rdhFactors != null) {
+                long factorAddress = this.host.factorBuffer(this.context).mappedAddress() + registration.factor.byteOffset;
+                for (int i = 0; i < built.rdhFactors.length; i++) {
+                    MemoryUtil.memPutInt(factorAddress + (long) i * 4L, built.rdhFactors[i]);
+                }
             }
+            if (built.sortedIndices != null && registration.sorted != null) {
+                long sortedAddress = this.host.sortedBuffer(this.context).mappedAddress() + registration.sorted.byteOffset;
+                MemoryUtil.memCopy(MemoryUtil.memAddress(built.sortedIndices.getDirectBuffer()),
+                        sortedAddress, built.sortedIndices.getLength());
+            }
+        } catch (RuntimeException | Error error) {
+            // Nothing was published, so the record's ranges are referenced
+            // by no snapshot: discard returns them immediately (the
+            // two-phase form's one immediate free) instead of stranding
+            // them on the deferred currency.
+            this.store.discardUnpublished(pending);
+            throw error;
         }
-        if (built.sortedIndices != null && registration.sorted != null) {
-            long sortedAddress = this.host.sortedBuffer(this.context).mappedAddress() + registration.sorted.byteOffset;
-            MemoryUtil.memCopy(MemoryUtil.memAddress(built.sortedIndices.getDirectBuffer()),
-                    sortedAddress, built.sortedIndices.getLength());
-        }
+        this.store.publish(pending);
+        this.residencyGate.noteResident(registration.key);
         return registration;
     }
 
@@ -323,6 +341,17 @@ final class TerrainEngineA {
         return this.deferred.size();
     }
 
+    /**
+     * Removes one section's queued build, freeing the queue's copies of it:
+     * the FIFO invalidation the host drives on unregister, so an
+     * unregistered section cannot resurrect through a later drain.
+     *
+     * @return whether the section was queued here
+     */
+    boolean cancelDeferred(TerrainSectionStore.Key key) {
+        return this.deferred.cancel(key);
+    }
+
     /** The most recent per-pass residency verification, or null before the first prepared frame. */
     TerrainResidencyGate.Report lastResidencyReport() {
         return this.lastResidencyReport;
@@ -352,18 +381,28 @@ final class TerrainEngineA {
         try {
             this.budget.beginFrame();
             while (!this.deferred.isEmpty()) {
-                AsyncSectionMesher.BuiltSectionA head = this.deferred.peekFirst();
+                if (this.deferred.dropStaleHead(this.store)) {
+                    // The head's section was registered by a newer build
+                    // while this one waited: the queue dropped it (counted
+                    // as a stale-drop) instead of letting the store's
+                    // duplicate-registration exception disable the executor.
+                    continue;
+                }
+                DeferredSectionQueue.Entry head = this.deferred.peekFirst();
                 if (!this.budget.tryAdmitDeferred(head.slabBytes())) {
                     if (head.slabBytes() > this.budget.bytesPerFrame()) {
                         // The head can never fit a whole frame's budget, so the
                         // FIFO behind it is blocked permanently, not transiently.
-                        this.residencyGate.noteHeadOfLine(new TerrainSectionStore.Key(
-                                head.sectionX, head.sectionY, head.sectionZ, head.passOrdinal));
+                        this.residencyGate.noteHeadOfLine(head.key);
                     }
                     break;
                 }
                 this.deferred.pollFirst();
-                upload(head, this.deferredGeneration);
+                try {
+                    upload(head.built(), head.generation);
+                } finally {
+                    head.freeCopies();
+                }
             }
             // Per-pass residency verification (order (i)): cross-check this
             // pass' expected sections against the store before arming. The
@@ -454,6 +493,7 @@ final class TerrainEngineA {
                         + " arenaFull=" + this.residencyGate.count(TerrainResidencyGate.Reason.ARENA_FULL)
                         + " strideGate=" + this.residencyGate.count(TerrainResidencyGate.Reason.STRIDE_GATE)
                         + " buildException=" + this.residencyGate.count(TerrainResidencyGate.Reason.BUILD_EXCEPTION)
+                        + " staleDrops=" + this.deferred.staleDropCount()
                         + "]");
             }
             return any;
@@ -783,6 +823,9 @@ final class TerrainEngineA {
 
     /** Destroys every executor resource. Called from the backend's own teardown. */
     void delete() {
+        // The deferred queue's payloads are the engine's own copies
+        // (copy-on-defer), so they are freed here with the executor.
+        this.deferred.clear();
         VkDevice device = this.context.device();
         for (Slot slot : this.slots) {
             if (slot.descriptorPool != 0L) {

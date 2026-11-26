@@ -2,7 +2,6 @@ package org.soutalab.celtium.vulkan;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
-import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.Set;
 import org.lwjgl.system.MemoryStack;
@@ -12,6 +11,7 @@ import org.lwjgl.vulkan.*;
 import static org.lwjgl.vulkan.VK10.*;
 
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
+import org.soutalab.celtium.vulkan.terrain.DeferredSectionQueue;
 import org.soutalab.celtium.vulkan.terrain.SectionDesc;
 import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
@@ -74,8 +74,7 @@ final class TerrainPackEngine {
     private VulkanHostBuffer sortedBuffer;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
-    private final ArrayDeque<AsyncSectionMesher.BuiltSectionA> deferred = new ArrayDeque<>();
-    private long deferredGeneration;
+    private final DeferredSectionQueue deferred = new DeferredSectionQueue();
 
     private long framesPrepared;
     private long framesDrawn;
@@ -161,10 +160,13 @@ final class TerrainPackEngine {
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(
                 built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
         this.residencyGate.expect(key);
+        // A fresh offer supersedes any queued build of the same section,
+        // exactly as on the vanilla executor (the queue's replace
+        // discipline, T3 design section 4.2).
+        this.deferred.cancel(key);
         try {
             if (!this.budget.tryAdmit(built.slabBytes())) {
-                this.deferred.addLast(built);
-                this.deferredGeneration = generation;
+                this.deferred.offer(built, generation);
                 this.residencyGate.noteMissing(key, TerrainResidencyGate.Reason.DEFERRED);
                 if (built.slabBytes() > this.budget.bytesPerFrame()) {
                     this.residencyGate.noteHeadOfLine(key);
@@ -179,24 +181,35 @@ final class TerrainPackEngine {
     }
 
     private TerrainSectionStore.Registration upload(AsyncSectionMesher.BuiltSectionA built, long generation) {
-        TerrainSectionStore.RegisterResult result = this.store.registerDiagnosed(built, generation);
-        TerrainSectionStore.Registration registration = result.registration();
-        if (registration == null) {
+        // Two-phase registration, the vanilla executor's form (T3 design
+        // section 4.2): allocate, write every byte, then publish.
+        TerrainSectionStore.AllocationResult allocated = this.store.allocateDiagnosed(built, generation);
+        TerrainSectionStore.PendingRegistration pending = allocated.pending();
+        if (pending == null) {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(
                     built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
-            this.residencyGate.noteMissing(key, result.failure() == TerrainSectionStore.RegisterFailure.OVERSIZE
+            this.residencyGate.noteMissing(key, allocated.failure() == TerrainSectionStore.RegisterFailure.OVERSIZE
                     ? TerrainResidencyGate.Reason.OVERSIZE : TerrainResidencyGate.Reason.ARENA_FULL);
             return null;
         }
-        this.residencyGate.noteResident(registration.key);
-        VulkanHostBuffer arenaBuffer = this.host.packArenaBuffer(this.context, (int) registration.desc.slabId);
-        long vertexAddress = arenaBuffer.mappedAddress() + registration.packGeometry.byteOffset;
-        MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
-        if (built.sortedIndices != null && registration.sorted != null) {
-            long sortedAddress = sortedBuffer().mappedAddress() + registration.sorted.byteOffset;
-            MemoryUtil.memCopy(MemoryUtil.memAddress(built.sortedIndices.getDirectBuffer()),
-                    sortedAddress, built.sortedIndices.getLength());
+        TerrainSectionStore.Registration registration = pending.registration();
+        try {
+            VulkanHostBuffer arenaBuffer = this.host.packArenaBuffer(this.context, (int) registration.desc.slabId);
+            long vertexAddress = arenaBuffer.mappedAddress() + registration.packGeometry.byteOffset;
+            MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
+            if (built.sortedIndices != null && registration.sorted != null) {
+                long sortedAddress = sortedBuffer().mappedAddress() + registration.sorted.byteOffset;
+                MemoryUtil.memCopy(MemoryUtil.memAddress(built.sortedIndices.getDirectBuffer()),
+                        sortedAddress, built.sortedIndices.getLength());
+            }
+        } catch (RuntimeException | Error error) {
+            // Unpublished: no snapshot names the ranges, so the discard
+            // returns them immediately (see TerrainEngineA's upload).
+            this.store.discardUnpublished(pending);
+            throw error;
         }
+        this.store.publish(pending);
+        this.residencyGate.noteResident(registration.key);
         return registration;
     }
 
@@ -229,6 +242,16 @@ final class TerrainPackEngine {
 
     int deferredCount() {
         return this.deferred.size();
+    }
+
+    /**
+     * Removes one section's queued build, freeing the queue's copies of it:
+     * the FIFO invalidation the host drives on unregister.
+     *
+     * @return whether the section was queued here
+     */
+    boolean cancelDeferred(TerrainSectionStore.Key key) {
+        return this.deferred.cancel(key);
     }
 
     /** The most recent per-pass residency verification, or null before the first prepared frame. */
@@ -266,16 +289,24 @@ final class TerrainPackEngine {
         try {
             this.budget.beginFrame();
             while (!this.deferred.isEmpty()) {
-                AsyncSectionMesher.BuiltSectionA head = this.deferred.peekFirst();
+                if (this.deferred.dropStaleHead(this.store)) {
+                    // Registered by a newer build while it waited: dropped
+                    // and counted by the queue, never an exception.
+                    continue;
+                }
+                DeferredSectionQueue.Entry head = this.deferred.peekFirst();
                 if (!this.budget.tryAdmitDeferred(head.slabBytes())) {
                     if (head.slabBytes() > this.budget.bytesPerFrame()) {
-                        this.residencyGate.noteHeadOfLine(new TerrainSectionStore.Key(
-                                head.sectionX, head.sectionY, head.sectionZ, head.passOrdinal));
+                        this.residencyGate.noteHeadOfLine(head.key);
                     }
                     break;
                 }
                 this.deferred.pollFirst();
-                upload(head, this.deferredGeneration);
+                try {
+                    upload(head.built(), head.generation);
+                } finally {
+                    head.freeCopies();
+                }
             }
             // The variant's arming rule: complete residency or nothing. The
             // pack route's legacy batches draw the whole pass whenever any
@@ -327,6 +358,7 @@ final class TerrainPackEngine {
                         + " arenaFull=" + this.residencyGate.count(TerrainResidencyGate.Reason.ARENA_FULL)
                         + " strideGate=" + this.residencyGate.count(TerrainResidencyGate.Reason.STRIDE_GATE)
                         + " buildException=" + this.residencyGate.count(TerrainResidencyGate.Reason.BUILD_EXCEPTION)
+                        + " staleDrops=" + this.deferred.staleDropCount()
                         + "]");
             }
             return any;
@@ -555,6 +587,9 @@ final class TerrainPackEngine {
 
     /** Destroys every executor resource. Called from the host's teardown, before the arena buffers. */
     void delete() {
+        // The deferred queue's payloads are the engine's own copies
+        // (copy-on-defer), so they are freed here with the executor.
+        this.deferred.clear();
         VkDevice device = this.context.device();
         for (Slot slot : this.slots) {
             if (slot.descriptorPool != 0L) {

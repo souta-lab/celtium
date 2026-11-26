@@ -2,7 +2,9 @@ package org.soutalab.celtium.vulkan.terrain;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The resident SectionDesc table of the new architecture: every loaded, non-empty
@@ -145,6 +147,8 @@ public final class TerrainSectionStore {
 
     private final List<Registration> records = new ArrayList<>();
     private final HashMap<Key, Registration> byKey = new HashMap<>();
+    /** Keys with an allocated-but-unpublished record (the two-phase form, {@link #allocateDiagnosed}). */
+    private final Set<Key> pendingKeys = new HashSet<>();
     private int[] descImage = new int[0];
     private int[] factorBaseImage = new int[0];
     private boolean imageDirty = true;
@@ -155,6 +159,34 @@ public final class TerrainSectionStore {
 
     /** The outcome of a diagnosed registration: exactly one of the two fields is non-null. */
     public record RegisterResult(Registration registration, RegisterFailure failure) {
+    }
+
+    /**
+     * An allocated-but-unpublished record (the two-phase registration form,
+     * T3 design section 4.2): its arena ranges are reserved and its desc
+     * placement is assigned, but it is in neither the record list nor the
+     * packed image, so no snapshot can name it. Exactly one of
+     * {@link #publish} / {@link #discardUnpublished} settles it.
+     */
+    public static final class PendingRegistration {
+        private final Registration registration;
+        /** The pack arena holding the ranges, or {@code null} for a vanilla record. */
+        private final PackArena packArena;
+        private boolean settled;
+
+        private PendingRegistration(Registration registration, PackArena packArena) {
+            this.registration = registration;
+            this.packArena = packArena;
+        }
+
+        /** The record being placed; its {@code recordIndex} is assigned at publish. */
+        public Registration registration() {
+            return this.registration;
+        }
+    }
+
+    /** The outcome of a diagnosed allocation: exactly one of the two fields is non-null. */
+    public record AllocationResult(PendingRegistration pending, RegisterFailure failure) {
     }
 
     /**
@@ -173,16 +205,94 @@ public final class TerrainSectionStore {
      * same silent {@code null}.
      */
     public synchronized RegisterResult registerDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        AllocationResult allocated = allocateDiagnosed(built, generation);
+        if (allocated.pending() == null) {
+            return new RegisterResult(null, allocated.failure());
+        }
+        return new RegisterResult(publish(allocated.pending()), null);
+    }
+
+    /**
+     * Phase one of the two-phase registration: reserves the record's arena
+     * ranges and assigns its desc placement, without publishing it — the
+     * record enters neither the record list nor the packed image, so a
+     * snapshot taken before {@link #publish} cannot name ranges whose bytes
+     * are not yet written. The caller writes the bytes, then publishes; on
+     * any failure in between it discards instead (see
+     * {@link #discardUnpublished}).
+     */
+    public synchronized AllocationResult allocateDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation) {
         Key key = new Key(built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
-        if (this.byKey.containsKey(key)) {
+        if (this.byKey.containsKey(key) || this.pendingKeys.contains(key)) {
             throw new IllegalStateException("section already registered: " + key);
         }
         if (built.oversize || built.descDraft.oversize()) {
-            return new RegisterResult(null, RegisterFailure.OVERSIZE);
+            return new AllocationResult(null, RegisterFailure.OVERSIZE);
         }
-        if (built.stride != 16) {
-            return registerPackDiagnosed(built, key, generation);
+        AllocationResult result = built.stride != 16
+                ? allocatePack(built, key, generation)
+                : allocateVanilla(built, key, generation);
+        if (result.pending() != null) {
+            this.pendingKeys.add(key);
         }
+        return result;
+    }
+
+    /**
+     * Phase two: makes an allocated record visible — it joins the record
+     * list and the packed image (the image dirties and its generation
+     * advances). Called only after the record's bytes are fully written.
+     */
+    public synchronized Registration publish(PendingRegistration pending) {
+        if (pending.settled) {
+            throw new IllegalStateException("pending registration already settled: "
+                    + pending.registration.key);
+        }
+        pending.settled = true;
+        Registration registration = pending.registration;
+        registration.recordIndex = this.records.size();
+        this.records.add(registration);
+        this.byKey.put(registration.key, registration);
+        this.pendingKeys.remove(registration.key);
+        this.imageDirty = true;
+        this.imageGeneration++;
+        return registration;
+    }
+
+    /**
+     * Rolls an unpublished allocation back: every range returns to its
+     * arena <em>immediately</em>, not deferred against the timeline. That
+     * is safe for exactly this case — the record was never published, so
+     * no snapshot names its ranges and no submission can read them — and
+     * it is the one immediate-free the two-phase form licenses (the
+     * INV-1a exception of the T3 design, section 4.2).
+     */
+    public synchronized void discardUnpublished(PendingRegistration pending) {
+        if (pending.settled) {
+            throw new IllegalStateException("pending registration already settled: "
+                    + pending.registration.key);
+        }
+        pending.settled = true;
+        Registration registration = pending.registration;
+        this.pendingKeys.remove(registration.key);
+        if (registration.pack()) {
+            pending.packArena.geometry.free(registration.packGeometry);
+            pending.packArena.quadSpace.free(registration.packQuadSpace);
+        } else {
+            this.geometryAllocator.free(registration.geometry);
+            this.quadSpaceAllocator.free(registration.quadSpace);
+            if (registration.factor != null) {
+                this.factorAllocator.free(registration.factor);
+            }
+        }
+        if (registration.sorted != null) {
+            this.sortedAllocator.free(registration.sorted);
+        }
+    }
+
+    /** The vanilla-space half of {@link #allocateDiagnosed}: paired slab placement, unpublished. */
+    private AllocationResult allocateVanilla(AsyncSectionMesher.BuiltSectionA built,
+                                             Key key, long generation) {
         long vertexBytes = (long) built.totalQuads * 4 * 16;
         // Geometry and quad space must land in the same slab, so they are placed
         // as a pair, slab by slab. Two independent first-fit allocations diverge
@@ -206,7 +316,7 @@ public final class TerrainSectionStore {
             geometry = null;
         }
         if (geometry == null) {
-            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+            return new AllocationResult(null, RegisterFailure.ARENA_FULL);
         }
         TerrainSlabAllocator.Allocation factor = null;
         TerrainSlabAllocator.Allocation sorted = null;
@@ -224,7 +334,7 @@ public final class TerrainSectionStore {
             if (quadSpace != null) this.quadSpaceAllocator.free(quadSpace);
             if (factor != null) this.factorAllocator.free(factor);
             if (sorted != null) this.sortedAllocator.free(sorted);
-            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+            return new AllocationResult(null, RegisterFailure.ARENA_FULL);
         }
 
         SectionDesc desc = built.descDraft;
@@ -235,29 +345,25 @@ public final class TerrainSectionStore {
         if (sorted != null) {
             desc.sortedIndexBase = sorted.byteOffset / 4;
         }
-        Registration registration = new Registration(key, desc, this.records.size(),
+        Registration registration = new Registration(key, desc, -1,
                 geometry, quadSpace, factor, sorted, built, null, null);
-        this.records.add(registration);
-        this.byKey.put(key, registration);
-        this.imageDirty = true;
-        this.imageGeneration++;
-        return new RegisterResult(registration, null);
+        return new AllocationResult(new PendingRegistration(registration, null), null);
     }
 
     /**
-     * The pack-space half of {@link #registerDiagnosed} (R-17 candidate
+     * The pack-space half of {@link #allocateDiagnosed} (R-17 candidate
      * 2-MIN): a foreign-format section is placed in its stride's own arena
      * pair, byte-for-byte as presented. No factor area is allocated (the
      * stream is self-contained) and the 16-byte slabs are never touched, so
      * the Tier-A invariant — the main slab holds vanilla-format geometry
      * only — is kept by construction.
      */
-    private RegisterResult registerPackDiagnosed(AsyncSectionMesher.BuiltSectionA built,
-                                                 Key key, long generation) {
+    private AllocationResult allocatePack(AsyncSectionMesher.BuiltSectionA built,
+                                          Key key, long generation) {
         PackArena arena = this.packArenasByStride.get(built.stride);
         if (arena == null) {
             if (this.packArenas.size() >= MAX_PACK_ARENAS) {
-                return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+                return new AllocationResult(null, RegisterFailure.ARENA_FULL);
             }
             arena = new PackArena(this.packArenas.size(), built.stride);
             this.packArenasByStride.put(built.stride, arena);
@@ -279,7 +385,7 @@ public final class TerrainSectionStore {
             geometry = null;
         }
         if (geometry == null) {
-            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+            return new AllocationResult(null, RegisterFailure.ARENA_FULL);
         }
         TerrainSlabAllocator.Allocation sorted = null;
         if (built.sortedIndices != null) {
@@ -287,7 +393,7 @@ public final class TerrainSectionStore {
             if (sorted == null) {
                 arena.geometry.free(geometry);
                 arena.quadSpace.free(quadSpace);
-                return new RegisterResult(null, RegisterFailure.ARENA_FULL);
+                return new AllocationResult(null, RegisterFailure.ARENA_FULL);
             }
         }
         SectionDesc desc = built.descDraft;
@@ -299,13 +405,9 @@ public final class TerrainSectionStore {
         if (sorted != null) {
             desc.sortedIndexBase = sorted.byteOffset / 4;
         }
-        Registration registration = new Registration(key, desc, this.records.size(),
+        Registration registration = new Registration(key, desc, -1,
                 null, null, null, sorted, built, geometry, quadSpace);
-        this.records.add(registration);
-        this.byKey.put(key, registration);
-        this.imageDirty = true;
-        this.imageGeneration++;
-        return new RegisterResult(registration, null);
+        return new AllocationResult(new PendingRegistration(registration, arena), null);
     }
 
     /**

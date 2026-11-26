@@ -74,6 +74,23 @@ public final class AsyncSectionMesher {
         }
 
         /**
+         * A copy of this section that presents {@code vertexData} and
+         * {@code sortedIndices} in place of the borrowed source buffers, with
+         * the factor stream cloned: the deferred-upload queue's copy-on-defer
+         * form (T3 design section 4.2). Every other field — placement draft,
+         * bucket counts, oversize verdict — is this section's own; the desc
+         * draft is shared, not copied, because it is a value the mesher made
+         * for this section alone and only registration writes into it.
+         */
+        static BuiltSectionA rebuild(BuiltSectionA source, ByteBuffer vertexData,
+                                     NativeBuffer sortedIndices) {
+            return new BuiltSectionA(source.sectionX, source.sectionY, source.sectionZ,
+                    source.passOrdinal, vertexData, source.vertexBytes, source.stride,
+                    source.rdhFactors == null ? null : source.rdhFactors.clone(),
+                    sortedIndices, source.bucketCounts, source.oversize, source.descDraft);
+        }
+
+        /**
          * Bytes the store reserves in the slab: the vertices followed by the per-quad
          * factor stream. The factor area is reserved even when the stream is absent
          * (it is uploaded as zeros), so the vertex shader's factor addressing —

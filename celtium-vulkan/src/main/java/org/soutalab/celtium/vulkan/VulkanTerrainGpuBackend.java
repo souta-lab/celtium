@@ -19080,13 +19080,24 @@ this.frameBufferOpen = false;
                 if (candidate != null) {
                     java.util.List<org.soutalab.celtium.vulkan.terrain.TerrainSectionStore.Registration>
                             records = candidate.packRecords();
-                    if (!records.isEmpty()
+                    // The entrance reads the deferred queue beside the
+                    // resident records (T3 design section 4.2): a pass
+                    // whose sections are all still queued has no resident
+                    // records yet, and prepareFrame is the queue's only
+                    // drain — gating the call on records alone starved the
+                    // queue forever. With only the queue non-empty,
+                    // prepareFrame drains and does not arm (residency is
+                    // incomplete), and the legacy loop below draws the pass.
+                    if ((!records.isEmpty() || candidate.deferredCount() > 0)
                             && packHost.store().recordCount() <= modPipeline.celtium$glsmRegionTableSlots()
                             && candidate.prepareFrame(this.commandBuffer, this.frameSlot,
                                     celtium$gpuTerrainCensusVp(matrices, shadowStage),
                                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z)) {
                         packEngine = candidate;
-                        packVariantRecords = records;
+                        // Re-read after the drain: sections this
+                        // prepareFrame admitted are resident now, and
+                        // their region offsets belong in the table.
+                        packVariantRecords = candidate.packRecords();
                         packVariantArmed = true;
                     }
                 }

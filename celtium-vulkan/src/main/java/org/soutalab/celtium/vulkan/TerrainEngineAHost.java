@@ -483,6 +483,18 @@ final class TerrainEngineAHost {
             TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
             this.store.unregister(key, releaseStamp());
             this.residencyGate.forget(key);
+            // The deferred queues are invalidated with the record (T3
+            // design section 4.2): a queued build of an unregistered
+            // section must never resurrect through a later drain. Keys
+            // carry their pass ordinal and each executor queues only its
+            // own pass' sections, so the calls into the other executors
+            // are plain misses.
+            for (TerrainEngineA engine : this.engines.values()) {
+                engine.cancelDeferred(key);
+            }
+            for (TerrainPackEngine engine : this.packEngines.values()) {
+                engine.cancelDeferred(key);
+            }
         }
         this.store.collectReleased(completedStamp());
     }
