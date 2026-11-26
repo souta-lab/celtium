@@ -27,6 +27,11 @@ class TierASlabCapacityTest {
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineA.java");
     }
 
+    private static String hostSource() throws IOException {
+        return readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
+    }
+
     /** The upload body: from its signature to the unregister delegate that follows it. */
     private static String uploadRegion(String source) {
         int start = source.indexOf("private TerrainSectionStore.Registration upload(");
@@ -43,17 +48,17 @@ class TierASlabCapacityTest {
         return source.substring(start, end);
     }
 
-    /** The draw loop: from its signature to the buffer section that follows it. */
+    /** The draw loop: from its signature to the classified type that follows it. */
     private static String recordDrawsRegion(String source) {
         int start = source.indexOf("boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex, long recordingEpoch)");
-        int end = source.indexOf("int liveSlabBufferCount()", start);
+        int end = source.indexOf("static final class SlabCapacityException", start);
         assertTrue(start >= 0 && end > start, "the recordDraws region is located");
         return source.substring(start, end);
     }
 
-    /** The slab buffer constructor: from its signature to its first accessor. */
+    /** The slab buffer constructor: from its signature to its first accessor (on the host since T3 slice S4). */
     private static String slabBufferConstructorRegion(String source) {
-        int start = source.indexOf("SlabBuffer(long sizeBytes, int usageFlags)");
+        int start = source.indexOf("SlabBuffer(VulkanContext context, long sizeBytes, int usageFlags)");
         int end = source.indexOf("long buffer() {", start);
         assertTrue(start >= 0 && end > start, "the SlabBuffer constructor region is located");
         return source.substring(start, end);
@@ -66,15 +71,18 @@ class TierASlabCapacityTest {
         assertTrue(source.contains(
                         "static final class SlabCapacityException extends IllegalStateException"),
                 "the capacity refusal has a dedicated classified type");
-        String constructor = slabBufferConstructorRegion(source);
+        String host = hostSource();
+        String constructor = slabBufferConstructorRegion(host);
         int allocate = constructor.indexOf("allocator.allocate(");
-        int wrap = constructor.indexOf("throw new SlabCapacityException(refusal);");
+        int wrap = constructor.indexOf("throw new TerrainEngineA.SlabCapacityException(refusal);");
         assertTrue(allocate >= 0 && wrap > allocate,
                 "the allocate call inside SlabBuffer is wrapped into the classified type");
         assertTrue(constructor.contains("catch (IllegalStateException refusal)"),
                 "the wrap catches the allocator's refusal type at the call site");
         assertFalse(source.contains("cannot serve") || source.contains("out of memory"),
                 "the classification never matches the refusal's message text");
+        assertFalse(host.contains("cannot serve") || host.contains("out of memory"),
+                "the classification never matches the refusal's message text (host side)");
     }
 
     /** On capacity, upload discards the unpublished record and returns the refusal instead of throwing into the disable catch. */
@@ -112,7 +120,7 @@ class TierASlabCapacityTest {
     @Test
     void residencyIsNotedOnlyAfterMaterialization() throws IOException {
         String upload = uploadRegion(engineSource());
-        int materialize = upload.indexOf("slabBuffer(registration.geometry.slabId)");
+        int materialize = upload.indexOf("geometrySlabBuffer(this.context, registration.geometry.slabId)");
         int resident = upload.indexOf("noteResident(registration.key)");
         assertTrue(materialize >= 0 && resident > materialize,
                 "noteResident stands after the slab materialization it certifies");

@@ -108,7 +108,8 @@ class TerrainEngineASharedBuffersTest {
         assertTrue(enginesDeleted >= 0, "the host deletes its engines");
         for (String bufferDelete : new String[] {
                 "this.descBuffers[slot].delete()", "this.factorBaseBuffers[slot].delete()",
-                "this.factorBuffer.delete()", "this.sortedBuffer.delete()"}) {
+                "this.factorBuffer.delete()", "this.sortedBuffer.delete()",
+                "geometrySlab.delete()"}) {
             assertTrue(delete.indexOf(bufferDelete) > enginesDeleted,
                     bufferDelete + " runs only after every engine is deleted");
             assertFalse(engine.contains(bufferDelete),

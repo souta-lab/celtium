@@ -45,14 +45,16 @@ class TerrainEmptySlabCopyContractTest {
     @Test
     void slabBuffersMaterializeOnlyAtUploadAndDrawBind() throws IOException {
         String source = readSource(ENGINE);
-        assertTrue(source.contains("SlabBuffer slab = slabBuffer(registration.geometry.slabId);"),
+        assertTrue(source.contains(
+                        "TerrainEngineAHost.SlabBuffer slab = this.host.geometrySlabBuffer(this.context, registration.geometry.slabId);"),
                 "upload materializes the slab its registration just landed in (never an empty copy)");
-        assertTrue(source.contains("slab = slabBuffer(s);"),
+        assertTrue(source.contains("slab = this.host.geometrySlabBuffer(this.context, s);"),
                 "the draw bind materializes armed slabs (inside prescription A's"
                         + " capacity receptacle since the Tier-A prescription A landing)");
-        int sites = source.split("slabBuffer\\(", -1).length - 1;
-        assertEquals(3, sites,
-                "slabBuffer( appears at the definition and exactly those two call sites;"
+        int sites = source.split("geometrySlabBuffer\\(", -1).length - 1;
+        assertEquals(2, sites,
+                "geometrySlabBuffer( appears at exactly those two call sites in the engine"
+                        + " (the definition lives on the host since T3 slice S4);"
                         + " a new materialization site must be added here consciously");
     }
 

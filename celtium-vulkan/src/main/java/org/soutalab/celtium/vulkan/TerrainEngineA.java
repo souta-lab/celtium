@@ -2,15 +2,12 @@ package org.soutalab.celtium.vulkan;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
-import java.util.ArrayList;
-import java.util.List;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
 
 import static org.lwjgl.vulkan.VK10.*;
 
-import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
 import org.soutalab.celtium.vulkan.terrain.DeferredSectionQueue;
 import org.soutalab.celtium.vulkan.terrain.SectionDesc;
@@ -82,16 +79,12 @@ final class TerrainEngineA {
 
     // The resident GPU images of the store (desc table, factor bases) and the
     // factor / sorted arenas are the host's, shared by every pass (R-15): this
-    // executor reaches them through the host's accessors below.
-    // Geometry slabs (wave-2 item 3): each slab's VkBuffer is bound to a dedicated
-    // allocation of the host's shared hal SlabAllocator (SlabAllocator.bindBuffer),
-    // not to a private vkAllocateMemory as a VulkanHostBuffer would make. The
-    // allocator is host-visible so uploads still write through the mapping, at the
-    // allocation's offset. It is shared by every pass (designer audit 2026-11-25,
-    // Stage 4 item 5-②): one allocator caps the terrain geometry slabs at the
-    // shared maximum instead of multiplying it by the pass count, and the host —
-    // not this engine — deletes it, after every engine's slab buffers.
-    private final List<SlabBuffer> slabBuffers = new ArrayList<>();
+    // executor reaches them through the host's accessors below. The geometry
+    // slabs' VkBuffers are the host's too (T3 slice S4): one buffer per
+    // logical slab for every pass, over the host's shared hal slab allocator,
+    // reached through the host's geometry slab accessor at the upload and
+    // draw-bind seats below — this executor creates, holds and deletes none
+    // of them, and the host deletes them after every engine.
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
     private final DeferredSectionQueue deferred = new DeferredSectionQueue();
@@ -168,20 +161,6 @@ final class TerrainEngineA {
      */
     boolean hasLiveWork() {
         return !this.disabled && (this.store.recordCount() > 0 || !this.deferred.isEmpty());
-    }
-
-    /**
-     * The completion value slab releases are stamped with: the context's slab
-     * release value ({@link VulkanContext#celtium$slabReleaseValue()}), which
-     * on a timeline device is the frame timeline's last allocated value, so
-     * collection waits for real GPU completion, and off a timeline device is
-     * the drain serial. Until Stage 2 landed this branch stamped 0 and the
-     * allocator's teardown (its delete frees live slabs outright) was what
-     * retired slab memory in practice; the Stage 3 currency keying is what the
-     * release waits on now.
-     */
-    private long slabReleaseValue() {
-        return this.context.celtium$slabReleaseValue();
     }
 
     private void disable(String what, RuntimeException error) {
@@ -292,7 +271,7 @@ final class TerrainEngineA {
         }
         TerrainSectionStore.Registration registration = pending.registration();
         try {
-            SlabBuffer slab = slabBuffer(registration.geometry.slabId);
+            TerrainEngineAHost.SlabBuffer slab = this.host.geometrySlabBuffer(this.context, registration.geometry.slabId);
             long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
             MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
             if (built.rdhFactors != null) {
@@ -653,15 +632,15 @@ final class TerrainEngineA {
                 if (!slot.armed[s]) {
                     continue;
                 }
-                SlabBuffer slab;
+                TerrainEngineAHost.SlabBuffer slab;
                 try {
-                    slab = slabBuffer(s);
+                    slab = this.host.geometrySlabBuffer(this.context, s);
                 } catch (SlabCapacityException capacity) {
                     // Prescription A receptacle: a slab that cannot materialize
                     // is skipped for this frame only. The remaining slabs still
                     // draw, nothing is disabled, and a later frame retries the
-                    // materialization (the slab stays uncreated, so slabBuffer
-                    // re-attempts it on the next armed frame).
+                    // materialization (the slab stays uncreated, so the host
+                    // accessor re-attempts it on the next armed frame).
                     continue;
                 }
                 vertexBuffers.put(0, slab.buffer());
@@ -690,22 +669,11 @@ final class TerrainEngineA {
     // Buffers
     // ----------------------------------------------------------------------------------
 
-    /** {@return how many of this pass' slab buffers have been created} (the census's per-pass device count). */
-    int liveSlabBufferCount() {
-        int count = 0;
-        for (SlabBuffer buffer : this.slabBuffers) {
-            if (buffer != null) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     /**
      * The classified form of a slab-allocator serve refusal (prescription A of
      * the Tier-A disable diagnosis, 2026-11-26): the shared terrainGeometry
      * pool cannot materialize one more slab for this pass. It is raised only at
-     * the {@code SlabAllocator.allocate} call inside {@link SlabBuffer}'s
+     * the {@code SlabAllocator.allocate} call inside {@code TerrainEngineAHost.SlabBuffer}'s
      * constructor — never by matching the refusal's message text — so callers
      * can tell "this section/slab does not fit right now" apart from a genuine
      * device fault: capacity maps to a rejected registration (with the store
@@ -716,123 +684,6 @@ final class TerrainEngineA {
     static final class SlabCapacityException extends IllegalStateException {
         SlabCapacityException(IllegalStateException cause) {
             super(cause.getMessage(), cause);
-        }
-    }
-
-    private SlabBuffer slabBuffer(int slab) {
-        while (this.slabBuffers.size() <= slab) {
-            this.slabBuffers.add(null);
-        }
-        SlabBuffer buffer = this.slabBuffers.get(slab);
-        if (buffer == null) {
-            buffer = new SlabBuffer(this.store.geometryAllocator().slabBytes(),
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            this.slabBuffers.set(slab, buffer);
-        }
-        return buffer;
-    }
-
-    /**
-     * One geometry slab's {@code VkBuffer}, bound to a dedicated allocation of the
-     * host's shared host-visible hal {@link SlabAllocator} (wave-2 item 3). The buffer owns
-     * no {@code VkDeviceMemory} of its own: the allocator's slab is its memory, bound
-     * through {@link SlabAllocator#bindBuffer} at the allocation's offset, and the
-     * upload mapping is the allocator's mapping plus that offset. A slab-sized request
-     * occupies a whole allocator slab (or a dedicated oversized slab when the buffer's
-     * memory requirements round past the slab size), so the live
-     * {@code VkDeviceMemory} count stays the slab count, as the design's memory
-     * contract requires. Deletion mirrors {@link VulkanBuffer}: an open recording
-     * defers the destroy and the deferred release to the context's retired list.
-     */
-    private final class SlabBuffer {
-        private long handle = VK_NULL_HANDLE;
-        private SlabAllocator.SlabAllocation allocation;
-        private long mapped;
-
-        SlabBuffer(long sizeBytes, int usageFlags) {
-            VkDevice device = TerrainEngineA.this.context.device();
-            long createdBuffer = VK_NULL_HANDLE;
-            SlabAllocator.SlabAllocation createdAllocation = null;
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
-                        .size(sizeBytes)
-                        .usage(usageFlags)
-                        .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
-                LongBuffer handleBuffer = stack.mallocLong(1);
-                check(vkCreateBuffer(device, createInfo, null, handleBuffer),
-                        "vkCreateBuffer(terrain slab, " + sizeBytes + " bytes)");
-                createdBuffer = handleBuffer.get(0);
-                VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
-                vkGetBufferMemoryRequirements(device, createdBuffer, requirements);
-                // The allocator is the host's, shared by every pass: the memory
-                // type is read from this buffer's own requirement bits, and the
-                // host keeps the first buffer's choice for all of them (every
-                // pass' slab buffers carry the same usage over the same slab
-                // size, so the choice cannot differ between passes).
-                int memoryType = TerrainEngineA.this.context.memoryTypeIndex(
-                        requirements.memoryTypeBits(),
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        "a host-visible terrain slab of " + sizeBytes + " bytes");
-                SlabAllocator allocator = TerrainEngineA.this.host.geometrySlabAllocator(
-                        TerrainEngineA.this.context, memoryType,
-                        TerrainEngineA.this.store.geometryAllocator().slabBytes());
-                try {
-                    createdAllocation = allocator.allocate(
-                            requirements.size(), requirements.alignment());
-                } catch (IllegalStateException refusal) {
-                    // The classification is structural, by call site: the slab
-                    // allocator's serve refusal is the one failure upload and
-                    // the draw loop may treat as capacity (prescription A). Its
-                    // message text is never matched. Device errors from the
-                    // surrounding calls (buffer creation, binding, memory-type
-                    // selection) keep their plain form and still disable.
-                    throw new SlabCapacityException(refusal);
-                }
-                allocator.bindBuffer(createdBuffer, createdAllocation);
-            } catch (RuntimeException | Error error) {
-                if (createdBuffer != VK_NULL_HANDLE) {
-                    vkDestroyBuffer(device, createdBuffer, null);
-                }
-                if (createdAllocation != null) {
-                    createdAllocation.owner().release(createdAllocation, slabReleaseValue());
-                }
-                throw error;
-            }
-            this.handle = createdBuffer;
-            this.allocation = createdAllocation;
-            this.mapped = createdAllocation.owner().mappedAddress(createdAllocation);
-        }
-
-        long buffer() {
-            return this.handle;
-        }
-
-        long mappedAddress() {
-            return this.mapped;
-        }
-
-        void delete() {
-            if (this.handle == VK_NULL_HANDLE) {
-                return;
-            }
-            if (TerrainEngineA.this.context.celtium$recordingOpen()) {
-                // An open recording may name this buffer; hand the destroy and
-                // the slab release to the context's slab retire list, the same
-                // deferral every other slab-backed buffer uses.
-                long handle = this.handle;
-                SlabAllocator.SlabAllocation allocation = this.allocation;
-                this.handle = VK_NULL_HANDLE;
-                this.allocation = null;
-                TerrainEngineA.this.context.celtium$retireSlabBuffer(handle, allocation,
-                        "terrain-a.slabBuffer.delete");
-                return;
-            }
-            vkDestroyBuffer(TerrainEngineA.this.context.device(), this.handle, null);
-            this.handle = VK_NULL_HANDLE;
-            if (this.allocation != null) {
-                this.allocation.owner().release(this.allocation, slabReleaseValue());
-                this.allocation = null;
-            }
         }
     }
 
@@ -961,14 +812,11 @@ final class TerrainEngineA {
                 if (slot.counts[s] != null) slot.counts[s].delete();
             }
         }
-        for (SlabBuffer slab : this.slabBuffers) {
-            if (slab != null) slab.delete();
-        }
-        // The slab allocator, the shared index buffer and the shared resident
-        // buffers (desc table, factor bases, factor and sorted arenas, R-15)
-        // are the host's, shared with the other passes' engines: the host
-        // deletes them after every engine, so nothing is freed here while a
-        // sibling pass still draws.
+        // The slab buffers, the slab allocator, the shared index buffer and
+        // the shared resident buffers (desc table, factor bases, factor and
+        // sorted arenas, R-15) are the host's, shared with the other passes'
+        // engines: the host deletes them after every engine, so nothing is
+        // freed here while a sibling pass still draws.
         if (this.pipeline != 0L) {
             vkDestroyPipeline(device, this.pipeline, null);
         }

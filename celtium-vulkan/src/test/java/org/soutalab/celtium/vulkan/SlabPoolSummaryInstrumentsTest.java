@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * BO convergence design §5.1 (2026-11-26): the slab pool summary gains the two readings the
  * convergence measurement turns on - every oversized slab's size next to its count, and the
  * terrain geometry allocator's row (device live slabs and used bytes against the logical
- * ledger's slab count and live bytes, with each pass' created slab buffer count). The device
+ * ledger's slab count and live bytes, with the host's shared slab buffer count). The device
  * side cannot be built without a GPU, so the wiring is pinned as source contracts, in the
  * style of {@link PackLiveWorkGateTest}; the size list's text form is a pure function and is
  * exercised directly.
@@ -63,7 +63,7 @@ class SlabPoolSummaryInstrumentsTest {
     }
 
     @Test
-    void terrainEntrySetsDeviceAgainstLogicalWithPerPassBufferCounts() throws IOException {
+    void terrainEntrySetsDeviceAgainstLogicalWithTheSharedBufferCount() throws IOException {
         String host = readSource(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
         String entry = methodSlice(host, "String terrainSlabSummary()", 2600);
@@ -78,17 +78,17 @@ class SlabPoolSummaryInstrumentsTest {
                 "the logical slab count is reported");
         assertTrue(entry.contains(",logicalLiveBytes=") && entry.contains("logical.liveBytes()"),
                 "the logical live bytes are reported");
-        assertTrue(entry.contains(",engineSlabBuffers=[") && entry.contains("liveSlabBufferCount()"),
-                "each executor's created slab buffer count is listed");
+        assertTrue(entry.contains(",hostSlabBuffers=") && entry.contains("liveSlabBufferCount()"),
+                "the host's shared slab buffer count is reported against the logical count");
     }
 
     @Test
     void liveSlabBufferCountCountsCreatedBuffersOnly() throws IOException {
-        String engine = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineA.java");
-        String count = methodSlice(engine, "int liveSlabBufferCount()", 400);
-        assertTrue(count.contains("for (SlabBuffer buffer : this.slabBuffers)"),
-                "the count walks this pass' slab buffer slots");
+        String host = readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
+        String count = methodSlice(host, "int liveSlabBufferCount()", 400);
+        assertTrue(count.contains("for (SlabBuffer buffer : this.geometrySlabBuffers)"),
+                "the count walks the host's shared slab buffer slots");
         assertTrue(count.contains("if (buffer != null)"),
                 "only created (non-null) buffers count");
     }
