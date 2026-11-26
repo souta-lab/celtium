@@ -137,6 +137,47 @@ final class BackendDiagnostics {
         return out.toString();
     }
 
+    /**
+     * The non-quad emitter census (R-23 strip/fan occurrence census): how many non-quad groups the
+     * drain offered the emitter, by GL mode, and how many of them the emitter itself drew - the
+     * difference fell back to the direct draw inside the emitter (or was refused a record, which
+     * {@code batchDroppedDraws} counts). Zero modes are omitted; the field prints unconditionally,
+     * so a scene with no non-quad groups reads as two empty lists rather than a missing field.
+     */
+    private String nonQuadByModeSummary() {
+        return "offered=" + nonQuadModeCounts(b.nonQuadOfferedByMode)
+                + " emitted=" + nonQuadModeCounts(b.nonQuadEmittedByMode);
+    }
+
+    private static String nonQuadModeCounts(long[] counts) {
+        StringBuilder out = new StringBuilder();
+        for (int mode = 0; mode < counts.length; mode++) {
+            if (counts[mode] == 0L) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(',');
+            }
+            out.append(glPrimitiveModeName(mode)).append('=').append(counts[mode]);
+        }
+        return out.toString();
+    }
+
+    /** The GL primitive modes 0-7 by name: the census arrays' index space. */
+    private static String glPrimitiveModeName(int mode) {
+        switch (mode) {
+            case 0: return "GL_POINTS";
+            case 1: return "GL_LINES";
+            case 2: return "GL_LINE_LOOP";
+            case 3: return "GL_LINE_STRIP";
+            case 4: return "GL_TRIANGLES";
+            case 5: return "GL_TRIANGLE_STRIP";
+            case 6: return "GL_TRIANGLE_FAN";
+            case 7: return "GL_QUADS";
+            default: return "mode" + mode;
+        }
+    }
+
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
@@ -187,6 +228,7 @@ final class BackendDiagnostics {
                 + " " + (b.frameArena == null ? "frameArena=not-created" : b.frameArena.describe())
                 + " frameRing=[" + frameRingSummary() + "]"
                 + " recordsStore=[" + recordsStoreSummary() + "]"
+                + " celtium/nonQuadByMode[" + nonQuadByModeSummary() + "]"
                 + " frameArenaFallbackGroups=" + b.submissionStatistics.frameArenaFallbackGroups()
                 + " frameSlots=" + b.FRAME_SLOTS + " frameSlotReuseWaits=" + b.scheduler.slotReuseWaits()
                 + " slotPolls=" + b.scheduler.slotPolls() + " slotPollConfirms=" + b.scheduler.slotPollConfirms()

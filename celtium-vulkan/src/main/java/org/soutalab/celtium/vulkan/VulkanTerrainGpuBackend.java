@@ -2433,6 +2433,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     final int[] acceptedByFormat = new int[8];
     /**
+     * Non-quad groups the drain sent to the non-quad emitter, by GL primitive mode (0-7): the arrival
+     * half of the strip/fan occurrence census (R-23). The count includes the groups the emitter itself
+     * fell back to the direct draw for, so offered minus emitted is that fallback (plus the
+     * record-refused drops {@code batchDroppedDraws} counts separately). Modes outside 0-7
+     * (GL_QUAD_STRIP, GL_POLYGON) are not counted: the census's subjects sit inside the range, and the
+     * increment sites guard the index so an exotic mode cannot throw inside the drain.
+     */
+    final long[] nonQuadOfferedByMode = new long[8];
+    /** Non-quad groups the emitter itself drew, by GL primitive mode: the drawn half of the pair above. */
+    final long[] nonQuadEmittedByMode = new long[8];
+    /**
      * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
      * sink are the backend's, because the state they read and the submission they make are its own.
      */
@@ -25208,6 +25219,11 @@ this.frameBufferOpen = false;
                         recordIndex);
             }
         }
+        // The emitter drew this group itself: the direct-draw delegations above return before this
+        // point, and the record refusal returned earlier still, so this is the census's drawn half.
+        if (group.drawMode >= 0 && group.drawMode < this.nonQuadEmittedByMode.length) {
+            this.nonQuadEmittedByMode[group.drawMode]++;
+        }
         // The binds above bypass the flush's bind cache: whatever it believes is bound no longer is.
         java.util.Arrays.fill(this.immediateBindCache, -1L);
         celtium$noteTwinDraw(twin.family, variantStart);
@@ -26004,6 +26020,9 @@ this.frameBufferOpen = false;
                             // non-quad emitter (Stage 5 stage 6): the mesh's own index stream is
                             // the accept path's per-batch expansions concatenated, which is not
                             // one mode's expansion of the group's vertices.
+                            if (group.drawMode >= 0 && group.drawMode < this.nonQuadOfferedByMode.length) {
+                                this.nonQuadOfferedByMode[group.drawMode]++;
+                            }
                             fallbackDrawn = celtium$emitNonQuadGroup(group, mesh, prepared, push);
                         } else {
                             // The generalized one-group direct twin draw (Stage 5 stage 6): every
