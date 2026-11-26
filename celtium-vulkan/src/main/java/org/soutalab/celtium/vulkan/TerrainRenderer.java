@@ -1880,6 +1880,10 @@ public final class TerrainRenderer {
         return created;
     }
 
+    /** R-55, Step C: the per-section Tier-A upload verdicts (see {@link FallbackPaths#TERRAIN_UPLOAD}). */
+    private static final FallbackPaths.Handle TERRAIN_UPLOAD_PATH =
+            FallbackPaths.register(FallbackPaths.TERRAIN_UPLOAD);
+
     /**
      * One Tier-A offer of the running upload (R-55, Step A): the mesh, its pass
      * and the classified registration outcome. The legacy-upload decision is
@@ -1997,7 +2001,14 @@ public final class TerrainRenderer {
         // offer of the same upload tainted.
         boolean tierAOffersProcessed = !tierAOffers.isEmpty();
         for (TierAOffer offer : tierAOffers) {
-            if (!tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass()))) {
+            // Step C: every offer's branch verdict is counted, so a leg can
+            // read how many sections the branch actually kept off the legacy
+            // upload (fast) and how many fell back to it.
+            TERRAIN_UPLOAD_PATH.attempt();
+            if (tierAUploadSkipsLegacy(offer.outcome(), this.terrainAHost.isPassTainted(offer.pass()))) {
+                TERRAIN_UPLOAD_PATH.fast();
+            } else {
+                TERRAIN_UPLOAD_PATH.fallback();
                 pending.add(TerrainRenderer.PendingMesh.obtain(offer.sectionIndex(), offer.pass(), offer.mesh(), null,
                         meshResources.sectionFirstColor, meshResources));
             }

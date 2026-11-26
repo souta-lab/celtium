@@ -46,6 +46,8 @@ public final class FallbackPaths {
     public static final String SLAB_ALLOC = "slab.alloc";
     /** Stage 4: a section is drawn by the new Tier-A terrain engine (fast) or by the legacy route (fallback). */
     public static final String TERRAIN_ENGINE = "terrain.engine";
+    /** Stage 4 (R-55): a section offered to Tier-A stays off the legacy upload (fast) or is uploaded to the legacy arena anyway (fallback). */
+    public static final String TERRAIN_UPLOAD = "terrain.upload";
     /** Stage 5: GL state is captured deferred/async (fast) or forces a full synchronisation (fallback). */
     public static final String GLSM_ASYNC = "glsm.async";
 
