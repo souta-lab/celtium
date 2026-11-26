@@ -56,6 +56,78 @@ final class ModelReplayFastPath {
     static final int SIGNATURE = 21;
 
     /**
+     * The signature inputs {@link #pipelineKeyOf(int[])} does not determine exactly, kept as raw values beside the
+     * key (stage 8, S8-a; the correspondence table is the stage-8 record's): the alpha reference is not a key field
+     * at all and is written into the record from the state; the alpha and depth functions are erased by the key
+     * while their test is off and share an escape slot outside their domains, while the state carries them raw;
+     * the texture environment pair is not pipeline state and only feeds the state's combine slot. The window-target
+     * input needs no slot here: it is a function of the target identity the shape guard already compares, and a
+     * tuple recorded under another target is refused by that guard before values are asked.
+     */
+    static final int RESIDUAL_ALPHA_REF = 0;
+    static final int RESIDUAL_ALPHA_FUNC = 1;
+    static final int RESIDUAL_DEPTH_FUNC = 2;
+    static final int RESIDUAL_ENV_MODE = 3;
+    static final int RESIDUAL_ENV_RGB = 4;
+    static final int KEY_RESIDUAL = 5;
+
+    /**
+     * The pipeline key of one signature: {@link PipelineStateKey}'s own packing, driven by the raw inputs the
+     * signature holds instead of by the state mirror - the same fields, the same codes, the same erasure rules.
+     * The cull triple goes through {@link VulkanCullState#encode} exactly as the state's cull slot does. Two slots
+     * are constant, by the shape of the model state itself: the shade slot is 0 because the model state carries no
+     * shade input (neither the signature nor the state has one, and the unchanged path's own extend predicate never
+     * reads it), and the vertex format fold is 0 because a list's format is fixed and the run conditions already
+     * discriminate it through the backend's state key.
+     * <p>
+     * What the packing identifies, beyond the fields it stores exactly: blend factors outside the defined domain
+     * share the escape code, and every such factor maps to the same state value ({@code glBlendFactorToVk} answers
+     * -1 for all of them and the state substitutes one fixed fallback), and blend equations outside the defined
+     * family share a low nibble only when the state maps them to the same operation (the default ADD). So a hit the
+     * raw comparison would have refused over one of those can only serve a tuple whose state - the bytes a hit
+     * writes from - is the same one the unchanged path would resolve.
+     */
+    static long pipelineKeyOf(int[] signature) {
+        return PipelineStateKey.pack(0,
+                signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] != 0,
+                signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] != 0,
+                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] != 0,
+                VulkanCullState.encode(signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] != 0,
+                        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE],
+                        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE]),
+                signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] != 0,
+                signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC],
+                signature[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] != 0,
+                0).value();
+    }
+
+    /** Copies the residual inputs of one signature into a tuple's residual slots. */
+    private static void copyResidual(int[] signature, int[] residual) {
+        residual[RESIDUAL_ALPHA_REF] = signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF];
+        residual[RESIDUAL_ALPHA_FUNC] = signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC];
+        residual[RESIDUAL_DEPTH_FUNC] = signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC];
+        residual[RESIDUAL_ENV_MODE] = signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE];
+        residual[RESIDUAL_ENV_RGB] = signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB];
+    }
+
+    /** {@return whether a live signature's residual inputs are the tuple's}. */
+    private static boolean residualMatches(int[] signature, int[] residual) {
+        return signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] == residual[RESIDUAL_ALPHA_REF]
+                && signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] == residual[RESIDUAL_ALPHA_FUNC]
+                && signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] == residual[RESIDUAL_DEPTH_FUNC]
+                && signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] == residual[RESIDUAL_ENV_MODE]
+                && signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] == residual[RESIDUAL_ENV_RGB];
+    }
+
+    /**
      * One replay's values, and the storage of a cached tuple.
      * <p>
      * The arrays are the tuple's own bytes: {@link #note} copies the live values into them, and a hit writes the record
@@ -67,6 +139,15 @@ final class ModelReplayFastPath {
      */
     static final class Probe {
         final int[] signature = new int[SIGNATURE];
+        /**
+         * The state judgment's key form (stage 8, S8-a): {@link PipelineStateKey}'s packing, driven by this probe's
+         * signature - see {@link #pipelineKeyOf(int[])}. Only the cached tuple's copy is read: the live probe's state
+         * is judged by packing its signature at comparison time, so this field is the tuple's half of the comparison.
+         * The five signature inputs the packing does not determine exactly are kept beside it in {@link #keyResidual}.
+         */
+        long pipelineKey;
+        /** The signature inputs the key does not determine exactly, in {@code RESIDUAL_*} order. */
+        final int[] keyResidual = new int[KEY_RESIDUAL];
         final int[] state = new int[16];
         /** The tuple's sixteen projection floats; written by {@link #note}, compared against the live array. */
         final float[] projection = new float[16];
@@ -85,7 +166,6 @@ final class ModelReplayFastPath {
         int quads;
         int textureIndex;
         int lightmapIndex;
-        int alphaFunction;
         long frameId;
         long target;
         long stateKey;
@@ -306,8 +386,11 @@ final class ModelReplayFastPath {
                     && (!now.combineValid || java.util.Arrays.equals(combineColour, last.combineColour));
         }
         // Arrays whose "no value" answer is a stale buffer are compared only when both sides carry one: the record
-        // ignores them when the flag is clear, so comparing the stale contents could only invent a miss.
-        return java.util.Arrays.equals(now.signature, last.signature)
+        // ignores them when the flag is clear, so comparing the stale contents could only invent a miss. The state
+        // itself is judged in its key form (stage 8, S8-a): the signature's pipeline fields through
+        // PipelineStateKey's packing, the five inputs the packing does not determine exactly as raw residuals.
+        return pipelineKeyOf(now.signature) == last.pipelineKey
+                && residualMatches(now.signature, last.keyResidual)
                 && projection != null && java.util.Arrays.equals(projection, last.projection)
                 && now.colourValid == last.colourValid
                 && (!now.colourValid || java.util.Arrays.equals(now.colour, last.colour))
@@ -367,7 +450,8 @@ final class ModelReplayFastPath {
             this.armed[slot] = false;
             return;
         }
-        System.arraycopy(now.signature, 0, last.signature, 0, SIGNATURE);
+        last.pipelineKey = pipelineKeyOf(now.signature);
+        copyResidual(now.signature, last.keyResidual);
         System.arraycopy(now.state, 0, last.state, 0, 16);
         System.arraycopy(projection, 0, last.projection, 0, 16);
         System.arraycopy(now.colour, 0, last.colour, 0, 4);
@@ -387,7 +471,6 @@ final class ModelReplayFastPath {
         last.quads = now.quads;
         last.textureIndex = now.textureIndex;
         last.lightmapIndex = now.lightmapIndex;
-        last.alphaFunction = now.alphaFunction;
         last.frameId = now.frameId;
         last.target = now.target;
         last.stateKey = now.stateKey;
