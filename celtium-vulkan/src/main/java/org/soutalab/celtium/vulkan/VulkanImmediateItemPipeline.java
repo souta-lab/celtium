@@ -105,6 +105,14 @@ public final class VulkanImmediateItemPipeline {
 
     private final VulkanContext context;
     private final long renderPass;
+    /**
+     * How many colour attachments the pass this pipeline is built against attaches. The blend state is
+     * replicated once per attachment when the pipeline is created - the mod-program multi-target form,
+     * because GL has one blend state for all draw buffers and the per-buffer form is not captured. One
+     * is every pass this family was built against before multi-target targets existed; a factory that
+     * builds for such a target sets this before the build, the way the variant fields are set.
+     */
+    private int colorAttachments = 1;
     /** When the vertex stage runs the fixed-function lighting eval and the normal attribute is real input. */
     private final boolean lit;
 
@@ -220,6 +228,16 @@ public final class VulkanImmediateItemPipeline {
     public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass,
                             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
                             int depthCompareOp, boolean lit) {
+        return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, lit, 1);
+    }
+
+    /**
+     * The multi-target form: built against a pass attaching {@code colorAttachments} colour targets,
+     * with the blend state replicated for each.
+     */
+    public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+                            int depthCompareOp, boolean lit, int colorAttachments) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
@@ -228,6 +246,7 @@ public final class VulkanImmediateItemPipeline {
         }
         VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, colorBlend,
                 depthTest, depthWrite, cull, depthCompareOp, lit);
+        result.colorAttachments = Math.max(1, colorAttachments);
         // BH-20: same transaction as the textured family - a failure in the pipeline stage used to leave the
         // descriptor set layout and the pipeline layout behind, since the half-built object is never returned and
         // never deleted.
@@ -253,9 +272,10 @@ public final class VulkanImmediateItemPipeline {
      */
     public static VulkanImmediateItemPipeline createRecords(VulkanContext context, long renderPass,
                             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
-                            int depthCompareOp, long recordsSetLayout) {
+                            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
         VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, colorBlend,
                 depthTest, depthWrite, cull, depthCompareOp, true);
+        result.colorAttachments = Math.max(1, colorAttachments);
         result.records = true;
         result.recordsLayout = recordsSetLayout;
         try {
@@ -836,6 +856,11 @@ public final class VulkanImmediateItemPipeline {
         }
     }
 
+    /** {@return how many colour attachments this pipeline's blend state was replicated for}. */
+    public int celtium$colorAttachments() {
+        return this.colorAttachments;
+    }
+
     private void createPipelineLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // The lit variant samples the light map on a second binding, and it samples it in the *vertex* stage: the
@@ -996,17 +1021,25 @@ public final class VulkanImmediateItemPipeline {
                                 .depthTestEnable(this.depthTest)
                                 .depthWriteEnable(this.depthWrite)
                                 .depthCompareOp(this.depthCompareOp);
+                // One blend state per colour attachment of the pass this pipeline is built against: GL
+                // has one blend state for all draw buffers unless a mod sets the per-buffer form, which
+                // the capture does not hold, so the batch's state is replicated - the same form
+                // VulkanModProgramPipeline's multi-target build uses. A one-colour pass keeps exactly
+                // the single state this always built.
+                int blendCount = Math.max(1, this.colorAttachments);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
-                        VkPipelineColorBlendAttachmentState.calloc(1, stack);
-                blendAttachment.get(0)
-                        .blendEnable(this.colorBlend.blend())
-                        .srcColorBlendFactor(this.colorBlend.srcColor())
-                        .dstColorBlendFactor(this.colorBlend.dstColor())
-                        .colorBlendOp(this.colorBlend.colorOp())
-                        .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
-                        .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
-                        .alphaBlendOp(this.colorBlend.alphaOp())
-                        .colorWriteMask(this.colorBlend.writeMask());
+                        VkPipelineColorBlendAttachmentState.calloc(blendCount, stack);
+                for (int i = 0; i < blendCount; i++) {
+                    blendAttachment.get(i)
+                            .blendEnable(this.colorBlend.blend())
+                            .srcColorBlendFactor(this.colorBlend.srcColor())
+                            .dstColorBlendFactor(this.colorBlend.dstColor())
+                            .colorBlendOp(this.colorBlend.colorOp())
+                            .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
+                            .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
+                            .alphaBlendOp(this.colorBlend.alphaOp())
+                            .colorWriteMask(this.colorBlend.writeMask());
+                }
                 VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
                         .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
                 VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)

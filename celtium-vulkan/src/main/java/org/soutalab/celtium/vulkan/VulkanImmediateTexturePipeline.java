@@ -110,6 +110,14 @@ public final class VulkanImmediateTexturePipeline {
 
     private final VulkanContext context;
     private final long renderPass;
+    /**
+     * How many colour attachments the pass this pipeline is built against attaches. The blend state is
+     * replicated once per attachment when the pipeline is created - the mod-program multi-target form,
+     * because GL has one blend state for all draw buffers and the per-buffer form is not captured. One
+     * is every pass this family was built against before multi-target targets existed; a factory that
+     * builds for such a target sets this before the build, the way the variant fields are set.
+     */
+    private int colorAttachments = 1;
     /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
     private boolean positionOnly;
     /** Position-and-nothing-else: twelve bytes, one attribute, and no texture coordinate to sample. */
@@ -274,6 +282,7 @@ public final class VulkanImmediateTexturePipeline {
                 state.celtium$cullState(), state.celtium$depthCompareOp());
         pipeline.records = true;
         pipeline.recordsLayout = recordsSetLayout;
+        pipeline.colorAttachments = state.celtium$colorAttachments();
         pipeline.positionOnly = state.celtium$positionOnly();
         pipeline.positionNoTexture = state.celtium$positionNoTexture();
         pipeline.extraTrailingElementBytes = state.celtium$extraTrailingElementBytes();
@@ -327,8 +336,15 @@ public final class VulkanImmediateTexturePipeline {
      */
     public static VulkanImmediateTexturePipeline createForCombine4(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
+        return createForCombine4(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForCombine4(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.combine4 = true;
         pipeline.explicitStride = COMBINE4_BYTES;
         return pipeline.build();
@@ -337,8 +353,15 @@ public final class VulkanImmediateTexturePipeline {
     /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
     public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
+        return createForPositionTex(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.positionOnly = true;
         return pipeline.build();
     }
@@ -349,8 +372,15 @@ public final class VulkanImmediateTexturePipeline {
      */
     public static VulkanImmediateTexturePipeline createForTexGen(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
+        return createForTexGen(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForTexGen(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.texGen = true;
         pipeline.explicitStride = 16;
         return pipeline.build();
@@ -369,8 +399,15 @@ public final class VulkanImmediateTexturePipeline {
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
     public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
+        return createForPosition(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
         return pipeline.build();
@@ -389,8 +426,17 @@ public final class VulkanImmediateTexturePipeline {
     public static VulkanImmediateTexturePipeline createForPositionNormal(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
+        return createForPositionNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPositionNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
         pipeline.explicitStride = POSITION_NORMAL_BYTES;
@@ -405,8 +451,17 @@ public final class VulkanImmediateTexturePipeline {
     public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
+        return createForPositionTexColorNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.extraTrailingElementBytes = POSITION_TEX_COLOR_NORMAL_BYTES;
         return pipeline.build();
     }
@@ -427,8 +482,17 @@ public final class VulkanImmediateTexturePipeline {
     public static VulkanImmediateTexturePipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
+        return createForPositionTexNormalFloat(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.positionOnly = true;
         pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_FLOAT_BYTES;
         return pipeline.build();
@@ -438,8 +502,17 @@ public final class VulkanImmediateTexturePipeline {
     public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
             int depthCompareOp) {
+        return createForPositionTexNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, int colorAttachments) {
         VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
         pipeline.positionOnly = true;
         pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_BYTES;
         return pipeline.build();
@@ -452,7 +525,20 @@ public final class VulkanImmediateTexturePipeline {
      */
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
                             boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
-        return allocate(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp).build();
+        return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, 1);
+    }
+
+    /**
+     * The multi-target form: built against a pass attaching {@code colorAttachments} colour targets,
+     * with the blend state replicated for each.
+     */
+    public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
+                            boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+                            int colorAttachments) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        return pipeline.build();
     }
 
     /**
@@ -1279,6 +1365,11 @@ public final class VulkanImmediateTexturePipeline {
         }
     }
 
+    /** {@return how many colour attachments this pipeline's blend state was replicated for}. */
+    public int celtium$colorAttachments() {
+        return this.colorAttachments;
+    }
+
     private void createPipelineLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
@@ -1462,17 +1553,25 @@ public final class VulkanImmediateTexturePipeline {
                                 .depthTestEnable(this.depthTest)
                                 .depthWriteEnable(this.depthWrite)
                                 .depthCompareOp(this.depthCompareOp);
+                // One blend state per colour attachment of the pass this pipeline is built against: GL
+                // has one blend state for all draw buffers unless a mod sets the per-buffer form, which
+                // the capture does not hold, so the batch's state is replicated - the same form
+                // VulkanModProgramPipeline's multi-target build uses. A one-colour pass keeps exactly
+                // the single state this always built.
+                int blendCount = Math.max(1, this.colorAttachments);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
-                        VkPipelineColorBlendAttachmentState.calloc(1, stack);
-                blendAttachment.get(0)
-                        .blendEnable(this.colorBlend.blend())
-                        .srcColorBlendFactor(this.colorBlend.srcColor())
-                        .dstColorBlendFactor(this.colorBlend.dstColor())
-                        .colorBlendOp(this.colorBlend.colorOp())
-                        .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
-                        .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
-                        .alphaBlendOp(this.colorBlend.alphaOp())
-                        .colorWriteMask(this.colorBlend.writeMask());
+                        VkPipelineColorBlendAttachmentState.calloc(blendCount, stack);
+                for (int i = 0; i < blendCount; i++) {
+                    blendAttachment.get(i)
+                            .blendEnable(this.colorBlend.blend())
+                            .srcColorBlendFactor(this.colorBlend.srcColor())
+                            .dstColorBlendFactor(this.colorBlend.dstColor())
+                            .colorBlendOp(this.colorBlend.colorOp())
+                            .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
+                            .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
+                            .alphaBlendOp(this.colorBlend.alphaOp())
+                            .colorWriteMask(this.colorBlend.writeMask());
+                }
                 VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
                         .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
                 VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)
