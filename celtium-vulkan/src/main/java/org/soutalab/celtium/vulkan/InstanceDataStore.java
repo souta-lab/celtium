@@ -128,7 +128,7 @@ final class InstanceDataStore {
 
         @Override
         public long buffer(int slot) {
-            return this.ring.buffer(slot).handle();
+            return this.ring.buffer(slot);
         }
     }
 
