@@ -157,7 +157,9 @@ class SlotConfirmationRingResetContractTest {
     @Test
     @DisplayName("the deferred submits' reclaim callback is the tail")
     void theDeferredReclaimConfirmsThroughTheTail() throws IOException {
-        String body = methodBody(read(BACKEND), "public void celtium$submitSlotDeferred(");
+        // Anchored at the class-level declaration: an inner class's @Override delegate of the
+        // same name sits earlier in the file and must not be mistaken for the declaration.
+        String body = methodBody(read(BACKEND), "\n    public void celtium$submitSlotDeferred(");
         assertTrue(body.contains("lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue())"),
                 "a batched slot's confirmation runs inside its batch's reclaim callback, which is"
                         + " the tail - so a reclaimed slot's ring is reset by the same seat");
