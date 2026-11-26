@@ -16,8 +16,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Every image this target creates - the frame's own colour and depth, each pair's colour, depth and
  * extra colours, and the shared depth store's - used to carry a dedicated {@code vkAllocateMemory}
  * (census site {@code frameTarget}: 12 live allocations in the Stage 0 scene, one per image). They are
- * now sub-allocations of the context's device-local image slab pool, the mirrored textures' shape, so
- * the live allocation count is bounded by the pool's slab cap rather than by the image count. These
+ * now slab sub-allocations, the mirrored textures' shape - the frame's own and the default pair's in
+ * the context's device-local image slab pool, and (prescription (f), pinned by
+ * {@code FrameTargetPoolSeparationTest}) each chain pair's and the shared depth store's in the
+ * dedicated frame-target image pool - so the live allocation count is bounded by the pools' slab caps
+ * rather than by the image count. These
  * pins read the source so a dedicated route cannot reappear silently: the allocator goes through the
  * pool, no {@code VulkanContext.allocateMemory} / {@code freeMemory} call remains anywhere in the
  * target, releases are keyed on the slab completion currency, and the after-bind fault site exists so
@@ -30,7 +33,8 @@ class FrameTargetSlabHousingTest {
         String allocator = methodSlice(frameTargetSource(),
                 "private AllocatedImage allocateImage(boolean color", 6000);
         assertTrue(allocator.contains("celtium$deviceLocalImageSlabs(requirements.memoryTypeBits())"),
-                "the backing memory comes from the device-local image slab pool");
+                "the frame's own and the default pair's backing memory comes from the device-local image "
+                        + "slab pool (the chain pairs' dedicated pool is the other branch of the same call)");
         assertTrue(allocator.contains(".allocate(requirements.size(), requirements.alignment())"),
                 "the image's own requirements size the sub-allocation");
         assertTrue(allocator.contains("bindImage(image, allocation)"),
