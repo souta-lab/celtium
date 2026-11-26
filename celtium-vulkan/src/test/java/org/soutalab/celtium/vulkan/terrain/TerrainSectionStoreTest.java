@@ -244,4 +244,30 @@ class TerrainSectionStoreTest {
         assertEquals(0, again.packGeometry.byteOffset, "the released pack range is reused");
         assertEquals(1, store.recordCount());
     }
+
+    @Test
+    void perPassSlabCountsSeeOnlyThatPassRecords() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        TerrainSectionStore store = new TerrainSectionStore();
+        // Two vanilla passes register into the same first slab; a pack record
+        // of the second pass (foreign stride) must leak into neither count.
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, parts(1, 0, true), 0), 2));
+        assertNotNull(store.register(mesher.build(3, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 3));
+
+        assertEquals(2, store.slabRecordCounts()[0],
+                "the store-wide form counts both vanilla passes, as before");
+        assertEquals(1, store.slabRecordCounts(0)[0], "pass 0 sees only its own record");
+        assertEquals(1, store.slabRecordCounts(1)[0],
+                "pass 1 sees its vanilla record; its pack record stays in the pack space");
+        for (int count : store.slabRecordCounts(2)) {
+            assertEquals(0, count, "a pass with no records counts nothing in any slab");
+        }
+
+        // Removal moves only the owning pass' count.
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0), 5));
+        assertEquals(0, store.slabRecordCounts(0)[0]);
+        assertEquals(1, store.slabRecordCounts(1)[0]);
+        assertEquals(1, store.slabRecordCounts()[0]);
+    }
 }
