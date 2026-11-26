@@ -45,7 +45,7 @@ class TierASlabCapacityTest {
 
     /** The draw loop: from its signature to the buffer section that follows it. */
     private static String recordDrawsRegion(String source) {
-        int start = source.indexOf("boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex)");
+        int start = source.indexOf("boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex, long recordingEpoch)");
         int end = source.indexOf("int liveSlabBufferCount()", start);
         assertTrue(start >= 0 && end > start, "the recordDraws region is located");
         return source.substring(start, end);
