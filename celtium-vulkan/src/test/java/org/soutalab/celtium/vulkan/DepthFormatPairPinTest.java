@@ -179,10 +179,10 @@ class DepthFormatPairPinTest {
     void bothSidesOfTheCopyComeFromTheOneAllocatorAtTheChosenFormat() throws IOException {
         String frameTarget = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java"));
-        String sharedStore = methodSlice(frameTarget, "private long[] ensureSharedDepth", 1600);
+        String sharedStore = methodSlice(frameTarget, "private AllocatedImage ensureSharedDepth", 2000);
         assertTrue(sharedStore.contains("allocateImage(false, width, height"),
                 "the shared depth store allocates through the one allocator");
-        String allocator = methodSlice(frameTarget, "private long[] allocateImage(boolean color", 3200);
+        String allocator = methodSlice(frameTarget, "private AllocatedImage allocateImage(boolean color", 3200);
         assertTrue(allocator.contains("VulkanDepthFormat.chosen(this.context.physicalDevice())"),
                 "the allocator's depth format is the chooser's single answer");
         assertFalse(allocator.contains("VK_FORMAT_D32_SFLOAT"),

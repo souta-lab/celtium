@@ -24,7 +24,6 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -33,7 +32,6 @@ import static org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkAllocateMemory;
-import static org.lwjgl.vulkan.VK10.vkBindImageMemory;
 import static org.lwjgl.vulkan.VK10.vkCmdBlitImage;
 import static org.lwjgl.vulkan.VK10.vkCmdClearAttachments;
 import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
@@ -44,15 +42,14 @@ import static org.lwjgl.vulkan.VK10.vkCreateImage;
 import static org.lwjgl.vulkan.VK10.vkCreateImageView;
 import static org.lwjgl.vulkan.VK10.vkDestroyImage;
 import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
-import static org.lwjgl.vulkan.VK10.vkFreeMemory;
 import static org.lwjgl.vulkan.VK10.vkGetImageMemoryRequirements;
-import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceMemoryProperties;
 import static org.lwjgl.vulkan.VK10.vkQueueSubmit;
 
 import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.soutalab.celtium.vulkan.hal.PresentEngine;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearDepthStencilValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -61,10 +58,8 @@ import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
-import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryRequirements;
-import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkSubmitInfo;
 
@@ -121,10 +116,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private final TargetFormatClass frameFormatClass;
 
     private long colorImage;
-    private long colorMemory;
+    private SlabAllocator.SlabAllocation colorAllocation;
     private long colorView;
     private long depthImage;
-    private long depthMemory;
+    private SlabAllocator.SlabAllocation depthAllocation;
     private long depthView;
     /**
      * The default-framebuffer pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the
@@ -323,14 +318,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // The frame's own colour is the frame's class (QUEUE 404 rule R1, revised by Stage 1's BGRA
             // ignition): the image the finished frame is composed into and presented from follows the
             // surface's format, whatever a mod's own framebuffer asked for.
-            long[] color = target.allocateImage(true, width, height, target.frameFormatClass);
-            target.colorImage = color[0];
-            target.colorMemory = color[1];
-            target.colorView = color[2];
-            long[] depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
-            target.depthImage = depth[0];
-            target.depthMemory = depth[1];
-            target.depthView = depth[2];
+            AllocatedImage color = target.allocateImage(true, width, height, target.frameFormatClass);
+            target.colorImage = color.image;
+            target.colorAllocation = color.allocation;
+            target.colorView = color.view;
+            AllocatedImage depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
+            target.depthImage = depth.image;
+            target.depthAllocation = depth.allocation;
+            target.depthView = depth.view;
             return target;
         } catch (RuntimeException | LinkageError error) {
             target.delete();
@@ -338,21 +333,41 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
+    /** One image created by {@link #allocateImage}: the image, its 2D view and the slab sub-allocation backing it. */
+    private static final class AllocatedImage {
+        private final long image;
+        private final long view;
+        private final SlabAllocator.SlabAllocation allocation;
+
+        private AllocatedImage(long image, long view, SlabAllocator.SlabAllocation allocation) {
+            this.image = image;
+            this.view = view;
+            this.allocation = allocation;
+        }
+    }
+
     /**
-     * Creates one image of a pair at the given size - the image, its device-local memory and a 2D view - and
-     * returns them as {@code {image, memory, view}}. The reason this is one method rather than one per pair: the
+     * Creates one image of a pair at the given size - the image, its slab-backed memory and a 2D view - and
+     * returns them as an {@link AllocatedImage}. The reason this is one method rather than one per pair: the
      * off-target pair is the same pair of usages as the frame's own, only at the size the game's framebuffer
      * asks for. The colour format is {@code colorClass}'s - the frame's own format for the frame and the
      * default pair, the resolved class for a chain pair (QUEUE 404) - and is ignored for depth, whose format
      * {@link VulkanDepthFormat} chooses.
      * <p>
-     * A failure after the image or the memory exists frees what was created here before it propagates, so the
+     * The backing memory is a sub-allocation of the context's device-local image slab pool, as the mirrored
+     * textures' is (R-54): there is no dedicated {@code vkAllocateMemory} per frame-target image, so the
+     * allocation census counts slabs rather than images, and a pool refusal surfaces as the allocator's own
+     * exception - there is no dedicated-allocation fallback behind it. The usage is deliberately not
+     * transient-attachment: every image here is sampled and copied after it is drawn, which that flag forbids.
+     * <p>
+     * A failure after the image or the allocation exists releases what was created here before it propagates, so the
      * caller only ever adopts complete handles and {@link #delete()} never has to know about a half-created image.
      */
-    private long[] allocateImage(boolean color, int imageWidth, int imageHeight, TargetFormatClass colorClass) {
+    private AllocatedImage allocateImage(boolean color, int imageWidth, int imageHeight,
+            TargetFormatClass colorClass) {
         VkDevice device = this.context.device();
         long image = VK_NULL_HANDLE;
-        long memory = VK_NULL_HANDLE;
+        SlabAllocator.SlabAllocation allocation = null;
         try (MemoryStack stack = stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
             // The depth format is chosen from what this device can do rather than fixed: AMD's RADV has no 24-bit
@@ -383,15 +398,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
             VkMemoryRequirements requirements = VkMemoryRequirements.malloc(stack);
             vkGetImageMemoryRequirements(device, image, requirements);
-            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(findMemoryType(requirements.memoryTypeBits()));
-            if (VulkanContext.allocateMemory(device, allocate, handle, "frameTarget") != VK_SUCCESS) {
-                throw new IllegalStateException("vkAllocateMemory(glless " + (color ? "colour" : "depth") + ") failed");
-            }
-            memory = handle.get(0);
-            if (vkBindImageMemory(device, image, memory, 0L) != VK_SUCCESS) {
-                throw new IllegalStateException("vkBindImageMemory(glless " + (color ? "colour" : "depth") + ") failed");
+            // The pool picks the memory type from the requirements bits, and the bind goes through the
+            // allocator, so the slab offset arithmetic lives in exactly one place (the mirrored textures'
+            // shape). The ownership record is the allocation, which the destroy paths hand back to the pool.
+            SlabAllocator imageAllocator = this.context.celtium$deviceLocalImageSlabs(requirements.memoryTypeBits());
+            allocation = imageAllocator.allocate(requirements.size(), requirements.alignment());
+            imageAllocator.bindImage(image, allocation);
+            if (VulkanAllocationFault.shouldFail("GllessFrameTarget:afterBind")) {
+                // After the bind, so the cleanup has an image AND its allocation to release - the frame-target
+                // twin of the mirrored texture's afterBind site, so the rollback above stays exercisable.
+                throw new IllegalStateException(
+                        "injected allocation failure after vkBindImageMemory: GllessFrameTarget");
             }
 
             VkImageViewCreateInfo createView = VkImageViewCreateInfo.calloc(stack).sType$Default()
@@ -400,11 +417,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (vkCreateImageView(device, createView, null, handle) != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateImageView(glless " + (color ? "colour" : "depth") + ") failed");
             }
-            return new long[] {image, memory, handle.get(0)};
+            return new AllocatedImage(image, handle.get(0), allocation);
         } catch (RuntimeException | LinkageError error) {
-            if (memory != VK_NULL_HANDLE) {
-                VulkanContext.freeMemory(device, memory);
-            }
+            releaseAllocation(allocation);
             if (image != VK_NULL_HANDLE) {
                 vkDestroyImage(device, image, null);
             }
@@ -412,17 +427,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
-    private int findMemoryType(int typeBits) {
-        try (MemoryStack stack = stackPush()) {
-            VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(this.context.physicalDevice(), properties);
-            for (int i = 0; i < properties.memoryTypeCount(); i++) {
-                if ((typeBits & (1 << i)) != 0
-                        && (properties.memoryTypes(i).propertyFlags() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
-                    return i;
-                }
-            }
-            throw new IllegalStateException("no device-local memory type for the glless frame target");
+    /**
+     * Hands one of this target's slab sub-allocations back to its pool, as a deferred release keyed on the
+     * context's current slab release value - the one currency every slab tenant releases against, so a
+     * frame-target range is neither reused before the submissions that could still name it have completed
+     * nor stranded by a scale change (audit #2, Q7). The release is a ledger operation: the range only
+     * becomes reusable once collection sees the completion currency pass the keyed value, which is what
+     * makes the same call correct on the settled paths ({@link #delete()}, {@code Pair.release()}) and on
+     * the mid-session ones ({@code Pair.retire()}), where the view and image go through the retire queue
+     * but the range itself needs no second delay. There is no {@code vkFreeMemory} - the slab is not this
+     * target's to free.
+     */
+    private void releaseAllocation(SlabAllocator.SlabAllocation allocation) {
+        if (allocation != null) {
+            allocation.owner().release(allocation, this.context.celtium$slabReleaseValue());
         }
     }
 
@@ -1667,7 +1685,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     static final class SharedDepth {
         private long image;
-        private long memory;
+        private SlabAllocator.SlabAllocation allocation;
         private long view;
         private int width;
         private int height;
@@ -1690,26 +1708,26 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     /**
      * Makes the shared depth image for {@code depthKey} exist at the requested extent and returns its
-     * {@code {image, memory, view}} triple. A live entry at the same extent is returned as it stands; a
+     * allocated image. A live entry at the same extent is returned as it stands; a
      * different extent retires the old image (through the retire queue — a pair may still be recorded against
      * it) and retires every pair that borrowed it, so no framebuffer keeps a view of the replaced image.
      */
-    private long[] ensureSharedDepth(long depthKey, int width, int height) {
+    private AllocatedImage ensureSharedDepth(long depthKey, int width, int height) {
         checkAlive();
         SharedDepth existing = this.sharedDepths.get(depthKey);
         if (existing != null && existing.width == width && existing.height == height) {
-            return new long[] {existing.image, existing.memory, existing.view};
+            return new AllocatedImage(existing.image, existing.view, existing.allocation);
         }
         if (existing != null) {
             retireSharedDepthHandles(existing);
             this.sharedDepths.remove(depthKey);
             retirePairsBorrowing(depthKey);
         }
-        long[] allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
+        AllocatedImage allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
         SharedDepth created = new SharedDepth();
-        created.image = allocated[0];
-        created.memory = allocated[1];
-        created.view = allocated[2];
+        created.image = allocated.image;
+        created.allocation = allocated.allocation;
+        created.view = allocated.view;
         created.width = width;
         created.height = height;
         this.sharedDepths.put(depthKey, created);
@@ -1721,10 +1739,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         VkDevice device = this.context.device();
         final long view = entry.view;
         final long image = entry.image;
-        final long memory = entry.memory;
+        final SlabAllocator.SlabAllocation allocation = entry.allocation;
         entry.view = VK_NULL_HANDLE;
         entry.image = VK_NULL_HANDLE;
-        entry.memory = VK_NULL_HANDLE;
+        entry.allocation = null;
         entry.layout = VK_IMAGE_LAYOUT_UNDEFINED;
         if (view != VK_NULL_HANDLE) {
             VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
@@ -1732,9 +1750,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (image != VK_NULL_HANDLE) {
             VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
         }
-        if (memory != VK_NULL_HANDLE) {
-            VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
-        }
+        releaseAllocation(allocation);
     }
 
     /** Retires every chain pair that borrowed the depth under {@code depthKey}; they re-ensure on next use. */
@@ -1888,8 +1904,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (pair.width != depthWidth || pair.height != depthHeight) {
             return false;
         }
-        long[] shared = ensureSharedDepth(depthKey, depthWidth, depthHeight);
-        if (pair.sharedDepthKey == depthKey && pair.depthImage == shared[0]) {
+        AllocatedImage shared = ensureSharedDepth(depthKey, depthWidth, depthHeight);
+        if (pair.sharedDepthKey == depthKey && pair.depthImage == shared.image) {
             return true;
         }
         int prevColorCount = pair.colorCount();
@@ -2762,10 +2778,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         /** How this pair is named in every counter that describes it. */
         private final String label;
         private long colorImage;
-        private long colorMemory;
+        private SlabAllocator.SlabAllocation colorAllocation;
         private long colorView;
         private long depthImage;
-        private long depthMemory;
+        private SlabAllocator.SlabAllocation depthAllocation;
         private long depthView;
         private int width;
         private int height;
@@ -2777,7 +2793,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * after every ensure, which is what keeps a resized pair from holding images at the old extent.
          */
         private long[] extraColorImages;
-        private long[] extraColorMemories;
+        private SlabAllocator.SlabAllocation[] extraColorAllocations;
         private long[] extraColorViews;
         private int[] extraColorLayouts;
         private int extraColorCount;
@@ -2950,30 +2966,42 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (attachments <= 1) {
                 return;
             }
+            int extras = attachments - 1;
+            long[] images = new long[extras];
+            SlabAllocator.SlabAllocation[] allocations = new SlabAllocator.SlabAllocation[extras];
+            long[] views = new long[extras];
+            int[] layouts = new int[extras];
             try {
-                int extras = attachments - 1;
-                long[] images = new long[extras];
-                long[] memories = new long[extras];
-                long[] views = new long[extras];
-                int[] layouts = new int[extras];
                 for (int i = 0; i < extras; i++) {
                     // The tuple's images are the pair's own class (rule R4): one class per tuple, because the
                     // render pass declares one format for every colour attachment.
-                    long[] allocated = allocateImage(true, this.width, this.height, this.formatClass);
-                    images[i] = allocated[0];
-                    memories[i] = allocated[1];
-                    views[i] = allocated[2];
+                    AllocatedImage allocated = allocateImage(true, this.width, this.height, this.formatClass);
+                    images[i] = allocated.image;
+                    allocations[i] = allocated.allocation;
+                    views[i] = allocated.view;
                     layouts[i] = VK_IMAGE_LAYOUT_UNDEFINED;
                 }
                 this.extraColorImages = images;
-                this.extraColorMemories = memories;
+                this.extraColorAllocations = allocations;
                 this.extraColorViews = views;
                 this.extraColorLayouts = layouts;
                 this.extraColorCount = extras;
                 this.extraGeneration++;
             } catch (RuntimeException | LinkageError error) {
-                // No half tuple is left behind, as in ensure(): whatever was adopted is released in place because
-                // nothing has recorded against it yet.
+                // No half tuple is left behind, as in ensure(): the images built so far live only in the
+                // local arrays above (the fields adopt them after the loop, and releaseExtras() reads the
+                // fields), so they are destroyed and released here in place - nothing has recorded
+                // against them yet.
+                VkDevice device = context.device();
+                for (int i = 0; i < extras; i++) {
+                    if (views[i] != VK_NULL_HANDLE) {
+                        vkDestroyImageView(device, views[i], null);
+                    }
+                    if (images[i] != VK_NULL_HANDLE) {
+                        vkDestroyImage(device, images[i], null);
+                    }
+                    releaseAllocation(allocations[i]);
+                }
                 releaseExtras();
                 throw error;
             }
@@ -2989,11 +3017,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
             VkDevice device = context.device();
             final long[] images = this.extraColorImages;
-            final long[] memories = this.extraColorMemories;
+            final SlabAllocator.SlabAllocation[] allocations = this.extraColorAllocations;
             final long[] views = this.extraColorViews;
             final int count = this.extraColorCount;
             this.extraColorImages = null;
-            this.extraColorMemories = null;
+            this.extraColorAllocations = null;
             this.extraColorViews = null;
             this.extraColorLayouts = null;
             this.extraColorCount = 0;
@@ -3001,16 +3029,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
             for (int i = 0; i < count; i++) {
                 final long view = views[i];
                 final long image = images[i];
-                final long memory = memories[i];
                 if (view != VK_NULL_HANDLE) {
                     VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
                 }
                 if (image != VK_NULL_HANDLE) {
                     VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
                 }
-                if (memory != VK_NULL_HANDLE) {
-                    VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
-                }
+                releaseAllocation(allocations[i]);
             }
         }
 
@@ -3028,12 +3053,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 if (this.extraColorImages[i] != VK_NULL_HANDLE) {
                     vkDestroyImage(device, this.extraColorImages[i], null);
                 }
-                if (this.extraColorMemories[i] != VK_NULL_HANDLE) {
-                    VulkanContext.freeMemory(device, this.extraColorMemories[i]);
-                }
+                releaseAllocation(this.extraColorAllocations[i]);
             }
             this.extraColorImages = null;
-            this.extraColorMemories = null;
+            this.extraColorAllocations = null;
             this.extraColorViews = null;
             this.extraColorLayouts = null;
             this.extraColorCount = 0;
@@ -3157,12 +3180,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
         /**
          * {@link #ensure(int, int)} with a borrowed depth: when {@code sharedDepth} is non-null it is the
-         * shared store's {@code {image, memory, view}} triple for {@code sharedKey}, and the pair renders
+         * shared store's allocated image for {@code sharedKey}, and the pair renders
          * into that depth instead of allocating its own. The store keeps ownership (see {@link #sharedDepthKey});
          * the pair's colour is rebuilt exactly as a resize rebuilds it, so engaging sharing costs one pair
          * recreation, on the first window that asks for it.
          */
-        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, long[] sharedDepth) {
+        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, AllocatedImage sharedDepth) {
             ensure(requestedWidth, requestedHeight, sharedKey, sharedDepth, this.formatClass);
         }
 
@@ -3172,7 +3195,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * and render passes built over the old views name the old format, and the generation bump in the
          * rebuild is what retires them.
          */
-        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, long[] sharedDepth,
+        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, AllocatedImage sharedDepth,
                 TargetFormatClass wantedClass) {
             checkAlive();
             if (requestedWidth <= 0 || requestedHeight <= 0) {
@@ -3180,27 +3203,27 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         + requestedWidth + "x" + requestedHeight);
             }
             boolean sharedMatches = this.sharedDepthKey == sharedKey
-                    && (sharedDepth == null || this.depthImage == sharedDepth[0]);
+                    && (sharedDepth == null || this.depthImage == sharedDepth.image);
             if (!celtium$pairRebuildNeeded(matches(requestedWidth, requestedHeight), sharedMatches,
                     this.formatClass, wantedClass)) {
                 return;
             }
             retire();
             try {
-                long[] color = allocateImage(true, requestedWidth, requestedHeight, wantedClass);
-                this.colorImage = color[0];
-                this.colorMemory = color[1];
-                this.colorView = color[2];
+                AllocatedImage color = allocateImage(true, requestedWidth, requestedHeight, wantedClass);
+                this.colorImage = color.image;
+                this.colorAllocation = color.allocation;
+                this.colorView = color.view;
                 if (sharedDepth != null) {
-                    this.depthImage = sharedDepth[0];
-                    this.depthMemory = VK_NULL_HANDLE;
-                    this.depthView = sharedDepth[2];
+                    this.depthImage = sharedDepth.image;
+                    this.depthAllocation = null;
+                    this.depthView = sharedDepth.view;
                 } else {
-                    long[] depth = allocateImage(false, requestedWidth, requestedHeight,
+                    AllocatedImage depth = allocateImage(false, requestedWidth, requestedHeight,
                             TargetFormatClass.RGBA8_UNORM);
-                    this.depthImage = depth[0];
-                    this.depthMemory = depth[1];
-                    this.depthView = depth[2];
+                    this.depthImage = depth.image;
+                    this.depthAllocation = depth.allocation;
+                    this.depthView = depth.view;
                 }
                 this.width = requestedWidth;
                 this.height = requestedHeight;
@@ -3937,37 +3960,33 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkDevice device = context.device();
             final long view = this.colorView;
             final long image = this.colorImage;
-            final long memory = this.colorMemory;
+            final SlabAllocator.SlabAllocation allocation = this.colorAllocation;
             // A borrowed depth is the store's, not this pair's: retiring the pair hands back the reference
             // and leaves the handles (and the layout record) with the store.
             final boolean borrowedDepth = this.sharedDepthKey != 0L;
             final long depthView = borrowedDepth ? VK_NULL_HANDLE : this.depthView;
             final long depthImage = borrowedDepth ? VK_NULL_HANDLE : this.depthImage;
-            final long depthMemory = borrowedDepth ? VK_NULL_HANDLE : this.depthMemory;
+            final SlabAllocator.SlabAllocation depthAllocation = borrowedDepth ? null : this.depthAllocation;
             this.colorView = VK_NULL_HANDLE;
             this.colorImage = VK_NULL_HANDLE;
-            this.colorMemory = VK_NULL_HANDLE;
+            this.colorAllocation = null;
             this.depthView = VK_NULL_HANDLE;
             this.depthImage = VK_NULL_HANDLE;
-            this.depthMemory = VK_NULL_HANDLE;
+            this.depthAllocation = null;
             if (view != VK_NULL_HANDLE) {
                 VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
             }
             if (image != VK_NULL_HANDLE) {
                 VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
             }
-            if (memory != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
-            }
+            releaseAllocation(allocation);
             if (depthView != VK_NULL_HANDLE) {
                 VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, depthView, null));
             }
             if (depthImage != VK_NULL_HANDLE) {
                 VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, depthImage, null));
             }
-            if (depthMemory != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, depthMemory));
-            }
+            releaseAllocation(depthAllocation);
             retireExtras();
             // The generation moves with the images: a framebuffer built over the views just handed to the retire
             // queue must read as stale even though this pair is asked for them again only when it is re-ensured.
@@ -3999,9 +4018,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 vkDestroyImage(device, this.colorImage, null);
                 this.colorImage = VK_NULL_HANDLE;
             }
-            if (this.colorMemory != VK_NULL_HANDLE) {
-                VulkanContext.freeMemory(device, this.colorMemory);
-                this.colorMemory = VK_NULL_HANDLE;
+            if (this.colorAllocation != null) {
+                releaseAllocation(this.colorAllocation);
+                this.colorAllocation = null;
             }
             if (this.sharedDepthKey == 0L) {
                 if (this.depthView != VK_NULL_HANDLE) {
@@ -4012,14 +4031,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     vkDestroyImage(device, this.depthImage, null);
                     this.depthImage = VK_NULL_HANDLE;
                 }
-                if (this.depthMemory != VK_NULL_HANDLE) {
-                    VulkanContext.freeMemory(device, this.depthMemory);
-                    this.depthMemory = VK_NULL_HANDLE;
+                if (this.depthAllocation != null) {
+                    releaseAllocation(this.depthAllocation);
+                    this.depthAllocation = null;
                 }
             } else {
                 this.depthView = VK_NULL_HANDLE;
                 this.depthImage = VK_NULL_HANDLE;
-                this.depthMemory = VK_NULL_HANDLE;
+                this.depthAllocation = null;
             }
             this.sharedDepthKey = 0L;
             this.width = 0;
@@ -4109,9 +4128,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (entry.image != VK_NULL_HANDLE) {
                 vkDestroyImage(device, entry.image, null);
             }
-            if (entry.memory != VK_NULL_HANDLE) {
-                VulkanContext.freeMemory(device, entry.memory);
-            }
+            releaseAllocation(entry.allocation);
         }
         this.sharedDepths.clear();
         if (this.colorView != VK_NULL_HANDLE) {
@@ -4122,9 +4139,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             vkDestroyImage(device, this.colorImage, null);
             this.colorImage = VK_NULL_HANDLE;
         }
-        if (this.colorMemory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(device, this.colorMemory);
-            this.colorMemory = VK_NULL_HANDLE;
+        if (this.colorAllocation != null) {
+            releaseAllocation(this.colorAllocation);
+            this.colorAllocation = null;
         }
         if (this.depthView != VK_NULL_HANDLE) {
             vkDestroyImageView(device, this.depthView, null);
@@ -4134,9 +4151,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             vkDestroyImage(device, this.depthImage, null);
             this.depthImage = VK_NULL_HANDLE;
         }
-        if (this.depthMemory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(device, this.depthMemory);
-            this.depthMemory = VK_NULL_HANDLE;
+        if (this.depthAllocation != null) {
+            releaseAllocation(this.depthAllocation);
+            this.depthAllocation = null;
         }
     }
 }
