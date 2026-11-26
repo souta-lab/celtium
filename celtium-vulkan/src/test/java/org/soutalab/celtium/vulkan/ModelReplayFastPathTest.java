@@ -22,9 +22,23 @@ class ModelReplayFastPathTest {
     }
 
     private static ModelReplayFastPath.Probe filled(ModelReplayFastPath.Probe probe) {
-        for (int i = 0; i < ModelReplayFastPath.SIGNATURE; i++) {
-            probe.signature[i] = 100 + i;
-        }
+        // The signature at values inside the domains the state mapping reads (stage 8, S8-a): the state is judged
+        // in PipelineStateKey's packing, whose codes are exact inside those domains and share an escape slot
+        // outside them, so a synthetic out-of-domain signature would test the escape, not the judgment.
+        int[] signature = {
+                1,                                  // BLEND
+                768, 769, 1, 0,                     // SRC_RGB, DST_RGB, SRC_ALPHA, DST_ALPHA (GL factors)
+                0x8006, 0x8006,                     // EQ_RGB, EQ_ALPHA (FUNC_ADD)
+                7,                                  // COLOR_MASK
+                1, Float.floatToIntBits(0.5f), 516, // ALPHA_TEST, ALPHA_REF, ALPHA_FUNC
+                1,                                  // CULL
+                1, 1, 515,                          // DEPTH_TEST, DEPTH_WRITE, DEPTH_FUNC
+                1,                                  // LIGHTING
+                8448, 8448,                         // ENV_MODE, ENV_RGB (MODULATE)
+                1,                                  // WINDOW_TARGET
+                0x0405, 0x0901                      // CULL_FACE (GL_BACK), FRONT_FACE (GL_CCW)
+        };
+        System.arraycopy(signature, 0, probe.signature, 0, ModelReplayFastPath.SIGNATURE);
         for (int i = 0; i < 16; i++) {
             probe.projection[i] = i;
             probe.state[i] = 1000 + i;
@@ -59,7 +73,6 @@ class ModelReplayFastPathTest {
         probe.quads = 6;
         probe.textureIndex = 3;
         probe.lightmapIndex = 4;
-        probe.alphaFunction = 0x204;
         probe.frameId = 77L;
         probe.target = 0x5f73abe3L;
         probe.stateKey = 0xDEADBEEFL;
@@ -156,9 +169,36 @@ class ModelReplayFastPathTest {
         note(fast);
         // One element of each value array, at both ends: an off-by-one in a copy shows up as a hit that should miss.
         assertTrue(matches(fast, filled()));
+        // Each signature slot an in-domain alternate that the judgment must tell apart (stage 8, S8-a): the keyed
+        // slots through PipelineStateKey's packing, the residual slots raw. The window-target slot is not here -
+        // it is a function of the target identity and has its own case below.
+        int[] alternates = new int[ModelReplayFastPath.SIGNATURE];
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 770;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = 770;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = 768;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = 1;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = 0x8007;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = 0x8007;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = 11;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.25f);
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = 517;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] = 516;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] = 0;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] = 34160;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] = 0x84E7;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = 0x0404;
+        alternates[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = 0x0903;
         for (int index = 0; index < ModelReplayFastPath.SIGNATURE; index++) {
+            if (index == VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET) {
+                continue;
+            }
             ModelReplayFastPath.Probe changed = refilled();
-            changed.signature[index]++;
+            changed.signature[index] = alternates[index];
             assertFalse(matches(fast, changed), "signature slot " + index + " is part of the state");
         }
         for (int index : new int[] {0, 15}) {
@@ -366,9 +406,92 @@ class ModelReplayFastPathTest {
                 default: moved.envVersion++; break;
             }
             assertFalse(ModelReplayFastPath.sameVersions(moved, fast.cached()), name + " is part of the proof");
-            moved.signature[0] += 3;
+            moved.signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = 9;
             assertFalse(matches(fast, moved), name + " moving must fall back to the bytes, and the bytes moved");
         }
+    }
+
+    @Test void theProbeKeyIsPipelineStateKeysOwnPacking() {
+        // The judgment's key is not a lookalike packing: driven by a signature read from a state mirror, it is
+        // the value PipelineStateKey.of packs from that same mirror. The model state carries no shade input, so
+        // the mirror's shade is set to the flat 0 the signature-driven packing uses, and the format fold is 0 on
+        // both sides (a list's format is fixed and the run conditions discriminate it through the backend key).
+        VulkanGlState state = new VulkanGlState();
+        state.blendEnabled(true);
+        state.blendFunc(770, 771, 1, 0);
+        state.blendEquation(VulkanGlState.BLEND_FUNC_ADD, VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT);
+        state.colorMask(0x5);
+        state.depthFunc(515);
+        state.alphaTestEnabled(true);
+        state.alphaFunc(516, 0.5f);
+        state.lightingEnabled(true);
+        state.shadeModel(VulkanGlState.SHADE_FLAT);
+        state.cullEnabled(true);
+        state.cullFace(VulkanCullState.GL_FRONT);
+        state.frontFace(VulkanCullState.GL_CW);
+        int[] signature = new int[ModelReplayFastPath.SIGNATURE];
+        signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = state.blendEnabled() ? 1 : 0;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = state.blendSrcRgb();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = state.blendDstRgb();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = state.blendSrcAlpha();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = state.blendDstAlpha();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = state.blendEquationRgb();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = state.blendEquationAlpha();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = state.colorMask();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = state.alphaTestEnabled() ? 1 : 0;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(state.alphaFuncReference());
+        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = state.alphaFunc();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] = state.cullEnabled() ? 1 : 0;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = state.cullFace();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = state.frontFace();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = state.depthTestEnabled() ? 1 : 0;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = state.depthMask() ? 1 : 0;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] = state.depthFunc();
+        signature[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] = state.lightingEnabled() ? 1 : 0;
+        assertEquals(PipelineStateKey.of(state, 0).value(), ModelReplayFastPath.pipelineKeyOf(signature));
+    }
+
+    @Test void theKeyErasesWhatTheStateErases() {
+        // With blending off, the state mapping substitutes 0 for every factor and the key erases them too, so a
+        // factor that changed while blending is off is the same state - the raw comparison refused it, the key
+        // judgment serves it, and the record a hit writes is the one the unchanged path resolves either way.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        ModelReplayFastPath.Probe off = filled();
+        off.signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
+        note(fast, off);
+        ModelReplayFastPath.Probe otherFactor = refilled();
+        otherFactor.signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
+        otherFactor.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 772;
+        assertTrue(matches(fast, otherFactor),
+                "a factor blending never reads is erased by the state mapping and by the key alike");
+    }
+
+    @Test void anOutOfDomainFactorSharesTheEscapeAndTheState() {
+        // PipelineStateKey's documented semantics outside a field's domain: one shared escape slot. For a blend
+        // factor that is sound here because the state mapping answers -1 for every unknown factor and substitutes
+        // one fixed fallback, so two unknowns are the same state even though the raw inputs differ.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        ModelReplayFastPath.Probe unknown = filled();
+        unknown.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 12345;
+        note(fast, unknown);
+        ModelReplayFastPath.Probe otherUnknown = refilled();
+        otherUnknown.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 23456;
+        assertTrue(matches(fast, otherUnknown),
+                "every unknown factor maps to the same state fallback, so the escape identifies them");
+        ModelReplayFastPath.Probe known = refilled();
+        known.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 768;
+        assertFalse(matches(fast, known), "a defined factor is a different state");
+    }
+
+    @Test void theWindowTargetRidesOnTheTargetIdentity() {
+        // The window-target input is the target identity restated (it is 1 exactly for the registry's main
+        // target), and the shape guard compares that identity before values are asked - so the value half does
+        // not carry the bit, and a probe differing only in it names the same target and the same state.
+        ModelReplayFastPath fast = new ModelReplayFastPath();
+        note(fast);
+        ModelReplayFastPath.Probe changed = refilled();
+        changed.signature[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 0;
+        assertTrue(matches(fast, changed), "the bit is the target identity restated, not a value of its own");
     }
 
     @Test void invalidateDropsTheTuple() {
