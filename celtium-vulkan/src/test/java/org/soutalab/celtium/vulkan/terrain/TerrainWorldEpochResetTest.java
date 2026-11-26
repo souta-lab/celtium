@@ -71,7 +71,7 @@ class TerrainWorldEpochResetTest {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts source = parts(2, true);
-        assertNotNull(store.register(mesher.build(1, 2, 3, 0, source, 0), 7L));
+        assertNotNull(store.register(mesher.build(1, 2, 3, 0, source, 0), 7L, 7L));
         assertEquals(1, store.recordCount());
         assertTrue(store.geometryAllocator().liveBytes() > 0,
                 "the registration really reserved ranges before the reset");
@@ -98,7 +98,7 @@ class TerrainWorldEpochResetTest {
 
         // The store serves the new epoch immediately, the same key included.
         BuiltSectionMeshParts again = parts(2, true);
-        assertNotNull(store.register(mesher.build(1, 2, 3, 0, again, 0), 8L));
+        assertNotNull(store.register(mesher.build(1, 2, 3, 0, again, 0), 8L, 8L));
         assertEquals(1, store.recordCount());
         freeParts(source);
         freeParts(again);
@@ -109,21 +109,26 @@ class TerrainWorldEpochResetTest {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts packSource = partsForStride(3, 0, 44);
-        assertNotNull(store.register(mesher.build(2, 0, 0, 1, packSource, 0, 44), 2L));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, packSource, 0, 44), 2L, 2L));
         assertEquals(1, packArenaCount(store), "the foreign stride created its pack arena");
 
-        // A vanilla section leaves by the deferred currency: unregistered
-        // against a release stamp nothing will ever reach, its ranges stay
-        // live until a collection that cannot happen in this epoch.
+        // A vanilla section leaves onto the pending-retire ledger (slice
+        // S2): unregistered but never stamped at a checkpoint, its ranges
+        // stay live until a collection that cannot happen in this epoch.
         TerrainSectionStore.Key key = new TerrainSectionStore.Key(5, 5, 5, 0);
         BuiltSectionMeshParts source = parts(2, false);
-        assertNotNull(store.register(mesher.build(5, 5, 5, 0, source, 0), 3L));
-        store.unregister(key, Long.MAX_VALUE);
+        assertNotNull(store.register(mesher.build(5, 5, 5, 0, source, 0), 3L, 3L));
+        store.unregister(key);
         assertEquals(1, store.recordCount(), "the pack record is still resident");
+        assertTrue(store.pendingRetirementCount() > 0,
+                "the retirement waits on the pending ledger, unstamped");
         assertTrue(store.geometryAllocator().liveBytes() > 0,
                 "the deferred release is outstanding: the old ledger still holds the ranges");
 
         store.resetForNewEpoch();
+
+        assertEquals(0, store.pendingRetirementCount(),
+                "no pending retirement crosses the epoch boundary (INV-4b)");
 
         assertEquals(0, store.recordCount());
         assertEquals(0, packArenaCount(store), "the pack arenas leave with the epoch");
@@ -141,7 +146,7 @@ class TerrainWorldEpochResetTest {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
         BuiltSectionMeshParts source = parts(2, false);
-        var allocated = store.allocateDiagnosed(mesher.build(9, 9, 9, 0, source, 0), 3L);
+        var allocated = store.allocateDiagnosed(mesher.build(9, 9, 9, 0, source, 0), 3L, 3L);
         assertNotNull(allocated.pending(), "the key is held by an unpublished allocation");
         assertNull(allocated.failure());
 
@@ -149,7 +154,7 @@ class TerrainWorldEpochResetTest {
 
         // The same key allocates cleanly: the pending hold did not cross.
         BuiltSectionMeshParts retry = parts(2, false);
-        var again = store.allocateDiagnosed(mesher.build(9, 9, 9, 0, retry, 0), 4L);
+        var again = store.allocateDiagnosed(mesher.build(9, 9, 9, 0, retry, 0), 4L, 4L);
         assertNotNull(again.pending());
         assertNull(again.failure());
         assertNotNull(store.publish(again.pending()));

@@ -65,13 +65,13 @@ class TerrainSnapshotCaptureTest {
     void captureFreezesCountsAcrossALaterRegistration() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1));
 
         TerrainSectionStore.SnapshotData capture = store.captureSnapshot();
         assertEquals(1, capture.recordCount());
         assertEquals(1, capture.vanillaSlabCounts()[0][0]);
 
-        assertNotNull(store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2, 2));
         assertEquals(2, store.recordCount(), "the live store moved on");
         assertEquals(1, capture.recordCount(), "the capture still reads its own generation");
         assertEquals(1, capture.vanillaSlabCounts()[0][0],
@@ -82,8 +82,8 @@ class TerrainSnapshotCaptureTest {
     void oneCaptureIsAtomicAcrossVanillaAndPack() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
-        assertNotNull(store.register(mesher.build(2, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 2));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 2, 2));
 
         TerrainSectionStore.SnapshotData capture = store.captureSnapshot();
         assertEquals(store.imageGeneration(), capture.generation(),
@@ -104,8 +104,8 @@ class TerrainSnapshotCaptureTest {
         // Two vanilla passes register into the same first slab (the shape
         // TerrainSectionStoreTest.perPassSlabCountsSeeOnlyThatPassRecords
         // established for the live counters).
-        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
-        assertNotNull(store.register(mesher.build(2, 0, 0, 1, parts(1, 0, true), 0), 2));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, parts(1, 0, true), 0), 2, 2));
 
         TerrainSectionStore.SnapshotData capture = store.captureSnapshot();
         assertEquals(2, capture.vanillaSlabCounts().length,
@@ -120,7 +120,7 @@ class TerrainSnapshotCaptureTest {
     void capturedImagesAreTheCapturesOwnCopies() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 0, parts(1, 0, true), 0), 1, 1));
 
         TerrainSectionStore.SnapshotData capture = store.captureSnapshot();
         int[] descAtCapture = capture.descImage().clone();
@@ -131,8 +131,8 @@ class TerrainSnapshotCaptureTest {
                 "the capture does not alias the store's live factor-base image");
 
         // Churn the store: a swap-remove rewrites slot 0 of the live image.
-        assertNotNull(store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2));
-        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0), 5));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 0, parts(1, 0, true), 0), 2, 2));
+        assertNotNull(store.unregister(new TerrainSectionStore.Key(1, 0, 0, 0)));
         assertArrayEquals(descAtCapture, capture.descImage(),
                 "later store mutations never rewrite a capture already handed out");
         assertArrayEquals(basesAtCapture, capture.factorBaseImage(),
@@ -143,9 +143,9 @@ class TerrainSnapshotCaptureTest {
     void packCountsAreFrozenPerPass() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
-        assertNotNull(store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 1));
-        assertNotNull(store.register(mesher.build(2, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 2));
-        assertNotNull(store.register(mesher.build(3, 0, 0, 2, partsForStride(1, 0, 44), 0, 44), 3));
+        assertNotNull(store.register(mesher.build(1, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 1, 1));
+        assertNotNull(store.register(mesher.build(2, 0, 0, 1, partsForStride(1, 0, 44), 0, 44), 2, 2));
+        assertNotNull(store.register(mesher.build(3, 0, 0, 2, partsForStride(1, 0, 44), 0, 44), 3, 3));
 
         TerrainSectionStore.SnapshotData capture = store.captureSnapshot();
         int base = TerrainSectionStore.PACK_SLAB_BASE;

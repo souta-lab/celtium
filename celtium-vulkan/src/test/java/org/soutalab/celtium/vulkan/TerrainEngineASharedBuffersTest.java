@@ -101,7 +101,7 @@ class TerrainEngineASharedBuffersTest {
     void theHostDeletesTheSharedBuffersOnlyAfterEveryEngine() throws IOException {
         String host = read(HOST);
         String engine = read(ENGINE);
-        int deleteStart = host.indexOf("void delete(VulkanContext context)");
+        int deleteStart = host.indexOf("boolean delete(VulkanContext context)");
         assertTrue(deleteStart >= 0, "the host's delete exists");
         String delete = host.substring(deleteStart);
         int enginesDeleted = delete.indexOf("engine.delete()");

@@ -17998,11 +17998,13 @@ this.frameBufferOpen = false;
         this.terrainAArmedEngines.clear();
         // The armed cache's frame stamp belongs to the dead world too: reset
         // with the cache, so the next world's first frame re-arms from a
-        // clean stamp instead of comparing against a dead frame id. (The
-        // recording epoch the sharing design keeps beside it is slice S1's
-        // field; its reset joins at this same seat when the slices
-        // integrate.)
+        // clean stamp instead of comparing against a dead frame id. The
+        // recording epoch (slice S1's field) restarts with the new world at
+        // this same seat: every executor that stamped it is deleted above,
+        // and a fresh epoch space keeps a new world's first recording from
+        // comparing against a dead world's count.
         this.terrainAArmedFrame = -1L;
+        this.recordingEpoch = 0L;
         for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
