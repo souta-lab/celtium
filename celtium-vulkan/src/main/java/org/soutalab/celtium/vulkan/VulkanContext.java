@@ -5046,7 +5046,9 @@ public final class VulkanContext {
      * {@code memoryTypeBits}}, created on first use. The dedicated pool of prescription (f): only the
      * GL-less frame target's chain-pair and shared-depth images allocate here (see {@link GllessFrameTarget});
      * every other image stays in {@link #celtium$deviceLocalImageSlabs}, whose bounded tenants this
-     * population must not be able to starve. Ordinary slabs are capped at 24 per type, so the live
+     * population must not be able to starve. Ordinary slabs are capped at 24 per type (DIAGNOSTIC
+     * branch devlocalimage-plateau-diag: raised to 40 to measure the population's plateau; never
+     * lands), so the live
      * {@code vkAllocateMemory} count for the chain-pair population is bounded by the cap (plus one
      * dedicated slab per live oversized image) - the cap is the exhaustion detector, and reaching it
      * escalates rather than degrading silently.
@@ -5056,7 +5058,7 @@ public final class VulkanContext {
                 "the frame-target image slab pool");
         SlabAllocator allocator = this.frameTargetImageSlabsByType.get(Integer.valueOf(type));
         if (allocator == null) {
-            allocator = new SlabAllocator(this, "frameTargetImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 24,
+            allocator = new SlabAllocator(this, "frameTargetImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 40,
                     false);
             this.frameTargetImageSlabsByType.put(Integer.valueOf(type), allocator);
         }

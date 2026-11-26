@@ -145,6 +145,28 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** Reverse lookup for the sampling hot path; only live colour images have entries. */
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairOwners =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+
+    // ---- DIAGNOSTIC ONLY (devlocalimage-plateau-diag branch; this instrumentation never lands) ----
+    // Pair-population census: every chain-pair creation, map-level retirement, pair-level image
+    // retirement and image allocation is printed under the CELTIUM_PAIR_CENSUS tag so a leg log can
+    // decompose the frame-target population by identity. Production semantics are untouched.
+    private static final long DIAG_T0 = System.nanoTime();
+    private static long diagPairCreated;
+    private static long diagPairRetired;
+
+    private static long diagNowMs() {
+        return (System.nanoTime() - DIAG_T0) / 1_000_000L;
+    }
+
+    private static void diagAlloc(String site, boolean color, int w, int h, TargetFormatClass cls,
+            boolean frameTargetPool, long rawSize, long reservedSize) {
+        System.out.println("[Celtium] CELTIUM_PAIR_CENSUS alloc site=" + site
+                + " kind=" + (color ? "color" : "depth")
+                + " size=" + rawSize + " reserved=" + reservedSize
+                + " w=" + w + " h=" + h + " class=" + cls
+                + " pool=" + (frameTargetPool ? "frameTarget" : "deviceLocal")
+                + " t=" + diagNowMs());
+    }
     /**
      * Chain-pair image-set changes so far; the source of {@link #chainPairGeneration}. Created <em>and</em> retired
      * count, because the number a framebuffer is stamped with has to change for either - see
@@ -318,12 +340,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // The frame's own colour is the frame's class (QUEUE 404 rule R1, revised by Stage 1's BGRA
             // ignition): the image the finished frame is composed into and presented from follows the
             // surface's format, whatever a mod's own framebuffer asked for.
-            AllocatedImage color = target.allocateImage(true, width, height, target.frameFormatClass, false);
+            AllocatedImage color = target.allocateImage(true, width, height, target.frameFormatClass, false,
+                    "frame");
             target.colorImage = color.image;
             target.colorAllocation = color.allocation;
             target.colorView = color.view;
             AllocatedImage depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM,
-                    false);
+                    false, "frame");
             target.depthImage = depth.image;
             target.depthAllocation = depth.allocation;
             target.depthView = depth.view;
@@ -369,7 +392,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * caller only ever adopts complete handles and {@link #delete()} never has to know about a half-created image.
      */
     private AllocatedImage allocateImage(boolean color, int imageWidth, int imageHeight,
-            TargetFormatClass colorClass, boolean frameTargetPool) {
+            TargetFormatClass colorClass, boolean frameTargetPool, String diagSite) {
         VkDevice device = this.context.device();
         long image = VK_NULL_HANDLE;
         SlabAllocator.SlabAllocation allocation = null;
@@ -424,6 +447,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (vkCreateImageView(device, createView, null, handle) != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateImageView(glless " + (color ? "colour" : "depth") + ") failed");
             }
+            diagAlloc(diagSite, color, imageWidth, imageHeight, colorClass, frameTargetPool,
+                    requirements.size(), allocation.size());
             return new AllocatedImage(image, handle.get(0), allocation);
         } catch (RuntimeException | LinkageError error) {
             releaseAllocation(allocation);
@@ -1572,6 +1597,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         Pair created = new Pair("chain-" + Long.toHexString(identity), true);
         this.chainPairs.put(identity, created);
+        diagPairCreated++;
+        System.out.println("[Celtium] CELTIUM_PAIR_CENSUS create identity=0x" + Long.toHexString(identity)
+                + " live=" + this.chainPairs.size() + " created=" + diagPairCreated
+                + " retired=" + diagPairRetired + " t=" + diagNowMs());
         return created;
     }
 
@@ -1584,6 +1613,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public void retireChainPair(long identity) {
         Pair pair = this.chainPairs.remove(identity);
         if (pair != null) {
+            diagPairRetired++;
+            System.out.println("[Celtium] CELTIUM_PAIR_CENSUS retire identity=0x" + Long.toHexString(identity)
+                    + " live=" + this.chainPairs.size() + " created=" + diagPairCreated
+                    + " retired=" + diagPairRetired + " t=" + diagNowMs());
             if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
             long[] extras = pair.extraColorImageSnapshot();
             if (extras != null) {
@@ -1730,7 +1763,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.sharedDepths.remove(depthKey);
             retirePairsBorrowing(depthKey);
         }
-        AllocatedImage allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM, true);
+        AllocatedImage allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM, true,
+                "shareddepth-" + Long.toHexString(depthKey));
         SharedDepth created = new SharedDepth();
         created.image = allocated.image;
         created.allocation = allocated.allocation;
@@ -2991,7 +3025,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // The tuple's images are the pair's own class (rule R4): one class per tuple, because the
                     // render pass declares one format for every colour attachment.
                     AllocatedImage allocated = allocateImage(true, this.width, this.height, this.formatClass,
-                            this.dedicatedPool);
+                            this.dedicatedPool, this.label + ":extra");
                     images[i] = allocated.image;
                     allocations[i] = allocated.allocation;
                     views[i] = allocated.view;
@@ -3036,6 +3070,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
             final SlabAllocator.SlabAllocation[] allocations = this.extraColorAllocations;
             final long[] views = this.extraColorViews;
             final int count = this.extraColorCount;
+            long diagExtrasReserved = 0L;
+            for (int i = 0; i < count; i++) {
+                if (allocations[i] != null) diagExtrasReserved += allocations[i].size();
+            }
+            System.out.println("[Celtium] CELTIUM_PAIR_CENSUS extras-retire pair=" + this.label
+                    + " count=" + count + " reserved=" + diagExtrasReserved
+                    + " t=" + diagNowMs());
             this.extraColorImages = null;
             this.extraColorAllocations = null;
             this.extraColorViews = null;
@@ -3227,7 +3268,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             retire();
             try {
                 AllocatedImage color = allocateImage(true, requestedWidth, requestedHeight, wantedClass,
-                        this.dedicatedPool);
+                        this.dedicatedPool, this.label);
                 this.colorImage = color.image;
                 this.colorAllocation = color.allocation;
                 this.colorView = color.view;
@@ -3237,7 +3278,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     this.depthView = sharedDepth.view;
                 } else {
                     AllocatedImage depth = allocateImage(false, requestedWidth, requestedHeight,
-                            TargetFormatClass.RGBA8_UNORM, this.dedicatedPool);
+                            TargetFormatClass.RGBA8_UNORM, this.dedicatedPool, this.label);
                     this.depthImage = depth.image;
                     this.depthAllocation = depth.allocation;
                     this.depthView = depth.view;
@@ -3984,6 +4025,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             final long depthView = borrowedDepth ? VK_NULL_HANDLE : this.depthView;
             final long depthImage = borrowedDepth ? VK_NULL_HANDLE : this.depthImage;
             final SlabAllocator.SlabAllocation depthAllocation = borrowedDepth ? null : this.depthAllocation;
+            System.out.println("[Celtium] CELTIUM_PAIR_CENSUS pair-retire pair=" + this.label
+                    + " colorReserved=" + (allocation != null ? allocation.size() : 0L)
+                    + " depthReserved=" + (depthAllocation != null ? depthAllocation.size() : 0L)
+                    + " borrowedDepth=" + borrowedDepth
+                    + " w=" + this.width + " h=" + this.height
+                    + " t=" + diagNowMs());
             this.colorView = VK_NULL_HANDLE;
             this.colorImage = VK_NULL_HANDLE;
             this.colorAllocation = null;

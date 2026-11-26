@@ -42,7 +42,10 @@ public final class CeltiumLogLimiter extends PrintStream {
      * present-freeze diagnosis reads (B2 freeze desk analysis, 2026-11-26).
      */
     private static final java.util.Set<String> UNLIMITED_TAGS = java.util.Set.of(
-            "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE", "CELTIUM_PRESENT");
+            "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE", "CELTIUM_PRESENT",
+            // DIAGNOSTIC ONLY (devlocalimage-plateau-diag branch; never lands): the pair census prints
+            // one line per allocation and would be cut at 16 by the per-tag bound.
+            "CELTIUM_PAIR_CENSUS");
     private static final Map<String, AtomicLong> COUNTS = new ConcurrentHashMap<String, AtomicLong>();
     private static volatile boolean summaryHookInstalled;
 
