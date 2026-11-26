@@ -579,6 +579,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
+     * {@return the pipeline cache key with the target's colour count folded in}: the count beside the
+     * class, in the same shape as {@link #celtium$pipelineKey} - the line bit saved and restored, the
+     * fold below it. A count of one is the identity, so every batch offered for a one-colour target -
+     * the whole shipped population before multi-target windows - keeps the very key it always had.
+     * The fold is what stops a pipeline built for one colour answering for a target attaching several:
+     * the state key alone cannot tell them apart, so without it the family caches below hand the
+     * one-colour pipeline to the multi-target window under the same key. Pure and static so the fold
+     * is pinned without a device.
+     */
+    static long celtium$pipelineColorKey(long pipelineKey, int colorCount) {
+        if (colorCount <= 1) {
+            return pipelineKey;
+        }
+        long flag = pipelineKey & LINE_KEY_BIT;
+        long mixed = ((pipelineKey & ~LINE_KEY_BIT) * 31L + colorCount) & ~LINE_KEY_BIT;
+        return mixed | flag;
+    }
+
+    /**
      * {@return the format class of the pair the current target's batches will be drawn into}: the frame's
      * class for identity 0 and the main identity (rule R1 - {@code RGBA8_UNORM} on a classic surface,
      * {@code BGRA8_UNORM} when the frame followed a BGRA one), the current identity's chain-pair class
@@ -14218,7 +14237,13 @@ this.frameBufferOpen = false;
         // happens here, at the pipeline boundary only, so groups do not split by class. For the default
         // class the fold is the identity and the pass choice is the one this code always made (rule R6).
         TargetFormatClass pairClass = celtium$currentPairFormatClass();
-        long effectiveKey = celtium$pipelineKey(key, pairClass.ordinal());
+        // The target's colour count, from the same publication record the mod-program path reads
+        // (celtium$modTargetColors): a multi-target window's pass attaches that many colours, and the
+        // pipeline is built against that count's pass, so the count is part of what a prepared material
+        // depends on and folds into the key beside the class.
+        int targetColors = this.modPrograms.celtium$modTargetColors();
+        long effectiveKey = celtium$pipelineColorKey(celtium$pipelineKey(key, pairClass.ordinal()),
+                targetColors);
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
         // version cleared the whole cache on every pass change and hashed the texture's upload serial - which an
         // animated atlas moves every tick - so half the asks missed (633,773 hits of 1,305,294 calls, 24,415 resets
@@ -14239,7 +14264,7 @@ this.frameBufferOpen = false;
                 : (resolvedKnown ? celtium$registry().get(textureId) : null);
         if (textureId > 0 && (live == null || !live.hasFullContent())) {
             return prepareImmediateUncached(format, textureId, effectiveKey, state, live, resolvedKnown,
-                    pairClass);
+                    pairClass, targetColors);
         }
         long textureKey = live == null ? 0L : live.key();
         // The lit families' descriptors also name the light map, which a resource reload replaces.
@@ -14261,7 +14286,7 @@ this.frameBufferOpen = false;
             return entry.value;
         }
         PreparedImmediate prepared = prepareImmediateUncached(format, textureId, effectiveKey, state, live,
-                resolvedKnown, pairClass);
+                resolvedKnown, pairClass, targetColors);
         if (prepared != null) {
             if (entry == null) {
                 entry = new PrepareCacheEntry();
@@ -14364,7 +14389,7 @@ this.frameBufferOpen = false;
      */
     private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state,
             org.soutalab.celtium.vulkan.VulkanGlTexture resolved, boolean resolvedKnown,
-            TargetFormatClass pairClass) {
+            TargetFormatClass pairClass, int targetColors) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -14440,14 +14465,21 @@ this.frameBufferOpen = false;
                     + " (no complete native image or initialized framebuffer attachment)";
             return null;
         }
-        // The pass the pipeline is built against: the frame pass for the frame's class, as always. A batch
-        // offered for a pair in any other class gets the class' frame-shaped pass instead (QUEUE 404, S4) -
-        // a pipeline built against the frame pass is not compatible with that pair's pass, because
-        // compatibility compares attachment formats. The class' pass is compatible with the pair's
-        // one-colour chain pass, so the same pipeline draws in the window.
-        long pass = pairClass != celtium$frameFormatClass()
-                ? formatClassPipelinePass(pairClass)
-                : terrain != null ? terrain.renderPass() : uiRenderPass();
+        // The pass the pipeline is built against. A target attaching several colours takes that
+        // count's chain pass: render-pass compatibility compares the attachment references
+        // themselves, so a pipeline built against a one-colour pass bound in a multi-target window is
+        // the 02684 mismatch - the window's reference [1] names an attachment while the pipeline's
+        // pass has VK_ATTACHMENT_UNUSED there. The chain form stands in for the window's load/store
+        // frame variant exactly as it does for mod programs, because load and store operations are
+        // not part of compatibility. A one-colour target keeps the choice this code always made: the
+        // frame pass for the frame's class, or - for a pair in any other class (QUEUE 404, S4) - the
+        // class' frame-shaped pass, which is compatible with the pair's one-colour chain pass, so the
+        // same pipeline draws in the window.
+        long pass = targetColors > 1
+                ? chainPairRenderPass(targetColors, pairClass)
+                : pairClass != celtium$frameFormatClass()
+                        ? formatClassPipelinePass(pairClass)
+                        : terrain != null ? terrain.renderPass() : uiRenderPass();
         long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         Object pipeline;
         long descriptor = 0;
@@ -14462,7 +14494,7 @@ this.frameBufferOpen = false;
             VulkanImmediateParticlePipeline value = this.particlePipelineCache.get(particleKey);
             if (value == null) {
                 value = VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
-                        true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]));
+                        true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]), targetColors);
                 if (value != null) {
                     this.particlePipelineCache.put(particleKey, value);
                 }
@@ -14483,7 +14515,8 @@ this.frameBufferOpen = false;
             VulkanImmediateItemPipeline value = this.itemPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), itemLit);
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), itemLit,
+                        targetColors);
                 if (value != null) {
                     this.itemPipelineCache.put(key, value);
                 }
@@ -14499,7 +14532,7 @@ this.frameBufferOpen = false;
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
                 if (value != null) {
                     this.blockPipelineCache.put(key, value);
                 }
@@ -14509,7 +14542,7 @@ this.frameBufferOpen = false;
             VulkanImmediateTexturePipeline value = this.texGenPipelineCache.get(key);
             if (value == null) {
                 value = VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
                 if (value != null) {
                     this.texGenPipelineCache.put(key, value);
                 }
@@ -14534,21 +14567,22 @@ this.frameBufferOpen = false;
                 boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
                 VulkanColorBlendState colorBlend = celtium$blendState(state);
                 value = format == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.createForCombine4(
-                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp,
+                        targetColors)
                         : format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
-                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
                         : format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
-                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp)
+                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp, targetColors)
                         : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
                         : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
                         : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
                         : VulkanImmediateTexturePipeline.create(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp);
+                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors);
                 cache.put(key, value);
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
@@ -14563,9 +14597,11 @@ this.frameBufferOpen = false;
             if (pipeline == null) {
                 VulkanImmediatePipeline created = lineBatch
                         ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]))
+                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
+                                targetColors)
                         : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]));
+                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
+                                targetColors);
                 if (created != null) {
                     pipelineCache.put(key, created);
                 }

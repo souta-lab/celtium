@@ -149,7 +149,7 @@ final class IndirectImmediateRuns {
                         colourState.celtium$renderPass(), colourState.celtium$colorBlend(),
                         colourState.celtium$depthTests(), colourState.celtium$depthWrites(),
                         colourState.celtium$cullState(), colourState.celtium$depthCompareOp(),
-                        b.drawRecords.descriptorSetLayout()));
+                        b.drawRecords.descriptorSetLayout(), colourState.celtium$colorAttachments()));
             }
         }
         // Blended groups are eligible as well: the opaque ordering only moves the opaque ones, so a blended group keeps its
@@ -228,7 +228,8 @@ final class IndirectImmediateRuns {
                     twin = VulkanImmediateItemPipeline.createRecords(b.context, itemState.celtium$renderPass(),
                             itemState.celtium$colorBlend(), itemState.celtium$depthTests(),
                             itemState.celtium$depthWrites(), itemState.celtium$cullState(),
-                            itemState.celtium$depthCompareOp(), b.drawRecords.descriptorSetLayout());
+                            itemState.celtium$depthCompareOp(), b.drawRecords.descriptorSetLayout(),
+                            itemState.celtium$colorAttachments());
                     this.recordsItemPipelines.put(itemState, twin);
                 }
                 this.indirectRunPipeline = null;
