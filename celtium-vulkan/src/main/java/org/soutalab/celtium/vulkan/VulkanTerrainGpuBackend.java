@@ -74,6 +74,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final int MIN_UNIFORM_ALIGNMENT = 256;
 
     /**
+     * The slot-wait decision point's fallback counters (Stage 2): every {@code waitForSlot} call that
+     * actually waits on a pending submission is one attempt, confirmed by the timeline wait (fast) or
+     * by the fence wait it falls through to (fallback). Counting only - rendering behaviour is unchanged.
+     */
+    private static final FallbackPaths.Handle TIMELINE_WAIT_PATH =
+            FallbackPaths.register(FallbackPaths.SYNC_TIMELINE);
+
+    /**
      * Bytes per dynamic uniform block. Mirrors {@code CeltiumSolidUniforms} in
      * {@code celtium-vulkan/src/main/shaders/terrain_solid.vert}: region offset, fog colour and parameters,
      * material flags and the (currently unused) chunk fade parameters.
@@ -26829,6 +26837,12 @@ this.frameBufferOpen = false;
             }
             return true;
         }
+        // A wait decision is actually being made for a pending submission: count the attempt here so
+        // the early return above (nothing in flight, no wait at all) stays invisible, and give the
+        // attempt its verdict below - fast when the timeline branch confirms the slot, fallback when
+        // the fence wait is what confirms it. A timeline stall ends the wait without a verdict (the
+        // fence never runs), so fast + fallback can honestly read below attempts.
+        TIMELINE_WAIT_PATH.attempt();
         long deferredToken = this.slotDeferredTokens[slot];
         if (deferredToken != 0) {
             // The slot's submission is still queued in the batched list: the batch is submitted only when that
@@ -26920,9 +26934,15 @@ this.frameBufferOpen = false;
                 // counter read is where the loss is detected on this path.
                 this.context.celtium$pollDeferredSubmits();
                 celtium$drainBindlessReleases();
+                // The timeline wait confirmed this slot - a success the bounded retries reached is
+                // still the timeline's confirmation, so the final result decides the verdict.
+                TIMELINE_WAIT_PATH.fast();
                 return true;
             }
         }
+        // The timeline branch did not confirm this slot (no timeline, no value, or the slot never
+        // rode a batch): the fence wait below is the attempt's verdict.
+        TIMELINE_WAIT_PATH.fallback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
             // A batched slot on a device without a timeline waits on its batch's fence, resolved from the
