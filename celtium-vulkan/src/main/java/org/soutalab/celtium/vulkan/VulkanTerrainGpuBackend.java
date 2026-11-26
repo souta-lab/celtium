@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
@@ -16756,32 +16757,40 @@ this.frameBufferOpen = false;
 
 
     /**
-     * Per-frame cap on chunk outputs uploaded, or 0 for the unbudgeted path.
+     * The upload budget's producer side (layer 2, design OVERHAUL-S3-REMAINDER-DESIGN §2.2).
+    /**
+     * The arrival size above which an arriving batch is put to the budget judgment instead of uploaded at once.
+     * This is an arrival-shape gate in front of the budget, not a budget itself: it stays a count.
+     * <p>
+     * A plain per-frame cap throttled the startup build and the fixture's capture could not list its pinned sections
+     * (measured twice: listed 0 of 64 with 28-35 pending at the deadline). The burst is what needs the budget, so
+     * small arrivals go straight through - the budget is never even asked - and only an arrival over this threshold
+     * is judged for deferral.
+     */
+    private static final int UPLOAD_BURST = Integer.getInteger("celtium.vulkan.uploadBurstThreshold", 32).intValue();
+    /**
+     * The deferred upload backlog: burst arrivals the budget judgment held back, in arrival order.
      * <p>
      * A burst of finished sections used to be uploaded inside one frame: the measured ATM3 world-only frame had
      * {@code setupTerrain} p95 2.2 ms and frame p95 15.9 ms against a 1.44 ms Celeritas frame, and the burst is what
-     * made the distribution, not the mean, expensive. With a budget the finished outputs queue and drain at the head of
-     * the next {@code setupTerrain}, which runs every frame - the queue therefore cannot starve. Off by default: the
-     * ordering and the pop-in cost are measured before the default changes.
+     * made the distribution, not the mean, expensive. The budget that answers that is the context's byte ledger
+     * ({@link UploadBudgetLedger}, sized by {@code celtium.vulkan.uploadBudgetMiB} - the one canonical budget
+     * property): a burst arrival whose real mesh bytes would take the frame's window over the budget is deferred
+     * here against the ledger's 16 MiB deferred cap, and the drain at the head of the next {@code setupTerrain} -
+     * which runs every frame - issues the backlog against the new window's room, so the queue cannot starve. The
+     * earlier per-frame count cap ({@code celtium.vulkan.uploadBudget}, 0 = off) is gone: its 0 meant the opposite
+     * of the byte property's 0 (unlimited), and with the drain spending bytes the count cap's role is absorbed by
+     * the ledger's remaining-room judgment.
      */
-    private static final int UPLOAD_BUDGET = Integer.getInteger("celtium.vulkan.uploadBudget", 0).intValue();
-    /**
-     * The queue size above which an arriving batch is budgeted instead of uploaded at once.
-     * <p>
-     * A plain per-frame cap throttled the startup build and the fixture's capture could not list its pinned sections
-     * (measured twice: listed 0 of 64 with 28-35 pending at the deadline). The burst is what needs the cap, so small
-     * arrivals go straight through and only a queue over this threshold is spread over frames.
-     */
-    private static final int UPLOAD_BURST = Integer.getInteger("celtium.vulkan.uploadBurstThreshold", 32).intValue();
     private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
     /**
      * What the upload budget did, so "the budget engaged" is a number rather than an inference from the flag.
      * <p>
-     * The budget is off by default and its re-entry condition is a measurement of the distribution it is aimed at, so
-     * a leg that sets it has to be able to say whether any arrival was actually over the burst threshold, how many
-     * outputs were deferred, how deep the queue got and how many frames the drain spent. Without these, a leg with the
-     * switch on and a leg without it are the same run whenever no burst arrived - and "no change" then reads as "the
-     * budget does not help" when it was never consulted.
+     * The deferral is live whenever the byte budget is finite, so a leg reading a run has to be able to say whether
+     * any arrival was actually over the burst threshold, how many outputs were deferred, how deep the queue got and
+     * how many frames the drain spent. Without these, a leg with a burst and a leg without one are the same run
+     * whenever the judgment is never consulted - and "no change" then reads as "the budget does not help" when it
+     * was never asked.
      */
     long deferredUploadBatches;
     long deferredUploadOutputs;
@@ -16790,56 +16799,119 @@ this.frameBufferOpen = false;
     long deferredUploadMaxQueued;
     long deferredUploadMaxDrainOutputs;
 
-    /** One region's remaining outputs, with the graph trigger that arrives with the batch. */
+    /** One region's deferred outputs, with the graph trigger that arrives with the batch and their byte weight. */
     private static final class DeferredUpload {
         final RenderRegion region;
         final List<ChunkTaskOutput> outputs;
         final Runnable trigger;
+        /** The outputs' deferral weight ({@link #celtium$deferredUploadWeight(ChunkTaskOutput)} summed). */
+        final long bytes;
 
-        DeferredUpload(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable trigger) {
+        DeferredUpload(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable trigger, long bytes) {
             this.region = region;
             this.outputs = outputs;
             this.trigger = trigger;
+            this.bytes = bytes;
         }
     }
 
     /**
-     * Drains the deferred chunk uploads, up to the configured budget. Called at the head of {@code setupTerrain}, which
-     * runs once per frame whatever the job queue does, so a deferred batch always reaches the terrain within a frame or
-     * two even when no further build results arrive.
+     * {@return the layer-2 deferral weight of one chunk output}: the real bytes of its built meshes - each
+     * {@link BuiltSectionMeshParts}' vertex buffer length plus its index buffer length when it has one, read
+     * from the {@link NativeBuffer}s themselves, so the weight is the actual byte count the producer holds,
+     * not an estimate. This is the deferral account's weight, kept apart from the flush account's recorded
+     * bytes ({@code noteFlushed}): the two are not required to agree, because uploads that ride along with
+     * an issued output (the Tier-A side's sorted streams, for one) are only visible to the flush side.
+     * Outputs that carry no built meshes under this definition - sort outputs - weigh 0.
+     */
+    static long celtium$deferredUploadWeight(ChunkTaskOutput output) {
+        if (!(output instanceof ChunkBuildOutput build)) {
+            return 0L;
+        }
+        long weight = 0L;
+        for (BuiltSectionMeshParts parts : build.meshes.values()) {
+            weight += parts.vertexBuffer().getLength();
+            NativeBuffer indexBuffer = parts.indexBuffer();
+            if (indexBuffer != null) {
+                weight += indexBuffer.getLength();
+            }
+        }
+        return weight;
+    }
+
+    /**
+     * The layer-2 producer judgment for one burst arrival of {@code weightBytes} under {@code frameKey}:
+     * defer it when issuing it would take the window over the budget and the deferred backlog's cap
+     * accepts it (the deferral is then accounted in the ledger). {@code false} - issue now - when the
+     * window has room, when the budget is unlimited, or when the cap refuses the deferral (the refusal
+     * itself is counted in the ledger's {@code deferredCapForce}).
+     */
+    static boolean celtium$tryDeferBurstArrival(UploadBudgetLedger ledger, long frameKey, long weightBytes) {
+        if (!ledger.wouldExceed(frameKey, weightBytes)) {
+            return false;
+        }
+        return ledger.noteDeferred(weightBytes);
+    }
+
+    /**
+     * Whether the deferred queue's head entry of {@code headBytes} may be issued under {@code frameKey}
+     * in this drain. The normal rule is the ledger's remaining room. The starvation escape stands behind
+     * it: when the window has carried nothing yet ({@code windowFlushedBytes} is 0) and this drain has
+     * issued nothing, an entry heavier than the whole budget can never become issuable by waiting - the
+     * window it waits on only fills through flushes of work that is itself waiting - so the head is
+     * issued once, unconditionally, and the excess lands in the window's overrun account at flush time.
+     * Once anything has flowed, the escape is closed and the entry waits for a fresh window like any
+     * other.
+     */
+    static boolean celtium$deferredEntryIssuable(UploadBudgetLedger ledger, long frameKey,
+            long windowFlushedBytes, long issuedThisDrainBytes, long headBytes) {
+        if (!ledger.wouldExceed(frameKey, headBytes)) {
+            return true;
+        }
+        return windowFlushedBytes <= 0L && issuedThisDrainBytes <= 0L;
+    }
+
+    /**
+     * Drains the deferred chunk uploads against the frame's byte budget. Called at the head of {@code setupTerrain},
+     * which runs once per frame whatever the job queue does, so a deferred batch always reaches the terrain within
+     * a frame or two even when no further build results arrive.
+     * <p>
+     * This call is also the budget window's definition point: {@code setupTerrain} runs inside the frame, before
+     * {@code frameId} advances, so the key supplied here is the frame the drain spends and the frame this frame's
+     * flushes are charged to. Entries are issued whole, never split - a region's outputs arrive together or wait
+     * together - while {@link #celtium$deferredEntryIssuable} judges the head against the window's remaining
+     * room, with the starvation escape behind it.
      */
     public void celtium$drainDeferredUploads() {
-        if (UPLOAD_BUDGET <= 0 || this.deferredUploads.isEmpty()) {
+        this.context.celtium$supplyUploadBudgetFrameKey(this.frameId);
+        if (this.deferredUploads.isEmpty()) {
             return;
         }
+        UploadBudgetLedger ledger = this.context.celtium$uploadBudget();
+        long frameKey = this.context.celtium$uploadBudgetWindowKey();
+        long windowFlushedBytes = this.context.celtium$uploadBudgetWindowBytes(frameKey);
         this.deferredUploadDrains++;
         int drained = 0;
-        int remaining = UPLOAD_BUDGET;
-        while (remaining > 0 && !this.deferredUploads.isEmpty()) {
+        long issuedBytes = 0L;
+        while (!this.deferredUploads.isEmpty()) {
             DeferredUpload entry = this.deferredUploads.peekFirst();
-            List<ChunkTaskOutput> take;
-            if (entry.outputs.size() <= remaining) {
-                this.deferredUploads.pollFirst();
-                take = entry.outputs;
-            } else {
-                take = obtainUploadList();
-                take.addAll(entry.outputs.subList(0, remaining));
-                entry.outputs.subList(0, remaining).clear();
+            if (!celtium$deferredEntryIssuable(ledger, frameKey, windowFlushedBytes, issuedBytes, entry.bytes)) {
+                break;
             }
-            // The list can go back to the pool once the region has consumed it: uploadRegion builds its own pending
-            // list and retains nothing of this one. The size is read before the release clears it.
-            int taken = take.size();
+            this.deferredUploads.pollFirst();
+            int taken = entry.outputs.size();
             try {
-                this.terrain.uploadRegion(entry.region, take, entry.trigger);
+                this.terrain.uploadRegion(entry.region, entry.outputs, entry.trigger);
             } catch (RuntimeException error) {
                 // The same rule the unbudgeted loop follows: one region's failure is counted, the rest still go.
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
-            } finally {
-                releaseUploadList(take);
             }
+            // The entry has left the backlog whether its upload succeeded or not - the region keeps
+            // whatever it already had on a failure - so the deferral account settles here either way.
+            ledger.noteDeferredIssued(entry.bytes);
             drained += taken;
-            remaining -= taken;
+            issuedBytes += entry.bytes;
         }
         this.deferredUploadDrainedOutputs += drained;
         if (drained > this.deferredUploadMaxDrainOutputs) {
@@ -16898,33 +16970,48 @@ this.frameBufferOpen = false;
             Runnable graphUpdateTrigger) {
         // Only a burst is budgeted. A batch smaller than the threshold - the steady-state trickle, and the batch the
         // fixture's capture deadline waits on - goes straight through, so the deadline never sees a queue it must wait
-        // out. A larger arrival is spread over the following frames by the drain at the head of setupTerrain.
-        if (UPLOAD_BUDGET > 0 && results.size() > UPLOAD_BURST) {
-            // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
-            // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
-            Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
-            queued.clear();
+        // out, and the budget is never even asked. A larger arrival is judged by the byte ledger: it is spread over
+        // the following frames by the drain at the head of setupTerrain only when issuing it now would take the
+        // frame's window over the budget and the deferred cap accepts the backlog; otherwise it goes through at
+        // once, exactly like a small arrival.
+        if (results.size() > UPLOAD_BURST) {
+            UploadBudgetLedger ledger = this.context.celtium$uploadBudget();
+            long weight = 0L;
             for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
-                ChunkTaskOutput output = holder.output();
-                List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
-                if (queue == null) {
-                    queue = new ArrayList<>();
-                    queued.put(output.render.getRegion(), queue);
+                weight += celtium$deferredUploadWeight(holder.output());
+            }
+            if (celtium$tryDeferBurstArrival(ledger, this.context.celtium$uploadBudgetWindowKey(), weight)) {
+                // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
+                // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
+                Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
+                queued.clear();
+                for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
+                    ChunkTaskOutput output = holder.output();
+                    List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
+                    if (queue == null) {
+                        queue = new ArrayList<>();
+                        queued.put(output.render.getRegion(), queue);
+                    }
+                    queue.add(output);
                 }
-                queue.add(output);
+                for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
+                        : queued.reference2ReferenceEntrySet()) {
+                    long entryWeight = 0L;
+                    for (ChunkTaskOutput output : entry.getValue()) {
+                        entryWeight += celtium$deferredUploadWeight(output);
+                    }
+                    this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(),
+                            graphUpdateTrigger, entryWeight));
+                }
+                // The lists moved to the queue; the map itself is done with.
+                queued.clear();
+                this.deferredUploadBatches++;
+                this.deferredUploadOutputs += results.size();
+                if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
+                    this.deferredUploadMaxQueued = this.deferredUploads.size();
+                }
+                return;
             }
-            for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
-                    : queued.reference2ReferenceEntrySet()) {
-                this.deferredUploads.addLast(new DeferredUpload(entry.getKey(), entry.getValue(), graphUpdateTrigger));
-            }
-            // The lists moved to the queue; the map itself is done with.
-            queued.clear();
-            this.deferredUploadBatches++;
-            this.deferredUploadOutputs += results.size();
-            if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
-                this.deferredUploadMaxQueued = this.deferredUploads.size();
-            }
-            return;
         }
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = this.uploadQueueScratch;
         clearUploadScratch(queues);
@@ -17697,7 +17784,19 @@ this.frameBufferOpen = false;
         // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
         // wrong world's region storage.
         if (!this.deferredUploads.isEmpty()) {
+            long droppedBytes = 0L;
+            for (DeferredUpload entry : this.deferredUploads) {
+                droppedBytes += entry.bytes;
+            }
             this.deferredUploads.clear();
+            if (droppedBytes > 0L) {
+                // The ledger belongs to the context, which outlives the world, so a backlog dropped here
+                // must leave its account here: otherwise the outstanding gauge would keep counting bytes
+                // no queue holds, and the next world's deferrals would meet the cap early. The account
+                // settles through its only exit, the issued side; the cumulative deferred totals are
+                // untouched, only the outstanding gauge returns to the truth.
+                this.context.celtium$uploadBudget().noteDeferredIssued(droppedBytes);
+            }
         }
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
         // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
