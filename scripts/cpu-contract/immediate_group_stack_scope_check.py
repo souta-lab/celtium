@@ -87,8 +87,14 @@ def main():
             body.index(scoped) < body.index('celtium$setGroupViewport(groupStack, group,'))
     require('texture pipeline draw is inside bounded group scope',
             'value.draw(this.commandBuffer, mesh, push, bindDescriptor, this.immediateBindCache)' in body)
-    require('item/block/particle pipeline draws are inside bounded group scope',
-            body.count('value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache)') >= 3)
+    require('item/block pipeline draws are inside bounded group scope',
+            body.count('value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache)') >= 2)
+    # Stage 5 S5-3: the particle family's per-group pipeline form is deleted; an uncaptured
+    # particle group is drawn by the backend fallback helper, whose only call site must stay
+    # inside this same bounded scope (its bind arrays allocate from stackGet(), which resolves
+    # to the group frame while the scope is open - the bounded lifetime this check exists for).
+    require('particle fallback draw is issued inside bounded group scope',
+            'celtium$drawParticleGroupFallback(group, mesh, prepared, push)' in body)
     require('mod-program draw is inside bounded group scope',
             'value.draw(this.commandBuffer, mesh, this.immediateBindCache)' in body)
     require('base pipeline draw is inside bounded group scope',
