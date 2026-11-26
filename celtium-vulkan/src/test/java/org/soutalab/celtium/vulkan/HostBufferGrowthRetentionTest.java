@@ -13,10 +13,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The VUID-vkCmdDrawIndexedIndirect-None-08114 fix (diagnosed 2026-11-26): TerrainEngineA's
+ * The VUID-vkCmdDrawIndexedIndirect-None-08114 fix (diagnosed 2026-11-26): the Tier-A
  * section-descriptor and factor-base buffers opt into superseded-buffer retention, so a growth no
  * longer hands the old handle to the retired-buffer drain while a Tier-A descriptor set can still
- * name it.
+ * name it. The buffers themselves moved from the per-pass engines to the shared host with R-15;
+ * the retention opt-in moved with them and is pinned where it now lives.
  * <p>
  * The device-bound half (the actual {@code vkDestroyBuffer} calls in {@code delete()}) cannot run on
  * a CPU-only instance, so the sequence is pinned at its two testable layers, the shape
@@ -27,8 +28,8 @@ class HostBufferGrowthRetentionTest {
 
     private static final String HOST_BUFFER =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanHostBuffer.java";
-    private static final String TERRAIN_ENGINE_A =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineA.java";
+    private static final String TERRAIN_ENGINE_A_HOST =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java";
 
     @Test
     @DisplayName("growth retains every superseded pair, and delete's drain hands each off exactly once")
@@ -93,7 +94,7 @@ class HostBufferGrowthRetentionTest {
     @Test
     @DisplayName("both Tier-A image buffers opt into retention at creation")
     void terrainEngineOptsBothBuffersIntoRetention() throws IOException {
-        String source = read(TERRAIN_ENGINE_A);
+        String source = read(TERRAIN_ENGINE_A_HOST);
         assertTrue(source.contains("this.descBuffer.retainSupersededBuffers()"),
                 "the section-descriptor buffer (binding 6) retains its superseded buffers");
         assertTrue(source.contains("this.factorBaseBuffer.retainSupersededBuffers()"),
