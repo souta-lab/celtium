@@ -2870,6 +2870,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private float[] gpuTerrainCensusVp;
     private long gpuTerrainCensusVpFrame = -1L;
     /**
+     * The shadow stage's own view-projection slot (R-17 increment (iv)): the shadow stage
+     * runs before the frame's terrain passes under the same frame id, with the light's
+     * projection x modelView in place of the camera's, so its VP is cached apart from the
+     * main stage's — a light VP composed into the shared slot would be read back by the
+     * main stage's pass heads as the camera VP for the rest of the frame.
+     */
+    private float[] gpuTerrainCensusVpShadow;
+    private long gpuTerrainCensusVpShadowFrame = -1L;
+    /**
      * E10-b's drawing executor (item 723, {@link VulkanGpuTerrainDraw}): created lazily on
      * the first SOLID pass under {@code celtium.vulkan.gpuTerrainCulling}, never when the
      * flag is off — the off path allocates, binds and records nothing for it.
@@ -18521,15 +18530,22 @@ this.frameBufferOpen = false;
             // once inside the pass below, under this route's own program. The
             // variant arms only on complete residency; on any refusal the
             // per-region legacy loop below draws the pass whole, unchanged.
-            // The shadow stage is excluded: whether the cull camera can be
-            // the light viewpoint is not established (U3), so the shadow
-            // stage keeps drawing through the legacy batches in the loop.
+            // The shadow stage arms too (R-17 increment (iv)): U3 is
+            // determined (OVERHAUL-R17-U3-DETERMINATION-2026-11-26) — in the
+            // shadow stage the matrices handed to this route are the light's
+            // projection x modelView and the occlusion camera is the shadow
+            // viewport's transform, so the same prepareFrame call shape
+            // below gives the cull the light viewpoint; its position is the
+            // player-camera anchor, which is the relative origin
+            // prepareFrame's contract expects. The stage's VP comes from
+            // the stage-keyed census cache, so the light VP never displaces
+            // the camera VP the main stage's pass heads read later in the
+            // frame.
             TerrainPackEngine packEngine = null;
             java.util.List<org.soutalab.celtium.vulkan.terrain.TerrainSectionStore.Registration>
                     packVariantRecords = null;
             boolean packVariantArmed = false;
-            if (!shadowStage
-                    && org.soutalab.celtium.vulkan.gl.GlsmPackState.ENABLED
+            if (org.soutalab.celtium.vulkan.gl.GlsmPackState.ENABLED
                     && modPipeline.celtium$glsmRegionTable()) {
                 TerrainEngineAHost packHost = this.terrain.terrainAHost();
                 TerrainPackEngine candidate = packHost == null ? null : packHost.packEngineIfPresent(pass);
@@ -18539,7 +18555,7 @@ this.frameBufferOpen = false;
                     if (!records.isEmpty()
                             && packHost.store().recordCount() <= modPipeline.celtium$glsmRegionTableSlots()
                             && candidate.prepareFrame(this.commandBuffer, this.frameSlot,
-                                    celtium$gpuTerrainCensusVp(matrices),
+                                    celtium$gpuTerrainCensusVp(matrices, shadowStage),
                                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z)) {
                         packEngine = candidate;
                         packVariantRecords = records;
@@ -18612,11 +18628,17 @@ this.frameBufferOpen = false;
             // head built). The fit check is upfront: the whole visit list must fit the
             // table, so no region can be stamped past its end mid-loop. Any other route
             // cancels the arm and the loop below is the generation-only form, unchanged.
+            // The pack variant is another such route (R-17 increment (iv)): when it
+            // armed above, its executor draws this stage's pass whole and the loop
+            // below never iterates, so the generated list stands down here — issuing
+            // it as well would draw the pass twice, and leaving the arm live would
+            // trip the executor's visited-count reproduction check at the loop's end
+            // and disable it.
             boolean shadowIssuanceArmed = false;
             int shadowIssuanceVisited = 0;
             if (shadowStage && this.shadowGpuTerrainDraw != null
                     && this.shadowGpuTerrainDraw.armed()) {
-                if (glsmRegionTable && this.shadowGpuTerrainDrawGenerated
+                if (!packVariantArmed && glsmRegionTable && this.shadowGpuTerrainDrawGenerated
                         && this.shadowGpuTerrainDrawVisits
                                 <= modPipeline.celtium$glsmRegionTableSlots()) {
                     shadowIssuanceArmed = true;
@@ -19699,13 +19721,37 @@ this.frameBufferOpen = false;
     }
 
     private float[] celtium$gpuTerrainCensusVp(ChunkRenderMatrices matrices) {
+        return celtium$gpuTerrainCensusVp(matrices, false);
+    }
+
+    /**
+     * Stage-keyed form (R-17 increment (iv)): the shadow stage shares the frame id with
+     * the main stage but brings the light's matrices, so it reads and fills its own slot;
+     * the main stage's slot is never written from shadow matrices and the shadow slot is
+     * never read by a main-stage pass head. Both slots compose the VP from the matrices
+     * they are handed, in the one call shape every consumer already used.
+     */
+    private float[] celtium$gpuTerrainCensusVp(ChunkRenderMatrices matrices, boolean shadowStage) {
+        if (shadowStage) {
+            if (this.gpuTerrainCensusVpShadow == null
+                    || this.gpuTerrainCensusVpShadowFrame != this.frameId) {
+                this.gpuTerrainCensusVpShadow = celtium$composeCensusVp(matrices);
+                this.gpuTerrainCensusVpShadowFrame = this.frameId;
+            }
+            return this.gpuTerrainCensusVpShadow;
+        }
         if (this.gpuTerrainCensusVp == null || this.gpuTerrainCensusVpFrame != this.frameId) {
-            float[] vp = new float[16];
-            new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView()).get(vp);
-            this.gpuTerrainCensusVp = vp;
+            this.gpuTerrainCensusVp = celtium$composeCensusVp(matrices);
             this.gpuTerrainCensusVpFrame = this.frameId;
         }
         return this.gpuTerrainCensusVp;
+    }
+
+    /** The census VP composition: the handed projection x modelView, as a column-major array. */
+    static float[] celtium$composeCensusVp(ChunkRenderMatrices matrices) {
+        float[] vp = new float[16];
+        new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView()).get(vp);
+        return vp;
     }
 
     /** Whether this pass is E10-b's target: the vanilla SOLID pass (the design's first shape, section 2.5). */
