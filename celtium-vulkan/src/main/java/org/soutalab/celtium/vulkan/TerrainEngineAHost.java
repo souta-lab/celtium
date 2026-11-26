@@ -85,8 +85,7 @@ final class TerrainEngineAHost {
 
     private final AsyncSectionMesher mesher = new AsyncSectionMesher();
     private final TerrainSectionStore store = new TerrainSectionStore();
-    private final TerrainUploadBudget budget = new TerrainUploadBudget(
-            Long.getLong("celtium.vulkan.terrainUploadMiB", 4L) * 1024 * 1024);
+    private final TerrainUploadBudget budget = TerrainUploadBudget.fromSystemProperties();
     private final TerrainResidencyGate residencyGate = new TerrainResidencyGate();
     private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
     private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();

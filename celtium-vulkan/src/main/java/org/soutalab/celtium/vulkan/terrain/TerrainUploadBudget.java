@@ -11,6 +11,12 @@ public final class TerrainUploadBudget {
     public static final long IGPU_BYTES_PER_FRAME = 4L * 1024 * 1024;
     public static final long DGPU_BYTES_PER_FRAME = 16L * 1024 * 1024;
 
+    /** Byte-granularity override of the per-frame budget (R-65 forcing knob for legs). */
+    public static final String BYTES_PROPERTY = "celtium.vulkan.terrainUploadBytes";
+    /** The standing MiB-granularity budget property; the byte property wins when set. */
+    public static final String MIB_PROPERTY = "celtium.vulkan.terrainUploadMiB";
+    public static final long DEFAULT_MIB_PER_FRAME = 4L;
+
     private final long bytesPerFrame;
     private long remainingThisFrame;
     private long admittedThisFrame;
@@ -31,6 +37,23 @@ public final class TerrainUploadBudget {
 
     public static TerrainUploadBudget forDGpu() {
         return new TerrainUploadBudget(DGPU_BYTES_PER_FRAME);
+    }
+
+    /**
+     * Resolves the budget from the system properties. When
+     * {@code celtium.vulkan.terrainUploadBytes} is set it wins over the MiB
+     * property; when it is not set the MiB path applies unchanged (default
+     * 4 MiB). A byte value of zero or below is handed to the constructor,
+     * whose positivity check rejects it — a misconfigured knob fails at
+     * startup instead of silently widening the budget.
+     */
+    public static TerrainUploadBudget fromSystemProperties() {
+        String bytes = System.getProperty(BYTES_PROPERTY);
+        if (bytes != null) {
+            return new TerrainUploadBudget(Long.parseLong(bytes));
+        }
+        return new TerrainUploadBudget(
+                Long.getLong(MIB_PROPERTY, DEFAULT_MIB_PER_FRAME) * 1024 * 1024);
     }
 
     /** Opens a new frame: the allowance resets; the pending backlog is unchanged. */
