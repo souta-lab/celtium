@@ -152,6 +152,7 @@ HARNESS_KEYS = {
     "celtium.vulkan.frameBudget": "frameBudget",
     "celtium.vulkan.frameBudgetFrames": "frameBudgetFrames",
     "celtium.vulkan.frameBudgetLines": "frameBudgetLines",
+    "celtium.vulkan.frameStats": "frameStats",
     "celtium.vulkan.gpuPassTimings": "gpuPassTimings",
     "celtium.vulkan.loopSpan": "loopSpan",
     "celtium.vulkan.otherSplit": "otherSplit",
