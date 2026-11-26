@@ -13076,9 +13076,8 @@ this.frameBufferOpen = false;
             if (!celtium$ensureDrawRecords()) {
                 return null;
             }
-            return this.indirectRuns.celtium$recordsParticlePipeline(
-                    celtium$immediateBranchKey(format, key, pass), pass, celtium$blendState(state),
-                    celtium$vkCompareOp(state[7]), targetColors);
+            return this.indirectRuns.celtium$recordsParticlePipeline(format, key, pass,
+                    celtium$blendState(state), celtium$vkCompareOp(state[7]), targetColors);
         }
         if (format == VulkanImmediateFormats.ITEM) {
             // The lit bit only: the per-group lit/unlit census stays at the prepare branch, which

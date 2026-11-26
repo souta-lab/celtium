@@ -137,27 +137,30 @@ final class IndirectImmediateRuns {
     }
 
     /**
-     * {@return the record-reading particle pipeline for one branch key, created on first use for that exact state},
-     * or null when the record store does not exist yet (the caller ensures it first; a store that cannot be
-     * created leaves the family with no pipeline, and the prepare refuses by name).
+     * {@return the record-reading particle pipeline for one prepared state, created on first use for that
+     * exact state}, or null when the record store does not exist yet (the caller ensures it first; a store
+     * that cannot be created leaves the family with no pipeline, and the prepare refuses by name).
      * <p>
      * The particle family's twin access, in the shape of {@link #celtium$recordsColourPipeline}: unlike the
      * other families the particle family has no per-group original to twin from - since Stage 5 S5-3 its
-     * record-reading form is its only form - so the key is the backend's branch key (the prepared key folded
-     * with the pass mix) and the state arrives as the creation arguments the backend's particle branch
-     * already computes. The depth test, depth write and cull arguments are the family's asserted constants
+     * record-reading form is its only form - so the state arrives as the creation arguments the backend's
+     * particle branch already computes, and the cache key is the backend's branch key (the prepared key
+     * folded with the pass mix), derived here through the same pass-keyed fold every branch cache read
+     * uses (the R-06 format-axis contract: an entry built under one pass never answers under another).
+     * The depth test, depth write and cull arguments are the family's asserted constants
      * (BH-07 leaves them as the family asserted them: depth test on, depth writes off, no culling); the
      * blend state is the batch's captured own, handed down by the caller, and the colour count with it.
      */
-    VulkanImmediateParticleRecordsPipeline celtium$recordsParticlePipeline(long branchKey, long renderPass,
+    VulkanImmediateParticleRecordsPipeline celtium$recordsParticlePipeline(int format, long key, long pass,
             VulkanColorBlendState colorBlend, int depthCompareOp, int colorAttachments) {
+        long branchKey = VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, pass);
         VulkanImmediateParticleRecordsPipeline twin =
                 this.recordsParticlePipelines.get(Long.valueOf(branchKey));
         if (twin == null) {
             if (b.drawRecords == null) {
                 return null;
             }
-            twin = VulkanImmediateParticleRecordsPipeline.create(b.context, renderPass, colorBlend,
+            twin = VulkanImmediateParticleRecordsPipeline.create(b.context, pass, colorBlend,
                     true, false, VulkanCullState.NONE, depthCompareOp,
                     b.drawRecords.descriptorSetLayout(), colorAttachments);
             this.recordsParticlePipelines.put(Long.valueOf(branchKey), twin);

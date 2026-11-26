@@ -251,8 +251,10 @@ class ParticleRecordsTwinContractTest {
     @DisplayName("the accessor builds with the family's depth and cull constants and the record store's layout")
     void accessorBuildsWithTheFamilyConstants() throws IOException {
         String indirect = read(INDIRECT);
-        assertTrue(indirect.contains("celtium$recordsParticlePipeline(long branchKey"),
+        assertTrue(indirect.contains("celtium$recordsParticlePipeline(int format, long key, long pass,"),
                 "the dedicated accessor exists on the runs class (the stage-6 relocation hand-off)");
+        assertTrue(indirect.contains("celtium$immediateBranchKey(format, key, pass)"),
+                "the accessor derives its cache key through the pass-keyed branch fold (R-06)");
         assertTrue(indirect.contains("true, false, VulkanCullState.NONE, depthCompareOp,"),
                 "depth test on, depth writes off, no culling: the family's asserted constants");
         assertTrue(indirect.contains("b.drawRecords.descriptorSetLayout(), colorAttachments);"),
