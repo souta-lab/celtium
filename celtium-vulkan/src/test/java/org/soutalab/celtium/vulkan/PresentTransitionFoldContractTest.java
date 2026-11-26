@@ -109,6 +109,24 @@ class PresentTransitionFoldContractTest {
     }
 
     /**
+     * Review condition 2, timeline side (R-66): the timeline await path has no fence to hold for an
+     * external entry, and its buffer is the owner's pool's, so the path's one buffer-only quarantine
+     * call sits behind the external guard - a timed-out external entry is quarantined not at all.
+     */
+    @Test
+    void externalEntriesAreExcludedFromTimelineQuarantine() throws IOException {
+        String context = read(CONTEXT);
+        String awaitTimeline = window(context, "private void celtium$awaitDeferredEntryTimeline(", 6000);
+        assertTrue(awaitTimeline.contains("if (entry.externalBuffer)"),
+                "the timeline path branches on the borrowed-entry flag before quarantining");
+        assertTrue(awaitTimeline.indexOf("entry.externalBuffer")
+                        < awaitTimeline.indexOf("quarantine(entry.commandBuffer, VK_NULL_HANDLE)"),
+                "the timeline path's quarantine call sits behind the external guard");
+        assertEquals(1, count(context, "quarantine(entry.commandBuffer, VK_NULL_HANDLE)"),
+                "the buffer-only quarantine call site is the timeline path's alone");
+    }
+
+    /**
      * Change B with review condition 4: the boundary holds its flush only for a live present
      * borrow, and never while the present is skipped.
      */

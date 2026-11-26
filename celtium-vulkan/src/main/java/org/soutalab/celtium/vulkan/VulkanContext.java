@@ -2765,7 +2765,8 @@ public final class VulkanContext {
      * batch's timeline value. Success reclaims; a lost device is reported without reclaiming (no handle
      * recycling is safe, and there is no fence to recycle in any case); a timeout or another failure
      * quarantines the command buffer - the buffer only, there is no fence to hold with it - latches the
-     * context unusable and throws. The result code comes from
+     * context unusable and throws. An external entry is the one exception (condition 2, R-66): its buffer
+     * is its owner's pool's, so nothing is quarantined for it. The result code comes from
      * {@link org.soutalab.celtium.vulkan.hal.FrameTimeline#awaitValueResult(long, long)} so each branch is
      * chosen on the code itself, not on an exception's wording.
      */
@@ -2799,7 +2800,14 @@ public final class VulkanContext {
         this.usable = false;
         this.deferredSubmits.remove(entry);
         this.deferredSubmitsOutstanding--;
-        quarantine(entry.commandBuffer, VK_NULL_HANDLE);
+        if (entry.externalBuffer) {
+            // S5-D1 condition 2, timeline side (R-66): the fence path holds only the entry's fence,
+            // because the buffer is the owner's pool's and must never reach the quarantine set this
+            // context frees at teardown. This path has no fence to hold in its place, so an external
+            // entry is quarantined not at all.
+        } else {
+            quarantine(entry.commandBuffer, VK_NULL_HANDLE);
+        }
         // This entry never reclaims, so its share of the batch count leaves with it: the count then names
         // only entries that can still reclaim. There is no fence for the quarantine set to own here.
         batch.pending--;
