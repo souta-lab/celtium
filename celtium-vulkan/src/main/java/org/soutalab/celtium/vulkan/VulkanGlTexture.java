@@ -3743,6 +3743,17 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * Level 0 of this mirror as tightly packed RGBA8 rows, for the bindless slot dump instrument
+     * in {@code VulkanTextureRegistry} - the same readback the mirror dump uses, exposed so the
+     * registry can compare a descriptor slot's content against this mirror's content.
+     *
+     * @return the level's pixels, or {@code null} when there is nothing to read
+     */
+    java.nio.ByteBuffer celtium$readLevelZero() {
+        return readMirrorLevel(0);
+    }
+
+    /**
      * Copies one mip level of this image into host memory.
      * <p>
      * Reuses the staging buffer the uploads already own, copies it into a fresh Java-owned buffer before returning so a

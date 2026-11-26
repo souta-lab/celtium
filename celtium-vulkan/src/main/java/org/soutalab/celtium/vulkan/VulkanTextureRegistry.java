@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding;
+import org.soutalab.celtium.vulkan.bindless.BindlessTextureTable;
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
@@ -388,7 +389,8 @@ public final class VulkanTextureRegistry {
     /** Mirrors one owned texture's current image into the bindless array, when one is installed. */
     private void celtium$bindlessRegister(int glTextureId, VulkanGlTexture texture) {
         if (this.bindlessBinding != null) {
-            this.bindlessBinding.onTextureRegistered(glTextureId, texture.view(), texture.sampler());
+            this.bindlessBinding.onTextureRegistered(glTextureId, texture.view(), texture.sampler(),
+                    texture.image());
         }
     }
 
@@ -396,6 +398,186 @@ public final class VulkanTextureRegistry {
     private void celtium$bindlessRelease(int glTextureId) {
         if (this.bindlessBinding != null) {
             this.bindlessBinding.onTextureReleased(glTextureId);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Bindless slot dump instrument (panel-background array-form defect,
+    // OVERHAUL-RERERUN2-FINDINGS-SEPARATION-2026-11-27 section 1.6 point 1).
+    // While -Dceltium.debug.bindlessSlotDump=<dir> is set, the backend's frame
+    // completion gate ticks this method; at ticks 300 / 1500 / 3000 it writes one
+    // census comparing, for every registered texture, the (image, view, sampler)
+    // the bindless slot was last written with against the owning mirror's current
+    // handles, plus level-0 content readbacks for small mirrors - and, when a
+    // slot's image belongs to a different live mirror, that image's content too.
+    // A slot whose content is not the mirror's content is the S1 seat; slots that
+    // all match their mirrors move the seat to the record/push consumption side
+    // (S2). Debug-only: with the property unset every call returns immediately.
+    // ------------------------------------------------------------------
+
+    private static final String SLOT_DUMP_DIR = System.getProperty("celtium.debug.bindlessSlotDump");
+    private int slotDumpTicks;
+
+    /** Ticks the slot dump instrument; see the note above. Render thread only. */
+    public void celtium$maybeDumpBindlessSlots() {
+        if (SLOT_DUMP_DIR == null || this.bindlessBinding == null) {
+            return;
+        }
+        this.slotDumpTicks++;
+        int tick = this.slotDumpTicks;
+        if (tick != 300 && tick != 1500 && tick != 3000) {
+            return;
+        }
+        try {
+            dumpBindlessSlots(tick);
+        } catch (Throwable failure) {
+            System.out.println("[Celtium] CELTIUM_SLOTDUMP tick=" + tick + " failed: " + failure);
+        }
+    }
+
+    private void dumpBindlessSlots(int tick) {
+        BindlessTextureBinding binding = this.bindlessBinding;
+        StringBuilder out = new StringBuilder();
+        out.append("CELTIUM_SLOTDUMP tick=").append(tick).append('\n');
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap ownerByImage =
+                new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        ownerByImage.defaultReturnValue(-1);
+        for (Entry entry : this.entries.values()) {
+            if (entry.texture.image() != 0L) {
+                ownerByImage.put(entry.texture.image(), entry.glId);
+            }
+        }
+        int registered = 0;
+        int mismatches = 0;
+        for (Entry entry : this.entries.values()) {
+            VulkanGlTexture texture = entry.texture;
+            int handle = binding.handleOf(entry.glId);
+            int slot = handle == BindlessTextureTable.INVALID_HANDLE ? -1 : binding.slotOf(handle);
+            if (slot < 0) {
+                continue;
+            }
+            registered++;
+            long slotImage = binding.writtenImageAt(slot);
+            long slotView = binding.writtenViewAt(slot);
+            boolean imageEq = slotImage == texture.image();
+            boolean viewEq = slotView == texture.view();
+            boolean samplerEq = binding.writtenSamplerAt(slot) == texture.sampler();
+            if (!imageEq || !viewEq || !samplerEq) {
+                mismatches++;
+            }
+            out.append("gl=").append(entry.glId)
+                    .append(" size=").append(texture.width()).append('x').append(texture.height())
+                    .append(" slot=").append(slot)
+                    .append(" writtenGl=").append(binding.writtenGlIdAt(slot))
+                    .append(" slotImage=").append(slotImage)
+                    .append(" curImage=").append(texture.image())
+                    .append(" imageEq=").append(imageEq)
+                    .append(" slotView=").append(slotView)
+                    .append(" curView=").append(texture.view())
+                    .append(" viewEq=").append(viewEq)
+                    .append(" samplerEq=").append(samplerEq);
+            if (!imageEq) {
+                out.append(" slotImageOwnerGl=").append(slotImage == 0L ? -1 : ownerByImage.get(slotImage));
+            }
+            out.append('\n');
+            if (texture.hasFullContent()
+                    && (long) texture.width() * texture.height() <= 300000L) {
+                java.nio.ByteBuffer mirror = null;
+                try {
+                    mirror = texture.celtium$readLevelZero();
+                } catch (Throwable ignored) {
+                    // A mirror whose layout is not the sampling layout cannot be read this way;
+                    // the handle comparison above still stands for it.
+                }
+                if (mirror != null) {
+                    out.append("  mirrorContent ").append(slotDumpPixelSummary(mirror)).append('\n');
+                    if (!imageEq || (texture.width() == 16 && texture.height() == 16)) {
+                        writeSlotDumpPng("t" + tick + "-gl" + entry.glId + "-mirror", mirror,
+                                texture.width(), texture.height());
+                    }
+                }
+                if (!imageEq) {
+                    int owner = slotImage == 0L ? -1 : ownerByImage.get(slotImage);
+                    Entry ownerEntry = owner < 0 ? null : this.entries.get(owner);
+                    if (ownerEntry != null
+                            && (long) ownerEntry.texture.width() * ownerEntry.texture.height() <= 300000L) {
+                        java.nio.ByteBuffer slotContent = null;
+                        try {
+                            slotContent = ownerEntry.texture.celtium$readLevelZero();
+                        } catch (Throwable ignored) {
+                        }
+                        if (slotContent != null) {
+                            out.append("  slotContent(owner gl=").append(owner).append(") ")
+                                    .append(slotDumpPixelSummary(slotContent)).append('\n');
+                            writeSlotDumpPng("t" + tick + "-gl" + entry.glId + "-slotcontent",
+                                    slotContent, ownerEntry.texture.width(),
+                                    ownerEntry.texture.height());
+                        }
+                    }
+                }
+            }
+        }
+        out.append("registered=").append(registered).append(" mismatches=").append(mismatches).append('\n');
+        out.append("journal:\n");
+        for (String event : binding.slotJournal()) {
+            out.append("  ").append(event).append('\n');
+        }
+        try {
+            java.io.File dir = new java.io.File(SLOT_DUMP_DIR);
+            dir.mkdirs();
+            java.nio.file.Files.write(
+                    new java.io.File(dir, "slotdump-t" + tick + ".txt").toPath(),
+                    out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            // Debug-only path: the stdout summary below still records that the dump ran.
+        }
+        System.out.println("[Celtium] CELTIUM_SLOTDUMP tick=" + tick + " registered=" + registered
+                + " mismatches=" + mismatches + " dir=" + SLOT_DUMP_DIR);
+    }
+
+    /** First two texels and an FNV-1a hash of the whole buffer, so contents compare at a glance. */
+    private static String slotDumpPixelSummary(java.nio.ByteBuffer rgba) {
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < rgba.capacity(); i++) {
+            hash ^= rgba.get(i) & 0xFF;
+            hash *= 0x100000001b3L;
+        }
+        StringBuilder sb = new StringBuilder("fnv=");
+        sb.append(Long.toHexString(hash));
+        for (int texel = 0; texel < 2 && (texel * 4 + 3) < rgba.capacity(); texel++) {
+            int o = texel * 4;
+            sb.append(" t").append(texel).append("=(")
+                    .append(rgba.get(o) & 0xFF).append(',')
+                    .append(rgba.get(o + 1) & 0xFF).append(',')
+                    .append(rgba.get(o + 2) & 0xFF).append(',')
+                    .append(rgba.get(o + 3) & 0xFF).append(')');
+        }
+        return sb.toString();
+    }
+
+    /** Writes RGBA8 rows to a PNG in the slot dump directory, rows exactly as laid out in memory. */
+    private static void writeSlotDumpPng(String label, java.nio.ByteBuffer rgba, int width, int height) {
+        try {
+            java.io.File dir = new java.io.File(SLOT_DUMP_DIR);
+            dir.mkdirs();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int offset = ((y * width) + x) * 4;
+                    if (offset + 3 >= rgba.capacity()) {
+                        continue;
+                    }
+                    int r = rgba.get(offset) & 0xFF;
+                    int g = rgba.get(offset + 1) & 0xFF;
+                    int b = rgba.get(offset + 2) & 0xFF;
+                    int a = rgba.get(offset + 3) & 0xFF;
+                    image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+                }
+            }
+            javax.imageio.ImageIO.write(image, "png", new java.io.File(dir, "slotdump-" + label + ".png"));
+        } catch (Throwable ignored) {
+            // Debug-only path: never let a dump failure affect rendering.
         }
     }
 

@@ -26953,6 +26953,8 @@ this.frameBufferOpen = false;
                 this.context.celtium$bindlessBindingOrNull();
         if (binding != null) {
             binding.advance(this.context.celtium$slabCompletedValue());
+            // Slot dump instrument tick (no-op unless -Dceltium.debug.bindlessSlotDump is set).
+            this.celtium$registry().celtium$maybeDumpBindlessSlots();
         }
     }
 
