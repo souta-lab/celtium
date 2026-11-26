@@ -177,6 +177,15 @@ public final class VulkanContext {
      * move it: the borrow gate compares formats and presents composed, never mismatched.
      */
     private int frameColorFormat;
+    /**
+     * The last provisional answer {@link #celtium$frameColorFormat} handed out while the decision
+     * was unlatched; 0 while none was. Kept only so the latch can report the decision's move: the
+     * provisional answer is the classic format, and a session whose decision later latches to BGRA
+     * has a window in which format-shaped objects were built against the provisional answer - the
+     * window the R-06 format axis lives in - so the move itself is the event a leg reads to know
+     * whether that window existed (CELTIUM_FRAME_FORMAT_MOVED).
+     */
+    private int provisionalFrameColorFormat;
     private int queueFamilyIndex = -1;
     private String deviceName;
     private String deviceUuid;
@@ -859,9 +868,28 @@ public final class VulkanContext {
                 VulkanColorFormat.usable(this.physicalDevice,
                         RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM));
         if (!PRESENT_DIRECT || adopted != SwapchainCreateArguments.FORMAT_UNDEFINED) {
-            this.frameColorFormat = decided;
+            celtium$latchFrameColorFormat(decided);
+        } else {
+            this.provisionalFrameColorFormat = decided;
         }
         return decided;
+    }
+
+    /**
+     * Fixes the frame colour decision for this context's lifetime. When a provisional answer
+     * differing from the latched one was handed out earlier, the decision has moved, and the move
+     * is printed once, at the moment it happens: a leg reads the line together with the
+     * per-generation swapchain describe lines to establish which format the session latched and
+     * whether a provisional window existed at all. A session that latches the classic format has
+     * no move and prints no line.
+     */
+    private void celtium$latchFrameColorFormat(int decided) {
+        int provisional = this.provisionalFrameColorFormat;
+        this.frameColorFormat = decided;
+        if (provisional != 0 && provisional != decided) {
+            System.out.println("[Celtium] CELTIUM_FRAME_FORMAT_MOVED provisional=" + provisional
+                    + " latched=" + decided);
+        }
     }
 
     /** {@return the frame colour format as a format class}: the vocabulary the pair resolution pins to. */
@@ -881,7 +909,7 @@ public final class VulkanContext {
      */
     public void celtium$noteFrameColorFormat(int format) {
         if (this.frameColorFormat == 0) {
-            this.frameColorFormat = format;
+            celtium$latchFrameColorFormat(format);
         }
     }
 

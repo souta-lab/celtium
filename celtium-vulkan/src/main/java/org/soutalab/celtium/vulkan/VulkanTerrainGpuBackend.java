@@ -12779,11 +12779,50 @@ this.frameBufferOpen = false;
      * family's reads under the prepared key itself; the particle family's key carries the blend
      * pair the family historically asserted, folded in by multiplication so a particle state and
      * a colour state never share an entry.
+     * <p>
+     * The render pass the pipeline is built against is folded into every family's key (R-06,
+     * format axis). A pipeline names its creation pass, and the frame colour format's decision
+     * moves once per session - the provisional classic answer first, the latched answer after -
+     * so an entry built in the provisional window must never answer a draw under the pass the
+     * latched decision built. Keyed on the state alone it did exactly that, and the draw bound a
+     * pipeline whose pass declares R8G8B8A8 inside a pass declaring B8G8R8A8
+     * (VUID-vkCmdDrawIndexed-renderPass-02684, a single event on each of the bundle final leg's
+     * runs). The mod programs' caches key on the render pass for exactly this reason
+     * ({@code ModPrograms.ModProgramKey}, {@code PassExecutor.PipelineKey}); here the handle is
+     * mixed into the fold by {@link #celtium$immediatePassMix} and folded under the line bit in
+     * the shape of {@link #celtium$pipelineKey} - the bit saved, the fold run with it clear, the
+     * bit restored - so the fold can neither set the line flag on a triangle batch nor clear it
+     * on a line batch, the measured failure that bit exists to prevent. The price is
+     * duplication: the same state builds once per pass it is drawn under. The live pass
+     * population is the frame pass, the standalone UI pass, the chain-pair variants and the
+     * format-class passes - a handful, bounded by the passes themselves.
      */
-    static long celtium$immediateBranchKey(int format, long key) {
-        return format == VulkanImmediateFormats.PARTICLE
+    static long celtium$immediateBranchKey(int format, long key, long pass) {
+        long branch = format == VulkanImmediateFormats.PARTICLE
                 ? key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
                 : key;
+        long flag = branch & LINE_KEY_BIT;
+        long mixed = ((branch & ~LINE_KEY_BIT) * 31L + celtium$immediatePassMix(pass)) & ~LINE_KEY_BIT;
+        return mixed | flag;
+    }
+
+    /**
+     * {@return the render pass handle mixed for the branch key's fold}: a murmur3 finalizer
+     * over the handle, so every bit of the handle reaches the fold. The xor fold the mod
+     * programs' key hashes with is not strong enough here - that hash only buckets a key whose
+     * equals also compares the handle itself, while this fold IS the comparison, and the
+     * handles the validation layer names are not raw pointers on the measured machines: the
+     * bundle leg's 02684 body names 0x350000000035 and 0xa600000000a6, a small id repeated in
+     * both halves, whose xor folds (0x3535, 0xa6a6) carry only the halves' xor - the term's
+     * entropy shrinks to the id's. The finalizer is a bijection on the handle, so two distinct
+     * passes keep distinct fold terms whatever shape the handle takes.
+     */
+    private static long celtium$immediatePassMix(long pass) {
+        long mix = pass;
+        mix ^= mix >>> 33;
+        mix *= 0xff51afd7ed558ccdL;
+        mix ^= mix >>> 33;
+        return mix;
     }
 
     /** {@return the cached pipeline for a branch, or null when the branch has not built it}. */
@@ -12948,7 +12987,7 @@ this.frameBufferOpen = false;
      */
     private Object celtium$getOrCreateImmediatePipeline(int format, long key, int[] state, long pass,
             int targetColors) {
-        long branchKey = celtium$immediateBranchKey(format, key);
+        long branchKey = celtium$immediateBranchKey(format, key, pass);
         Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
         if (pipeline == null) {
             pipeline = celtium$createImmediatePipeline(format, key, state, pass, targetColors);
@@ -12971,10 +13010,15 @@ this.frameBufferOpen = false;
      * one-colour terrain pass, so a target attaching several colours resolves synchronously
      * through the exact colour-aware path instead of drawing with a pipeline whose render
      * pass leaves the extra attachments unused (the pack-scene 02684 residual).
+     * <p>
+     * The standard is read under this draw's own pass, under the same key shape as the exact
+     * key: the warm set warms the standards against the terrain pass, so a miss under another
+     * pass finds no standard there and builds its exact pipeline synchronously - the substitute
+     * is never a pipeline built against a different pass.
      */
     private Object celtium$resolveImmediatePipeline(int format, long key, int[] state, long pass,
             int targetColors) {
-        long branchKey = celtium$immediateBranchKey(format, key);
+        long branchKey = celtium$immediateBranchKey(format, key, pass);
         Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
         if (pipeline != null) {
             return pipeline;
@@ -12984,7 +13028,7 @@ this.frameBufferOpen = false;
                 && prewarm.needsFallback(key) && targetColors <= 1) {
             celtium$requestImmediatePipelinePrewarm(format, key, state, pass, targetColors);
             Object standard = celtium$cachedImmediatePipeline(format, celtium$immediateBranchKey(format,
-                    celtium$immediateStandardKey(format, key, state)));
+                    celtium$immediateStandardKey(format, key, state), pass));
             if (standard != null) {
                 prewarm.noteFallbackDraw();
                 this.celtium$lastPrepareWasFallback = true;
@@ -13136,9 +13180,10 @@ this.frameBufferOpen = false;
      * Releases every immediate pipeline the backend built against a render pass, and empties the caches.
      * <p>
      * Each of these objects names a render pass at creation: the world's terrain pass for a world frame, the standalone
-     * UI pass for a menu frame. The cache key is the draw state alone and does not include it, so a cache cannot outlive
-     * the world whose pass it was built for - {@link VulkanTerrainPipeline#delete()} destroys the terrain render pass,
-     * and a reused entry would name it. This is called from the world-leave path and from the backend's own teardown;
+     * UI pass for a menu frame. The cache key folds the pass in (see {@link #celtium$immediateBranchKey}), but the
+     * entries are the pipeline objects themselves, and an object built against a pass the teardown destroys must not
+     * outlive it - {@link VulkanTerrainPipeline#delete()} destroys the terrain render pass, and a later world whose
+     * pass lands on the recycled handle would be handed the dead world's pipeline. This is called from the world-leave path and from the backend's own teardown;
      * because each map is emptied here, the second call finds nothing and releases nothing again, which is what makes
      * the release exactly-once on both paths.
      * <p>
