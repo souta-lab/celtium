@@ -75,10 +75,9 @@ final class TerrainPackEngine {
     private long pipeline;
     private boolean disabled;
 
-    // The resident desc image of the shared store (host-visible, own copy:
-    // the compute descriptor set names it, as on the vanilla executor).
-    private VulkanHostBuffer descBuffer;
-    private long uploadedGeneration = -1;
+    // The resident desc image is the host's per-slot copy, read through the
+    // frame snapshot since T3 condition (2) (the private copy this executor
+    // kept until then is gone: one image per slot serves every pass).
     private VulkanHostBuffer sortedBuffer;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
@@ -87,8 +86,16 @@ final class TerrainPackEngine {
     private long framesPrepared;
     private long framesDrawn;
     private long issuedCommands;
+    /**
+     * The snapshot the latest {@link #prepareFrame} armed against (T3
+     * condition (2)): the same snapshot the vanilla executor of the same
+     * slot and recording reads, one store view for the whole frame.
+     */
+    private TerrainEngineAHost.FrameSnapshot currentSnapshot;
 
     private static final class Slot {
+        /** This slot's frame-slot index: the desc image it dispatches against is that slot's. */
+        final int index;
         final VulkanHostBuffer[] bucketOut = new VulkanHostBuffer[MAX_SLAB_IDS];
         final VulkanHostBuffer[] sortedOut = new VulkanHostBuffer[MAX_SLAB_IDS];
         final VulkanHostBuffer[] counts = new VulkanHostBuffer[MAX_SLAB_IDS];
@@ -100,6 +107,16 @@ final class TerrainPackEngine {
         final long[] describedSorted = new long[MAX_SLAB_IDS];
         final long[] describedCounts = new long[MAX_SLAB_IDS];
         final boolean[] armed = new boolean[MAX_SLAB_IDS];
+        /**
+         * The recording that produced this slot's armed streams (T3 condition
+         * (2), INV-2c): {@link #recordDraws} issues them only into that same
+         * recording. -1 while the slot has never armed.
+         */
+        long armedRecordingEpoch = -1L;
+
+        Slot(int index) {
+            this.index = index;
+        }
     }
 
     TerrainPackEngine(VulkanContext context, int passOrdinal, String passName,
@@ -117,7 +134,7 @@ final class TerrainPackEngine {
             createPipeline(stack);
         }
         for (int i = 0; i < this.slots.length; i++) {
-            this.slots[i] = new Slot();
+            this.slots[i] = new Slot(i);
         }
         System.out.println("[Celtium] CELTIUM_TERRAIN_A_PACK created pass=" + passName
                 + " drawIndirectCount=" + context.drawIndirectCountEnabled()
@@ -294,7 +311,7 @@ final class TerrainPackEngine {
      *         false the caller draws the pass with legacy batches, whole.
      */
     boolean prepareFrame(VkCommandBuffer commandBuffer, int slotIndex, float[] viewProjection,
-                         double cameraX, double cameraY, double cameraZ) {
+                         double cameraX, double cameraY, double cameraZ, long recordingEpoch) {
         // Epoch guard (INV-4c), as in register: a dead epoch's executor
         // prepares nothing.
         if (this.worldEpoch != this.host.worldEpoch()) {
@@ -336,14 +353,26 @@ final class TerrainPackEngine {
             if (!report.complete()) {
                 return false;
             }
-            uploadDescImageIfMoved();
-            java.util.List<TerrainSectionStore.Registration> records = this.store.packRecords(this.passOrdinal);
-            if (records.isEmpty()) {
-                return false;
-            }
+            // The recording's one view of the store (T3 condition (2)): the
+            // same snapshot the vanilla executor reads for this slot and
+            // recording. The slab set and the census' record count come from
+            // this pass' frozen pack counts in it — the pack passes no longer
+            // keep a private desc image or read the live store at dispatch
+            // time (the unification this condition names).
+            TerrainEngineAHost.FrameSnapshot snapshot =
+                    this.host.prepareSlotSnapshot(this.context, slotIndex, recordingEpoch);
+            this.currentSnapshot = snapshot;
+            int[] packCounts = snapshot.packSlabCounts(this.passOrdinal);
             Set<Integer> slabs = new HashSet<>();
-            for (TerrainSectionStore.Registration registration : records) {
-                slabs.add((int) registration.desc.slabId);
+            int passRecords = 0;
+            for (int s = TerrainSectionStore.PACK_SLAB_BASE; s < packCounts.length; s++) {
+                if (packCounts[s] > 0) {
+                    slabs.add(s);
+                    passRecords += packCounts[s];
+                }
+            }
+            if (slabs.isEmpty()) {
+                return false;
             }
             Slot slot = this.slots[slotIndex];
             for (int s = 0; s < MAX_SLAB_IDS; s++) {
@@ -353,13 +382,15 @@ final class TerrainPackEngine {
                 }
                 slot.armed[s] = false;
             }
+            // The streams this prepare is about to produce belong to this
+            // recording; recordDraws issues them only into it (INV-2c).
+            slot.armedRecordingEpoch = recordingEpoch;
             float[] planes = GpuTerrainDrawTable.extractPlanes(viewProjection);
-            int[] packCounts = this.store.packSlabRecordCounts();
             boolean any = false;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 for (int slab : slabs) {
                     dispatchSlab(stack, commandBuffer, slot, slab, packCounts[slab], planes,
-                            (float) cameraX, (float) cameraY, (float) cameraZ);
+                            (float) cameraX, (float) cameraY, (float) cameraZ, snapshot);
                     slot.armed[slab] = true;
                     any = true;
                 }
@@ -370,7 +401,7 @@ final class TerrainPackEngine {
                         + " frames=" + this.framesPrepared
                         + " drawn=" + this.framesDrawn
                         + " issuedCommands=" + this.issuedCommands
-                        + " records=" + records.size()
+                        + " records=" + passRecords
                         + " deferred=" + this.deferred.size()
                         + " residency[" + TerrainResidencyGate.describe(report) + "]"
                         + " leaks[deferred=" + this.residencyGate.count(TerrainResidencyGate.Reason.DEFERRED)
@@ -389,7 +420,8 @@ final class TerrainPackEngine {
     }
 
     private void dispatchSlab(MemoryStack stack, VkCommandBuffer commandBuffer, Slot slot, int slab,
-                              int slabRecords, float[] planes, float cameraX, float cameraY, float cameraZ) {
+                              int slabRecords, float[] planes, float cameraX, float cameraY, float cameraZ,
+                              TerrainEngineAHost.FrameSnapshot snapshot) {
         int capacity = Math.max(MIN_STREAM_COMMANDS, slabRecords * SectionDesc.BUCKETS);
         ensureStreamBuffers(slot, slab, capacity);
         ensureDescriptors(stack, slot, slab);
@@ -411,13 +443,13 @@ final class TerrainPackEngine {
         push.putFloat(100, cameraY);
         push.putFloat(104, cameraZ);
         push.putFloat(108, GpuTerrainCulling.MAX_DISTANCE_BLOCKS);
-        push.putInt(112, this.store.recordCount());
+        push.putInt(112, snapshot.recordCount());
         push.putInt(116, this.passOrdinal);
         push.putInt(120, slab);
         push.putInt(124, slot.streamCapacity[slab]);
         push.clear();
         vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
-        vkCmdDispatch(commandBuffer, (this.store.recordCount() + WORKGROUP - 1) / WORKGROUP, 1, 1);
+        vkCmdDispatch(commandBuffer, (snapshot.recordCount() + WORKGROUP - 1) / WORKGROUP, 1, 1);
         barrier.get(0).srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -434,11 +466,18 @@ final class TerrainPackEngine {
      *
      * @return whether at least one pack slab was drawn
      */
-    boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex) {
+    boolean recordDraws(VkCommandBuffer commandBuffer, int slotIndex, long recordingEpoch) {
         if (this.disabled) {
             return false;
         }
         Slot slot = this.slots[slotIndex];
+        if (!TerrainEngineAHost.drawEpochCurrent(slot.armedRecordingEpoch, recordingEpoch)) {
+            // INV-2c: this slot's streams were produced by another recording
+            // (a mid-frame split ended it and a new one began). Issuing them
+            // here would draw the previous recording's output; the pass head
+            // re-prepares in the new recording instead.
+            return false;
+        }
         boolean any = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer vertexBuffers = stack.mallocLong(1);
@@ -474,29 +513,6 @@ final class TerrainPackEngine {
     // Buffers
     // ----------------------------------------------------------------------------------
 
-    private void uploadDescImageIfMoved() {
-        long generation = this.store.imageGeneration();
-        if (generation == this.uploadedGeneration && this.descBuffer != null) {
-            return;
-        }
-        int[] descImage = this.store.descImage();
-        long descBytes = Math.max(48L, (long) descImage.length * 4L);
-        if (this.descBuffer == null) {
-            this.descBuffer = new VulkanHostBuffer(this.context, descBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            // Same rule as the vanilla executor's desc buffer: a descriptor
-            // set may keep naming a grown-away handle (VUID-08114), so
-            // superseded buffers are kept until delete().
-            this.descBuffer.retainSupersededBuffers();
-        } else {
-            this.descBuffer.ensureCapacity(descBytes);
-        }
-        long descAddress = this.descBuffer.mappedAddress();
-        for (int i = 0; i < descImage.length; i++) {
-            MemoryUtil.memPutInt(descAddress + (long) i * 4L, descImage[i]);
-        }
-        this.uploadedGeneration = generation;
-    }
-
     private VulkanHostBuffer sortedBuffer() {
         if (this.sortedBuffer == null) {
             this.sortedBuffer = new VulkanHostBuffer(this.context,
@@ -529,7 +545,7 @@ final class TerrainPackEngine {
 
     private void ensureDescriptors(MemoryStack stack, Slot slot, int slab) {
         if (slot.descriptorSets[slab] != 0L
-                && slot.describedDesc[slab] == this.descBuffer.buffer()
+                && slot.describedDesc[slab] == this.host.descBuffer(slot.index).buffer()
                 && slot.describedBucket[slab] == slot.bucketOut[slab].buffer()
                 && slot.describedSorted[slab] == slot.sortedOut[slab].buffer()
                 && slot.describedCounts[slab] == slot.counts[slab].buffer()) {
@@ -551,7 +567,7 @@ final class TerrainPackEngine {
             check(vkAllocateDescriptorSets(device, setInfo, handle), "allocate terrain-a-pack descriptor set");
             slot.descriptorSets[slab] = handle.get(0);
         }
-        VulkanHostBuffer[] buffers = {this.descBuffer, slot.bucketOut[slab], slot.sortedOut[slab], slot.counts[slab]};
+        VulkanHostBuffer[] buffers = {this.host.descBuffer(slot.index), slot.bucketOut[slab], slot.sortedOut[slab], slot.counts[slab]};
         VkDescriptorBufferInfo.Buffer infos = VkDescriptorBufferInfo.calloc(4, stack);
         VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(4, stack);
         for (int i = 0; i < 4; i++) {
@@ -560,7 +576,7 @@ final class TerrainPackEngine {
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).pBufferInfo(infos.slice(i, 1));
         }
         vkUpdateDescriptorSets(device, writes, null);
-        slot.describedDesc[slab] = this.descBuffer.buffer();
+        slot.describedDesc[slab] = this.host.descBuffer(slot.index).buffer();
         slot.describedBucket[slab] = slot.bucketOut[slab].buffer();
         slot.describedSorted[slab] = slot.sortedOut[slab].buffer();
         slot.describedCounts[slab] = slot.counts[slab].buffer();
@@ -621,7 +637,6 @@ final class TerrainPackEngine {
                 if (slot.counts[s] != null) slot.counts[s].delete();
             }
         }
-        if (this.descBuffer != null) this.descBuffer.delete();
         if (this.sortedBuffer != null) this.sortedBuffer.delete();
         if (this.pipeline != 0L) {
             vkDestroyPipeline(device, this.pipeline, null);
