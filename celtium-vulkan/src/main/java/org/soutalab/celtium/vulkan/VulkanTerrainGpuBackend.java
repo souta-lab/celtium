@@ -12970,7 +12970,11 @@ this.frameBufferOpen = false;
      * warmed legacy-blend state) instead - the fallback draw is counted on the prewarm, and the
      * caller keeps the material out of the prepare cache so the exact pipeline takes over from
      * the next prepare once it lands. Before the warm set has run, or when the async compile
-     * has failed for the key, the miss resolves synchronously exactly as it always did.
+     * has failed for the key, the miss resolves synchronously exactly as it always did. The
+     * fallback serves single-colour targets only: the standard pipeline is built against the
+     * one-colour terrain pass, so a target attaching several colours resolves synchronously
+     * through the exact colour-aware path instead of drawing with a pipeline whose render
+     * pass leaves the extra attachments unused (the pack-scene 02684 residual).
      */
     private Object celtium$resolveImmediatePipeline(int format, long key, int[] state, long pass,
             int targetColors) {
@@ -12981,7 +12985,7 @@ this.frameBufferOpen = false;
         }
         PipelinePrewarm prewarm = this.pipelinePrewarm;
         if (prewarm != null && this.pipelinePrewarmWarmed && !prewarm.isFailed(key)
-                && prewarm.needsFallback(key)) {
+                && prewarm.needsFallback(key) && targetColors <= 1) {
             celtium$requestImmediatePipelinePrewarm(format, key, state, pass, targetColors);
             Object standard = celtium$cachedImmediatePipeline(format, celtium$immediateBranchKey(format,
                     celtium$immediateStandardKey(format, key, state)));
