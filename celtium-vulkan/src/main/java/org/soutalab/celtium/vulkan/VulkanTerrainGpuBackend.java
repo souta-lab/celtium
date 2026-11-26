@@ -11341,12 +11341,25 @@ this.frameBufferOpen = false;
      * Only the sites where the group leaves every list at once belong here: a clear that follows an
      * {@code addAll(immediateGroups)} into the retired list is a reference move, not a death, and recycling there
      * would hand a still-live group back to the freelist.
+     * <p>
+     * The mesh is freed here, before the recycle, and that is load-bearing rather than tidy: a queued
+     * group was never submitted, so nothing on the GPU can still name its bytes (the same reasoning the
+     * stale-stamp retire path states), and {@link ImmediateGroup#recycle} only returns the group object -
+     * it does not release the mesh. Discarding without this free leaked every dropped group's ring hold
+     * (and arena pending count) for the rest of the process: one unflushed-target drop, ordering-flush
+     * failure or stall drop on a slot raised that slot's hold floor permanently, its ring reset deferred
+     * forever and the slot pinned at capacity - the permanent-pin seat the ring records separation
+     * measured. Borrowed meshes are their lender's and are never freed here, exactly as the retire drain
+     * rules them.
      */
     private void celtium$discardImmediateGroups() {
         // A main clear the queue is carrying rides one of these groups; hand it back before the group goes,
         // or the discard takes the frame's clear with it (see celtium$rescueCarriedMainClearsFromDrop).
         celtium$rescueCarriedMainClearsFromDrop();
         for (ImmediateGroup group : this.immediateGroups) {
+            if (group.mesh != null && (group.stamp == null || !group.stamp.meshBorrowed)) {
+                group.mesh.delete();
+            }
             ImmediateGroup.recycle(group);
         }
         this.groupQueueMutation++;
@@ -16297,24 +16310,35 @@ this.frameBufferOpen = false;
      * and counted rather than silent: a frame whose groups are still held (waiting for another render target)
      * can leave both arena slots reserved, and the right answer then is the old behaviour for that group - its
      * own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
+     * <p>
+     * One class never enters the ring (F-2 of the ring records separation): a group being built for a
+     * non-main target. Its lifetime is governed by that target's pass schedule, not by the frame's - it
+     * waits in the queue across frames until the target is drawn - so its mesh would hold its birth
+     * slot's ring across every slot cycle in between, and the slot's reset would stay deferred for
+     * exactly the long-lived shape the ring is worst at carrying. The arena-to-owning chain below is
+     * its home instead: the same bounded degradation, without pinning the shared ring. The registry's
+     * own routing answer decides ({@code currentIsMain}), so the mesh home and the draw routing can
+     * never disagree about which target a group belongs to.
      */
     private VulkanDynamicMesh celtium$newImmediateMesh() {
         if (this.frameArena == null) {
             this.frameArena = new VulkanFrameArena(this.context);
         }
-        try {
-            VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
-                    this.context.celtium$frameLinearRing(), this.frameSlot);
-            if (ringMesh != null) {
-                return ringMesh;
-            }
-        } catch (RuntimeException | LinkageError failure) {
-            // The ring could not be created (a device-side failure while the arena path may still work):
-            // record it once and fall through, rather than refusing every group on the ring's account.
-            if (!this.frameRingMeshFailed) {
-                this.frameRingMeshFailed = true;
-                record("frame linear ring unavailable for immediate meshes: " + describe(failure)
-                        + "; groups fall back to the frame arena");
+        if (this.targetRegistry.currentIsMain()) {
+            try {
+                VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
+                        this.context.celtium$frameLinearRing(), this.frameSlot);
+                if (ringMesh != null) {
+                    return ringMesh;
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                // The ring could not be created (a device-side failure while the arena path may still work):
+                // record it once and fall through, rather than refusing every group on the ring's account.
+                if (!this.frameRingMeshFailed) {
+                    this.frameRingMeshFailed = true;
+                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                            + "; groups fall back to the frame arena");
+                }
             }
         }
         VulkanDynamicMesh borrowed = this.frameArena.openMesh();
