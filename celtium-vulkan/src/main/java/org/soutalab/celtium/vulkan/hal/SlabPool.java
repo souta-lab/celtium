@@ -35,13 +35,29 @@ import java.util.TreeMap;
  * request refused at the slab cap with 135,168 bytes free in runs too small to serve it). Direction only orders
  * the search; it does not stop a small long-lived allocation from being placed inside a slab whose long runs a
  * larger request will later need, pinning that slab open at a small offset. So each slab also carries a band -
- * small (paged size at most {@link #SMALL_BAND_MAX_BYTES}), medium (below the large threshold) or large - taken
- * from the first request that creates it, and a request only searches slabs of its own band while the pool can
- * still grow a slab of that band. Bands are a placement guide, not a capacity partition: when the slab cap has
- * been reached and no slab of the request's band can serve it, the search falls back to every slab, so segregation
- * never makes a request fail that the unsegregated pool would have served. The 64 KiB boundary is the staging
- * chunk the crash turned on: per-frame staging churn of at most 64 KiB recycles inside small-band slabs, and its
- * holes are never carved out of the slabs that serve medium and large requests.
+ * small (paged size below {@link #CHUNK_SIZE_BYTES}), medium (below the large threshold), large, or chunk (paged
+ * size exactly {@link #CHUNK_SIZE_BYTES}) - taken from the first request that creates it, and a request only
+ * searches slabs of its own band while the pool can still grow a slab of that band. Bands are a placement guide,
+ * not a capacity partition: when the slab cap has been reached and no slab of the request's band can serve it,
+ * the search falls back to every slab, so segregation never makes a request fail that the unsegregated pool
+ * would have served. The 64 KiB boundary is the staging chunk the crash turned on: per-frame staging churn of
+ * at most 64 KiB recycles inside small-band slabs, and its holes are never carved out of the slabs that serve
+ * medium and large requests.
+ * <p>
+ * <b>The chunk band (R-60):</b> band segregation alone did not protect the exactly-64 KiB class once the
+ * fixed-page pool filled: the overflow fell into the small band, whose 4 KiB page ledger can strand every free
+ * run one page short of the 16 consecutive pages a chunk needs (the drain-confirm leg measured a largest free
+ * run of 61,440 bytes against a 65,536-byte request, with 307,200 bytes free in total). A chunk-band slab is
+ * therefore sub-allocated in whole chunks only: every allocation inside it starts on a chunk boundary and spans
+ * a whole number of chunks, so every free run in a chunk slab is a whole number of chunks - a free run is either
+ * absent or at least one full chunk, never a page short. Chunk requests also scan newest first (the large
+ * class's tail order), so simultaneously created chunks cohort in the youngest slab and their simultaneous
+ * releases merge back into whole runs. The chunk band is the one deliberate exception to the fallback rule
+ * above: at the cap, a request whose paged size is not a whole number of chunks is never served from a chunk
+ * slab, even when a free run there would fit it, because one sub-chunk placement would pin a single page inside
+ * a chunk and break the invariant every later chunk request relies on. This is the same exactness the
+ * {@link FixedPagePool} applies to the same 64 KiB class, kept inside this ledger so the ordinary pool's slab
+ * budget - and therefore its allocation census - does not grow.
  * <p>
  * <b>Release:</b> {@link #free(Allocation)} returns a range at once, merging it with any neighbouring free runs.
  * {@link #freeDeferred(Allocation, long)} only records the release against a timeline value: the range stays counted
@@ -70,13 +86,23 @@ public final class SlabPool {
     private static final int LARGE_REQUEST_SLAB_DIVISOR = 16;
 
     /**
-     * The small band's ceiling in bytes: a request whose paged size is at most this is small-band. 64 KiB is the
-     * per-frame staging chunk size whose refusal at the slab cap ended the Phase 1 legs, so the band boundary is
-     * stated in the units that request is made in, not as a slab fraction.
+     * The chunk size in bytes: a request whose paged size is exactly this belongs to the chunk band and is
+     * sub-allocated in whole chunks (see the class documentation). 64 KiB is the per-frame staging chunk size
+     * whose refusal at the slab cap ended the Phase 1 legs and whose overflow refusal after the fixed-page pool
+     * filled is R-60, so the class boundary is stated in the units that request is made in, not as a slab
+     * fraction.
      */
-    static final long SMALL_BAND_MAX_BYTES = 64L * 1024;
+    static final long CHUNK_SIZE_BYTES = 64L * 1024;
 
-    /** Band index for requests at most {@link #SMALL_BAND_MAX_BYTES} and below the large threshold. */
+    /**
+     * The small band's ceiling in bytes: a request whose paged size is below this (and below the large
+     * threshold) is small-band. The ceiling coincides with {@link #CHUNK_SIZE_BYTES} on purpose: the class the
+     * fixed-page pool serves first is exactly the class that overflows into this ledger, so the boundary between
+     * the small and chunk bands is the fixed-page size itself.
+     */
+    static final long SMALL_BAND_MAX_BYTES = CHUNK_SIZE_BYTES;
+
+    /** Band index for requests below {@link #SMALL_BAND_MAX_BYTES} and below the large threshold. */
     private static final int BAND_SMALL = 0;
 
     /** Band index for requests between the small ceiling and the large threshold. */
@@ -84,6 +110,9 @@ public final class SlabPool {
 
     /** Band index for requests at or above the large threshold. */
     private static final int BAND_LARGE = 2;
+
+    /** Band index for requests of exactly {@link #CHUNK_SIZE_BYTES}; its slabs hold whole chunks only. */
+    private static final int BAND_CHUNK = 3;
 
     private final long slabSizeBytes;
     private final int pageSizeBytes;
@@ -159,7 +188,8 @@ public final class SlabPool {
     /**
      * Allocates {@code sizeBytes} rounded up to whole pages, at an offset that is a multiple of {@code alignment}.
      * <p>
-     * Slabs are searched in the request's size-class order (large: newest first; small: creation order) and free
+     * Slabs are searched in the request's size-class order (large and chunk: newest first; small and medium:
+     * creation order) and free
      * runs in offset order; the first run that can hold the aligned request wins. When no slab fits and the pool
      * is below its cap, exactly one new slab is appended and the search is retried against it - appended, never
      * copied into, so the offsets of everything already allocated stay put.
@@ -182,29 +212,35 @@ public final class SlabPool {
             return null;
         }
         int band = bandFor(pagedSize);
-        boolean large = band == BAND_LARGE;
-        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment, large, band);
+        boolean tailFirst = band == BAND_LARGE || band == BAND_CHUNK;
+        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment, tailFirst, band);
         if (allocation != null) {
             return allocation;
         }
         if (this.freeRunsBySlab.size() >= this.maxSlabs) {
-            // At the cap no slab of this band can be grown, so segregation yields: any slab may serve.
-            return tryAllocate(pagedSize, sizeBytes, alignment, large, -1);
+            // At the cap no slab of this band can be grown, so segregation yields: any slab may serve,
+            // subject to the chunk slabs' whole-chunk rule (see tryAllocate).
+            return tryAllocate(pagedSize, sizeBytes, alignment, tailFirst, -1);
         }
         addSlab(band);
-        return tryAllocate(pagedSize, sizeBytes, alignment, large, band);
+        return tryAllocate(pagedSize, sizeBytes, alignment, tailFirst, band);
     }
 
     /**
-     * The band a request of this paged size belongs to. The large test comes first, so on a slab small enough
-     * that the large threshold sits below the small ceiling, a request at the threshold is large - the same
-     * classification the scan direction has always used.
+     * The band a request of this paged size belongs to. The chunk test comes first: exactly one chunk is the
+     * chunk class on every slab size, even where the large threshold sits at or below the chunk size (there the
+     * chunk class used to be large, whose newest-first scan the chunk band keeps). The large test comes second,
+     * so on a slab small enough that the large threshold sits below the small ceiling, a request at the
+     * threshold is large - the same classification the scan direction has always used.
      */
     private int bandFor(long pagedSize) {
+        if (pagedSize == CHUNK_SIZE_BYTES) {
+            return BAND_CHUNK;
+        }
         if (pagedSize >= this.largeRequestThresholdBytes) {
             return BAND_LARGE;
         }
-        return pagedSize <= SMALL_BAND_MAX_BYTES ? BAND_SMALL : BAND_MEDIUM;
+        return pagedSize < SMALL_BAND_MAX_BYTES ? BAND_SMALL : BAND_MEDIUM;
     }
 
     /**
@@ -302,14 +338,25 @@ public final class SlabPool {
 
     /**
      * First fit over the slabs of one band, or over every slab when {@code band} is negative (the at-cap
-     * fallback). Scan direction is the size-class one: large requests walk newest first, the rest oldest first.
+     * fallback). Scan direction is the size-class one: large and chunk requests walk newest first, the rest
+     * oldest first. A chunk slab serves only requests whose paged size is a whole number of chunks, placed on
+     * a chunk boundary, so its free runs stay whole chunks however the other bands churn (see the class
+     * documentation).
      */
-    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment, boolean large, int band) {
+    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment, boolean tailFirst,
+            int band) {
         int slabCount = this.freeRunsBySlab.size();
         for (int index = 0; index < slabCount; index++) {
-            // Size-class scan direction: large requests walk the slabs newest first, small ones oldest first.
-            int slab = large ? slabCount - 1 - index : index;
-            if (band >= 0 && this.bandBySlab.get(slab).intValue() != band) {
+            // Size-class scan direction: large and chunk requests walk the slabs newest first, small ones
+            // oldest first.
+            int slab = tailFirst ? slabCount - 1 - index : index;
+            int slabBand = this.bandBySlab.get(slab).intValue();
+            if (band >= 0 && slabBand != band) {
+                continue;
+            }
+            boolean chunkSlab = slabBand == BAND_CHUNK;
+            if (chunkSlab && pagedSize % CHUNK_SIZE_BYTES != 0L) {
+                // A sub-chunk placement would pin a page inside a chunk and break the whole-chunk invariant.
                 continue;
             }
             TreeMap<Long, Long> runs = this.freeRunsBySlab.get(slab);
@@ -318,7 +365,9 @@ public final class SlabPool {
             for (Map.Entry<Long, Long> run : new ArrayList<Map.Entry<Long, Long>>(runs.entrySet())) {
                 long runStart = run.getKey().longValue();
                 long runEnd = runStart + run.getValue().longValue();
-                long offset = alignUp(runStart, alignment);
+                long offset = chunkSlab
+                        ? chunkOffset(runStart, runEnd, alignment)
+                        : alignUp(runStart, alignment);
                 if (offset < runStart || offset + pagedSize > runEnd) {
                     continue;
                 }
@@ -383,6 +432,22 @@ public final class SlabPool {
     private static long alignUp(long value, long alignment) {
         long remainder = value % alignment;
         return remainder == 0L ? value : value + (alignment - remainder);
+    }
+
+    /**
+     * The first offset at or after {@code runStart} that starts a chunk and satisfies {@code alignment}:
+     * chunk boundaries are stepped until one is aligned, because rounding an aligned offset up to the next
+     * chunk boundary could break the alignment again. The search stops at {@code runEnd}; an offset there or
+     * beyond it cannot serve, and the caller rejects it by the same run-end check as any other placement.
+     * Alignments that divide the chunk size (the staging alignment 64 among them) are satisfied by the first
+     * boundary at once.
+     */
+    private static long chunkOffset(long runStart, long runEnd, long alignment) {
+        long offset = alignUp(runStart, CHUNK_SIZE_BYTES);
+        while (offset < runEnd && offset % alignment != 0L) {
+            offset += CHUNK_SIZE_BYTES;
+        }
+        return offset;
     }
 
     /** One recorded deferred release: the allocation and the timeline value that gates its actual return. */

@@ -2,10 +2,14 @@ package org.soutalab.celtium.vulkan.hal;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The slab ledger's placement and release rules: page rounding, alignment, first-fit reuse, run merging, the slab
@@ -170,8 +174,8 @@ class SlabPoolTest {
         for (long timeline = 1L; timeline <= 200L; timeline++) {
             SlabPool.Allocation churn = pool.allocate(65536L, 64L);
             assertNotNull(churn);
-            // Band segregation: 65536 bytes is the large band in a 1 MiB slab (threshold 64 KiB), so the churn
-            // recycles in its own slab (index 1) and never touches the small allocations' slab.
+            // Band segregation: 65536 bytes is exactly one chunk, so the churn recycles in its own
+            // chunk-band slab (index 1) and never touches the small allocations' slab.
             assertEquals(1, churn.slab());
             pool.freeDeferred(churn, timeline);
             assertEquals(1, pool.collectCompleted(timeline));
@@ -213,7 +217,8 @@ class SlabPoolTest {
         assertEquals(0, pool.pendingDeferredCount());
         SlabPool.Allocation reused = pool.allocate(65536L, 64L);
         assertNotNull(reused);
-        // 65536 bytes is the large class in a 128 KiB slab, so the tail slab is served first.
+        // 65536 bytes is exactly one chunk, and the chunk band scans newest first, so the tail slab is
+        // served first.
         assertEquals(1, reused.slab());
         assertEquals(0L, reused.offset());
     }
@@ -266,11 +271,17 @@ class SlabPoolTest {
 
         // Small churn recycles only the small slab, however often it runs.
         for (int i = 0; i < 64; i++) {
+            SlabPool.Allocation smallChurn = pool.allocate(PAGE, 1L);
+            assertEquals(1, smallChurn.slab());
+            pool.free(smallChurn);
+        }
+        // The exactly-64 KiB churn has a band of its own (the chunk band), separate from even the small slab.
+        for (int i = 0; i < 64; i++) {
             SlabPool.Allocation churn = pool.allocate(65536L, 64L);
-            assertEquals(1, churn.slab());
+            assertEquals(2, churn.slab());
             pool.free(churn);
         }
-        assertEquals(2, pool.slabCount());
+        assertEquals(3, pool.slabCount());
 
         // A medium hole freed between live medium neighbours stays a whole medium run: the next medium
         // request takes it, undamaged by the small churn above.
@@ -335,5 +346,131 @@ class SlabPoolTest {
         assertEquals(4L * PAGE, pool.freeBytes());
         assertEquals(4L * PAGE, pool.largestFreeRun());
         assertEquals(0, pool.liveAllocationCount());
+    }
+
+    /**
+     * The R-60 refusal shape, reconstructed deterministically (design gate for the chunk band): the
+     * production pool (64 MiB slabs, cap 8) fills with the 64 KiB cohort and le32k-class churn, a deferred
+     * batch release then punches isolated 8-page holes through the small slabs, and the fixed-page overflow -
+     * exactly-64 KiB requests arriving when the small slabs' largest hole is 8 pages - must still be served.
+     * Before the chunk band, the 64 KiB class shared the small band's page ledger and this series ended in
+     * refusal: every hole was half the request size, however much free space the pool held in total. The chunk
+     * cohort's own slabs are sub-allocated in whole chunks, so their unused tail is always whole chunks.
+     */
+    @Test
+    void chunkBandServesTheFixedPageOverflowShape() {
+        SlabPool pool = new SlabPool(64L * 1024 * 1024, PAGE, 8);
+        // The 64 KiB cohort: one full chunk slab (1024 chunks) and half of a second.
+        List<SlabPool.Allocation> chunks = new ArrayList<SlabPool.Allocation>();
+        for (int i = 0; i < 1536; i++) {
+            chunks.add(pool.allocate(65536L, 64L));
+        }
+        assertEquals(2, pool.slabCount());
+        assertEquals(0, chunks.get(0).slab());
+        assertEquals(1, chunks.get(1024).slab());
+        assertEquals(0L, chunks.get(1024).offset());
+
+        // le32k-class churn fills the pool to its cap; the chunk slabs' virgin tail is not sub-chunk space,
+        // so the churn cannot carve into it even through the at-cap fallback.
+        List<SlabPool.Allocation> small = new ArrayList<SlabPool.Allocation>();
+        SlabPool.Allocation next;
+        while ((next = pool.allocate(32768L, 64L)) != null) {
+            small.add(next);
+        }
+        assertEquals(8, pool.slabCount());
+        assertEquals(6 * 2048, small.size());
+
+        // A deferred batch release of every seventeenth churn allocation, collected at once: isolated
+        // 8-page holes, far more free space in total than one chunk - and no 16-page run in any small slab.
+        int released = 0;
+        for (int i = 0; i < small.size(); i += 17) {
+            pool.freeDeferred(small.get(i), 1L);
+            released++;
+        }
+        assertEquals(released, pool.collectCompleted(1L));
+        assertTrue(pool.freeBytes() >= 307200L);
+
+        // The twelve overflow requests of the R-60 scene are all served, from the chunk slab's whole-chunk
+        // tail (its virgin half starts at chunk 512), on chunk boundaries.
+        for (int i = 0; i < 12; i++) {
+            SlabPool.Allocation overflow = pool.allocate(65536L, 64L);
+            assertNotNull(overflow);
+            assertEquals(1, overflow.slab());
+            assertEquals(512L * 65536 + i * 65536L, overflow.offset());
+        }
+    }
+
+    /**
+     * The chunk invariant at the cap: a chunk slab's free space is whole chunks, and only a request spanning
+     * a whole number of chunks may take any of it. A sub-chunk request is refused at the cap rather than
+     * pinning one page inside a chunk - the one place where band segregation does refuse a request the
+     * unsegregated pool would have served, deliberately (see the SlabPool class documentation).
+     */
+    @Test
+    void chunkSlabsAdmitOnlyWholeChunkRequestsAtTheCap() {
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 1);
+        SlabPool.Allocation chunk = pool.allocate(65536L, 64L);
+        assertEquals(0, chunk.slab());
+        pool.free(chunk);
+
+        // A whole-chunk multiple from another band may use the chunk slab at the cap.
+        SlabPool.Allocation twoChunks = pool.allocate(2L * 65536, 1L);
+        assertNotNull(twoChunks);
+        assertEquals(0, twoChunks.slab());
+        assertEquals(0L, twoChunks.offset());
+        pool.free(twoChunks);
+
+        // Sub-chunk requests are refused, however small, while the chunk class itself is still served.
+        assertNull(pool.allocate(100L * 1024, 1L));
+        assertNull(pool.allocate(PAGE, 1L));
+        assertNotNull(pool.allocate(65536L, 64L));
+        assertEquals(1, pool.slabCount());
+    }
+
+    /**
+     * Chunk placement (the b2 half of the R-60 disposition): chunk requests scan newest first, so a cohort of
+     * simultaneously created chunks gathers in the youngest chunk slab and its simultaneous release merges
+     * back into whole runs, instead of stranding single chunks across every slab the class has ever opened.
+     */
+    @Test
+    void chunkRequestsCohortInTheNewestChunkSlab() {
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 4);
+        List<SlabPool.Allocation> firstSlab = new ArrayList<SlabPool.Allocation>();
+        for (int i = 0; i < 64; i++) {
+            firstSlab.add(pool.allocate(65536L, 64L));
+        }
+        SlabPool.Allocation spill = pool.allocate(65536L, 64L);
+        assertEquals(1, spill.slab());
+
+        // A chunk freed in the older slab does not pull the next request back: the newest slab wins while it
+        // has a whole chunk free.
+        pool.free(firstSlab.get(0));
+        SlabPool.Allocation nextChunk = pool.allocate(65536L, 64L);
+        assertEquals(1, nextChunk.slab());
+
+        // Once the newest slab is full, the freed chunk in the older slab is served, at its chunk boundary.
+        for (int i = 0; i < 62; i++) {
+            assertEquals(1, pool.allocate(65536L, 64L).slab());
+        }
+        SlabPool.Allocation backfill = pool.allocate(65536L, 64L);
+        assertEquals(0, backfill.slab());
+        assertEquals(0L, backfill.offset());
+    }
+
+    /**
+     * Alignment inside a chunk slab: the offset must satisfy the requested alignment and stay on the chunk
+     * grid, so an alignment of two chunks lands the second allocation two chunks in, not one chunk in at a
+     * misaligned offset and not at a page offset off the grid.
+     */
+    @Test
+    void chunkPlacementHonoursAlignmentWithoutLeavingTheChunkGrid() {
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 2);
+        SlabPool.Allocation first = pool.allocate(65536L, 2L * 65536);
+        assertEquals(0L, first.offset());
+
+        SlabPool.Allocation second = pool.allocate(65536L, 2L * 65536);
+        assertEquals(2L * 65536, second.offset());
+        assertEquals(0L, second.offset() % 65536L);
+        assertEquals(0L, second.offset() % (2L * 65536));
     }
 }
