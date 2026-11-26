@@ -110,13 +110,23 @@ class FrameTargetPoolSeparationTest {
     }
 
     private static String contextSource() throws IOException {
-        return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java"));
+        return readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java");
     }
 
     private static String frameTargetSource() throws IOException {
-        return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java"));
+        return readSource(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java");
+    }
+
+    /**
+     * Reads a production source for the contracts above. Line endings are
+     * normalised to LF: several pinned shapes span a line break plus its
+     * indentation, and a CRLF checkout (the Windows default) must pin the
+     * same shapes as an LF one.
+     */
+    private static String readSource(String repoRelative) throws IOException {
+        return Files.readString(findRepoFile(repoRelative)).replace("\r\n", "\n");
     }
 
     /** A slice of one method, from its signature, long enough to cover the lines this pin reads. */
