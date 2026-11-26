@@ -5,6 +5,7 @@ import net.minecraft.block.BlockLeaves;
 import net.minecraft.block.BlockPlanks;
 import net.minecraft.block.material.Material;
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.init.Bootstrap;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumFacing;
@@ -13,6 +14,7 @@ import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.WorldType;
 import net.minecraft.world.biome.Biome;
 import org.embeddedt.embeddium.impl.gui.SodiumGameOptions.LeafCullingMode;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
@@ -33,6 +35,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code instanceof} classification is exercised as production runs it.
  */
 class LeafCullingTest {
+    /**
+     * Any {@link Block} construction reads {@code SoundType.STONE}, whose class
+     * initialisation reaches {@code SoundEvents} - and that class refuses to initialise
+     * before Bootstrap ("Accessed Sounds before Bootstrap!"). The doubles below are real
+     * blocks, so the test JVM has to be bootstrapped first; Bootstrap's own guard makes
+     * the call a no-op when another test class got there first.
+     */
+    @BeforeAll
+    static void bootstrapMinecraft() {
+        Bootstrap.register();
+    }
+
     private static class StubBlock extends Block {
         private final boolean sideSolid;
 
