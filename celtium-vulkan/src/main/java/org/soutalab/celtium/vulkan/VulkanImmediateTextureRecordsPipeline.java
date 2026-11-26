@@ -1,0 +1,1423 @@
+package org.soutalab.celtium.vulkan;
+
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
+import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
+import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineInputAssemblyStateCreateInfo;
+import org.lwjgl.vulkan.VkDescriptorImageInfo;
+import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
+import org.lwjgl.vulkan.VkPipelineMultisampleStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineRasterizationStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
+import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
+import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
+import org.lwjgl.vulkan.VkPushConstantRange;
+import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
+import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
+import org.lwjgl.vulkan.VkVertexInputBindingDescription;
+
+import java.nio.ByteBuffer;
+import java.nio.LongBuffer;
+
+import static org.lwjgl.vulkan.VK10.*;
+
+/**
+ * The textured immediate family's only pipeline form since Stage 5 stage 6: the per-group
+ * block comes from the draw records at set 1, indexed by {@code gl_InstanceIndex}, and set 0
+ * is the per-texture pair this class's descriptor machinery builds.
+ * <p>
+ * This class is the record-reading twin the family's deleted per-group class grew through
+ * its {@code createRecords}/{@code createRecordsLike} factories, separated into its own class
+ * when the per-group form was deleted (stage 6 slice S6-b): the records form is
+ * no longer a variant of anything - it is the family. Every variant the per-group class had
+ * has its factory here with the same variant fields and stride carriers, because a twin
+ * built at the base family's stride reads every vertex after the first out of phase; the
+ * texgen and combine variants, which the twin used to refuse for want of a record-reading
+ * shader pair, have theirs now ({@code immediate_texgen_records} /
+ * {@code immediate_combine4_records}) and are ordinary variants of this class.
+ * <p>
+ * The bindless array variant ({@link #createRecordsArray}) is carried with the family: its
+ * set 0 is the texture array rather than one texture pair. It is built only by the bindless
+ * wiring, which is a later slice's work; the factory and the shader pair stay so that slice
+ * finds the surface it was promised.
+ * <p>
+ * Threading: render thread only (creation also runs on the pipeline prewarm thread, as every
+ * immediate family's does, through {@link ImmediateRecordsPipelines}).
+ */
+public final class VulkanImmediateTextureRecordsPipeline {
+
+    /** Bounded census of the layout a descriptor is actually written with, for VUID-vkCmdDraw-None-09600. */
+    private static int descLayoutLogs;
+
+    /** Prints the layout of the descriptor write about to be issued, bounded, so the offending write names itself. */
+    static void celtium$noteDescWrite(org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write) {
+        if (descLayoutLogs >= 24 || write == null || write.remaining() == 0) {
+            return;
+        }
+        org.lwjgl.vulkan.VkDescriptorImageInfo.Buffer images = write.get(0).pImageInfo();
+        int layout = images == null ? -1 : images.get(0).imageLayout();
+        descLayoutLogs++;
+        String name = layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL ? "GENERAL"
+                : layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? "SHADER_READ_ONLY"
+                : layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? "TRANSFER_DST"
+                : Integer.toString(layout);
+        System.out.println("[Celtium] CELTIUM_DESC_WRITE layout=" + name + " images="
+                + (images == null ? 0 : images.remaining()));
+    }
+
+    /** {@code POSITION_TEX_COLOR}: 3 floats position, 2 floats texture coordinates, 4 unsigned bytes colour. */
+    public static final int VERTEX_BYTES = 24;
+
+    /** {@code POSITION_TEX}: 3 floats position and 2 floats texture coordinates, the shape RenderGlobal uploads. */
+    public static final int POSITION_TEX_BYTES = 20;
+    /** Position only: three floats and nothing else. */
+    public static final int POSITION_BYTES = 12;
+    /** Position, texture, colour and a normal the shaders do not read: the entity/TESR layout, 28 bytes. */
+    public static final int POSITION_TEX_COLOR_NORMAL_BYTES = 28;
+    /**
+     * Position, texture and a normal, 24 bytes: the composite batch's layout, and {@code POSITION_TEX_NORMAL} and
+     * {@code OLDMODEL_POSITION_TEX_NORMAL} with it.
+     * <p>
+     * 12 + 8 + 3 + 1. These widths are the runtime ones and not a rounded stride: vanilla's {@code VertexFormat} advances
+     * by the element's own {@code getSize()} and pads nothing, so this layout is 24 and not 28 while the colour-carrying
+     * {@code POSITION_TEX_COLOR_NORMAL} really is 28. This constant said 24 while the id it belongs to was never assigned
+     * and the id it was confused with was answered instead, so nothing ever compared the two.
+     */
+    public static final int POSITION_TEX_NORMAL_BYTES = 24;
+    /**
+     * Position, a normal and a padding byte: 16 bytes, {@code DefaultVertexFormats.POSITION_NORMAL}.
+     * <p>
+     * 12 + 3 + 1. Nothing is written in the top byte of each vertex, and the shader reads only the position, but the
+     * binding still has to step the width the format really has: a stride of 12 would read the next vertex's first
+     * position byte as this vertex's normal, and the vertices are written end to end at no other stride.
+     */
+    public static final int POSITION_NORMAL_BYTES = 16;
+    // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
+    // inside the 128 bytes Vulkan guarantees (audit S19).
+    // 208 since the fixed-function fog landed: the fragment stage reads the fog block at 128..207 (colour, params and
+    // the model view the fog coordinate is computed from), so the pipeline layout's range has to cover it. This is the
+    // size the lit ITEM pipeline has required of the device since the lighting block arrived, so it asks for nothing
+    // the tree did not already. This class carries the POSITION (sky dome, horizon plane) and POSITION_TEX (water
+    // surface, sun, moon, clouds) layouts, which is where the fog is visible.
+    private static final int PUSH_CONSTANT_BYTES = 208;
+
+    private final VulkanContext context;
+    private final long renderPass;
+    /**
+     * How many colour attachments the pass this pipeline is built against attaches. The blend state is
+     * replicated once per attachment when the pipeline is created - the mod-program multi-target form,
+     * because GL has one blend state for all draw buffers and the per-buffer form is not captured. One
+     * is every pass this family was built against before multi-target targets existed; a factory that
+     * builds for such a target sets this before the build, the way the variant fields are set.
+     */
+    private int colorAttachments = 1;
+    /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
+    private boolean positionOnly;
+    /** Position-and-nothing-else: twelve bytes, one attribute, and no texture coordinate to sample. */
+    private boolean positionNoTexture;
+    /** Non-zero when the layout is one of the wider standard formats whose extra element the shaders ignore. */
+    private int extraTrailingElementBytes;
+    /**
+     * A stride that is neither the base layout's nor one of the trailing-element ones.
+     * <p>
+     * {@code POSITION_NORMAL} is 16 bytes and carries a normal rather than trailing padding, so neither of the two fields
+     * above describes it. Rather than let it fall into a default that would be wrong, the stride lives in one place and the
+     * default is only reached when none of the three is set.
+     */
+    private int explicitStride;
+    /** POSITION_COLOR drawn with generated texture coordinates; see {@link #createForTexGen}. */
+    private boolean texGen;
+    /** Position and four texture coordinates sampling one texture through a multi-unit combine; see {@link #createForCombine4}. */
+    private boolean combine4;
+    /** Stride of the {@link VulkanImmediateFormats#COMBINE4} layout: a float3 position and four float2 coordinates. */
+    public static final int COMBINE4_BYTES = 44;
+
+    private long pipelineLayout = VK_NULL_HANDLE;
+    private long pipeline = VK_NULL_HANDLE;
+    private long descriptorSetLayout = VK_NULL_HANDLE;
+    /** The records set layout, owned by {@link InstanceDataStore}; this pipeline only references it. */
+    private long recordsLayout = VK_NULL_HANDLE;
+    /** Set 0 layout of the bindless texture array, when this variant samples through it instead of one texture. */
+    private long arrayLayout = VK_NULL_HANDLE;
+    /** Whether this variant's fragment stage samples {@code u_Textures[]} and its vertex stage publishes the index. */
+    private boolean arrayRecords;
+
+    /**
+     * Every descriptor pool this pipeline has allocated sets from, oldest first, all destroyed in {@link #delete()}.
+     * <p>
+     * A single 64-set pool was the audit's B03. One set is reserved at creation, {@link #descriptorSetFor} allocates
+     * one per distinct texture key and caches it for the pipeline's whole lifetime, so the 63rd distinct texture was
+     * the last one that could be drawn: after that {@code vkAllocateDescriptorSets} failed, the method returned 0 and
+     * the batch was refused - and under GL-less a refused batch is drawn by nobody. The cache has no eviction, so the
+     * bound was a lifetime bound rather than a frame bound, and raising 64 to a larger constant would only move it.
+     * {@link #allocateDescriptorSet} grows the pool when one is full, and the growth is counted so the report says
+     * how far a scene actually got.
+     */
+    private final java.util.List<Long> descriptorPools = new java.util.ArrayList<Long>();
+    private long descriptorSet = VK_NULL_HANDLE;
+    // Primitive long keys: this is the hottest map in the renderer - one lookup per immediate batch, ~300 a frame - and
+    // the boxed form showed up in a JFR of the world window as HashMap.getNode/getTreeNode plus Long allocation for
+    // the keys (about a tenth of the client thread together with the texture registry's maps).
+    /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
+    private long lastDescriptorKey = -1L;
+    private long lastDescriptorSet;
+    private long descriptorSlotHits;
+
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByTextureView =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /**
+     * The live texture key per GL texture name, so a superseded generation can be retired.
+     * <p>
+     * {@code setsByTextureView} is keyed by {@code texture.key()} = view ^ generation, and nothing ever removed an
+     * entry: a generation bump (a mirror refresh, a sampler rebuild, a reallocation) left the old set in the map
+     * forever, so a long session with repeated texture reloads grew the cache without bound and exhausted the finite
+     * pool - every later allocation then failed. The name index is what says which entry a new generation supersedes.
+     */
+    private final long[] insertionOrderRing = new long[DESCRIPTOR_CACHE_LIMIT * 2];
+    private int insertionOrderHead;
+    private int insertionOrderTail;
+    private int insertionOrderCount;
+    /** Sets retired because a newer generation of the same GL texture replaced them; counted, never silently dropped. */
+    private int descriptorSetsRetired;
+    /** Sets this pipeline has handed back to their pools through the completion-gated free. */
+    private int descriptorSetsFreed;
+    /**
+     * Retired sets with the pool each belongs to, awaiting the completion-gated free that returns them.
+     * <p>
+     * This list used to be write-only: nothing ever freed a retired set, no pool carried the
+     * FREE_DESCRIPTOR_SET bit, and pool consumption grew monotonically with texture generations until the
+     * 64-pool ceiling refused every later textured batch. Now the sets are handed to
+     * {@link VulkanContext#celtium$retireCleanup} - OPT-04's completion basis - in batches of
+     * {@link #RETIRED_FREE_BATCH}, and {@link #delete()} advances {@link #descriptorFreeGeneration} so a batch
+     * still queued when its pools are destroyed drops itself instead of freeing into a dead pool.
+     */
+    private final RetiredDescriptorSets retiredSets = new RetiredDescriptorSets();
+    /** The pool each live cached set was allocated from, so a retired set can be handed back to its own pool. */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap poolByDescriptorSet =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** The pool the most recent successful allocation came from; read by {@link #descriptorSetFor} once per miss. */
+    private long lastAllocationPool;
+    /**
+     * The generation of every set this pipeline has allocated, and the texture key each set was last handed
+     * out for (hs_err triage instrument (ii)). A set handle is unique only within its pool and is recycled by
+     * the completion-gated free, so the handle a draw binds cannot say whether it is the set the group was
+     * queued with or a later allocation that reused the value; the generation - a serial stamped at each
+     * allocation, including a reallocation of a recycled handle - can, and the descriptor-bind breadcrumb
+     * records it beside the texture key (itself view ^ texture generation) at the bind. Entries are kept for
+     * the pipeline's lifetime: the set count is pool-bounded, and dropping an entry at retirement would make
+     * a still-queued bind of a retired set read as generation 0 rather than as its own, older generation.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap descriptorSetGenerations =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap descriptorSetTextureKeys =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private long nextDescriptorSetGeneration;
+    /** Advanced by {@link #delete()}; a queued descriptor free that sees a newer value owns nothing any more. */
+    private long descriptorFreeGeneration;
+    /** How many retired sets one completion-gated free hands back at a time. */
+    private static final int RETIRED_FREE_BATCH = 32;
+    /** Sets this pipeline has been given: the one reserved at creation plus every cached texture set. */
+    private int descriptorSetsAllocated;
+
+    private final VulkanColorBlendState colorBlend;
+    private final boolean depthTest;
+    private final boolean depthWrite;
+    private final int cull;
+    /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
+    private final int depthCompareOp;
+
+    private VulkanImmediateTextureRecordsPipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
+                                           boolean depthTest, boolean depthWrite, int cull,
+                                           int depthCompareOp, long recordsSetLayout) {
+        this.context = context;
+        this.renderPass = renderPass;
+        this.colorBlend = colorBlend;
+        this.depthTest = depthTest;
+        this.depthWrite = depthWrite;
+        this.cull = cull;
+        this.depthCompareOp = depthCompareOp;
+        this.recordsLayout = recordsSetLayout;
+    }
+
+    /**
+     * Creates the base variant for one drawing state: blending with the given Vulkan factors, the depth test and
+     * its write mask, and face culling, with the block taken from the records buffer at set 1. These bake into the
+     * pipeline object, which is why the immediate path caches one per state instead of forcing every batch through
+     * a single hardcoded combination.
+     */
+    public static VulkanImmediateTextureRecordsPipeline create(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the bindless variant: the record buffer at set 1 as in {@link #create}, but set 0 is
+     * the texture array rather than one texture pair, and the fragment stage samples {@code u_Textures[v_TextureIndex]}.
+     * A run of this pipeline does not stop when the texture changes, which is the point of the array.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createRecordsArray(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout, long arraySetLayout) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.arrayRecords = true;
+        pipeline.arrayLayout = arraySetLayout;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the {@link VulkanImmediateFormats#COMBINE4} variant: position plus the coordinates of units 0, 2 and 3 (unit 1
+     * is not sampled), one texture, and the fragment stage that evaluates the combine the group's push block selects.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createForCombine4(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout) {
+        return createForCombine4(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForCombine4(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.combine4 = true;
+        pipeline.explicitStride = COMBINE4_BYTES;
+        return pipeline.build();
+    }
+
+    /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTex(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout) {
+        return createForPositionTex(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTex(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.positionOnly = true;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the texgen variant: {@code POSITION_COLOR} vertices (16 bytes, no texture coordinate) sampling the bound
+     * texture at the coordinate {@link NativeTexGen} generates, which the backend writes as three rows at 64/80/96.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createForTexGen(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout) {
+        return createForTexGen(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForTexGen(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.texGen = true;
+        pipeline.explicitStride = 16;
+        return pipeline.build();
+    }
+
+    /** {@return whether this is the multi-unit combine variant}, whose fragment stage the array shader pair does not have. */
+    public boolean celtium$combine4() {
+        return this.combine4;
+    }
+
+    /** {@return whether this is the texgen variant}, which the backend's push writer fills differently. */
+    public boolean celtium$texGen() {
+        return this.texGen;
+    }
+
+    /** {@return this pipeline's Vulkan handle, or 0 when it has none} (the batch draw sink binds it directly). */
+    public long celtium$handle() {
+        return this.pipeline;
+    }
+
+    /** {@return this pipeline's layout handle} (the batch draw sink binds descriptor sets against it). */
+    public long celtium$pipelineLayout() {
+        return this.pipelineLayout;
+    }
+
+    /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
+    public static VulkanImmediateTextureRecordsPipeline createForPosition(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+            long recordsSetLayout) {
+        return createForPosition(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPosition(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.positionOnly = true;
+        pipeline.positionNoTexture = true;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the {@code POSITION_NORMAL} variant: 16 bytes, position and a normal, no colour and no texture.
+     * <p>
+     * The white box {@code Render.renderOffsetAABB} draws for an entity with no renderer, and the reason this variant
+     * exists: without it that box is refused by the uploader (it had no id at all before) and, under the GL-less window,
+     * drawn by nobody. The shaders are the colourless position ones - this renderer evaluates no fixed-function lighting, so
+     * the normal cannot change the picture, and the vertex's colour comes from the push block the way the position-only
+     * layout's does. The stride is the whole of what makes it a different pipeline from {@link #createForPosition}: the
+     * binding has to step 16 bytes, not the position-only layout's 12.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout) {
+        return createForPositionNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.positionOnly = true;
+        pipeline.positionNoTexture = true;
+        pipeline.explicitStride = POSITION_NORMAL_BYTES;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the {@code POSITION_TEX_COLOR_NORMAL} variant: the same shaders and attribute offsets as the textured pipeline,
+     * with the stride the extra normal element needs. The normal is not read - none of these shaders light anything - but the
+     * layout has to be declared honestly or the pipeline reads the next vertex's bytes as this one's colour.
+     */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout) {
+        return createForPositionTexColorNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.extraTrailingElementBytes = POSITION_TEX_COLOR_NORMAL_BYTES;
+        return pipeline.build();
+    }
+
+    /**
+     * The 32-byte mod layout's stride ({@code pos3f + uv2f + normal3f}). The normal is not read - no immediate shader
+     * lights anything - so the variant is {@code POSITION_TEX} at this stride, which is the whole of what the geometry
+     * needed to stop being refused.
+     */
+    public static final int POSITION_TEX_NORMAL_FLOAT_BYTES = 32;
+
+    /**
+     * Creates the float-normal variant: the colourless {@code POSITION_TEX} shaders at 32 bytes, with the normal
+     * element as the trailing stride they skip. Measured need: the 268-mod E2E pack draws geometry in this layout and
+     * the table refused it with id 0 ({@code CELTIUM_UNMAPPED_REFUSED layout=[3,Position,Float 2,UV,Float
+     * 3,Normal,Float]}).
+     */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout) {
+        return createForPositionTexNormalFloat(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexNormalFloat(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.positionOnly = true;
+        pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_FLOAT_BYTES;
+        return pipeline.build();
+    }
+
+    /** Creates the {@code POSITION_TEX_NORMAL} variant, 24 bytes: colourless shaders, wider stride than the 20-byte one. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout) {
+        return createForPositionTexNormal(context, renderPass, colorBlend, depthTest, depthWrite, cull,
+                depthCompareOp, recordsSetLayout, 1);
+    }
+
+    /** The multi-target form: the blend state is replicated for each colour attachment. */
+    public static VulkanImmediateTextureRecordsPipeline createForPositionTexNormal(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+            int depthCompareOp, long recordsSetLayout, int colorAttachments) {
+        VulkanImmediateTextureRecordsPipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
+                depthWrite, cull, depthCompareOp, recordsSetLayout);
+        pipeline.colorAttachments = Math.max(1, colorAttachments);
+        pipeline.positionOnly = true;
+        pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_BYTES;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates a pipeline for one drawing state: blending with the given Vulkan factors, the depth test and its write
+     * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
+     * state instead of forcing every batch through a single hardcoded combination.
+     */
+    public static VulkanImmediateTextureRecordsPipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
+                            boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
+                            long recordsSetLayout) {
+        return create(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp,
+                recordsSetLayout, 1);
+    }
+
+    /**
+     * Allocates the pipeline without building it, so a variant factory can set the fields that decide its layout first.
+     * <p>
+     * This split is the whole fix for the defect the sky dome measured. {@link #create} builds the pipeline inside the
+     * call, and every variant factory used to call it and then set {@code positionOnly} / {@code positionNoTexture} /
+     * {@code extraTrailingElementBytes} / {@code explicitStride} on the finished object - so those fields were still at
+     * their defaults when {@link #createPipeline} read them, and <b>every</b> variant was built as the base
+     * {@code POSITION_TEX_COLOR} pipeline: three attributes, a 24-byte binding stride, and a colour attribute at byte
+     * 20 read as {@code R8G8B8A8_UNORM}. Measured on the sky dome, whose real layout is 12 bytes of position: the
+     * attribute at 20 landed on the vertex data's own floats, and since every coordinate of that dome is a multiple of
+     * 64 or +-16 (low two bytes zero) the fragments came out with red and green exactly zero and blue in
+     * {0,64,128,160,192} interpolated across the quad - the 176,633 pure-blue pixels the frame gained. The index
+     * expansion stayed the 676-vertex one, so the quads sheared into the wedges and read past the end of the mesh.
+     * {@code VulkanImmediateColourRecordsPipeline} does this by passing its variant through the constructor; this class
+     * now builds only after its fields are final.
+     */
+    private static VulkanImmediateTextureRecordsPipeline allocate(VulkanContext context, long renderPass,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull,
+                            int depthCompareOp, long recordsSetLayout) {
+        if (context == null || renderPass == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException("context and renderPass must be set");
+        }
+        if (colorBlend == null) {
+            throw new IllegalArgumentException("colorBlend must be set");
+        }
+        return new VulkanImmediateTextureRecordsPipeline(context, renderPass, colorBlend, depthTest, depthWrite,
+                cull, depthCompareOp, recordsSetLayout);
+    }
+
+    /** Builds the layout and the pipeline from the fields as they stand; call only once they are final. */
+    private VulkanImmediateTextureRecordsPipeline build() {
+        // BH-20: this is the path the common variants actually take (the factories call allocate(...).build()), and the
+        // injected-failure leg proved it was the one stage sequence still outside the transaction -
+        // pipelineBuildRollbacks stayed 0 while the fault fired. A failure in the pipeline stage therefore left the
+        // descriptor set layout and the pipeline layout behind, exactly as the finding says.
+        try {
+            this.createPipelineLayout();
+            this.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            BUILD_ROLLBACKS.incrementAndGet();
+            this.delete();
+            throw error;
+        }
+        return this;
+    }
+
+    /**
+     * The per-group bind timings of the deleted per-group draw path. Their writers were that
+     * path's {@code draw} methods; the counters stay as this family's report surface
+     * ({@code FrameStatsReport} reads them), reading zero deltas now that the binds they timed
+     * are the batch sink's and the direct fallback's, which keep their own accounts.
+     */
+    public static long VIEW_NANOS;
+    public static long PUSH_CALL_NANOS;
+    public static long MESH_BIND_NANOS;
+    public static long PIPELINE_BIND_NANOS;
+    public static long DESCRIPTOR_BIND_NANOS;
+
+    /** {@return whether this is the colourless position-only variant}, whose block and shader differ. */
+    public boolean celtium$positionOnly() {
+        return this.positionOnly;
+    }
+
+    /** {@return whether this is the position-without-texture variant}. */
+    public boolean celtium$positionNoTexture() {
+        return this.positionNoTexture;
+    }
+
+    /** {@return the trailing element width that widens this variant's stride}, or 0 when the layout carries none. */
+    int celtium$extraTrailingElementBytes() {
+        return this.extraTrailingElementBytes;
+    }
+
+    /** {@return this variant's explicit stride}, or 0 when its layout derives one from the base shapes. */
+    int celtium$explicitStride() {
+        return this.explicitStride;
+    }
+
+    /** {@return whether this pipeline writes depth} - the indirect run only takes opaque groups. */
+    public boolean celtium$depthWrites() {
+        return this.depthWrite;
+    }
+
+    /** {@return whether this pipeline tests depth}. */
+    public boolean celtium$depthTests() {
+        return this.depthTest;
+    }
+
+    /** {@return whether this pipeline blends} - a blended group keeps its per-group draw. */
+    public boolean celtium$blends() {
+        return this.colorBlend != null && this.colorBlend.celtium$blends();
+    }
+
+    /** {@return the render pass this pipeline was built for}. */
+    public long celtium$renderPass() {
+        return this.renderPass;
+    }
+
+    /** {@return the blend state this pipeline was built with}, so a record-reading twin can match it. */
+    public VulkanColorBlendState celtium$colorBlend() {
+        return this.colorBlend;
+    }
+
+    /** {@return the depth compare op this pipeline was built with}. */
+    public int celtium$depthCompareOp() {
+        return this.depthCompareOp;
+    }
+
+    /** {@return whether face culling is on}, which a twin has to reproduce to draw the same pixels. */
+    public boolean celtium$culls() {
+        return VulkanCullState.culls(this.cull);
+    }
+
+    /** {@return the encoded cull state (enable, face and winding) this pipeline was built with}. */
+    public int celtium$cullState() {
+        return this.cull;
+    }
+
+    public int vertexBytes() {
+        return VERTEX_BYTES;
+    }
+
+    /**
+     * The render state this variant was built with, for a pipeline that has to draw the same batch under a mod's own
+     * program ({@link VulkanModProgramPipeline}): same render pass, blend, depth and cull, different shaders.
+     */
+    long celtium$renderPassHandle() {
+        return this.renderPass;
+    }
+
+    boolean celtium$depthTest() {
+        return this.depthTest;
+    }
+
+    boolean celtium$depthWrite() {
+        return this.depthWrite;
+    }
+
+    int celtium$cull() {
+        return this.cull;
+    }
+
+    /**
+     * {@return the stride this variant's vertex binding declares}.
+     * <p>
+     * One place, in the order the variants are built: an explicit stride wins (the position-normal layout is neither of the
+     * shortages below), then a trailing element that widens the vertex, then the three base layouts. The expression used to
+     * be inlined in the binding and read the three flags in an order that made {@code POSITION_NORMAL} unwritable without a
+     * fourth branch.
+     */
+    private int vertexStride() {
+        return strideFor(this.explicitStride, this.extraTrailingElementBytes, this.positionNoTexture,
+                this.positionOnly);
+    }
+
+    /** The stride decision of {@link #vertexStride()}, as a pure function so the variant table can be pinned. */
+    static int strideFor(int explicitStride, int extraTrailingElementBytes, boolean positionNoTexture,
+            boolean positionOnly) {
+        if (explicitStride != 0) {
+            return explicitStride;
+        }
+        if (extraTrailingElementBytes != 0) {
+            return extraTrailingElementBytes;
+        }
+        return positionNoTexture ? POSITION_BYTES : positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES;
+    }
+
+    /**
+     * {@return the descriptor set that samples the given texture}, creating and writing it on first use.
+     * <p>
+     * Each texture gets its own set, written **before** it is ever bound, because updating a set that a recording
+     * command buffer has already bound is invalid without {@code UPDATE_AFTER_BIND} - and the validation layer said so
+     * precisely: "VkDescriptorSet was destroyed or updated without UPDATE_AFTER_BIND", after which every following
+     * command in that buffer failed with "commandBuffer must be in the recording state". Returns 0 when the pool is
+     * exhausted, so the caller refuses the batch instead of drawing with a stale binding.
+     */
+    /**
+     * {@return the descriptor cache's live and retired counts}, so BH-22's acceptance is a number on a normal leg:
+     * a session that drives generation changes must show {@code live} converging to the live-texture count instead of
+     * growing without bound, with {@code retired} accounting for the difference.
+     */
+    public String descriptorSetCensus() {
+        return "descriptorSetsLive=" + this.setsByTextureView.size()
+                + " descriptorSetsRetired=" + this.descriptorSetsRetired
+                + " descriptorSetsAwaitingCompletion=" + this.retiredSets.size()
+                + " descriptorSetsFreed=" + this.descriptorSetsFreed
+                + " descriptorSetsAllocated=" + this.descriptorSetsAllocated;
+    }
+
+    /** Cache hits and misses of {@link #descriptorSetFor}, so "the cache is not hitting" is measured, not assumed. */
+    public static long DESCRIPTOR_HITS;
+    public static long DESCRIPTOR_MISSES;
+    /**
+     * Batches refused because the wrapper they would sample has no view any more. A zero view in a descriptor is a
+     * device-lost class failure, not a missing draw, so this counter is the honest alternative to binding it.
+     */
+    public static long ZERO_VIEW_REFUSALS;
+    /**
+     * BH-20's counter: pipeline builds that failed after a stage had already created handles, and were rolled back
+     * instead of leaked. A leg reads it beside the created/destroyed census: zero means either nothing failed or the
+     * rollback is not wired, and the injected-failure leg is what tells the two apart.
+     */
+    public static final java.util.concurrent.atomic.AtomicLong BUILD_ROLLBACKS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * The other side of the atlas-binding question: which images the registry is handing out.
+     * <p>
+     * Every texture this pipeline builds a descriptor for comes from {@code VulkanTextureRegistry} - either
+     * {@code get(boundTexture)} or {@code imageFor(...)} - so the first few distinct ones are a sample of the registry's
+     * current values, taken at the moment a descriptor is built from them. Printed next to
+     * {@code CELTIUM_ATLAS_DESCRIPTOR}, a run says whether the image the terrain samples is the same image the registry
+     * hands out for that size, or an older one the terrain is still holding. Bounded to
+     * {@link #CENSUS_LIMIT} lines for the whole process; the identity comparison per call is a walk over at most that
+     * many longs.
+     */
+    private static final int CENSUS_LIMIT = 6;
+    /** Distinct census entries: {key, view, generation, width<<32|height}, plus the object identity alongside. */
+    private static final long[][] CENSUS = new long[CENSUS_LIMIT][4];
+    private static final int[] CENSUS_IDENTITY = new int[CENSUS_LIMIT];
+    private static int censusCount;
+    private static int censusLines;
+
+    /** Records one distinct image the registry supplied, and prints the first few with their full identity. */
+    private static void censusTexture(VulkanGlTexture texture) {
+        long key = texture.key();
+        for (int i = 0; i < censusCount; i++) {
+            if (CENSUS[i][0] == key) {
+                return;
+            }
+        }
+        if (censusCount >= CENSUS_LIMIT) {
+            return;
+        }
+        int slot = censusCount++;
+        CENSUS[slot][0] = key;
+        CENSUS[slot][1] = texture.view();
+        CENSUS[slot][2] = key ^ (texture.view() * 31L);
+        CENSUS[slot][3] = ((long) texture.width() << 32) | (texture.height() & 0xFFFFFFFFL);
+        CENSUS_IDENTITY[slot] = System.identityHashCode(texture);
+        if (censusLines < CENSUS_LIMIT) {
+            censusLines++;
+            System.out.println("[Celtium] CELTIUM_REGISTRY_TEXTURE #" + slot + " obj="
+                    + Integer.toHexString(CENSUS_IDENTITY[slot]) + " view=0x" + Long.toHexString(texture.view())
+                    + " gen=" + CENSUS[slot][2] + " key=0x" + Long.toHexString(key) + " size=" + texture.width()
+                    + "x" + texture.height() + " full=" + texture.hasFullContent() + " sampler=0x"
+                    + Long.toHexString(texture.sampler()) + " (from the registry, sampled by the immediate path)");
+        }
+    }
+
+    /** {@return whether the registry has been seen supplying an image of this size}, for the terrain audit line. */
+    public static String registryImageOfSize(int width, int height) {
+        long packed = ((long) width << 32) | (height & 0xFFFFFFFFL);
+        for (int i = 0; i < censusCount; i++) {
+            if (CENSUS[i][3] == packed) {
+                return "#" + i + " obj=" + Integer.toHexString(CENSUS_IDENTITY[i]) + " view=0x"
+                        + Long.toHexString(CENSUS[i][1]) + " gen=" + CENSUS[i][2];
+            }
+        }
+        return "none-seen";
+    }
+
+    private static int descriptorFailureReports;
+
+    static boolean descriptorResultIsDeviceLost(int result) {
+        return result == VK_ERROR_DEVICE_LOST;
+    }
+
+    private void celtium$descriptorFailure(String operation, int result) {
+        if (descriptorFailureReports++ < 12) {
+            System.err.println("[Celtium] CELTIUM_DESCRIPTOR_VK_RESULT phase=" + operation
+                    + " result=" + result + " pools=" + this.descriptorPools.size()
+                    + " setsAllocated=" + this.descriptorSetsAllocated);
+        }
+        if (descriptorResultIsDeviceLost(result)) {
+            throw this.context.celtium$reportDeviceLost("descriptor " + operation, result);
+        }
+    }
+
+    public long descriptorSetFor(VulkanGlTexture texture) {
+        if (this.descriptorPools.isEmpty() || texture == null) {
+            return 0L;
+        }
+        if (texture.view() == 0L) {
+            // A wrapper whose view has been released. Writing a descriptor with a zero view is not a missing draw: the
+            // validation layer reports `u_Texture is using imageView VkImageView 0x0 that is invalid or has been
+            // destroyed`, and on RADV the frame ends in VK_ERROR_DEVICE_LOST - the measured world-path failure. A refusal
+            // here is a batch drawn by nobody (counted, named); binding the zero view is a dead device, so the refusal is
+            // the honest outcome until the owner that retired the wrapper is found.
+            ZERO_VIEW_REFUSALS++;
+            if (ZERO_VIEW_REFUSALS <= 4) {
+                System.out.println("[Celtium] CELTIUM_ZERO_VIEW_REFUSAL key=0x" + Long.toHexString(texture.key())
+                        + " size=" + texture.width() + "x" + texture.height()
+                        + " (the wrapper's view has been released; the batch is refused rather than binding a zero"
+                        + " view, which the validation layer reports as a destroyed imageView and RADV ends as"
+                        + " VK_ERROR_DEVICE_LOST)");
+            }
+            return 0L;
+        }
+        long key = texture.key();
+        // Single-slot cache in front of the map: consecutive immediate batches overwhelmingly sample the same texture (the
+        // font atlas, the block atlas), and this is the hottest lookup in the renderer - one per batch, ~300 a frame.
+        if (key == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
+            DESCRIPTOR_HITS++;
+            this.descriptorSlotHits++;
+            this.descriptorSetTextureKeys.put(this.lastDescriptorSet, key);
+            return this.lastDescriptorSet;
+        }
+        long cachedSet = this.setsByTextureView.get(key);
+        if (cachedSet != 0L) {
+            DESCRIPTOR_HITS++;
+            this.lastDescriptorKey = key;
+            this.lastDescriptorSet = cachedSet;
+            this.descriptorSetTextureKeys.put(cachedSet, key);
+            return cachedSet;
+        }
+        censusTexture(texture);
+        // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
+        // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
+        // added: nothing removed an entry, so a long session with repeated texture reloads grew the cache without
+        // bound and exhausted the finite pool. The set itself is not freed here - the command buffers that recorded it
+        // may still be in flight, and OPT-04 makes GPU completion the only basis for releasing a resource - so it goes
+        // on the retired list with its pool, and a full batch is handed to the completion-gated free.
+        while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && this.insertionOrderCount > 0) {
+            long eldest = this.insertionOrderRing[this.insertionOrderHead];
+            this.insertionOrderHead = (this.insertionOrderHead + 1) % this.insertionOrderRing.length;
+            this.insertionOrderCount--;
+            long removed = this.setsByTextureView.remove(eldest);
+            if (removed != 0L) {
+                this.descriptorSetsRetired++;
+                // The single-slot cache in front of the map is dropped with its set: the slot is consulted
+                // before the map, so a slot still naming a retired set would hand back a set that is on its
+                // way back to its pool - and, after the completion-gated free and a reallocation, a set that
+                // now belongs to another texture. The item and block families clear their slots the same way.
+                if (removed == this.lastDescriptorSet) {
+                    this.lastDescriptorKey = -1L;
+                    this.lastDescriptorSet = 0L;
+                }
+                long pool = this.poolByDescriptorSet.remove(removed);
+                if (pool != 0L) {
+                    this.retiredSets.add(pool, removed);
+                    if (this.retiredSets.size() >= RETIRED_FREE_BATCH) {
+                        this.celtium$handOffRetiredSets();
+                    }
+                }
+            }
+        }
+        // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
+        // is changing under us and the "cache" is really an allocation per call - which is what the 1.13 ms per
+        // prepareImmediate call would be.
+        DESCRIPTOR_MISSES++;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long set = allocateDescriptorSet(stack);
+            if (set == 0L) {
+                return 0L;
+            }
+            VkDescriptorImageInfo.Buffer image = VkDescriptorImageInfo.calloc(1, stack);
+            image.get(0).imageLayout(texture.samplingLayout())
+                    .imageView(texture.view())
+                    .sampler(texture.sampler());
+            org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write =
+                    org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
+            write.get(0).sType$Default()
+                    .dstSet(set)
+                    .dstBinding(0)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .pImageInfo(image);
+            celtium$noteDescWrite(write);
+            vkUpdateDescriptorSets(this.context.device(), write, null);
+            this.setsByTextureView.put(key, set);
+            this.descriptorSetTextureKeys.put(set, key);
+            this.poolByDescriptorSet.put(set, this.lastAllocationPool);
+            if (this.insertionOrderCount < this.insertionOrderRing.length) {
+                this.insertionOrderRing[this.insertionOrderTail] = key;
+                this.insertionOrderTail = (this.insertionOrderTail + 1) % this.insertionOrderRing.length;
+                this.insertionOrderCount++;
+            }
+            this.lastDescriptorKey = key;
+            this.lastDescriptorSet = set;
+            DESCRIPTOR_KEYS_CACHED.incrementAndGet();
+            return set;
+        } catch (RuntimeException | LinkageError error) {
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
+            return 0L;
+        }
+    }
+
+    /**
+     * {@return whether {@code set} is still the descriptor set the cache holds for {@code key}}.
+     * <p>
+     * A queued group's key can stand still while its set dies: a run of misses on other textures evicts the
+     * entry, the set is retired, and the completion-gated free hands it back to its pool once the submissions
+     * recorded so far complete - a use the group has not recorded yet, because it is still queued for a later
+     * flush, is not counted by that gate. The map is the authority: an evicted key is absent, and a key that
+     * missed again since names the replacement set, never the retired one.
+     */
+    public boolean celtium$setStillCached(long set, long key) {
+        return set != 0L && this.setsByTextureView.get(key) == set;
+    }
+
+    // ---- the descriptor pool: one per 64 sets, grown on demand (audit B03) ----------------------------------------
+
+    /** A pool smaller than this cannot hold the one set allocated at pipeline creation. */
+    private static final int VULKAN_MINIMUM_SETS_PER_POOL = 1;
+    /**
+     * Sets one pool holds: 64 COMBINED_IMAGE_SAMPLER descriptors, one per set.
+     * <p>
+     * {@code -Dceltium.vulkan.descriptorPoolSets=<n>} lowers it so the growth path can be exercised by a scene that
+     * does not hold 64 distinct keys: the growth mechanism, the counters and the no-refusal property are the same,
+     * only the point at which they are reached moves. It is a control check, not a tuning knob, and it is named here
+     * and in the report of the run that uses it.
+     */
+    public static final int DESCRIPTOR_SETS_PER_POOL = descriptorSetsPerPoolProperty();
+    /**
+     * How many live descriptor sets the cache keeps before retiring the eldest.
+     * <p>
+     * BH-22: the cache is keyed by view ^ generation and nothing removed an entry, so a generation bump always added
+     * and the pool's finite capacity was exhausted by a long session's texture reloads. The limit is the pool's own
+     * capacity, so the cache can no longer outgrow the sets that exist for it.
+     */
+    public static final int DESCRIPTOR_CACHE_LIMIT = descriptorSetsPerPoolProperty();
+
+    private static int descriptorSetsPerPoolProperty() {
+        int value = Integer.getInteger("celtium.vulkan.descriptorPoolSets", 64).intValue();
+        return value <= 0 ? VULKAN_MINIMUM_SETS_PER_POOL : Math.min(value, 64);
+    }
+
+
+    /** How many pools a pipeline may create before an allocation is refused rather than grown for. */
+    public static final int DESCRIPTOR_POOL_LIMIT = 64;
+    /** Pool creations, growths beyond the first, sets handed out and refusals - reported, not inferred. */
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_POOLS_CREATED =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_POOL_GROWTHS =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_SETS_ALLOCATED =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_ALLOCATION_FAILURES =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Distinct texture keys cached, so the cache's own growth is visible beside the pool's. */
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_KEYS_CACHED =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Creates one more pool with {@value #DESCRIPTOR_SETS_PER_POOL} sets and appends it to {@link #descriptorPools}.
+     *
+     * @return the new pool, or {@link VK_NULL_HANDLE} when the pipeline has already grown to its limit
+     */
+    private long createDescriptorPool() {
+        if (this.descriptorPools.size() >= DESCRIPTOR_POOL_LIMIT) {
+            return VK_NULL_HANDLE;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
+                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
+            org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
+                    org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                            // FREE so a retired set can be handed back individually once its last use has
+                            // completed; without it a pool only ever fills.
+                            .flags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
+                            .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
+            LongBuffer poolHandle = stack.mallocLong(1);
+            int poolResult = vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle);
+            if (poolResult != VK_SUCCESS) {
+                celtium$descriptorFailure("createPool", poolResult);
+                return VK_NULL_HANDLE;
+            }
+            this.descriptorPools.add(Long.valueOf(poolHandle.get(0)));
+            DESCRIPTOR_POOLS_CREATED.incrementAndGet();
+            if (this.descriptorPools.size() > 1) {
+                DESCRIPTOR_POOL_GROWTHS.incrementAndGet();
+                // One line per growth, bounded by DESCRIPTOR_POOL_LIMIT: a scene that reaches the old 64-set ceiling
+                // says so in the log, with the aggregate counts, instead of only refusing batches (audit B03).
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_DESCRIPTORS grew to "
+                        + this.descriptorPools.size() + " pools for this pipeline: " + descriptorPoolSummary());
+            }
+            return poolHandle.get(0);
+        }
+    }
+
+    /**
+     * {@return a descriptor set from one of this pipeline's pools, growing the pool list when every pool is full}.
+     * <p>
+     * The pools are per pipeline and live as long as it does, which is what makes this growable rather than
+     * per-frame: a set's contents (one image view and one sampler) are cached against the texture's key, and a key
+     * changes when the view is recreated, so a reload asks for new sets rather than reusing old ones. Reclaiming by
+     * completed frame was the other shape the audit allowed; growth is the one that cannot hand a set to two frames at
+     * once, which a per-frame reset would when a batch outlives the frame it was recorded in.
+     * <p>
+     * Pools are tried newest first, but every pool is tried: a retired set freed back into an older pool leaves a
+     * slot only an all-pools search can reuse, and without the search the completion-gated free would return slots
+     * nobody allocates from and the pool list would keep growing anyway.
+     *
+     * @param stack the stack the allocate info is built on
+     * @return the set, or 0 when even a fresh pool could not supply one (counted in
+     *         {@link #DESCRIPTOR_ALLOCATION_FAILURES})
+     */
+    private long allocateDescriptorSet(MemoryStack stack) {
+        int lastResult = VK_SUCCESS;
+        for (int round = 0; round < 2; round++) {
+            for (int i = this.descriptorPools.size() - 1; i >= 0; i--) {
+                Long pool = this.descriptorPools.get(i);
+                org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                        org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                                .descriptorPool(pool.longValue())
+                                .pSetLayouts(stack.longs(this.descriptorSetLayout));
+                LongBuffer handle = stack.mallocLong(1);
+                int allocationResult = vkAllocateDescriptorSets(this.context.device(), allocate, handle);
+                if (allocationResult == VK_SUCCESS) {
+                    this.descriptorSetsAllocated++;
+                    DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+                    this.lastAllocationPool = pool.longValue();
+                    long allocated = handle.get(0);
+                    this.descriptorSetGenerations.put(allocated, ++this.nextDescriptorSetGeneration);
+                    return allocated;
+                }
+                lastResult = allocationResult;
+                if (descriptorResultIsDeviceLost(allocationResult)) {
+                    celtium$descriptorFailure("allocateSet", allocationResult);
+                }
+            }
+            // Every pool refused (full, or its freed slots not yet returned by the completion gate). One growth
+            // attempt, then the caller refuses the batch.
+            if (createDescriptorPool() == VK_NULL_HANDLE) {
+                break;
+            }
+        }
+        celtium$descriptorFailure("allocateSet", lastResult);
+        DESCRIPTOR_ALLOCATION_FAILURES.incrementAndGet();
+        return 0L;
+    }
+
+    /**
+     * Hands the retired sets to the completion-gated cleanup that frees them back into their pools.
+     * <p>
+     * A retired set's last recorded use belongs to a submission at or before the sequence current now, and
+     * {@link VulkanContext#celtium$retireCleanup} runs the free only once that sequence is confirmed complete -
+     * the same basis {@link #delete()} destroys whole pools on. If this pipeline is deleted first, the generation
+     * check drops the batch: its sets died with their pools and there is nothing left to free.
+     */
+    private void celtium$handOffRetiredSets() {
+        if (this.retiredSets.size() == 0) {
+            return;
+        }
+        final java.util.Map<Long, long[]> byPool = this.retiredSets.drainGrouped();
+        final long generation = this.descriptorFreeGeneration;
+        final VulkanContext context = this.context;
+        context.celtium$retireCleanup("texture.descriptorFree", () -> {
+            if (generation != this.descriptorFreeGeneration) {
+                return;
+            }
+            int freed = 0;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                for (java.util.Map.Entry<Long, long[]> entry : byPool.entrySet()) {
+                    int result = vkFreeDescriptorSets(context.device(), entry.getKey().longValue(),
+                            stack.longs(entry.getValue()));
+                    if (result == VK_SUCCESS) {
+                        freed += entry.getValue().length;
+                    }
+                }
+            }
+            this.descriptorSetsFreed += freed;
+        });
+    }
+
+    /**
+     * Retired descriptor sets paired with the pool each was allocated from, in retirement order.
+     * <p>
+     * Two parallel lists rather than a map: a set handle is unique only within its pool, so the pair is the
+     * identity. {@link #drainGrouped()} is the hand-off to the completion-gated free - one
+     * {@code vkFreeDescriptorSets} call per pool.
+     */
+    static final class RetiredDescriptorSets {
+        private final java.util.ArrayList<Long> pools = new java.util.ArrayList<Long>();
+        private final java.util.ArrayList<Long> sets = new java.util.ArrayList<Long>();
+
+        void add(long pool, long set) {
+            this.pools.add(Long.valueOf(pool));
+            this.sets.add(Long.valueOf(set));
+        }
+
+        int size() {
+            return this.sets.size();
+        }
+
+        void clear() {
+            this.pools.clear();
+            this.sets.clear();
+        }
+
+        /** Removes every pair and groups the set handles by pool, in first-seen pool order. */
+        java.util.Map<Long, long[]> drainGrouped() {
+            java.util.Map<Long, java.util.ArrayList<Long>> grouped =
+                    new java.util.LinkedHashMap<Long, java.util.ArrayList<Long>>();
+            for (int i = 0; i < this.sets.size(); i++) {
+                java.util.ArrayList<Long> bucket = grouped.get(this.pools.get(i));
+                if (bucket == null) {
+                    bucket = new java.util.ArrayList<Long>();
+                    grouped.put(this.pools.get(i), bucket);
+                }
+                bucket.add(this.sets.get(i));
+            }
+            this.pools.clear();
+            this.sets.clear();
+            java.util.Map<Long, long[]> drained = new java.util.LinkedHashMap<Long, long[]>();
+            for (java.util.Map.Entry<Long, java.util.ArrayList<Long>> entry : grouped.entrySet()) {
+                long[] handles = new long[entry.getValue().size()];
+                for (int i = 0; i < handles.length; i++) {
+                    handles[i] = entry.getValue().get(i).longValue();
+                }
+                drained.put(entry.getKey(), handles);
+            }
+            return drained;
+        }
+    }
+
+    /** {@return the descriptor allocation as one line: pools, growths, sets, cached keys and refusals}. */
+    public static String descriptorPoolSummary() {
+        return "pools=" + DESCRIPTOR_POOLS_CREATED.get()
+                + " growths=" + DESCRIPTOR_POOL_GROWTHS.get()
+                + " sets=" + DESCRIPTOR_SETS_ALLOCATED.get()
+                + " keysCached=" + DESCRIPTOR_KEYS_CACHED.get()
+                + " failures=" + DESCRIPTOR_ALLOCATION_FAILURES.get()
+                + " hits=" + DESCRIPTOR_HITS
+                + " misses=" + DESCRIPTOR_MISSES;
+    }
+
+    public void delete() {
+        // Capture the handles first. A deferred teardown that read the fields when it finally ran would destroy
+        // whatever this object had been rebuilt into by then - measured as the replacement pipeline being destroyed
+        // out from under fresh recordings (141 VUIDs, leg uniE7) - so the closure owns these handles and the object is
+        // empty immediately.
+        long pipelineToDestroy = this.pipeline;
+        long setLayoutToDestroy = this.descriptorSetLayout;
+        long pipelineLayoutToDestroy = this.pipelineLayout;
+        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
+        this.pipeline = VK_NULL_HANDLE;
+        this.descriptorSetLayout = VK_NULL_HANDLE;
+        this.pipelineLayout = VK_NULL_HANDLE;
+        this.descriptorSet = VK_NULL_HANDLE;
+        this.descriptorPools.clear();
+        this.setsByTextureView.clear();
+        this.poolByDescriptorSet.clear();
+        // Any descriptor free still queued against these pools drops itself on this generation change: the sets
+        // it names die with the pools destroyed below.
+        this.descriptorFreeGeneration++;
+        this.insertionOrderHead = 0;
+        this.insertionOrderTail = 0;
+        this.insertionOrderCount = 0;
+        this.lastDescriptorKey = -1L;
+        this.lastDescriptorSet = 0L;
+        this.retiredSets.clear();
+        if (this.context.celtium$recordingOpen()) {
+            // An open recording can have bound this pipeline and the sets of its pools: destroying either before that
+            // recording is submitted invalidates the whole recording. Every pool this pipeline grew is here, not only
+            // the first - a set is alive in whichever pool allocated it. The deferred list runs at a frame boundary,
+            // where the frame's recording has been ended and submitted (see the drain site in the backend).
+            this.context.celtium$retireCleanup("texture.delete", () -> {
+                if (pipelineToDestroy != VK_NULL_HANDLE) {
+                    this.context.celtium$notePipelineDestroy("immediatetexturerecordspipeline");
+                    vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+                }
+                for (int i = 0; i < poolsToDestroy.size(); i++) {
+                    this.context.celtium$noteDescriptorDestroy("texture.delete.deferred");
+                    vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+                }
+                if (setLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+                }
+                if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+                }
+            });
+            return;
+        }
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            this.context.celtium$notePipelineDestroy("immediatetexturerecordspipeline");
+            vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+        }
+        for (int i = 0; i < poolsToDestroy.size(); i++) {
+            vkDestroyDescriptorPool(this.context.device(), poolsToDestroy.get(i).longValue(), null);
+        }
+        if (setLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+        }
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+        }
+    }
+
+    /** {@return how many colour attachments this pipeline's blend state was replicated for}. */
+    public int celtium$colorAttachments() {
+        return this.colorAttachments;
+    }
+
+    private void createPipelineLayout() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer binding =
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.calloc(1, stack);
+            binding.get(0).binding(0)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
+            org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo layoutInfo =
+                    org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
+                            .pBindings(binding);
+            LongBuffer layoutHandle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, layoutHandle),
+                    "vkCreateDescriptorSetLayout(immediate textured)");
+            this.descriptorSetLayout = layoutHandle.get(0);
+            // BH-20's acceptance hook: a failure *inside* the transaction, after the first handle exists, so the
+            // rollback is exercised rather than assumed. The fault is one-shot (VulkanAllocationFault), so the first
+            // build fails and the rollback runs; the next build - the one the acceptance requires to succeed - is
+            // untouched.
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail(
+                    "VulkanImmediateTextureRecordsPipeline:afterLayout")) {
+                throw new IllegalStateException("injected pipeline-build failure (afterLayout)");
+            }
+            // The first of the pipeline's pools. It is created here rather than inline so the growth path
+            // (allocateDescriptorSet -> createDescriptorPool) has exactly one shape to keep correct.
+            if (createDescriptorPool() == VK_NULL_HANDLE) {
+                throw new IllegalStateException("vkCreateDescriptorPool(immediate textured) failed");
+            }
+            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                            .descriptorPool(this.descriptorPools.get(0).longValue())
+                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
+            LongBuffer setHandle = stack.mallocLong(1);
+            check(vkAllocateDescriptorSets(this.context.device(), allocate, setHandle),
+                    "vkAllocateDescriptorSets(immediate textured)");
+            this.descriptorSet = setHandle.get(0);
+            this.descriptorSetGenerations.put(this.descriptorSet, ++this.nextDescriptorSetGeneration);
+            this.descriptorSetsAllocated++;
+            DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+            VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
+            if (this.arrayRecords) {
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the array-records pipeline needs the records set layout");
+                }
+                if (this.arrayLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the array-records pipeline needs the texture array layout");
+                }
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+                create.pSetLayouts(stack.longs(this.arrayLayout, this.recordsLayout))
+                        .pPushConstantRanges(fragmentRange);
+            } else {
+                // Two sets: set 0 is the per-texture pair this class already builds, set 1 is the
+                // records buffer. The record-reading vertex shader declares no push constants at all.
+                if (this.recordsLayout == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("the records pipeline needs the records set layout");
+                }
+                // The fragment stage still reads the alpha reference and the current colour from the push block, so the
+                // records layout keeps a range for it - declared for the fragment stage alone, because the record-reading
+                // vertex shader declares no push constants at all. Offset 0 keeps the block's own offsets.
+                VkPushConstantRange.Buffer fragmentRange = VkPushConstantRange.calloc(1, stack);
+                // The fragment file declares the block identically to the vertex stage (208 bytes in this family), so the
+                // range has to cover all of it even though only the alpha reference and colour are read here.
+                fragmentRange.get(0).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+                create.pSetLayouts(stack.longs(this.descriptorSetLayout, this.recordsLayout))
+                        .pPushConstantRanges(fragmentRange);
+            }
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(this.context.device(), create, null, handle),
+                    "vkCreatePipelineLayout(immediate)");
+            this.pipelineLayout = handle.get(0);
+        }
+    }
+
+    private void createPipeline() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            // BH-30: the shared pair carries the world fog block at 128..207, which this layout declares 208 bytes for
+            // and the backend writes for every group without a lighting payload. The lit ITEM variant has its own
+            // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
+            ByteBuffer vertexCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_RECORDS_VERTEX
+                    : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_RECORDS_VERTEX
+                    : this.arrayRecords ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_VERTEX
+                    : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_RECORDS_VERTEX
+                    : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_RECORDS_VERTEX
+                    : SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_VERTEX);
+            ByteBuffer fragmentCode = SpirvShaders.load(this.combine4 ? SpirvShaders.IMMEDIATE_COMBINE4_RECORDS_FRAGMENT
+                    : this.texGen ? SpirvShaders.IMMEDIATE_TEXGEN_RECORDS_FRAGMENT
+                    : this.arrayRecords ? SpirvShaders.IMMEDIATE_TEX_COLOR_ARRAY_FRAGMENT
+                    : this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_RECORDS_FRAGMENT
+                    : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_RECORDS_FRAGMENT
+                    : SpirvShaders.IMMEDIATE_TEX_COLOR_RECORDS_FRAGMENT);
+            long vertexModule = VK_NULL_HANDLE;
+            long fragmentModule = VK_NULL_HANDLE;
+            try {
+                VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack).sType$Default();
+                LongBuffer handle = stack.mallocLong(1);
+                moduleInfo.pCode(vertexCode);
+                check(vkCreateShaderModule(this.context.device(), moduleInfo, null, handle),
+                        "vkCreateShaderModule(immediate vertex)");
+                vertexModule = handle.get(0);
+                moduleInfo.pCode(fragmentCode);
+                check(vkCreateShaderModule(this.context.device(), moduleInfo, null, handle),
+                        "vkCreateShaderModule(immediate fragment)");
+                fragmentModule = handle.get(0);
+
+                VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+                stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
+                        .pName(stack.UTF8("main"));
+                stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
+                        .pName(stack.UTF8("main"));
+
+                VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
+                binding.get(0).binding(0).stride(vertexStride()).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                VkVertexInputAttributeDescription.Buffer attributes = VkVertexInputAttributeDescription.calloc(
+                        this.combine4 ? 4 : this.texGen ? 2 : this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
+                attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                if (this.combine4) {
+                    // Units 0, 2 and 3's coordinates at 12, 28 and 36; unit 1's at 20 is not read.
+                    attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                    attributes.get(2).location(3).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(28);
+                    attributes.get(3).location(4).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(36);
+                } else if (this.texGen) {
+                    // POSITION_COLOR: the colour follows the position directly; there is no texture coordinate.
+                    attributes.get(1).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                } else if (!this.positionNoTexture) {
+                    // Only the variants that declare a texture coordinate have anything at offset 12; writing this
+                    // struct for the one-attribute layouts wrote 16 bytes past the end of a one-element array.
+                    attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                }
+                if (!this.combine4 && !this.texGen && !this.positionOnly && !this.positionNoTexture) {
+                    // The colourless format has nothing at offset 20 - describing an attribute there would read past
+                    // the end of every vertex.
+                    attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);
+                }
+                VkPipelineVertexInputStateCreateInfo vertexInput =
+                        VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
+                                .pVertexBindingDescriptions(binding)
+                                .pVertexAttributeDescriptions(attributes);
+
+                VkPipelineInputAssemblyStateCreateInfo assembly =
+                        VkPipelineInputAssemblyStateCreateInfo.calloc(stack).sType$Default()
+                                .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+                VkPipelineViewportStateCreateInfo viewport =
+                        VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default()
+                                .viewportCount(1).scissorCount(1);
+                VkPipelineRasterizationStateCreateInfo raster =
+                        VkPipelineRasterizationStateCreateInfo.calloc(stack).sType$Default()
+                                .polygonMode(VK_POLYGON_MODE_FILL)
+                                // BH-11: the depth bias is command state (vkCmdSetDepthBias) so one pipeline serves every
+                                // polygon offset the game sets; the enable bit is what has to be declared here, and it is a
+                                // rasterization field - the multisample state next door has no such member.
+                                .depthBiasEnable(true)
+                                // The enable, the face and the winding are one encoded state (VulkanCullState): a
+                                // mod's glCullFace(GL_FRONT) or glFrontFace(GL_CW) selects its own pipeline here
+                                // instead of being drawn with GL's default pair.
+                                .cullMode(VulkanCullState.vkCullMode(this.cull))
+                                .frontFace(VulkanCullState.vkFrontFace(this.cull))
+                                .lineWidth(1.0f);
+                VkPipelineMultisampleStateCreateInfo multisample =
+                        VkPipelineMultisampleStateCreateInfo.calloc(stack).sType$Default()
+                                .rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+                // Depth test on so the geometry participates in the world, writes off because Minecraft's own
+                // immediate path for this state does the same, and blending on so the alpha it carries is honoured.
+                // Depth test back on with the comparison Minecraft's own immediate path uses (depth writes stay off,
+                // which is what the state the fixture sets asks for). The previous round measured the quad appearing
+                // with the test disabled; this run answers whether the comparison itself is what hides it.
+                VkPipelineDepthStencilStateCreateInfo depth =
+                        VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
+                                .depthTestEnable(this.depthTest)
+                                .depthWriteEnable(this.depthWrite)
+                                .depthCompareOp(this.depthCompareOp);
+                // One blend state per colour attachment of the pass this pipeline is built against: GL
+                // has one blend state for all draw buffers unless a mod sets the per-buffer form, which
+                // the capture does not hold, so the batch's state is replicated - the same form
+                // VulkanModProgramPipeline's multi-target build uses. A one-colour pass keeps exactly
+                // the single state this always built.
+                int blendCount = Math.max(1, this.colorAttachments);
+                VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                        VkPipelineColorBlendAttachmentState.calloc(blendCount, stack);
+                for (int i = 0; i < blendCount; i++) {
+                    blendAttachment.get(i)
+                            .blendEnable(this.colorBlend.blend())
+                            .srcColorBlendFactor(this.colorBlend.srcColor())
+                            .dstColorBlendFactor(this.colorBlend.dstColor())
+                            .colorBlendOp(this.colorBlend.colorOp())
+                            .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
+                            .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
+                            .alphaBlendOp(this.colorBlend.alphaOp())
+                            .colorWriteMask(this.colorBlend.writeMask());
+                }
+                VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                        .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
+                VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)
+                        .sType$Default()
+                        .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS));
+
+                VkGraphicsPipelineCreateInfo.Buffer create = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+                create.get(0).sType$Default()
+                        .pStages(stages)
+                        .pVertexInputState(vertexInput)
+                        .pInputAssemblyState(assembly)
+                        .pViewportState(viewport)
+                        .pRasterizationState(raster)
+                        .pMultisampleState(multisample)
+                        .pDepthStencilState(depth)
+                        .pColorBlendState(blend)
+                        .pDynamicState(dynamic)
+                        .layout(this.pipelineLayout)
+                        .renderPass(this.renderPass)
+                        .subpass(0);
+                LongBuffer pipelineHandle = stack.mallocLong(1);
+                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle, "immediate-texture"),
+                        "vkCreateGraphicsPipelines(immediate)");
+                this.pipeline = pipelineHandle.get(0);
+            } finally {
+                if (vertexModule != VK_NULL_HANDLE) {
+                    vkDestroyShaderModule(this.context.device(), vertexModule, null);
+                }
+                if (fragmentModule != VK_NULL_HANDLE) {
+                    vkDestroyShaderModule(this.context.device(), fragmentModule, null);
+                }
+                MemoryUtil.memFree(vertexCode);
+                MemoryUtil.memFree(fragmentCode);
+            }
+        }
+    }
+
+    private static void check(int result, String what) {
+        if (result != VK_SUCCESS) {
+            throw new IllegalStateException(what + " failed with VkResult " + result);
+        }
+    }
+
+}

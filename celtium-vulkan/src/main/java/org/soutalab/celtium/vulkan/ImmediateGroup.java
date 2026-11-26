@@ -24,6 +24,15 @@ public final class ImmediateGroup {
     public float[] modelView;
     /** The vertex format id the group was built with. */
     public int formatId;
+    /**
+     * The GL draw mode this group's batches were offered with ({@code GL_QUADS} unless the accept path
+     * stamped another). One group carries exactly one mode - the accept path's split predicate compares
+     * it - because the draw side issues a non-quad group through the non-quad emitter, whose index
+     * expansion is a function of the mode: a group that mixed modes would be re-expanded wrong. Groups
+     * built off the accept path (the font sink, model capture) keep the quad default, the only mode
+     * they ever carry.
+     */
+    public int drawMode = org.lwjgl.opengl.GL11.GL_QUADS;
     /** The GL texture id this group's draws sample; 0 when untextured. */
     public int texture;
 
@@ -373,6 +382,7 @@ public final class ImmediateGroup {
 
     /** Clears the fields the accept path may set after construction; {@link #reset} and {@link #recycle} share it. */
     private void clearForReuse() {
+        this.drawMode = org.lwjgl.opengl.GL11.GL_QUADS;
         this.modelRun = null;
         this.indexFlushExempt = false;
         this.color = null;

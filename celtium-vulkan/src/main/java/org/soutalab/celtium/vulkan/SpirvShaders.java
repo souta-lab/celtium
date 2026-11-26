@@ -121,6 +121,12 @@ public final class SpirvShaders {
     /** Fragment module for the BLOCK-family immediate geometry, sampling both the texture and the lightmap. */
     public static final String IMMEDIATE_BLOCK_FRAGMENT = "immediate_block.frag";
 
+    /** The record-reading form of {@link #IMMEDIATE_BLOCK_VERTEX}: the BLOCK family, from the record buffer. */
+    public static final String IMMEDIATE_BLOCK_RECORDS_VERTEX = "immediate_block_records.vert";
+
+    /** The record-reading form of {@link #IMMEDIATE_BLOCK_FRAGMENT}: the alpha reference arrives per record. */
+    public static final String IMMEDIATE_BLOCK_RECORDS_FRAGMENT = "immediate_block_records.frag";
+
     /** Vertex module for textured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_TEX_COLOR}). */
     public static final String IMMEDIATE_TEX_COLOR_VERTEX = "immediate_tex_color.vert";
 
@@ -136,6 +142,12 @@ public final class SpirvShaders {
     public static final String IMMEDIATE_TEXGEN_VERTEX = "immediate_texgen.vert";
     /** The texgen family's fragment stage: the projective divide, the modulate and the fog. */
     public static final String IMMEDIATE_TEXGEN_FRAGMENT = "immediate_texgen.frag";
+
+    /** The record-reading form of {@link #IMMEDIATE_TEXGEN_VERTEX}: the generation rows come from the record. */
+    public static final String IMMEDIATE_TEXGEN_RECORDS_VERTEX = "immediate_texgen_records.vert";
+
+    /** The record-reading form of {@link #IMMEDIATE_TEXGEN_FRAGMENT}: the fog block arrives per record. */
+    public static final String IMMEDIATE_TEXGEN_RECORDS_FRAGMENT = "immediate_texgen_records.frag";
 
     /**
      * Fragment module for the lit ITEM variant (BH-30's collision fix). It is the shared
@@ -157,6 +169,12 @@ public final class SpirvShaders {
     /** The four-coordinate multi-unit combine ({@link VulkanImmediateFormats#COMBINE4}). */
     public static final String IMMEDIATE_COMBINE4_VERTEX = "immediate_combine4.vert";
     public static final String IMMEDIATE_COMBINE4_FRAGMENT = "immediate_combine4.frag";
+
+    /** The record-reading form of {@link #IMMEDIATE_COMBINE4_VERTEX}: the combine selector comes from the record. */
+    public static final String IMMEDIATE_COMBINE4_RECORDS_VERTEX = "immediate_combine4_records.vert";
+
+    /** The record-reading form of {@link #IMMEDIATE_COMBINE4_FRAGMENT}: the combine is evaluated per record. */
+    public static final String IMMEDIATE_COMBINE4_RECORDS_FRAGMENT = "immediate_combine4_records.frag";
 
     /** Fragment module for textured geometry with no colour. */
     public static final String IMMEDIATE_POSITION_TEX_FRAGMENT = "immediate_position_tex.frag";

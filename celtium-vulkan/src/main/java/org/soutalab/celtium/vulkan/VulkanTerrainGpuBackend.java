@@ -3541,6 +3541,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private boolean currentGroupIndexFlushExempt;
     private int currentGroupFormatId;
+    /**
+     * The open group's GL draw mode, stamped onto the group at close ({@link ImmediateGroup#drawMode}).
+     * Part of the group's identity since Stage 5 stage 6: the split predicate compares it, so a group
+     * never mixes modes and the draw side can re-expand a non-quad group by its one mode. Lines already
+     * split through the state key's line bit; this term is what separates the remaining modes (a
+     * TRIANGLES batch from a TRIANGLE_STRIP batch of the same format and state, which used to merge
+     * into one group whose mesh held both expansions concatenated).
+     */
+    private int currentGroupDrawMode;
     private int[] currentGroupState = new int[7];
     /**
      * The registry records the open group was built against. A texture re-created under the same GL name is a
@@ -3586,7 +3595,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is the window's own; a device that cannot give the store answers false, and the caller refuses by
      * name rather than building a pipeline whose layout lacks the records set.
      */
-    private boolean celtium$ensureDrawRecords() {
+    boolean celtium$ensureDrawRecords() {
         if (this.drawRecords != null) {
             return true;
         }
@@ -3625,6 +3634,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int drawStateCensusFull;
     /** The indirect/record run path, split out of this class (2026-11-06); see IndirectImmediateRuns. */
     final IndirectImmediateRuns indirectRuns = new IndirectImmediateRuns(this);
+    /**
+     * The immediate families' record-reading pipelines and their creation dispatch (Stage 5
+     * stage 6); see {@link ImmediateRecordsPipelines}. The prepare branches resolve a group's
+     * twin here, and the prewarm's creation actions build through the same dispatch.
+     */
+    final ImmediateRecordsPipelines recordsPipelines = new ImmediateRecordsPipelines(this);
 
     /**
      * The batch wiring of Stage 5 stage 4 (S5-2): eligible UI-bracket and font-run groups are captured at drain
@@ -3869,7 +3884,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code -Dceltium.vulkan.positionNormalDepthTest=false} builds the POSITION_NORMAL pipeline with its depth test
      * off, for the one measurement that separates a depth rejection from a lost draw.
      */
-    private static final boolean POSITION_NORMAL_DEPTH_TEST =
+    static final boolean POSITION_NORMAL_DEPTH_TEST =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.positionNormalDepthTest", "true"));
     /**
      * The one-flag controls for BH-07 and BH-10. Each substitutes the value the pipeline baked before the finding was
@@ -10637,6 +10652,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // Split by format and by whether the open group bakes its matrix into the vertices: an affine change
                     // in a pre-transformed group could be baked into its UVs instead of splitting it.
                     this.mergeRefusal("affine-f" + formatId + (this.currentGroupPreTransformed ? "-pre" : ""));
+                } else if (this.currentGroupDrawMode != drawMode) {
+                    this.mergeRefusal("draw-mode");
                 } else {
                     this.mergeRefusal("fog-or-light");
                 }
@@ -10647,6 +10664,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // grouping exists to combine.
             if (NO_MERGE || retained != null || this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId
+                    || this.currentGroupDrawMode != drawMode
                     || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
                     || scissorMoved
@@ -10727,6 +10745,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.currentGroupPolygonOffsetFactor = 0.0F;
                 this.currentGroupPolygonOffsetUnits = 0.0F;
                 this.currentGroupBatches = 0;
+                this.currentGroupDrawMode = drawMode;
                 // Flight A1: the group's accounting stamp is decided here, where the retained offer is in
                 // hand - a retained offer always opens its own group (the split predicate above), so this is
                 // the one place the accept addition below and the close-side stamp take the same fact from.
@@ -16818,6 +16837,7 @@ this.frameBufferOpen = false;
             // font-run provenance of the submission that built this group.
             group.closedInUiBracket = FramePassTimings.uiSectionActive();
             group.fromFontRun = this.fontRunSubmitting;
+            group.drawMode = this.currentGroupDrawMode;
             group.color = this.currentGroupColor;
             group.blendSrc = this.currentGroupBlendSrc;
             group.blendDst = this.currentGroupBlendDst;
