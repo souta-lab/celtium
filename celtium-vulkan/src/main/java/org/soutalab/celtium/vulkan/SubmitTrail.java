@@ -9,7 +9,7 @@ package org.soutalab.celtium.vulkan;
  * what had been submitted last - the two-second window could be bracketed only by reading two successful settles
  * around it. This ring is what {@code noteStalled} prints instead: the newest {@link #KEPT} submissions with their
  * kind and the two numbers each kind defines (a frame submission's scheduler sequence and slot; a deferred
- * submission's fence and upload-slot mask).
+ * submission's batch token and upload-slot mask).
  * <p>
  * Static and synchronized-free in the same way the breadcrumb ring is: submissions are recorded on the render
  * thread, and a torn read at stall time costs at most one entry's coherence, never the stall report itself.
@@ -17,7 +17,7 @@ package org.soutalab.celtium.vulkan;
 public final class SubmitTrail {
     /** A frame slot's submission: first number is the scheduler's submit sequence, second is the slot. */
     public static final int FRAME = 1;
-    /** A deferred submission: first number is its fence, second is the upload-slot mask it read. */
+    /** A deferred submission: first number is its batch token (the batch serial), second is the upload-slot mask it read. */
     public static final int DEFERRED = 2;
 
     private static final int KEPT = 8;
@@ -56,7 +56,7 @@ public final class SubmitTrail {
                     out.append("frame seq=").append(FIRST[index]).append(" slot=").append(SECOND[index]);
                     break;
                 case DEFERRED:
-                    out.append("deferred fence=0x").append(Long.toHexString(FIRST[index]))
+                    out.append("deferred token=").append(FIRST[index])
                             .append(" mask=").append(SECOND[index]);
                     break;
                 default:

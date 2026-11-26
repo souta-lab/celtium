@@ -18,23 +18,25 @@ class CrashBreadcrumbsTest {
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.IMMEDIATE_GROUP, 9L, 0x2aL, 0x10L));
         assertEquals("raw-fbo identity=0x10 color=28072 depth=28074",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.RAW_FBO, 0x10L, 28072L, 28074L));
-        assertEquals("deferred-upload texture=4339 fence=0x2a serial=7",
+        assertEquals("deferred-upload texture=4339 token=42 serial=7",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.DEFERRED_UPLOAD, 4339L, 0x2aL, 7L));
     }
 
     @Test
     void item529CodesDescribeWithTheirOwnFields() {
-        // Item 529: one deferred code per fence-assignment site, each carrying the texture's instance serial,
-        // and the batch record that says what shared a lost fence - its generation, serial, and composition.
-        assertEquals("deferred-upload-patched-levels texture=4339 fence=0x2a serial=7",
+        // Item 529: one deferred code per token-assignment site, each carrying the texture's instance serial,
+        // and the batch record that says what shared a lost submission - its generation, serial, and
+        // composition. R-56: the deferred codes carry the batch token and the batch record its timeline value,
+        // where both used to carry the batch's fence.
+        assertEquals("deferred-upload-patched-levels texture=4339 token=42 serial=7",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.DEFERRED_UPLOAD_PATCHED_LEVELS, 4339L, 0x2aL, 7L));
-        assertEquals("deferred-transition texture=4339 fence=0x2a serial=7",
+        assertEquals("deferred-transition texture=4339 token=42 serial=7",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.DEFERRED_TRANSITION, 4339L, 0x2aL, 7L));
-        assertEquals("deferred-upload-level texture=4339 fence=0x2a serial=7",
+        assertEquals("deferred-upload-level texture=4339 token=42 serial=7",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.DEFERRED_UPLOAD_LEVEL, 4339L, 0x2aL, 7L));
-        assertEquals("deferred-upload-image texture=4339 fence=0x2a serial=7",
+        assertEquals("deferred-upload-image texture=4339 token=42 serial=7",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.DEFERRED_UPLOAD_IMAGE, 4339L, 0x2aL, 7L));
-        assertEquals("batch-submit gen=3 batch=7 fence=0x2a entries=5 frame=2 deferred=3 semaphoreSets=1",
+        assertEquals("batch-submit gen=3 batch=7 timeline=42 entries=5 frame=2 deferred=3 semaphoreSets=1",
                 CrashBreadcrumbs.describe(CrashBreadcrumbs.BATCH_SUBMIT, (3L << 32) | 7L, 0x2aL,
                         CrashBreadcrumbs.packBatchComposition(5, 2, 1)));
     }

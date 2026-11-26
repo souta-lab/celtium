@@ -1038,13 +1038,15 @@ public final class VulkanGlTexture {
     private long stagingCursor;
     private boolean stagingCoherent;
     /**
-     * The fence of this texture's most recent deferred upload submission, or 0. Uploads now submit without a wait
-     * (the same deferred shape the upload ring uses), so the staging bytes a pending copy may still be reading are
-     * protected by awaiting this fence before anything writes, grows or frees the staging buffer. The wait is this
-     * texture's own last submission - never longer than the chain the synchronous submit already paid - and all the
-     * cross-texture serialization the per-submit wait used to cost is gone.
+     * The token of this texture's most recent deferred upload submission - the serial of the batch that carried
+     * it - or 0. Uploads now submit without a wait (the same deferred shape the upload ring uses), so the staging
+     * bytes a pending copy may still be reading are protected by awaiting this token before anything writes,
+     * grows or frees the staging buffer. The wait is this texture's own last submission - never longer than the
+     * chain the synchronous submit already paid - and all the cross-texture serialization the per-submit wait
+     * used to cost is gone. (R-56: the token replaced the batch fence the field held before; on a timeline
+     * device that batch has no fence.)
      */
-    private long outstandingUploadFence = VK_NULL_HANDLE;
+    private long outstandingUploadToken = VK_NULL_HANDLE;
 
     private boolean deleted;
 
@@ -2117,8 +2119,8 @@ public final class VulkanGlTexture {
             // reaches this submission - ordered before every later submission the same queue takes - and the fence
             // is what the next staging write awaits before reusing the buffer the copy reads from.
             if (!this.patchBatching) {
-                this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
-                noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_PATCHED_LEVELS);
+                this.outstandingUploadToken = context.celtium$submitDeferred(commandBuffer, 0L);
+                noteDeferredToken(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_PATCHED_LEVELS);
             }
         }
         }
@@ -3354,8 +3356,8 @@ public final class VulkanGlTexture {
             // ordering the recorded layout bookkeeping needs. The fence is still tracked for this texture even though
             // nothing reads staging here: delete() may not destroy the image while this submission still names it,
             // and the newest tracked fence is what the await uses - queue order makes it stand for the earlier ones.
-            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
-            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_TRANSITION);
+            this.outstandingUploadToken = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredToken(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_TRANSITION);
         }
     }
 
@@ -4051,8 +4053,8 @@ public final class VulkanGlTexture {
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                     barrier);
         } finally {
-            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
-            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_LEVEL);
+            this.outstandingUploadToken = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredToken(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_LEVEL);
         }
         setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         recordWholeImageWrite();
@@ -4295,8 +4297,8 @@ public final class VulkanGlTexture {
             // Always close the one-shot command buffer, also when recording threw half way through, so the
             // context's helper never keeps an open command buffer around. Deferred: tracked, not waited - the fence
             // is what the next staging write awaits, since this copy reads the staging buffer.
-            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
-            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_IMAGE);
+            this.outstandingUploadToken = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredToken(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_IMAGE);
         }
         // The blit path uses currentLayout as its next oldLayout. Keep it in step with the tail barrier;
         // the per-level ledger alone does not update this field.
@@ -4698,7 +4700,7 @@ public final class VulkanGlTexture {
         }
     }
 
-    /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
+    /** Submits the open patch batch, if any; its token becomes this texture's outstanding upload. */
     private void submitPatchBatch() {
         // Pending regions name slices of the staging ring this submission is about to fence: record them first.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchFlush");
@@ -4713,15 +4715,15 @@ public final class VulkanGlTexture {
             this.patchBatch = null;
             org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchCmd");
             try {
-                this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
+                this.outstandingUploadToken = context.celtium$submitDeferred(batch, 0L);
                 if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
-                    // The texture-to-fence binding a later staging wait is charged to: TEXTURE_UPLOAD records the
-                    // upload itself, but the submit that carries it - and the fence awaitOutstandingUpload will
+                    // The texture-to-token binding a later staging wait is charged to: TEXTURE_UPLOAD records the
+                    // upload itself, but the submit that carries it - and the token awaitOutstandingUpload will
                     // wait on - was recorded nowhere (item 414, hole 6's recording half). Item 529: the instance
                     // serial joins it, so the mirror is identifiable even before its first fill names it.
                     org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
                             org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD, glTextureName(),
-                            this.outstandingUploadFence, this.instanceSerial);
+                            this.outstandingUploadToken, this.instanceSerial);
                 }
             } finally {
                 org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchCmd");
@@ -4730,31 +4732,31 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * Records which submit this texture's outstanding fence came from (item 529, instrument I2): the kind
+     * Records which submit this texture's outstanding token came from (item 529, instrument I2): the kind
      * names the assignment site, because every staging wait is charged as "texture staging reuse" even when
-     * the fence it waits on belongs to a transition that never read staging. Numbers only, like every ring
-     * note: the GL name, the fence, and this mirror's instance serial.
+     * the token it waits on belongs to a transition that never read staging. Numbers only, like every ring
+     * note: the GL name, the token, and this mirror's instance serial.
      */
-    private void noteDeferredFence(int kind) {
+    private void noteDeferredToken(int kind) {
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(kind, glTextureName(),
-                    this.outstandingUploadFence, this.instanceSerial);
+                    this.outstandingUploadToken, this.instanceSerial);
         }
     }
 
     /** Awaits this texture's own last deferred upload, when there is one still unconfirmed. */
     private void awaitOutstandingUpload() {
-        if (this.outstandingUploadFence != VK_NULL_HANDLE) {
-            long fence = this.outstandingUploadFence;
-            this.outstandingUploadFence = VK_NULL_HANDLE;
+        if (this.outstandingUploadToken != VK_NULL_HANDLE) {
+            long token = this.outstandingUploadToken;
+            this.outstandingUploadToken = VK_NULL_HANDLE;
             // The reason names the owner (item 414, hole 6): it is the only text the wait's failure paths print,
             // and the measured detection #2 - a staging-reuse wait reporting DEVICE_LOST - left no record of
-            // which texture's upload, or which fence, it had been waiting on. The GL name is this mirror's last
-            // upload's (-1 before any fill, which is itself the answer for a fresh mirror); item 529's instance
-            // serial names the mirror even then, which is the case both reported losses actually hit.
-            context.celtium$awaitDeferredSubmit(fence,
+            // which texture's upload, or which batch token, it had been waiting on. The GL name is this mirror's
+            // last upload's (-1 before any fill, which is itself the answer for a fresh mirror); item 529's
+            // instance serial names the mirror even then, which is the case both reported losses actually hit.
+            context.celtium$awaitDeferredSubmit(token,
                     "texture staging reuse gl=" + glTextureName() + " serial=" + this.instanceSerial
-                            + " fence=0x" + Long.toHexString(fence));
+                            + " token=" + token);
         }
     }
 

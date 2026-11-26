@@ -57,24 +57,24 @@ public final class CrashBreadcrumbs {
     public static final int IMMEDIATE_GROUP = 14;
     /** A raw (mod-created) framebuffer was registered: its identity, its colour texture, and its depth texture. */
     public static final int RAW_FBO = 15;
-    /** A texture's deferred upload was submitted: the texture's GL name and the fence that stands for the submit. */
+    /** A texture's deferred upload was submitted: the texture's GL name and the batch token that stands for the submit. */
     public static final int DEFERRED_UPLOAD = 16;
     /**
-     * A texture's patched-levels upload was submitted: the texture's GL name, the fence, and the texture's
-     * instance serial. One code per fence-assignment site (item 529, instrument I2): every staging wait is
-     * charged as "texture staging reuse", so without the site the record cannot say which submit the waited-on
-     * fence actually came from.
+     * A texture's patched-levels upload was submitted: the texture's GL name, the batch token, and the
+     * texture's instance serial. One code per token-assignment site (item 529, instrument I2): every staging
+     * wait is charged as "texture staging reuse", so without the site the record cannot say which submit the
+     * waited-on token actually came from.
      */
     public static final int DEFERRED_UPLOAD_PATCHED_LEVELS = 17;
-    /** A texture's layout transition was submitted - it reads no staging: GL name, fence, and instance serial. */
+    /** A texture's layout transition was submitted - it reads no staging: GL name, token, and instance serial. */
     public static final int DEFERRED_TRANSITION = 18;
-    /** A texture's single-level upload was submitted: GL name, fence, and instance serial. */
+    /** A texture's single-level upload was submitted: GL name, token, and instance serial. */
     public static final int DEFERRED_UPLOAD_LEVEL = 19;
-    /** A texture's level copy with its mip chain was submitted: GL name, fence, and instance serial. */
+    /** A texture's level copy with its mip chain was submitted: GL name, token, and instance serial. */
     public static final int DEFERRED_UPLOAD_IMAGE = 20;
     /**
      * A deferred batch was submitted to the queue: the context generation and the batch serial packed into the
-     * first number, the batch's shared fence, and the composition packed into the third by
+     * first number, the batch's timeline value, and the composition packed into the third by
      * {@link #packBatchComposition} (item 529, instrument I3).
      */
     public static final int BATCH_SUBMIT = 21;
@@ -355,26 +355,26 @@ public final class CrashBreadcrumbs {
             case RAW_FBO:
                 return "raw-fbo identity=0x" + Long.toHexString(first) + " color=" + second + " depth=" + third;
             case DEFERRED_UPLOAD:
-                return "deferred-upload texture=" + first + " fence=0x" + Long.toHexString(second)
+                return "deferred-upload texture=" + first + " token=" + second
                         + " serial=" + third;
             case DEFERRED_UPLOAD_PATCHED_LEVELS:
-                return "deferred-upload-patched-levels texture=" + first + " fence=0x" + Long.toHexString(second)
+                return "deferred-upload-patched-levels texture=" + first + " token=" + second
                         + " serial=" + third;
             case DEFERRED_TRANSITION:
-                return "deferred-transition texture=" + first + " fence=0x" + Long.toHexString(second)
+                return "deferred-transition texture=" + first + " token=" + second
                         + " serial=" + third;
             case DEFERRED_UPLOAD_LEVEL:
-                return "deferred-upload-level texture=" + first + " fence=0x" + Long.toHexString(second)
+                return "deferred-upload-level texture=" + first + " token=" + second
                         + " serial=" + third;
             case DEFERRED_UPLOAD_IMAGE:
-                return "deferred-upload-image texture=" + first + " fence=0x" + Long.toHexString(second)
+                return "deferred-upload-image texture=" + first + " token=" + second
                         + " serial=" + third;
             case BATCH_SUBMIT: {
                 long total = third & 0x1fffffL;
                 long frameEntries = (third >>> 21) & 0x1fffffL;
                 long semaphoreEntries = (third >>> 42) & 0x1fffffL;
                 return "batch-submit gen=" + (first >>> 32) + " batch=" + (first & 0xffffffffL)
-                        + " fence=0x" + Long.toHexString(second)
+                        + " timeline=" + second
                         + " entries=" + total + " frame=" + frameEntries + " deferred=" + (total - frameEntries)
                         + " semaphoreSets=" + semaphoreEntries;
             }

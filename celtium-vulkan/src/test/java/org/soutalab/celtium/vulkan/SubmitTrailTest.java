@@ -10,8 +10,8 @@ class SubmitTrailTest {
         SubmitTrail.clear();
         assertEquals("lastSubmits=[none]", SubmitTrail.describe());
         SubmitTrail.note(SubmitTrail.FRAME, 10708L, 2L);
-        SubmitTrail.note(SubmitTrail.DEFERRED, 0x2aL, 0L);
-        assertEquals("lastSubmits=[frame seq=10708 slot=2 deferred fence=0x2a mask=0]", SubmitTrail.describe());
+        SubmitTrail.note(SubmitTrail.DEFERRED, 42L, 0L);
+        assertEquals("lastSubmits=[frame seq=10708 slot=2 deferred token=42 mask=0]", SubmitTrail.describe());
     }
 
     @Test
