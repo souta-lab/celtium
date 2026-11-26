@@ -5,6 +5,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Startup pipeline prewarm and asynchronous pipeline compilation (new-architecture design
@@ -35,6 +36,7 @@ public final class PipelinePrewarm {
     private final Set<Long> startupKeys = new LinkedHashSet<Long>();
     private final ConcurrentHashMap<Long, State> states = new ConcurrentHashMap<Long, State>();
     private final LinkedBlockingQueue<Long> queue = new LinkedBlockingQueue<Long>();
+    private final AtomicLong fallbackDraws = new AtomicLong();
     private volatile boolean running;
     private Thread worker;
 
@@ -111,6 +113,29 @@ public final class PipelinePrewarm {
         return !isReady(pipelineKey);
     }
 
+    /**
+     * Records one draw issued with the fallback pipeline because the exact key was not ready.
+     * The issuing side calls this next to {@link #needsFallback(long)} (which stays a pure
+     * query): a warm window with zero synchronous pipeline creations is only honest evidence
+     * when the number of draws it quietly substituted is printed beside it, so this counter is
+     * surfaced as {@code prewarmFallbackDraws} in the backend's diagnostic summaries.
+     */
+    public void noteFallbackDraw() {
+        this.fallbackDraws.incrementAndGet();
+    }
+
+    /** {@return how many draws have been issued with a fallback pipeline so far} */
+    public long fallbackDraws() {
+        return this.fallbackDraws.get();
+    }
+
+    /** {@return the prewarm census, in the summary style of the other backend counters}. */
+    public String summary() {
+        return "prewarmFallbackDraws=" + this.fallbackDraws.get()
+                + " prewarmReady=" + readyCount()
+                + " prewarmFailed=" + failedCount();
+    }
+
     public int readyCount() {
         return count(State.READY);
     }
@@ -124,6 +149,24 @@ public final class PipelinePrewarm {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         while (System.nanoTime() < deadline) {
             if (this.queue.isEmpty() && count(State.COMPILING) == 0 && count(State.QUEUED) == 0) {
+                return true;
+            }
+            Thread.sleep(2);
+        }
+        return false;
+    }
+
+    /**
+     * Waits until no compile is in flight. Queued keys may remain: after {@link #close()} the
+     * worker is stopped, so a queued key will never run and cannot touch the device - only a
+     * compile already executing can. This is therefore the wait teardown needs before the
+     * device is destroyed, where {@link #awaitIdle} would additionally wait for a queue that
+     * nothing will ever drain.
+     */
+    public boolean awaitCompilesIdle(long timeoutMillis) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (System.nanoTime() < deadline) {
+            if (count(State.COMPILING) == 0) {
                 return true;
             }
             Thread.sleep(2);

@@ -459,6 +459,10 @@ final class BackendDiagnostics {
                 + " lastPairClearRefusal=[" + b.targetStatistics.lastPairClearRefusal() + "]"
                 + " " + (b.postChain != null ? b.postChain.status() : "postChains=0 postPasses=0")
                 + " " + VulkanContext.pipelineCreationSummary()
+                // The prewarm's fallback census, beside the creation summary it qualifies: a warm
+                // window with no synchronous creations reads very differently when the number of
+                // draws it substituted is zero than when it is not.
+                + " " + b.celtium$prewarmSummary()
                 + " " + VulkanContext.memoryAllocationSummary()
                 + " " + FallbackPaths.summary()
                 + " " + b.context.celtium$slabPoolSummary()

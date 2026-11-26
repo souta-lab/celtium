@@ -152,6 +152,14 @@ public final class VulkanContext {
      * upload batch, which the first frame's submission flushes before anything reads the pattern.
      */
     private SharedQuadIndexBuffer sharedQuadIndexBuffer;
+    /**
+     * The backend's pipeline prewarm, registered by the terrain backend when it wires the
+     * startup warm set (Stage 5 slice S5-0). The context holds the reference only so that
+     * {@link #delete()} can stop the background compiler before any render pass or the device
+     * itself is destroyed: a compile still in flight while {@code vkDestroyDevice} runs would
+     * create pipelines against a dying device. Null until the backend registers it.
+     */
+    private PipelinePrewarm pipelinePrewarm;
     // Once the driver reports device loss, even fence reset/destroy can crash natively.
     // Deliberately leak device-owned handles until the failed process exits.
     private volatile boolean deviceLost;
@@ -2383,6 +2391,11 @@ public final class VulkanContext {
             }
             return;
         }
+        // The prewarm's background compiler stops before anything on the device is waited on or
+        // destroyed (fixed teardown order): a compile in flight creates pipelines, and creating
+        // against a device whose render passes are being destroyed is the race this ordering
+        // exists to exclude.
+        closePipelinePrewarm();
         if (this.device != null) {
             final long deviceHandle = this.device.address();
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
@@ -3028,6 +3041,46 @@ public final class VulkanContext {
     /** {@return the shared quad index buffer created at startup; never null on a created context}. */
     public SharedQuadIndexBuffer sharedQuadIndexBuffer() {
         return this.sharedQuadIndexBuffer;
+    }
+
+    /**
+     * Registers the backend's pipeline prewarm for teardown ordering (see the field). Called
+     * once by the terrain backend when it wires the startup warm set; a later registration
+     * replaces an earlier one (the earlier prewarm's owner closes it on its own teardown).
+     */
+    public void celtium$setPipelinePrewarm(PipelinePrewarm prewarm) {
+        this.pipelinePrewarm = prewarm;
+    }
+
+    /** {@return the registered pipeline prewarm, or null when no backend wired one}. */
+    public PipelinePrewarm celtium$pipelinePrewarm() {
+        return this.pipelinePrewarm;
+    }
+
+    /**
+     * Stops the registered prewarm's background compiler and waits (bounded) for a compile in
+     * flight to finish. The fixed head of the teardown order: no pipeline creation may still be
+     * running when render passes and the device are destroyed below. A wait that times out is
+     * reported and teardown proceeds - hanging the process exit on a stuck compile would be
+     * worse than the bounded risk it leaves.
+     */
+    private void closePipelinePrewarm() {
+        PipelinePrewarm prewarm = this.pipelinePrewarm;
+        if (prewarm == null) {
+            return;
+        }
+        this.pipelinePrewarm = null;
+        prewarm.close();
+        try {
+            // Only a compile in flight can still touch the device; keys still queued after
+            // close() will never run, so they are not waited for.
+            if (!prewarm.awaitCompilesIdle(5000L)) {
+                System.err.println("[Celtium] CELTIUM_PREWARM_TEARDOWN pipeline prewarm still had a compile"
+                        + " in flight after 5 s at context teardown; proceeding with device destruction");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Select supported instance extensions for the desktop platforms handled by VulkanSwapchain. */

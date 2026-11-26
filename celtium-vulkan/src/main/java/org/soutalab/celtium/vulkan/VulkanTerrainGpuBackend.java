@@ -1239,6 +1239,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.publishedTextures, this.nativePassRegistry);
         celtium$installWindowSplitExitHook();
         celtium$installFontCensusExitHook();
+        // The pipeline prewarm pair (Stage 5 slice S5-0): created with the backend so its
+        // fallback counter exists for every diagnostic report, and registered with the context
+        // so the context's teardown stops its background compiler before the device goes away.
+        // The startup warm set itself is registered later, at the first world prepare
+        // (celtium$ensurePipelinePrewarm), when a terrain render pass exists to build against.
+        this.pipelinePrewarmCompiler = new PipelinePrewarmCompiler();
+        this.pipelinePrewarm = new PipelinePrewarm(this.pipelinePrewarmCompiler);
+        context.celtium$setPipelinePrewarm(this.pipelinePrewarm);
 }
 
     /**
@@ -4057,21 +4065,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static boolean celtium$rectsOverlap(float[] a, float[] b) {
         return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
     }
-    /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> immediatePipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    /**
+     * Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs.
+     * <p>
+     * The pipeline caches are {@link java.util.concurrent.ConcurrentHashMap} rather than the fastutil maps they
+     * started as: the pipeline prewarm's background compiler puts finished pipelines into the same caches the
+     * render thread reads (Stage 5 slice S5-0), and a plain map would corrupt under that pair of writers.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediatePipeline> immediatePipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** The same states, but with a line-list topology: the selection outline and other line batches. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> linePipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediatePipeline> linePipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** One pipeline per state for the composite batch's layout, likewise wider than the colourless pipeline's. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * One pipeline per state for {@code POSITION_NORMAL}: sixteen-byte vertices.
      * <p>
@@ -4079,15 +4093,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * pipeline, and 16 is not a width any other layout has. Its one user is the white box {@code Render.renderOffsetAABB}
      * draws for a renderer-less entity, so an empty cache here means that box is not drawn.
      */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionNormalPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> positionNormalPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** {@link VulkanImmediateFormats#COMBINE4}: the multi-unit combine Xaero's World Map draws its tiles with. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> combine4PipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texturedPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> combine4PipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * Lit model display lists drawn as instance runs ({@link VulkanModelInstances}); on unless
      * {@code -Dceltium.native.modelInstances=false}, and only on a device with the shared texture array.
@@ -4118,14 +4132,39 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final ModelReplayFastPath modelReplayFastPath = new ModelReplayFastPath();
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> texGenPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateBlockPipeline> blockPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateParticlePipeline> particlePipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateItemPipeline> itemPipelineCache =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateTexturePipeline> texGenPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateParticlePipeline> particlePipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, VulkanImmediateItemPipeline> itemPipelineCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The pipeline prewarm pair (Stage 5 slice S5-0): the compiler the creation actions are
+     * registered with, and the scheduler that warms the startup set and compiles unknown keys
+     * off the frame path. Recreated per world: the caches it fills are released on world leave
+     * (they name that world's render pass), so its registrations die with them -
+     * {@link #celtium$closePipelinePrewarm} runs at the head of the release, and
+     * {@link #celtium$ensurePipelinePrewarm} builds a fresh pair for the next world.
+     */
+    private PipelinePrewarm pipelinePrewarm;
+    private PipelinePrewarmCompiler pipelinePrewarmCompiler;
+    /** Whether the startup warm set has been registered and warmed for the current world. */
+    private boolean pipelinePrewarmWarmed;
+    /**
+     * Bumped every time the prewarm pair is closed, so a creation action captured for an older
+     * world can tell that the render pass it would build against is gone and refuse to run.
+     */
+    private long pipelinePrewarmGeneration;
+    /**
+     * Set by the pipeline resolution when the material being prepared was drawn with the
+     * family's standard pipeline because the exact one was still compiling: such a material is
+     * transient and must not enter the prepare cache, or the fallback would outlive the compile
+     * it was standing in for. Read and cleared by {@link #prepareImmediate} around its cache
+     * store; the resolution runs on the same thread inside the same call.
+     */
+    private boolean celtium$lastPrepareWasFallback;
     int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
@@ -12653,7 +12692,7 @@ this.frameBufferOpen = false;
      * walking it is a leak of one object set per distinct state key. The map is cleared whatever happens to an entry,
      * so a second teardown sees an empty cache and releases nothing again.
      */
-    private int releaseImmediatePipelineCache(it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediatePipeline> cache) {
+    private int releaseImmediatePipelineCache(java.util.Map<Long, VulkanImmediatePipeline> cache) {
         int count = 0;
         for (VulkanImmediatePipeline pipeline : cache.values()) {
             count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
@@ -12663,13 +12702,402 @@ this.frameBufferOpen = false;
     }
 
     /** Releases one keyed cache of textured immediate pipelines; see {@link #releaseImmediatePipelineCache}. */
-    private int releaseTexturePipelineCache(it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediateTexturePipeline> cache) {
+    private int releaseTexturePipelineCache(java.util.Map<Long, VulkanImmediateTexturePipeline> cache) {
         int count = 0;
         for (VulkanImmediateTexturePipeline pipeline : cache.values()) {
             count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
         }
         cache.clear();
         return count;
+    }
+
+    /**
+     * Stops the pipeline prewarm pair and drops it, at the head of the pipeline release: its
+     * background compiler creates pipelines into the caches the release empties, against the
+     * render pass the release gives up. The generation bump is what stale creation actions
+     * (registered for the world that is ending) check before they run. Only a compile already
+     * in flight is waited for - keys still queued after {@code close()} will never run.
+     */
+    private void celtium$closePipelinePrewarm() {
+        PipelinePrewarm prewarm = this.pipelinePrewarm;
+        this.pipelinePrewarm = null;
+        this.pipelinePrewarmCompiler = null;
+        this.pipelinePrewarmWarmed = false;
+        this.pipelinePrewarmGeneration++;
+        if (prewarm == null) {
+            return;
+        }
+        prewarm.close();
+        try {
+            if (!prewarm.awaitCompilesIdle(5000L)) {
+                record("pipeline prewarm did not go idle within 5 s at pipeline release;"
+                        + " a compile may still be in flight against the released pass");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** {@return the pipeline prewarm census, for the diagnostic summaries}. */
+    String celtium$prewarmSummary() {
+        PipelinePrewarm prewarm = this.pipelinePrewarm;
+        return prewarm == null
+                ? "prewarmFallbackDraws=0 prewarmReady=0 prewarmFailed=0"
+                : prewarm.summary();
+    }
+
+    /**
+     * {@return the key a prepare branch's cache is read under}. Every branch but the particle
+     * family's reads under the prepared key itself; the particle family's key carries the blend
+     * pair the family historically asserted, folded in by multiplication so a particle state and
+     * a colour state never share an entry.
+     */
+    private static long celtium$immediateBranchKey(int format, long key) {
+        return format == VulkanImmediateFormats.PARTICLE
+                ? key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+                : key;
+    }
+
+    /** {@return the cached pipeline for a branch, or null when the branch has not built it}. */
+    private Object celtium$cachedImmediatePipeline(int format, long branchKey) {
+        switch (format) {
+            case VulkanImmediateFormats.PARTICLE:
+                return this.particlePipelineCache.get(branchKey);
+            case VulkanImmediateFormats.ITEM:
+                return this.itemPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.BLOCK:
+                return this.blockPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_COLOR_TEXGEN:
+                return this.texGenPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.COMBINE4:
+                return this.combine4PipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_NORMAL:
+                return this.positionNormalPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_TEX_NORMAL:
+                return this.positionTexNormalPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL:
+                return this.positionTexColorNormalPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION:
+                return this.positionOnlyPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_TEX:
+                return this.positionTexPipelineCache.get(branchKey);
+            case VulkanImmediateFormats.POSITION_TEX_COLOR:
+            case VulkanImmediateFormats.POSITION_TEX_NORMAL_FLOAT:
+                return this.texturedPipelineCache.get(branchKey);
+            default:
+                return ((branchKey & LINE_KEY_BIT) != 0
+                        ? this.linePipelineCache : this.immediatePipelineCache).get(branchKey);
+        }
+    }
+
+    /** Stores a pipeline in its branch's cache. */
+    private void celtium$cacheImmediatePipeline(int format, long branchKey, Object pipeline) {
+        switch (format) {
+            case VulkanImmediateFormats.PARTICLE:
+                this.particlePipelineCache.put(branchKey, (VulkanImmediateParticlePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.ITEM:
+                this.itemPipelineCache.put(branchKey, (VulkanImmediateItemPipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.BLOCK:
+                this.blockPipelineCache.put(branchKey, (VulkanImmediateBlockPipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_COLOR_TEXGEN:
+                this.texGenPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.COMBINE4:
+                this.combine4PipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_NORMAL:
+                this.positionNormalPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_TEX_NORMAL:
+                this.positionTexNormalPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL:
+                this.positionTexColorNormalPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION:
+                this.positionOnlyPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_TEX:
+                this.positionTexPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            case VulkanImmediateFormats.POSITION_TEX_COLOR:
+            case VulkanImmediateFormats.POSITION_TEX_NORMAL_FLOAT:
+                this.texturedPipelineCache.put(branchKey, (VulkanImmediateTexturePipeline) pipeline);
+                break;
+            default:
+                ((branchKey & LINE_KEY_BIT) != 0
+                        ? this.linePipelineCache : this.immediatePipelineCache)
+                        .put(branchKey, (VulkanImmediatePipeline) pipeline);
+                break;
+        }
+    }
+
+    /**
+     * Builds the pipeline for one prepared state through the family's ordinary factory - the
+     * single creation path the prepare branches and the pipeline prewarm's creation actions
+     * share, so a warmed pipeline is built by exactly the code a frame-path miss would run.
+     * No cache is touched here.
+     *
+     * @return the built pipeline, or null when the factory declined
+     */
+    private Object celtium$createImmediatePipeline(int format, long key, int[] state, long pass, int targetColors) {
+        if (format == VulkanImmediateFormats.PARTICLE) {
+            // BH-07: the colour-blend state is the batch's own, like every other family's. This one used to assert
+            // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) for the RGB pair and the family default for alpha whatever the capture
+            // said; ParticleManager itself calls `blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`, and GL's glBlendFunc sets
+            // the RGB *and* the alpha pair to that same pair - so the alpha pair the pipeline baked was the wrong one
+            // for every particle batch in the scene. The depth and cull arguments are left as this family asserted
+            // them: they are a different finding's subject and changing them here would move an accepted picture.
+            return VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
+                    true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]), targetColors);
+        }
+        if (format == VulkanImmediateFormats.ITEM) {
+            // The lit bit only: the per-group lit/unlit census stays at the prepare branch, which
+            // runs per group, while this creation path runs per distinct state.
+            boolean itemLit = state.length > 8 && state[8] != 0;
+            return VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
+                    state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), itemLit,
+                    targetColors);
+        }
+        if (format == VulkanImmediateFormats.BLOCK) {
+            return VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
+                    state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
+        }
+        if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
+            return VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
+                    state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
+        }
+        if (format >= 2) {
+            int compareOp = celtium$vkCompareOp(state[7]);
+            // Experiment switch for the POSITION_NORMAL box: every one of its batches reaches this draw and the
+            // box is absent from the full-mask picture (62 accepted, 62 drawn, no pixels), while the same group
+            // drawn with format 10 alone lands exactly where GROUP_BOUNDS puts it. Turning its depth test off
+            // separates "the fragments are rejected by the depth the window draws against" from "the draw does not
+            // reach the image at all". Default on, so the shipped behaviour is unchanged.
+            boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
+            VulkanColorBlendState colorBlend = celtium$blendState(state);
+            return format == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.createForCombine4(
+                    this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp,
+                    targetColors)
+                    : format == VulkanImmediateFormats.POSITION_TEX_NORMAL_FLOAT
+                    ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
+                    pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
+                    : format == VulkanImmediateFormats.POSITION_NORMAL
+                    ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
+                    colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp, targetColors)
+                    : format == VulkanImmediateFormats.POSITION_TEX_NORMAL
+                    ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
+                    colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
+                    : format == VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL
+                    ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
+                    colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
+                    : format == VulkanImmediateFormats.POSITION
+                    ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
+                    colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
+                    : format == VulkanImmediateFormats.POSITION_TEX
+                    ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
+                    colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
+                    : VulkanImmediateTexturePipeline.create(this.context, pass,
+                    colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors);
+        }
+        boolean lineBatch = (key & LINE_KEY_BIT) != 0;
+        VulkanColorBlendState colorBlend = celtium$blendState(state);
+        return lineBatch
+                ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
+                        targetColors)
+                : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
+                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
+                        targetColors);
+    }
+
+    /**
+     * {@return the branch's pipeline for this state, building and caching it on a miss} - the
+     * synchronous form of the resolution, and the body of every prewarm creation action.
+     */
+    private Object celtium$getOrCreateImmediatePipeline(int format, long key, int[] state, long pass,
+            int targetColors) {
+        long branchKey = celtium$immediateBranchKey(format, key);
+        Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
+        if (pipeline == null) {
+            pipeline = celtium$createImmediatePipeline(format, key, state, pass, targetColors);
+            if (pipeline != null) {
+                celtium$cacheImmediatePipeline(format, branchKey, pipeline);
+            }
+        }
+        return pipeline;
+    }
+
+    /**
+     * {@return the pipeline a prepare branch draws this state with}. A cache hit is the exact
+     * pipeline. On a miss, once the startup warm set has run, the exact pipeline is compiled on
+     * the prewarm's background thread and this draw uses the family's standard pipeline (the
+     * warmed legacy-blend state) instead - the fallback draw is counted on the prewarm, and the
+     * caller keeps the material out of the prepare cache so the exact pipeline takes over from
+     * the next prepare once it lands. Before the warm set has run, or when the async compile
+     * has failed for the key, the miss resolves synchronously exactly as it always did.
+     */
+    private Object celtium$resolveImmediatePipeline(int format, long key, int[] state, long pass,
+            int targetColors) {
+        long branchKey = celtium$immediateBranchKey(format, key);
+        Object pipeline = celtium$cachedImmediatePipeline(format, branchKey);
+        if (pipeline != null) {
+            return pipeline;
+        }
+        PipelinePrewarm prewarm = this.pipelinePrewarm;
+        if (prewarm != null && this.pipelinePrewarmWarmed && !prewarm.isFailed(key)
+                && prewarm.needsFallback(key)) {
+            celtium$requestImmediatePipelinePrewarm(format, key, state, pass, targetColors);
+            Object standard = celtium$cachedImmediatePipeline(format, celtium$immediateBranchKey(format,
+                    celtium$immediateStandardKey(format, key, state)));
+            if (standard != null) {
+                prewarm.noteFallbackDraw();
+                this.celtium$lastPrepareWasFallback = true;
+                return standard;
+            }
+        }
+        return celtium$getOrCreateImmediatePipeline(format, key, state, pass, targetColors);
+    }
+
+    /**
+     * Registers the creation action for one not-yet-known key and asks the prewarm to compile
+     * it in the background. The state array is the caller's shared scratch, so it is cloned;
+     * the action refuses to run for a world that has since ended (its render pass is gone).
+     */
+    private void celtium$requestImmediatePipelinePrewarm(int format, long key, int[] state, long pass,
+            int targetColors) {
+        PipelinePrewarmCompiler compiler = this.pipelinePrewarmCompiler;
+        PipelinePrewarm prewarm = this.pipelinePrewarm;
+        if (compiler == null || prewarm == null) {
+            return;
+        }
+        final int[] capturedState = state.clone();
+        final long generation = this.pipelinePrewarmGeneration;
+        compiler.register(key, k -> generation == this.pipelinePrewarmGeneration
+                && celtium$getOrCreateImmediatePipeline(format, key, capturedState, pass, targetColors) != null);
+        prewarm.request(key);
+    }
+
+    /**
+     * {@return the prepared key of the family's standard state} - the legacy alpha blend with
+     * depth testing on and depth writes off that the family's own default factory builds, and
+     * the state the warm set guarantees is cached for every branch. The item family keys its
+     * descriptor layout on the lit bit, so its standard follows the batch's own.
+     */
+    private long celtium$immediateStandardKey(int format, long key, int[] state) {
+        boolean lit = format == VulkanImmediateFormats.ITEM && state.length > 8 && state[8] != 0;
+        long standard = celtium$stateKey(format, celtium$immediateStandardState(1, true, false, false, lit));
+        return (key & LINE_KEY_BIT) != 0 ? standard | LINE_KEY_BIT : standard;
+    }
+
+    /**
+     * {@return one standard drawing state}, built by feeding a standard signature through the
+     * same pure mapping a live capture takes, so the state - and therefore the prepared key -
+     * is exactly the one a batch captured under that state would carry. {@code blend} is 0 for
+     * opaque, 1 for the legacy alpha pair and 2 for additive; the depth function is GL_LEQUAL,
+     * the cull face GL_BACK with GL_CCW winding, the texture environment MODULATE and the
+     * target the delivered frame, matching the defaults a vanilla scene presents.
+     */
+    private static int[] celtium$immediateStandardState(int blend, boolean depthTest, boolean depthWrite,
+            boolean cull, boolean lit) {
+        int[] signature = new int[ModelReplayFastPath.SIGNATURE];
+        if (blend != 0) {
+            signature[SIGNATURE_BLEND] = 1;
+            signature[SIGNATURE_SRC_RGB] = org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
+            signature[SIGNATURE_DST_RGB] = blend == 2
+                    ? org.lwjgl.opengl.GL11.GL_ONE : org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
+            signature[SIGNATURE_SRC_ALPHA] = org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
+            signature[SIGNATURE_DST_ALPHA] = blend == 2
+                    ? org.lwjgl.opengl.GL11.GL_ONE : org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
+            signature[SIGNATURE_EQ_RGB] = 0x8006; // GL_FUNC_ADD
+            signature[SIGNATURE_EQ_ALPHA] = 0x8006; // GL_FUNC_ADD
+        }
+        signature[SIGNATURE_COLOR_MASK] = VulkanColorBlendState.allChannels();
+        signature[SIGNATURE_CULL] = cull ? 1 : 0;
+        signature[SIGNATURE_CULL_FACE] = 0x0405; // GL_BACK
+        signature[SIGNATURE_FRONT_FACE] = 0x0901; // GL_CCW
+        signature[SIGNATURE_DEPTH_TEST] = depthTest ? 1 : 0;
+        signature[SIGNATURE_DEPTH_WRITE] = depthWrite ? 1 : 0;
+        signature[SIGNATURE_DEPTH_FUNC] = 515; // GL_LEQUAL
+        signature[SIGNATURE_LIGHTING] = lit ? 1 : 0;
+        signature[SIGNATURE_ENV_MODE] = NativeTextureEnvironment.MODULATE;
+        signature[SIGNATURE_WINDOW_TARGET] = 1;
+        int[] state = new int[16];
+        celtium$stateFromSignature(signature, state);
+        return state;
+    }
+
+    /**
+     * Registers the M08 families' startup standard set with the prewarm and warms it, once per
+     * world, at the first prepare that has a terrain pass to build against. The set is the
+     * standard combinations of the design's estimate (formats x {opaque, alpha, additive} x
+     * {depth test, depth write, cull, lit} pruned to the combinations each family actually
+     * presents), 84 keys as written; every key's creation action runs the ordinary creation
+     * path into the branch caches, so after this returns a standard state never compiles on
+     * the frame path. Runs on the render thread, where blocking is the point of a warm-up.
+     */
+    private void celtium$ensurePipelinePrewarm() {
+        if (this.pipelinePrewarmWarmed) {
+            return;
+        }
+        // The terrain pipeline for the current pass is the world's presence: while it is null
+        // the frame is a UI-only screen, whose draws keep the synchronous path - the warm set
+        // is built against the terrain render pass, and this same instance is adopted by the
+        // world renderer when one arrives.
+        VulkanTerrainPipeline terrainPipeline = this.terrain.pipelineFor(this.lastUiPass);
+        if (terrainPipeline == null) {
+            return;
+        }
+        if (this.pipelinePrewarm == null) {
+            this.pipelinePrewarmCompiler = new PipelinePrewarmCompiler();
+            this.pipelinePrewarm = new PipelinePrewarm(this.pipelinePrewarmCompiler);
+            this.context.celtium$setPipelinePrewarm(this.pipelinePrewarm);
+        }
+        final long pass = terrainPipeline.renderPass();
+        final long generation = this.pipelinePrewarmGeneration;
+        // {format, blend, depthTest, depthWrite, cull, lit, line}: blend 0 opaque, 1 alpha, 2 additive.
+        final int[][] standardSet = {
+                {0, 0, 1, 1, 0, 0, 0}, {0, 0, 1, 1, 0, 1, 0}, {0, 0, 1, 1, 1, 0, 0}, {0, 1, 1, 0, 0, 0, 0},
+                {0, 1, 1, 0, 0, 1, 0}, {0, 1, 0, 0, 0, 0, 0}, {0, 1, 1, 0, 1, 0, 0}, {0, 2, 1, 0, 0, 0, 0},
+                {1, 0, 1, 1, 0, 0, 0}, {1, 0, 1, 1, 0, 1, 0}, {1, 0, 1, 1, 1, 0, 0}, {1, 1, 1, 0, 0, 0, 0},
+                {1, 1, 1, 0, 0, 1, 0}, {1, 1, 0, 0, 0, 0, 0}, {1, 1, 1, 0, 1, 0, 0}, {1, 2, 1, 0, 0, 0, 0},
+                {0, 1, 1, 0, 0, 0, 1}, {0, 1, 0, 0, 0, 0, 1}, {0, 0, 1, 1, 0, 0, 1},
+                {1, 1, 1, 0, 0, 0, 1}, {1, 1, 0, 0, 0, 0, 1}, {1, 0, 1, 1, 0, 0, 1},
+                {2, 0, 1, 1, 0, 0, 0}, {2, 0, 1, 1, 0, 1, 0}, {2, 1, 1, 0, 0, 0, 0}, {2, 1, 1, 0, 0, 1, 0},
+                {2, 1, 0, 0, 0, 0, 0}, {2, 2, 1, 0, 0, 0, 0},
+                {6, 0, 1, 1, 0, 0, 0}, {6, 0, 1, 1, 0, 1, 0}, {6, 1, 1, 0, 0, 0, 0}, {6, 1, 1, 0, 0, 1, 0},
+                {6, 1, 0, 0, 0, 0, 0}, {6, 2, 1, 0, 0, 0, 0},
+                {7, 0, 1, 1, 0, 0, 0}, {7, 0, 1, 1, 0, 1, 0}, {7, 1, 1, 0, 0, 0, 0}, {7, 1, 1, 0, 0, 1, 0},
+                {7, 1, 0, 0, 0, 0, 0}, {7, 2, 1, 0, 0, 0, 0},
+                {8, 0, 1, 1, 0, 0, 0}, {8, 0, 1, 1, 0, 1, 0}, {8, 1, 1, 0, 0, 0, 0}, {8, 1, 1, 0, 0, 1, 0},
+                {8, 1, 0, 0, 0, 0, 0}, {8, 2, 1, 0, 0, 0, 0},
+                {9, 0, 1, 1, 0, 0, 0}, {9, 0, 1, 1, 0, 1, 0}, {9, 1, 1, 0, 0, 0, 0}, {9, 1, 1, 0, 0, 1, 0},
+                {9, 1, 0, 0, 0, 0, 0}, {9, 2, 1, 0, 0, 0, 0},
+                {10, 0, 1, 1, 0, 0, 0}, {10, 0, 1, 1, 0, 1, 0}, {10, 1, 1, 0, 0, 0, 0}, {10, 1, 1, 0, 0, 1, 0},
+                {10, 1, 0, 0, 0, 0, 0}, {10, 2, 1, 0, 0, 0, 0},
+                {11, 0, 1, 1, 0, 0, 0}, {11, 0, 1, 1, 0, 1, 0}, {11, 1, 1, 0, 0, 0, 0}, {11, 1, 1, 0, 0, 1, 0},
+                {11, 1, 0, 0, 0, 0, 0}, {11, 2, 1, 0, 0, 0, 0},
+                {13, 0, 1, 1, 0, 0, 0}, {13, 0, 1, 1, 0, 1, 0}, {13, 1, 1, 0, 0, 0, 0}, {13, 1, 1, 0, 0, 1, 0},
+                {13, 1, 0, 0, 0, 0, 0}, {13, 2, 1, 0, 0, 0, 0},
+                {12, 0, 1, 1, 0, 0, 0}, {12, 1, 1, 0, 0, 0, 0}, {12, 1, 0, 0, 0, 0, 0},
+                {3, 0, 1, 1, 0, 0, 0}, {3, 0, 1, 1, 0, 1, 0}, {3, 1, 1, 0, 0, 0, 0}, {3, 1, 1, 0, 0, 1, 0},
+                {4, 1, 1, 0, 0, 1, 0}, {4, 1, 0, 0, 0, 1, 0}, {4, 1, 0, 0, 0, 0, 0}, {4, 0, 1, 1, 0, 1, 0},
+                {5, 1, 1, 0, 0, 0, 0}, {5, 2, 1, 0, 0, 0, 0}, {5, 0, 1, 1, 0, 0, 0},
+        };
+        for (int[] row : standardSet) {
+            final int format = row[0];
+            final int[] state = celtium$immediateStandardState(row[1], row[2] != 0, row[3] != 0,
+                    row[4] != 0, row[5] != 0);
+            final long key = celtium$stateKey(format, state) | (row[6] != 0 ? LINE_KEY_BIT : 0L);
+            this.pipelinePrewarmCompiler.register(key, k -> generation == this.pipelinePrewarmGeneration
+                    && celtium$getOrCreateImmediatePipeline(format, key, state, pass, 1) != null);
+            this.pipelinePrewarm.registerStartup(key);
+        }
+        this.pipelinePrewarm.warmUp(Integer.MAX_VALUE);
+        this.pipelinePrewarmWarmed = true;
     }
 
     /**
@@ -12685,6 +13113,9 @@ this.frameBufferOpen = false;
      * The UI pipeline is not part of this: it is built against the standalone UI render pass, which the window keeps.
      */
     private int celtium$releaseImmediatePipelines() {
+        // The prewarm stops first: its background compiler creates pipelines into the caches
+        // this method is about to empty, against the render pass this world is giving up.
+        celtium$closePipelinePrewarm();
         this.framebufferCompositor.release();
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
@@ -14297,6 +14728,7 @@ this.frameBufferOpen = false;
      */
     PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state,
             org.soutalab.celtium.vulkan.VulkanGlTexture knownLive, boolean liveKnown) {
+        celtium$ensurePipelinePrewarm();
         Object pass = this.lastUiPass;
         this.prepareCacheCalls++;
         // The format class of the target this batch was offered for (QUEUE 404, S4): folded into the key so
@@ -14355,7 +14787,12 @@ this.frameBufferOpen = false;
         }
         PreparedImmediate prepared = prepareImmediateUncached(format, textureId, effectiveKey, state, live,
                 resolvedKnown, pairClass, targetColors);
-        if (prepared != null) {
+        // A material the pipeline resolution served through the prewarm's fallback pipeline is
+        // transient: storing it would keep the batch on the family's standard pipeline after
+        // its exact pipeline lands in the branch cache.
+        boolean fallback = this.celtium$lastPrepareWasFallback;
+        this.celtium$lastPrepareWasFallback = false;
+        if (prepared != null && !fallback) {
             if (entry == null) {
                 entry = new PrepareCacheEntry();
                 this.prepareCache[slot] = entry;
@@ -14458,6 +14895,7 @@ this.frameBufferOpen = false;
     private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state,
             org.soutalab.celtium.vulkan.VulkanGlTexture resolved, boolean resolvedKnown,
             TargetFormatClass pairClass, int targetColors) {
+        this.celtium$lastPrepareWasFallback = false;
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -14552,21 +14990,8 @@ this.frameBufferOpen = false;
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
-            long particleKey = key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            // BH-07: the colour-blend state is the batch's own, like every other family's. This one used to assert
-            // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) for the RGB pair and the family default for alpha whatever the capture
-            // said; ParticleManager itself calls `blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`, and GL's glBlendFunc sets
-            // the RGB *and* the alpha pair to that same pair - so the alpha pair the pipeline baked was the wrong one
-            // for every particle batch in the scene. The depth and cull arguments are left as this family asserted
-            // them: they are a different finding's subject and changing them here would move an accepted picture.
-            VulkanImmediateParticlePipeline value = this.particlePipelineCache.get(particleKey);
-            if (value == null) {
-                value = VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
-                        true, false, VulkanCullState.NONE, celtium$vkCompareOp(state[7]), targetColors);
-                if (value != null) {
-                    this.particlePipelineCache.put(particleKey, value);
-                }
-            }
+            VulkanImmediateParticlePipeline value = (VulkanImmediateParticlePipeline)
+                    celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
             // Which variant each ITEM batch gets, split by stage. The GUI stage is where the hotbar and the inventory
@@ -14580,15 +15005,8 @@ this.frameBufferOpen = false;
                 this.immediateStatistics.noteItemUnlitGroups();
                 if (!this.worldPassActive) this.immediateStatistics.noteItemUnlitGuiGroups();
             }
-            VulkanImmediateItemPipeline value = this.itemPipelineCache.get(key);
-            if (value == null) {
-                value = VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), itemLit,
-                        targetColors);
-                if (value != null) {
-                    this.itemPipelineCache.put(key, value);
-                }
-            }
+            VulkanImmediateItemPipeline value = (VulkanImmediateItemPipeline)
+                    celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             // The lit variant samples the light map on a second binding; the unlit one has only the model texture, so
             // the set is built for the layout this variant declares. A lit batch with no mirrored light map gets
             // descriptor 0 and is refused by name rather than drawn with a zero view (see the pipeline's guard).
@@ -14597,84 +15015,23 @@ this.frameBufferOpen = false;
                     : value.descriptorSetFor(texture), "prepare");
             pipeline = value;
         } else if (format == 3) {
-            VulkanImmediateBlockPipeline value = this.blockPipelineCache.get(key);
-            if (value == null) {
-                value = VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
-                if (value != null) {
-                    this.blockPipelineCache.put(key, value);
-                }
-            }
+            VulkanImmediateBlockPipeline value = (VulkanImmediateBlockPipeline)
+                    celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
-            VulkanImmediateTexturePipeline value = this.texGenPipelineCache.get(key);
-            if (value == null) {
-                value = VulkanImmediateTexturePipeline.createForTexGen(this.context, pass, celtium$blendState(state),
-                        state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]), targetColors);
-                if (value != null) {
-                    this.texGenPipelineCache.put(key, value);
-                }
-            }
+            VulkanImmediateTexturePipeline value = (VulkanImmediateTexturePipeline)
+                    celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare");
             pipeline = value;
         } else if (format >= 2) {
-            it.unimi.dsi.fastutil.longs.Long2ObjectMap<VulkanImmediateTexturePipeline> cache =
-                    format == VulkanImmediateFormats.COMBINE4 ? this.combine4PipelineCache
-                    : format == 10 ? this.positionNormalPipelineCache
-                    : format == 9 ? this.positionTexNormalPipelineCache
-                    : format == 8 ? this.positionTexColorNormalPipelineCache : format == 7 ? this.positionOnlyPipelineCache
-                    : format == 6 ? this.positionTexPipelineCache : this.texturedPipelineCache;
-            VulkanImmediateTexturePipeline value = cache.get(key);
-            if (value == null) {
-                int compareOp = celtium$vkCompareOp(state[7]);
-                // Experiment switch for the POSITION_NORMAL box: every one of its batches reaches this draw and the
-                // box is absent from the full-mask picture (62 accepted, 62 drawn, no pixels), while the same group
-                // drawn with format 10 alone lands exactly where GROUP_BOUNDS puts it. Turning its depth test off
-                // separates "the fragments are rejected by the depth the window draws against" from "the draw does not
-                // reach the image at all". Default on, so the shipped behaviour is unchanged.
-                boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
-                VulkanColorBlendState colorBlend = celtium$blendState(state);
-                value = format == VulkanImmediateFormats.COMBINE4 ? VulkanImmediateTexturePipeline.createForCombine4(
-                        this.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp,
-                        targetColors)
-                        : format == 11 ? VulkanImmediateTexturePipeline.createForPositionTexNormalFloat(this.context,
-                        pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
-                        : format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
-                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp, targetColors)
-                        : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
-                        : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
-                        : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
-                        : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors)
-                        : VulkanImmediateTexturePipeline.create(this.context, pass,
-                        colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, targetColors);
-                cache.put(key, value);
-            }
+            VulkanImmediateTexturePipeline value = (VulkanImmediateTexturePipeline)
+                    celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
             boolean lineBatch = (key & LINE_KEY_BIT) != 0;
-            VulkanColorBlendState colorBlend = celtium$blendState(state);
-            // No computeIfAbsent: it boxed the state key and allocated a capturing lambda per batch. The two caches
-            // hold the same kind of pipeline, so one lookup and one creation branch have the same shape as before.
-            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> pipelineCache =
-                    lineBatch ? this.linePipelineCache : this.immediatePipelineCache;
-            pipeline = pipelineCache.get(key);
-            if (pipeline == null) {
-                VulkanImmediatePipeline created = lineBatch
-                        ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
-                                targetColors)
-                        : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
-                                state[3] != 0, state[4] != 0, state[5], celtium$vkCompareOp(state[7]),
-                                targetColors);
-                if (created != null) {
-                    pipelineCache.put(key, created);
-                }
-                pipeline = created;
-            }
+            // No computeIfAbsent on the resolution either: it boxed the state key and allocated a capturing lambda
+            // per batch. The resolver's explicit lookup, then creation, has the same shape as before.
+            pipeline = celtium$resolveImmediatePipeline(format, key, state, pass, targetColors);
             if (lineBatch) {
                 this.lineBatchesNative++;
             }

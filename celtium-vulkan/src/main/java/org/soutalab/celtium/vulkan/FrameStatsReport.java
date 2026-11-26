@@ -218,6 +218,7 @@ final class FrameStatsReport {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
+                + " " + b.celtium$prewarmSummary()
                 + (VulkanTerrainGpuBackend.BATCH_TIMINGS ? b.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
                         + b.batchDistSummary() : "")
                 + " append[ms=" + (b.immediateStatistics.appendNanos() / 1000000L) + "]"
