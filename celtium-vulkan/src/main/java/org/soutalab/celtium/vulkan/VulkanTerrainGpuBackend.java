@@ -3601,6 +3601,72 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int drawStateCensusFull;
     /** The indirect/record run path, split out of this class (2026-11-06); see IndirectImmediateRuns. */
     final IndirectImmediateRuns indirectRuns = new IndirectImmediateRuns(this);
+
+    /**
+     * The batch wiring of Stage 5 stage 4 (S5-2): eligible UI-bracket and font-run groups are captured at drain
+     * time into an {@link org.soutalab.celtium.vulkan.batch.ImmediateBatcher} over the frame-linear ring, and
+     * each segment - a maximal run of consecutive captured groups - is compiled and executed before the next
+     * command that is not its own records (a per-group draw, a model run, a queued clear), so the order the
+     * queue arrived in is the order the command buffer holds. Created lazily at the first frame start; null
+     * when the ring could not be created, which keeps the per-group path entire.
+     */
+    private org.soutalab.celtium.vulkan.batch.ImmediateBatcher batchBatcher;
+    private org.soutalab.celtium.vulkan.batch.FrameLinearStagingRingAdapter batchRing;
+    private final org.soutalab.celtium.vulkan.batch.BatchPlanExecutor batchExecutor =
+            new org.soutalab.celtium.vulkan.batch.BatchPlanExecutor();
+    /** Whether a capture segment is open (a beginFrame whose endFrame has not run yet). */
+    private boolean batchSegmentOpen;
+    private int batchSegmentCaptures;
+    /** Pipeline keys for the batcher, interned per record-reading twin object. */
+    private final java.util.IdentityHashMap<Object, Integer> batchPipelineKeys = new java.util.IdentityHashMap<>();
+    private int batchNextPipelineKey = 1;
+    /** What each interned pipeline key binds: the twin's handles and family. */
+    private final java.util.HashMap<Integer, BatchTwinBinding> batchTwinBindings = new java.util.HashMap<>();
+    /** The state tuples interned in the open segment; the list index is the state key (DrawSortKey packs 8 bits). */
+    private final java.util.ArrayList<ImmediateGroup> batchStateDonors = new java.util.ArrayList<>();
+    /** The per-texture bindings captured in the open segment, by GL texture name. */
+    private final java.util.HashMap<Integer, BatchTextureBinding> batchTextureBindings = new java.util.HashMap<>();
+    /**
+     * Groups captured into batch segments; groups that fell back after a capture was attempted; draws dropped
+     * because a captured texture set was evicted and could not be rebuilt; segments discarded unexecuted at a
+     * frame boundary. Read by the window census line (CELTIUM_BATCH_ROUTE), which is the leg's route evidence.
+     */
+    private long batchCapturedGroups;
+    private long batchFallbackGroups;
+    private long batchDroppedDraws;
+    private long batchDiscardedSegments;
+
+    /** What a batch pipeline key binds: one record-reading twin's handles, and its family. */
+    private static final class BatchTwinBinding {
+        final long pipeline;
+        final long layout;
+        final boolean colour;
+        final int pushBytes;
+
+        BatchTwinBinding(long pipeline, long layout, boolean colour, int pushBytes) {
+            this.pipeline = pipeline;
+            this.layout = layout;
+            this.colour = colour;
+            this.pushBytes = pushBytes;
+        }
+    }
+
+    /**
+     * A per-texture descriptor captured with a group: the set, the cache key it was prepared under, and the
+     * original pipeline that owns the cache (the eviction check and the rebuild go through it, as the indirect
+     * run's flush does).
+     */
+    private static final class BatchTextureBinding {
+        long descriptor;
+        final long textureKey;
+        final VulkanImmediateTexturePipeline original;
+
+        BatchTextureBinding(long descriptor, long textureKey, VulkanImmediateTexturePipeline original) {
+            this.descriptor = descriptor;
+            this.textureKey = textureKey;
+            this.original = original;
+        }
+    }
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
     static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
@@ -24276,6 +24342,9 @@ this.frameBufferOpen = false;
         // Open the unified frame buffer for this frame: recordings coalesce into it unconditionally - no
         // target carries a semaphore contract any more (Stage 2 submit unification).
         this.frameBufferOpen = true;
+        // The frame's slot is final here (the slot wait and the ring slot reset are both above): the batch
+        // wiring takes it for its staging adapter and opens the frame's first capture segment (S5-2).
+        celtium$beginBatcherFrame();
     }
 
     /**
@@ -24452,6 +24521,374 @@ this.frameBufferOpen = false;
      * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
      * hidden.
      */
+    /**
+     * Frame start for the batch wiring (S5-2 execution record section 2-3): the adapter takes the frame
+     * scheduler's slot - the same single source {@link InstanceDataStore#selectSlot} reads - and the frame's
+     * first capture segment opens on it. Later segments of the same frame re-open on the same slot.
+     */
+    private void celtium$beginBatcherFrame() {
+        if (this.batchBatcher == null) {
+            try {
+                this.batchRing = org.soutalab.celtium.vulkan.batch.FrameLinearStagingRingAdapter.create(this.context);
+                this.batchBatcher = new org.soutalab.celtium.vulkan.batch.ImmediateBatcher();
+                // The per-texture shape: the bindless array route is not wired in this slice - its vertex
+                // shader still declares the stale 224-byte record stride and the pair has never run - so every
+                // entry rebinds its per-texture set at the executor's change points, which is the rebind form
+                // the stage-4 entry pack's section 3-3 requires of the entries the array cannot serve. The
+                // reopening condition is the array pair's stride fix plus its own verification leg.
+                this.batchBatcher.setBindlessEnabled(false);
+            } catch (RuntimeException | LinkageError error) {
+                this.batchRing = null;
+                this.batchBatcher = null;
+                return;
+            }
+        }
+        if (this.batchSegmentOpen) {
+            // A segment left open across a frame boundary (an exception path out of a drain): a plan that is
+            // not executed in its own frame is not executed at all (ringmap section 7 item 4). Counted, dropped.
+            this.batchDiscardedSegments++;
+            this.batchSegmentOpen = false;
+            this.batchSegmentCaptures = 0;
+        }
+        this.batchRing.selectSlot(this.frameSlot);
+        this.batchBatcher.beginFrame(this.batchRing);
+        this.batchSegmentOpen = true;
+        this.batchSegmentCaptures = 0;
+        this.batchStateDonors.clear();
+        this.batchTextureBindings.clear();
+    }
+
+    /** Opens a capture segment on the frame's slot when none is open (a later drain segment of this frame). */
+    private void celtium$ensureBatchSegment() {
+        if (this.batchSegmentOpen || this.batchBatcher == null) {
+            return;
+        }
+        this.batchRing.selectSlot(this.frameSlot);
+        this.batchBatcher.beginFrame(this.batchRing);
+        this.batchSegmentOpen = true;
+        this.batchSegmentCaptures = 0;
+        this.batchStateDonors.clear();
+        this.batchTextureBindings.clear();
+    }
+
+    /**
+     * Closes the open capture segment and executes its plan, synchronously, at the point the caller has
+     * reached. Every flush point is a place where a command that is not the segment's own is about to record,
+     * so the segment's draws land exactly where the captured groups stood in the queue.
+     *
+     * @return whether a non-empty plan was executed
+     */
+    private boolean celtium$flushBatchSegment() {
+        if (!this.batchSegmentOpen) {
+            return false;
+        }
+        this.batchSegmentOpen = false;
+        int captures = this.batchSegmentCaptures;
+        this.batchSegmentCaptures = 0;
+        org.soutalab.celtium.vulkan.batch.BatchPlan plan = this.batchBatcher.endFrame();
+        boolean executed = captures > 0;
+        if (executed) {
+            long vertexBuffer = this.context.celtium$frameLinearRing().buffer(this.frameSlot);
+            long indexBuffer = this.context.sharedQuadIndexBuffer().buffer();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                vkCmdBindVertexBuffers(this.commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
+                vkCmdBindIndexBuffer(this.commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+                this.batchExecutor.execute(plan, false, new BatchDrawSink(stack));
+            }
+            // The segment bound pipelines, sets and buffers outside the immediate bind cache's knowledge:
+            // the next per-group draw rebinds everything, exactly as after a window head.
+            java.util.Arrays.fill(this.immediateBindCache, -1L);
+        }
+        this.batchStateDonors.clear();
+        this.batchTextureBindings.clear();
+        return executed;
+    }
+
+    /**
+     * {@return whether this group belongs to the batch population and can be captured}: the UI-section stamp
+     * axis (the stage-4 record's section 2-2, with the routing stamp being the unconditional UI-bracket read
+     * the S4-c/d stamps added - not the census-gated pair), one of the four migrated formats, and a mesh whose
+     * indices are exactly the shared quad pattern. The pattern half is the equivalence check itself:
+     * {@link VulkanDynamicMesh#usesSharedQuadIndex()} is adopted by a mesh's first quad append and revoked -
+     * the pattern materialised into the mesh's own stream - by any non-quad append, so a mesh carrying the
+     * flag holds the pattern byte for byte (the same sequence {@code TopologyIndexEmitter} expands GL_QUADS
+     * into, which its own documentation pins to this pattern).
+     */
+    private boolean celtium$batchEligible(ImmediateGroup group, VulkanDynamicMesh mesh, PreparedImmediate prepared) {
+        if (prepared == null || mesh == null || this.drawRecords == null) {
+            return false;
+        }
+        if (!group.closedInUiBracket && !group.fromFontRun) {
+            return false;
+        }
+        int formatId = group.formatId;
+        if (formatId != VulkanImmediateFormats.POSITION_COLOR
+                && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR
+                && formatId != VulkanImmediateFormats.POSITION_TEX
+                && formatId != VulkanImmediateFormats.POSITION) {
+            return false;
+        }
+        if (!mesh.usesSharedQuadIndex() || mesh.vertexCount() <= 0 || (mesh.vertexCount() & 3) != 0
+                || mesh.vertexAddress() == 0L || mesh.layout() == null || mesh.layout().stride <= 0) {
+            return false;
+        }
+        Object pipeline = prepared.pipeline;
+        if (pipeline instanceof VulkanImmediateTexturePipeline texturePipeline) {
+            // The texgen and combine variants have no record-reading shader pair; their groups stay per-group.
+            return !texturePipeline.celtium$texGen() && !texturePipeline.celtium$combine4();
+        }
+        return pipeline instanceof VulkanImmediatePipeline;
+    }
+
+    /**
+     * Attempts to capture this group into the open batch segment at drain time (the stage-4 record's
+     * section 2: the capture point is the drain, inside drawPendingImmediate's group loop, where the group's
+     * matrices are already in the push block and its mesh is final). All migrated captures are ordered: the
+     * UI and font populations observe submission order, so nothing here may be reordered by the sort.
+     *
+     * @return whether the group was captured; a group that is not captured is drawn by the caller exactly as
+     *         before
+     */
+    private boolean celtium$tryCaptureBatchGroup(ImmediateGroup group, VulkanDynamicMesh mesh,
+            PreparedImmediate prepared, java.nio.ByteBuffer push) {
+        if (this.batchBatcher == null || !celtium$batchEligible(group, mesh, prepared)) {
+            return false;
+        }
+        Object twin;
+        boolean colour;
+        int textureSlot;
+        int pushBytes = 0;
+        if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texturePipeline) {
+            VulkanImmediateTexturePipeline records = this.indirectRuns.celtium$recordsPipelineForBatch(texturePipeline);
+            if (records == null || records.celtium$handle() == 0L) {
+                return false;
+            }
+            twin = records;
+            colour = false;
+            textureSlot = group.texture;
+        } else {
+            VulkanImmediatePipeline records = this.indirectRuns.celtium$recordsColourPipeline(
+                    (VulkanImmediatePipeline) prepared.pipeline);
+            if (records.celtium$handle() == 0L) {
+                return false;
+            }
+            twin = records;
+            colour = true;
+            textureSlot = -1;
+            pushBytes = records.celtium$pushConstantBytes();
+        }
+        // The indirect run's deferred draws belong to earlier groups of this window: they record first.
+        this.indirectRuns.celtium$flushIndirectRun("batch-segment");
+        celtium$ensureBatchSegment();
+        int stateKey = celtium$internBatchState(group);
+        int recordIndex = this.drawRecords.record(push, -1);
+        if (recordIndex < 0) {
+            this.batchFallbackGroups++;
+            return false;
+        }
+        Integer keyBoxed = this.batchPipelineKeys.get(twin);
+        int pipelineKey;
+        if (keyBoxed == null) {
+            pipelineKey = this.batchNextPipelineKey++;
+            this.batchPipelineKeys.put(twin, Integer.valueOf(pipelineKey));
+            long handle = colour ? ((VulkanImmediatePipeline) twin).celtium$handle()
+                    : ((VulkanImmediateTexturePipeline) twin).celtium$handle();
+            long layout = colour ? ((VulkanImmediatePipeline) twin).celtium$pipelineLayout()
+                    : ((VulkanImmediateTexturePipeline) twin).celtium$pipelineLayout();
+            this.batchTwinBindings.put(Integer.valueOf(pipelineKey),
+                    new BatchTwinBinding(handle, layout, colour, pushBytes));
+        } else {
+            pipelineKey = keyBoxed.intValue();
+        }
+        if (!colour) {
+            this.batchTextureBindings.putIfAbsent(Integer.valueOf(textureSlot),
+                    new BatchTextureBinding(prepared.descriptor, prepared.textureKey,
+                            (VulkanImmediateTexturePipeline) prepared.pipeline));
+        }
+        int stride = mesh.layout().stride;
+        java.nio.ByteBuffer vertices = org.lwjgl.system.MemoryUtil.memByteBuffer(
+                mesh.vertexAddress(), mesh.vertexCount() * stride);
+        boolean captured = this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,
+                recordIndex, true, vertices, mesh.vertexCount() / 4, stride);
+        if (!captured) {
+            // The ring or the shared index space had no room: the record above is inert (nothing reads an
+            // unreferenced record) and the group draws per-group. Counted here, in the wiring's own fallback
+            // counter, not in the font-run refusal census (the stage-4 record's section 2-2 correction).
+            this.batchFallbackGroups++;
+            return false;
+        }
+        this.batchSegmentCaptures++;
+        this.batchCapturedGroups++;
+        return true;
+    }
+
+    /**
+     * Interns this group's command-state tuple in the open segment and returns its state key.
+     * <p>
+     * The decision the stage-4 entry pack's section 3-6 asks to have written down, rather than silently
+     * assumed: the key interns the exact tuple (the viewport and scissor source values, and the polygon
+     * offset triple) instead of bucketing by a coarser hash. Identical tuples share a key, so the executor's
+     * state change points are exactly the tuple changes, {@link BatchDrawSink#bindState} re-issues through
+     * the production issuers from the interned donor group, and two distinct states never share one draw's
+     * state. The price is a linear scan over the segment's distinct states, bounded by the 8-bit key space:
+     * a segment that would intern a 257th distinct state is flushed and a fresh segment opened, so the bound
+     * is structural.
+     */
+    private int celtium$internBatchState(ImmediateGroup group) {
+        java.util.ArrayList<ImmediateGroup> donors = this.batchStateDonors;
+        for (int i = 0; i < donors.size(); i++) {
+            if (celtium$sameBatchState(donors.get(i), group)) {
+                return i;
+            }
+        }
+        if (donors.size() >= 256) {
+            celtium$flushBatchSegment();
+            celtium$ensureBatchSegment();
+        }
+        donors.add(group);
+        return donors.size() - 1;
+    }
+
+    /** {@return whether two groups carry the same command-state tuple a batch state key names}. */
+    private static boolean celtium$sameBatchState(ImmediateGroup a, ImmediateGroup b) {
+        return a.scissorEnabled == b.scissorEnabled
+                && java.util.Arrays.equals(a.scissorBox, b.scissorBox)
+                && java.util.Arrays.equals(a.viewportValues, b.viewportValues)
+                && a.polygonOffsetEnabled == b.polygonOffsetEnabled
+                && a.polygonOffsetFactor == b.polygonOffsetFactor
+                && a.polygonOffsetUnits == b.polygonOffsetUnits;
+    }
+
+    /**
+     * Issues this group's polygon-offset depth bias: the drain loop's own block, factored so the batch
+     * segment's re-issue path runs the identical decision (the counters included - a group re-issued after
+     * a segment flush is issued twice, and the counters say so).
+     */
+    private void celtium$issueGroupDepthBias(ImmediateGroup group) {
+        boolean offsetEnabled = group.polygonOffsetEnabled;
+        float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
+        float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
+        // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
+        // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
+        // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
+        // whatever the last draw left. Zeros are the state GL has when the offset is off.
+        if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
+            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+            this.passBiasC = constantFactor;
+            this.passBiasS = slopeFactor;
+        } else {
+            // The common case - the game leaves the offset off - re-emits (0,0) for every group. The
+            // skip is still VUID-07834-clean: the first group of the buffer always emits because the
+            // tracker starts at NaN, and a later group's same-valued bias changes nothing the draw reads.
+            this.immediateStatistics.noteStateSkipsDepthBias();
+        }
+        if (offsetEnabled) {
+            this.immediateStatistics.noteImmediateDepthBiasedGroups();
+        }
+    }
+
+    /**
+     * The production {@link org.soutalab.celtium.vulkan.batch.BatchPlanExecutor.DrawSink} for one segment
+     * execution: binds the record-reading twins the plan's pipeline keys name and the records set with them,
+     * the per-texture sets at the executor's texture change points, and re-issues each state key's command
+     * state through the production issuers, so the pass viewport, scissor and bias trackers stay truthful
+     * for the groups that follow the segment.
+     */
+    private final class BatchDrawSink implements org.soutalab.celtium.vulkan.batch.BatchPlanExecutor.DrawSink {
+        private final MemoryStack stack;
+        private BatchTwinBinding twin;
+        private int textureSlot = Integer.MIN_VALUE;
+        private boolean textureDropped;
+
+        BatchDrawSink(MemoryStack stack) {
+            this.stack = stack;
+        }
+
+        @Override
+        public void bindPipeline(int pipelineKey) {
+            this.twin = batchTwinBindings.get(Integer.valueOf(pipelineKey));
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
+            // The records set is bound with the pipeline, at the family's own index: set 1 for the texture
+            // family (set 0 is the per-texture pair), set 0 for the colour family, whose layout declares
+            // the records set alone. The dynamic offset is read now, at execution: a store grow during the
+            // window moved the slice, and the offset that names this window's records is the current one.
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                    this.twin.colour ? 0 : 1, this.stack.longs(drawRecords.descriptorSet()),
+                    this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
+            if (!this.twin.colour && this.textureSlot != Integer.MIN_VALUE && !this.textureDropped) {
+                // A pipeline bind disturbs the sets bound under an incompatible layout, and the executor
+                // does not re-ask for the texture across a pipeline change: rebind the current texture's
+                // set under this pipeline's layout before any draw reads it.
+                bindTextureSet(this.textureSlot);
+            }
+        }
+
+        @Override
+        public void bindTexture(int textureSlot) {
+            this.textureSlot = textureSlot;
+            this.textureDropped = false;
+            if (this.twin.colour) {
+                return; // the colour layout declares no texture set
+            }
+            bindTextureSet(textureSlot);
+        }
+
+        private void bindTextureSet(int textureSlot) {
+            BatchTextureBinding binding = batchTextureBindings.get(Integer.valueOf(textureSlot));
+            long descriptor = binding.descriptor;
+            if (!binding.original.celtium$setStillCached(descriptor, binding.textureKey)) {
+                // Item 699's shape, segment edition: a later group of this window rebuilt against a newer
+                // wrapper and evicted the set this segment captured. Rebuild against the texture's current
+                // wrapper, as the indirect run's flush does; when no rebuild is available, the entries that
+                // sample this texture are dropped (counted), never drawn with the retired set.
+                VulkanGlTexture current = celtium$registry().get(textureSlot);
+                long rebuilt = current == null ? 0L : binding.original.descriptorSetFor(current);
+                if (rebuilt == 0L) {
+                    this.textureDropped = true;
+                    return;
+                }
+                binding.descriptor = rebuilt;
+                descriptor = rebuilt;
+            }
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
+                    this.stack.longs(descriptor), null);
+        }
+
+        @Override
+        public void bindState(int stateKey) {
+            ImmediateGroup donor = batchStateDonors.get(stateKey);
+            celtium$setGroupViewport(this.stack, donor, passAreaWidth, passAreaHeight);
+            boolean offsetEnabled = donor.polygonOffsetEnabled;
+            float constantFactor = offsetEnabled ? donor.polygonOffsetUnits : 0.0F;
+            float slopeFactor = offsetEnabled ? donor.polygonOffsetFactor : 0.0F;
+            if (constantFactor != passBiasC || slopeFactor != passBiasS) {
+                vkCmdSetDepthBias(commandBuffer, constantFactor, 0.0F, slopeFactor);
+                passBiasC = constantFactor;
+                passBiasS = slopeFactor;
+            }
+        }
+
+        @Override
+        public void drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
+                int firstInstance) {
+            if (this.textureDropped) {
+                batchDroppedDraws++;
+                return;
+            }
+            if (this.twin.colour) {
+                // The colour fragment stage reads its alpha reference, colour and fog from the push range,
+                // not from the record: push this entry's own record bytes - the per-entry form of the
+                // indirect run's one shared push, and exact where the run's is keyed to its first group.
+                long address = context.celtium$frameLinearRing().mappedAddress(frameSlot,
+                        drawRecords.descriptorDynamicOffset()
+                                + (long) firstInstance * ImmediateDrawRecords.RECORD_BYTES);
+                vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                        org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
+            }
+            vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+        }
+    }
+
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
         this.modelBindValid = false;
@@ -24578,6 +25015,8 @@ this.frameBufferOpen = false;
                                     : Integer.toHexString(System.identityHashCode(group.prepared.pipeline)));
                 }
                 if (group.target == target && group.modelRun == null) {
+                    // A captured segment in front of this group executes before the model run it precedes.
+                    celtium$flushBatchSegment();
                     this.celtium$flushPendingModelRun();
                     // Anything that is not a model run binds its own pipeline and set; the model bind cache may only be
                     // trusted while the immediately preceding draw was a model run.
@@ -24598,6 +25037,8 @@ this.frameBufferOpen = false;
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
                     // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
                     // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
+                    // A captured segment in front of this group executes before its queued clears record.
+                    celtium$flushBatchSegment();
                     celtium$recordQueuedClearsInPass(group.postClears, group.target);
                     this.retiredImmediateGroups.add(group);
                     this.immediateStatistics.noteSelfCompositeSkips();
@@ -24609,6 +25050,7 @@ this.frameBufferOpen = false;
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
                         // freed by the next completion drain, which is safe because this group was never submitted.
+                        celtium$flushBatchSegment();
                         celtium$recordQueuedClearsInPass(group.postClears, group.target);
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleTargetGeneration();
@@ -24621,6 +25063,7 @@ this.frameBufferOpen = false;
                         // this would read freed geometry. The target-generation stamp cannot see that: a frame target
                         // survives a world change. Retired without drawing and counted; the mesh is freed by the next
                         // completion drain, which is safe because the group was never submitted.
+                        celtium$flushBatchSegment();
                         celtium$recordQueuedClearsInPass(group.postClears, group.target);
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleWorldEpoch();
@@ -24629,6 +25072,8 @@ this.frameBufferOpen = false;
                     }
                 }
                 if (group.modelRun != null) {
+                    // A captured segment in front of this group executes before the model run it precedes.
+                    celtium$flushBatchSegment();
                     this.modelReplay.celtium$drawModelRun(group);
                     gpuMark("run");
                     // A model run is drawn from the replay's own instance buffer, but it is still a group in the queue
@@ -24843,6 +25288,7 @@ this.frameBufferOpen = false;
                                         + Long.toHexString(currentTexture.key())
                                         + "; the group is refused rather than drawn with a destroyed view");
                             }
+                            celtium$flushBatchSegment();
                             celtium$recordQueuedClearsInPass(group.postClears, group.target);
                             this.retiredImmediateGroups.add(group);
                             this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -24998,11 +25444,18 @@ this.frameBufferOpen = false;
                 // bytes alone exceed the 64 KiB default stack. The shape is pinned by
                 // scripts/cpu-contract/immediate_group_stack_scope_check.py.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                boolean batchCaptured = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPrepared");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
                 try (MemoryStack groupStack = MemoryStack.stackPush()) {
+                    if (this.batchSegmentOpen && !celtium$batchEligible(group, mesh, prepared)) {
+                        // This group will not be captured (the draw site decides finally, after the probe
+                        // borrow): a segment open in front of it executes here, before this group's own
+                        // viewport issuance, so no command state has to be re-issued after it.
+                        celtium$flushBatchSegment();
+                    }
                     celtium$setGroupViewport(groupStack, group, this.passAreaWidth, this.passAreaHeight);
                     // After the viewport and before the draw: the read-back records what the command will actually fetch
                     // from the group's slice, which is the one fact the accept-time reads cannot supply.
@@ -25019,26 +25472,7 @@ this.frameBufferOpen = false;
                     // overlay's draws and disables it immediately after, so a group flushed later used to read the
                     // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
                     // overlay in the frame, and immediateDepthBiasedGroups=0).
-                    boolean offsetEnabled = group.polygonOffsetEnabled;
-                    float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
-                    float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
-                    // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
-                    // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
-                    // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
-                    // whatever the last draw left. Zeros are the state GL has when the offset is off.
-                    if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
-                        org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
-                        this.passBiasC = constantFactor;
-                        this.passBiasS = slopeFactor;
-                    } else {
-                        // The common case - the game leaves the offset off - re-emits (0,0) for every group. The
-                        // skip is still VUID-07834-clean: the first group of the buffer always emits because the
-                        // tracker starts at NaN, and a later group's same-valued bias changes nothing the draw reads.
-                        this.immediateStatistics.noteStateSkipsDepthBias();
-                    }
-                    if (offsetEnabled) {
-                        this.immediateStatistics.noteImmediateDepthBiasedGroups();
-                    }
+                    celtium$issueGroupDepthBias(group);
                     // Merging a run of consecutive groups into one draw was the last structural idea for this loop and it
                     // is not available: every group pushes its own matrices, so two groups only share a draw when their
                     // push-constant blocks are byte-identical, which in the world window means groups that share a
@@ -25057,8 +25491,19 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpPrep");
                     org.soutalab.celtium.vulkan.FramePassTimings.end("rcViewport");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("grpDraw");
-                    boolean indirectConsumed = this.indirectRuns.celtium$tryEnqueueIndirect(group, mesh, prepared, push);
-                    if (!indirectConsumed) {
+                    batchCaptured = celtium$tryCaptureBatchGroup(group, mesh, prepared, push);
+                    boolean indirectConsumed = false;
+                    if (!batchCaptured) {
+                        if (celtium$flushBatchSegment()) {
+                            // The segment's execution re-issued command state per entry, ending on its last
+                            // entry's: this group's own viewport and depth bias, issued above for the draw
+                            // below, are issued again so the draw reads its own state, not the segment's.
+                            celtium$setGroupViewport(groupStack, group, this.passAreaWidth, this.passAreaHeight);
+                            celtium$issueGroupDepthBias(group);
+                        }
+                        indirectConsumed = this.indirectRuns.celtium$tryEnqueueIndirect(group, mesh, prepared, push);
+                    }
+                    if (!batchCaptured && !indirectConsumed) {
                     long bindDescriptor = prepared.descriptor;
                     if (REPLACE_TEXTURE_IDS != null && prepared.pipeline instanceof VulkanImmediateTexturePipeline
                             && this.textureRegistry != null) {
@@ -25115,12 +25560,13 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
-                    if (indirectConsumed) {
+                    if (indirectConsumed || batchCaptured) {
                         // The bracket has to close on both paths. It used to close only inside the direct branch, so
                         // a group the indirect path consumed left grpDraw open and the next group's begin restarted
                         // it - the reported grpDraw then held the whole remainder of the loop, which is how a
                         // 112-group frame read 1.0 ms (8.9 us a group) against the ~2.5 us the same loop measures
-                        // when every group takes the direct path.
+                        // when every group takes the direct path. A batch-captured group closes it the same way:
+                        // its draw records later, at the segment's flush, under the segment's own accounting.
                         org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
                     if (skyGroup) {
@@ -25320,6 +25766,11 @@ this.frameBufferOpen = false;
                             + "/b" + (group.state != null && group.state.length > 0 ? group.state[0] : -1)
                             + (group.target == this.targetRegistry.mainIdentity() ? "" : "/off"));
                 }
+                if (batchCaptured) {
+                    // The segment executes before this group's queued clears record: a clear that rode the
+                    // group erases what was drawn before it, and the captured draw is this group's own.
+                    celtium$flushBatchSegment();
+                }
                 // The game's own glClears that arrived after this group was queued: recorded inside this same pass,
                 // after the draws they erase and before the groups that follow them.
                 if (group.postClears != null) {
@@ -25328,6 +25779,10 @@ this.frameBufferOpen = false;
                 }
                 group.postClears = null;
             }
+            // The window's last batch segment has no following group to close it. It executes before the
+            // indirect run's flush: a capture first closes any open indirect run, so at most one of the two
+            // deferred paths is open here, and this order keeps it that way.
+            celtium$flushBatchSegment();
             // The last run of the window has no following group to close it.
             this.indirectRuns.celtium$flushIndirectRun("record-full");
             if (GROUP_CENSUS) {
@@ -25345,6 +25800,15 @@ this.frameBufferOpen = false;
                 System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + this.groupCensusMain + census);
                 java.util.Arrays.fill(this.groupCensusCounts, 0L);
                 this.groupCensusMain = 0;
+            }
+            if (GROUP_CENSUS) {
+                // The batch route's own evidence (S5-2): how many groups the drain captured into segments,
+                // how many fell back after an attempt, and the two loss counters. Cumulative over the run.
+                System.out.println("[Celtium] CELTIUM_BATCH_ROUTE captured=" + this.batchCapturedGroups
+                        + " fallback=" + this.batchFallbackGroups
+                        + " droppedDraws=" + this.batchDroppedDraws
+                        + " discardedSegments=" + this.batchDiscardedSegments
+                        + " batcherDropped=" + (this.batchBatcher == null ? -1 : this.batchBatcher.droppedCaptures()));
             }
             if (MERGE_CENSUS) {
                 int largest = 0;
