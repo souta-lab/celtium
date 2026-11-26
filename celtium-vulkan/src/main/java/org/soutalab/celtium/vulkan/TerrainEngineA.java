@@ -249,8 +249,23 @@ final class TerrainEngineA {
                     ? TerrainResidencyGate.Reason.OVERSIZE : TerrainResidencyGate.Reason.ARENA_FULL);
             return null;
         }
+        SlabBuffer slab;
+        try {
+            slab = slabBuffer(registration.geometry.slabId);
+        } catch (SlabCapacityException capacity) {
+            // Prescription A (Tier-A disable diagnosis, 2026-11-26): device-side
+            // slab capacity is a per-section refusal, not an engine fault. The
+            // store registration is rolled back through the ordinary removal
+            // path, so the ledger never claims a residency the device side
+            // could not materialize; the section is reported missing like the
+            // arena-full refusals, and returning null classifies the attempt
+            // REJECTED — the legacy upload remains, drawing stays correct, and
+            // this pass' engine stays alive for the next section.
+            this.store.unregister(registration.key, slabReleaseValue());
+            this.residencyGate.noteMissing(registration.key, TerrainResidencyGate.Reason.ARENA_FULL);
+            return null;
+        }
         this.residencyGate.noteResident(registration.key);
-        SlabBuffer slab = slabBuffer(registration.geometry.slabId);
         long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
         MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
         if (built.rdhFactors != null) {
@@ -527,7 +542,17 @@ final class TerrainEngineA {
                 if (!slot.armed[s]) {
                     continue;
                 }
-                SlabBuffer slab = slabBuffer(s);
+                SlabBuffer slab;
+                try {
+                    slab = slabBuffer(s);
+                } catch (SlabCapacityException capacity) {
+                    // Prescription A receptacle: a slab that cannot materialize
+                    // is skipped for this frame only. The remaining slabs still
+                    // draw, nothing is disabled, and a later frame retries the
+                    // materialization (the slab stays uncreated, so slabBuffer
+                    // re-attempts it on the next armed frame).
+                    continue;
+                }
                 vertexBuffers.put(0, slab.buffer());
                 offsets.put(0, 0L);
                 vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffers, offsets);
@@ -563,6 +588,24 @@ final class TerrainEngineA {
             }
         }
         return count;
+    }
+
+    /**
+     * The classified form of a slab-allocator serve refusal (prescription A of
+     * the Tier-A disable diagnosis, 2026-11-26): the shared terrainGeometry
+     * pool cannot materialize one more slab for this pass. It is raised only at
+     * the {@code SlabAllocator.allocate} call inside {@link SlabBuffer}'s
+     * constructor — never by matching the refusal's message text — so callers
+     * can tell "this section/slab does not fit right now" apart from a genuine
+     * device fault: capacity maps to a rejected registration (with the store
+     * registration rolled back) or a one-frame draw skip, while every other
+     * failure keeps the disable path. It extends {@link IllegalStateException}
+     * so an unhandled escape keeps the allocator's original type.
+     */
+    static final class SlabCapacityException extends IllegalStateException {
+        SlabCapacityException(IllegalStateException cause) {
+            super(cause.getMessage(), cause);
+        }
     }
 
     private SlabBuffer slabBuffer(int slab) {
@@ -622,8 +665,18 @@ final class TerrainEngineA {
                 SlabAllocator allocator = TerrainEngineA.this.host.geometrySlabAllocator(
                         TerrainEngineA.this.context, memoryType,
                         TerrainEngineA.this.store.geometryAllocator().slabBytes());
-                createdAllocation = allocator.allocate(
-                        requirements.size(), requirements.alignment());
+                try {
+                    createdAllocation = allocator.allocate(
+                            requirements.size(), requirements.alignment());
+                } catch (IllegalStateException refusal) {
+                    // The classification is structural, by call site: the slab
+                    // allocator's serve refusal is the one failure upload and
+                    // the draw loop may treat as capacity (prescription A). Its
+                    // message text is never matched. Device errors from the
+                    // surrounding calls (buffer creation, binding, memory-type
+                    // selection) keep their plain form and still disable.
+                    throw new SlabCapacityException(refusal);
+                }
                 allocator.bindBuffer(createdBuffer, createdAllocation);
             } catch (RuntimeException | Error error) {
                 if (createdBuffer != VK_NULL_HANDLE) {
