@@ -1,6 +1,8 @@
 #version 450
 // Record-reading form of immediate_position_tex.vert: projection, texture affine, colour alpha (pushed at 96 in
 // this layout), rgb (116..124) and the fog block all come from the record.
+// The struct is padded to the draw-record store's 256-byte stride (InstanceDataStore.RECORD_BYTES);
+// at the old 224 the second record onward was read 32 bytes early per step.
 
 struct DrawRecord {
     mat4 u_ProjectionMatrix;
@@ -14,6 +16,8 @@ struct DrawRecord {
     vec4 u_FogRow1;
     vec4 u_FogRow2;
     vec4 u_RecordPad;
+    vec4 u_RecordPad2;
+    vec4 u_RecordPad3;
 };
 layout(std430, set = 1, binding = 0) readonly buffer DrawRecords { DrawRecord records[]; };
 

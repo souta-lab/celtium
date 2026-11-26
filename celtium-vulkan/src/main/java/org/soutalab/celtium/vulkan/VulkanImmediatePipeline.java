@@ -304,6 +304,16 @@ public final class VulkanImmediatePipeline {
         return this.pipeline;
     }
 
+    /** {@return this pipeline's layout handle} (the batch draw sink binds the records set against it). */
+    public long celtium$pipelineLayout() {
+        return this.pipelineLayout;
+    }
+
+    /** {@return the push-constant block size this family's fragment stage declares}. */
+    public int celtium$pushConstantBytes() {
+        return PUSH_CONSTANT_BYTES;
+    }
+
     /** {@return whether face culling is on}. */
     public boolean celtium$culls() {
         return VulkanCullState.culls(this.cull);

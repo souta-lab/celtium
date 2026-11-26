@@ -396,6 +396,16 @@ public final class VulkanImmediateTexturePipeline {
         return this.texGen;
     }
 
+    /** {@return this pipeline's Vulkan handle, or 0 when it has none} (the batch draw sink binds it directly). */
+    public long celtium$handle() {
+        return this.pipeline;
+    }
+
+    /** {@return this pipeline's layout handle} (the batch draw sink binds descriptor sets against it). */
+    public long celtium$pipelineLayout() {
+        return this.pipelineLayout;
+    }
+
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
     public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {

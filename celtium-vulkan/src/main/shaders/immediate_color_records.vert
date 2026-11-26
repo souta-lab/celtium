@@ -7,7 +7,9 @@
 // Celtium - the record-reading form of immediate_color.vert: the POSITION_COLOR family, which is where the sky's
 // colour batches and the colour-only fills arrive. The same 208-byte block comes from a draw-record storage buffer
 // indexed by gl_InstanceIndex; this family samples nothing, so the records live at set 0 and the layout declares no
-// other set. The array's stride is 224, which is what the trailing pad is for.
+// other set. The array's stride is the draw-record store's 256 bytes (InstanceDataStore.RECORD_BYTES),
+// which is what the trailing pads are for: at the old 224 the second record onward was read 32 bytes
+// early per step, the same stale stride immediate_tex_color_records.vert already pads past.
 struct DrawRecord {
     mat4 u_ProjectionMatrix;   // 0
     vec4 u_MvColumn0;          // 64: dead model-view column
@@ -19,7 +21,9 @@ struct DrawRecord {
     vec4 u_FogRow0;            // 160
     vec4 u_FogRow1;            // 176
     vec4 u_FogRow2;            // 192
-    vec4 u_RecordPad;          // 208: pad to the 224-byte stride
+    vec4 u_RecordPad;          // 208: pad to the store's 256-byte stride
+    vec4 u_RecordPad2;         // 224
+    vec4 u_RecordPad3;         // 240
 };
 
 layout(std430, set = 0, binding = 0) readonly buffer DrawRecords {

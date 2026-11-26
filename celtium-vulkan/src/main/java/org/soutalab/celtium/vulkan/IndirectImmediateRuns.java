@@ -107,6 +107,43 @@ final class IndirectImmediateRuns {
     }
 
     /**
+     * {@return the record-reading twin of a texture pipeline for the batch path (S5-2 drain wiring)}, or null for
+     * the texgen and combine variants, which have no record-reading shader pair.
+     * <p>
+     * Unlike {@link #celtium$recordsPipeline} this does not apply the {@code RECORDS_POSITION_TWINS} refusal to the
+     * position variants: that refusal's measured basis is indirect-run formation (a run key names each group's own
+     * vertex and index buffers, so runs could not span groups), and the batcher is not a run former - it copies
+     * every captured group's vertices into the staging ring, which is the shared-geometry condition the refusal
+     * names as its re-entry condition. The twins are the same objects, from the same cache.
+     */
+    VulkanImmediateTexturePipeline celtium$recordsPipelineForBatch(VulkanImmediateTexturePipeline state) {
+        if (state.celtium$texGen() || state.celtium$combine4()) {
+            return null;
+        }
+        VulkanImmediateTexturePipeline twin = this.recordsPipelines.get(state);
+        if (twin == null) {
+            twin = VulkanImmediateTexturePipeline.createRecordsLike(b.context, state,
+                    b.drawRecords.descriptorSetLayout());
+            this.recordsPipelines.put(state, twin);
+        }
+        return twin;
+    }
+
+    /** {@return the record-reading twin of a colour-family pipeline, created on first use for that exact state}. */
+    VulkanImmediatePipeline celtium$recordsColourPipeline(VulkanImmediatePipeline state) {
+        VulkanImmediatePipeline twin = this.recordsColourPipelines.get(state);
+        if (twin == null) {
+            twin = VulkanImmediatePipeline.createRecords(b.context,
+                    state.celtium$renderPass(), state.celtium$colorBlend(),
+                    state.celtium$depthTests(), state.celtium$depthWrites(),
+                    state.celtium$cullState(), state.celtium$depthCompareOp(),
+                    b.drawRecords.descriptorSetLayout(), state.celtium$colorAttachments());
+            this.recordsColourPipelines.put(state, twin);
+        }
+        return twin;
+    }
+
+    /**
      * {@return whether this group was turned into indirect work}.
      * <p>
      * The geometry stays where it is: a record is a copy of the push block the group would have pushed, and the command
@@ -143,14 +180,7 @@ final class IndirectImmediateRuns {
             return false;
         }
         if (colourFamily) {
-            VulkanImmediatePipeline colourState = (VulkanImmediatePipeline) prepared.pipeline;
-            if (this.recordsColourPipelines.get(colourState) == null) {
-                this.recordsColourPipelines.put(colourState, VulkanImmediatePipeline.createRecords(b.context,
-                        colourState.celtium$renderPass(), colourState.celtium$colorBlend(),
-                        colourState.celtium$depthTests(), colourState.celtium$depthWrites(),
-                        colourState.celtium$cullState(), colourState.celtium$depthCompareOp(),
-                        b.drawRecords.descriptorSetLayout(), colourState.celtium$colorAttachments()));
-            }
+            celtium$recordsColourPipeline((VulkanImmediatePipeline) prepared.pipeline);
         }
         // Blended groups are eligible as well: the opaque ordering only moves the opaque ones, so a blended group keeps its
         // arrival position, and the commands of a run are issued in the order they were recorded. A run therefore never
