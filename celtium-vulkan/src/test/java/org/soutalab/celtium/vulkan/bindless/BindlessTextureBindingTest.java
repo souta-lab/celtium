@@ -76,6 +76,45 @@ class BindlessTextureBindingTest {
     }
 
     @Test
+    void registrationWithTheImageNamedWritesTheSameSlotAsWithout() {
+        Writes writes = new Writes();
+        BindlessTextureBinding binding = binding(writes, new AtomicLong(0L));
+        // The four-argument form the registry uses (it names the image behind the view for
+        // the slot dump instrument) must behave exactly like the three-argument form:
+        // same handle, same slot, same descriptor write.
+        int handle = binding.onTextureRegistered(7, 111L, 222L, 999L);
+        assertEquals(0, binding.slotOf(handle));
+        assertEquals(handle, binding.handleOf(7));
+        assertEquals(1, writes.calls.size());
+        assertEquals(0L, writes.calls.get(0)[0]);
+        assertEquals(111L, writes.calls.get(0)[1]);
+        assertEquals(222L, writes.calls.get(0)[2]);
+        int again = binding.onTextureRegistered(7, 333L, 444L, 1000L);
+        assertEquals(handle, again);
+        assertEquals(2, writes.calls.size());
+        assertEquals(333L, writes.calls.get(1)[1]);
+        assertEquals(444L, writes.calls.get(1)[2]);
+    }
+
+    @Test
+    void slotDumpBookkeepingStaysEmptyWhileTheInstrumentIsDisabled() {
+        // The test JVM never sets -Dceltium.debug.bindlessSlotDump, so the instrument is
+        // disabled here: registrations must leave no bookkeeping behind, which is what
+        // keeps the production path exactly as it was before the instrument existed.
+        Writes writes = new Writes();
+        BindlessTextureBinding binding = binding(writes, new AtomicLong(0L));
+        int handle = binding.onTextureRegistered(7, 111L, 222L, 999L);
+        int slot = binding.slotOf(handle);
+        assertEquals(0L, binding.writtenImageAt(slot));
+        assertEquals(0L, binding.writtenViewAt(slot));
+        assertEquals(0L, binding.writtenSamplerAt(slot));
+        assertEquals(-1, binding.writtenGlIdAt(slot));
+        assertEquals(0, binding.slotJournal().size());
+        binding.onTextureReleased(7);
+        assertEquals(0, binding.slotJournal().size());
+    }
+
+    @Test
     void aFullTableRefusesAndCountsTheOverflow() {
         Writes writes = new Writes();
         BindlessTextureBinding binding = binding(writes, new AtomicLong(0L));
