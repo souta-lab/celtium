@@ -11,12 +11,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * R-55, Step A/B: the upload branch predicate and its wiring. The legacy
- * upload is skipped exactly when Tier-A took the section (accepted or
- * deferred) and its pass is not tainted; everything else keeps the legacy
- * upload. The predicate is pure, so its truth table is exercised directly;
- * the device-bound sites that consume it (the pass head's arm suppression,
- * prepareFrame's report relay) are pinned as source contracts.
+ * R-55, Step A/B (predicate narrowed by the terrain regression fix,
+ * 2026-11-26): the upload branch predicate and its wiring. The legacy upload
+ * is skipped exactly when the section's geometry is already resident in the
+ * Tier-A store (accepted) and its pass is not tainted; a deferred section is
+ * not resident yet and keeps its legacy upload, and so do rejected sections
+ * and every section of a tainted pass. The predicate is pure, so its truth
+ * table is exercised directly; the device-bound sites that consume it (the
+ * pass head's arm suppression, prepareFrame's report relay) are pinned as
+ * source contracts.
  */
 class TierAUploadBranchTest {
 
@@ -27,10 +30,10 @@ class TierAUploadBranchTest {
     }
 
     @Test
-    void aDeferredSectionOfACleanPassSkipsTheLegacyUpload() {
-        assertTrue(TerrainRenderer.tierAUploadSkipsLegacy(
+    void aDeferredSectionKeepsTheLegacyUploadUntilItIsResident() {
+        assertFalse(TerrainRenderer.tierAUploadSkipsLegacy(
                 TerrainEngineA.RegisterOutcome.DEFERRED, false),
-                "a deferred section is Tier-A's: it becomes resident through the deferred queue");
+                "a deferred section is not in the store yet: skipping its legacy upload leaves it drawn by neither route until prepareFrame admits it");
     }
 
     @Test

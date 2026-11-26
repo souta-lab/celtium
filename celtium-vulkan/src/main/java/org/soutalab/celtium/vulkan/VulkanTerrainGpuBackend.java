@@ -1688,8 +1688,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$preflushIfDeferred();
             return;
         }
-        if (!renderLists.hasPass(pass)) {
-            // No geometry for this pass; nothing is opened, nothing has to be closed. The pre-terrain groups stay
+        if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass)) {
+            // No geometry for this pass on either route; nothing is opened, nothing has to be closed. The pre-terrain groups stay
             // queued (the deferred drain, adopted by the A/B: legs r11ab-on-amd / r11ab-off-amd, same jar - the
             // same-tick presented pictures differ by 0.1 mean abs diff / 0.07 % of pixels over 24 levels, and the
             // world-entry blocks' terrainPreflush falls from 125 us to under 10 us). The flush exists to put them
@@ -1703,6 +1703,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // target routing, the sampling-side transitions and a submit - for the sky, the void plane and the
             // sun. In the settled warm window the pass has geometry, so this branch is not taken and the flush
             // stays in-pass.
+            //
+            // The Tier-A half of the condition (terrain regression fix, 2026-11-26): hasPass reads the legacy
+            // route's presence - the regions' storage sets - so a pass whose sections all live in the Tier-A
+            // store reports hasPass=false while it still has terrain to draw. Tier-A's only per-frame driver is
+            // the pass head inside this entry (it also drains the deferred queue and rolls the upload budget),
+            // so returning here on legacy presence alone locked the executor out permanently: the R-55 upload
+            // skip emptied the legacy route, the gate closed, and no frame ever prepared (measured: terrain
+            // passes entered 0 times, the presented frames sky-only). The world-entry regime above is
+            // unaffected: no executor exists for the pass until the first registration, so the Tier-A test is
+            // false there and the early return stands.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
@@ -19647,6 +19657,28 @@ this.frameBufferOpen = false;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=passHead reason=" + error);
             return false;
         }
+    }
+
+    /**
+     * Whether the Tier-A executor already serving {@code pass} still has live
+     * work — resident records or deferred registrations awaiting admission.
+     * The pass entry's legacy-presence gate consults this so a pass held
+     * entirely by Tier-A is not refused entry (see the gate in
+     * {@code celtium$renderPass}). The stride test mirrors the pass head's:
+     * a non-16-byte pass is never the vanilla executor's, whatever its host
+     * state says. A peek only — no engine is created here.
+     */
+    private boolean celtium$tierAHasLiveWork(TerrainRenderPass pass) {
+        if (this.terrainAFailed) {
+            return false;
+        }
+        if (pass.vertexType() != null
+                && pass.vertexType().getVertexFormat().getStride()
+                        != org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
+            return false;
+        }
+        TerrainEngineAHost host = this.terrain.terrainAHost();
+        return host != null && host.hasLiveWork(pass);
     }
 
     /**

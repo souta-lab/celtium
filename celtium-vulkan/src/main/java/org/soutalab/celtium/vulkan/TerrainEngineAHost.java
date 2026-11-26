@@ -167,6 +167,18 @@ final class TerrainEngineAHost {
     }
 
     /**
+     * Whether an executor already exists for {@code pass} and still has live
+     * work (resident records or a pending deferred queue). A peek only: the
+     * terrain pass entry asks this before deciding the pass has nothing to
+     * draw, and creating an engine there would manufacture the very presence
+     * being tested.
+     */
+    boolean hasLiveWork(TerrainRenderPass pass) {
+        TerrainEngineA engine = this.engines.get(pass);
+        return engine != null && engine.hasLiveWork();
+    }
+
+    /**
      * The one geometry slab allocator shared by every pass' executor, created
      * lazily from the first slab buffer's own memory-type choice. Every pass'
      * slab buffers carry the same usage over the shared store's slab size, so

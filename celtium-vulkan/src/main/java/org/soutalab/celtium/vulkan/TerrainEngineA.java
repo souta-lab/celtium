@@ -132,6 +132,18 @@ final class TerrainEngineA {
     }
 
     /**
+     * Whether this executor still has work a frame could draw or admit:
+     * resident records in the store, or deferred registrations waiting for
+     * {@link #prepareFrame} to admit them. The terrain pass entry consults
+     * this through the host: a pass whose sections all live on this route has
+     * no legacy storage, so the legacy presence test cannot see it, yet its
+     * only driver (the pass head) sits inside that entry.
+     */
+    boolean hasLiveWork() {
+        return !this.disabled && (this.store.recordCount() > 0 || !this.deferred.isEmpty());
+    }
+
+    /**
      * The completion value slab releases are stamped with: the context's slab
      * release value ({@link VulkanContext#celtium$slabReleaseValue()}), which
      * on a timeline device is the frame timeline's last allocated value, so
@@ -163,9 +175,10 @@ final class TerrainEngineA {
      * upload queue ({@link #DEFERRED}), or did not take it at all
      * ({@link #REJECTED} — ineligible, an arena exhausted, or the executor
      * disabled). The renderer's upload branch stands on this classification:
-     * accepted and deferred sections are Tier-A's, so their legacy upload is
-     * skipped; a rejected section stays on the legacy route alone and taints
-     * its pass (Step B).
+     * only an accepted section's legacy upload is skipped, because its
+     * geometry is already resident in the store; a deferred section is not
+     * resident yet and a rejected section never will be, so both keep their
+     * legacy upload, and a rejected section also taints its pass (Step B).
      */
     enum RegisterOutcome {
         ACCEPTED,

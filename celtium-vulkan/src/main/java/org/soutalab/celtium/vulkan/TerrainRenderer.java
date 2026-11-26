@@ -1858,15 +1858,21 @@ public final class TerrainRenderer {
     }
 
     /**
-     * The upload branch predicate (R-55, Step A/B): the legacy upload is
-     * skipped exactly when Tier-A took the section — accepted now or deferred
-     * into its upload queue — and its pass is not tainted. A rejected section
-     * keeps its legacy upload, and so does every section of a tainted pass:
-     * while any section of the pass is legacy-only the pass draws from the
-     * legacy route, so all of its sections must be present there.
+     * The upload branch predicate (R-55, Step A/B; narrowed by the terrain
+     * regression fix, 2026-11-26): the legacy upload is skipped exactly when
+     * the section's geometry is already resident in the Tier-A store — an
+     * ACCEPTED registration uploaded it synchronously — and its pass is not
+     * tainted. A deferred section is not resident yet, so it keeps its legacy
+     * upload: until {@code prepareFrame} admits it, neither route would draw
+     * it on a pass Tier-A does not arm, and the legacy copy is also what keeps
+     * the pass present on the legacy route while admission is pending. A
+     * rejected section keeps its legacy upload, and so does every section of
+     * a tainted pass: while any section of the pass is legacy-only the pass
+     * draws from the legacy route, so all of its sections must be present
+     * there.
      */
     static boolean tierAUploadSkipsLegacy(TerrainEngineA.RegisterOutcome outcome, boolean passTainted) {
-        return outcome != TerrainEngineA.RegisterOutcome.REJECTED && !passTainted;
+        return outcome == TerrainEngineA.RegisterOutcome.ACCEPTED && !passTainted;
     }
 
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
