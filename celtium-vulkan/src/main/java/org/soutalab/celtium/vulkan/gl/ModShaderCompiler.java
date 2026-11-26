@@ -78,12 +78,22 @@ public final class ModShaderCompiler {
     }
 
     /**
+     * {@return the SPIR-V words of one stage}, served from the {@link SpirvDiskCache} when a
+     * previous run already compiled this exact stage: a cache hit needs no shaderc at all, so it
+     * also succeeds on a run where the binding is absent. On a miss this compiles with shaderc
+     * (see {@link #compileWithShaderc}) and stores the result for the next run.
+     */
+    public static byte[] compile(String source, boolean vertex) {
+        return SpirvDiskCache.loadOrCompile(source, vertex, () -> compileWithShaderc(source, vertex));
+    }
+
+    /**
      * {@return the SPIR-V words of one stage}; throws with shaderc's message when the stage does not compile, and
      * throws when the stage does not compile <em>in time</em> - the caller ({@code ModProgramRegistry}) already
      * turns any {@code RuntimeException} from here into a refused program, so a stuck compile now fails the one
      * program instead of the whole frame loop.
      */
-    public static byte[] compile(String source, boolean vertex) {
+    private static byte[] compileWithShaderc(String source, boolean vertex) {
         if (!available()) {
             throw new IllegalStateException("shaderc unavailable: " + unavailableReason());
         }
@@ -142,7 +152,8 @@ public final class ModShaderCompiler {
     /** {@return the timeout and concurrency refusals so far}, in the census style of the stub's summaries. */
     public static String compileRefusalSummary() {
         return "shadercTimeouts=" + COMPILE_TIMEOUTS.get()
-                + " shadercConcurrencyRefusals=" + COMPILE_CONCURRENCY_REFUSALS.get();
+                + " shadercConcurrencyRefusals=" + COMPILE_CONCURRENCY_REFUSALS.get()
+                + " " + SpirvDiskCache.summary();
     }
 
     /** The only class that names the binding; loaded after {@link #available()} succeeded. */
