@@ -2563,6 +2563,10 @@ public final class VulkanContext {
                 allocator.delete();
             }
             this.deviceLocalImageSlabsByType.clear();
+            for (SlabAllocator allocator : this.frameTargetImageSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.frameTargetImageSlabsByType.clear();
             // Stage 2's device children die with the drains above complete and before the device itself:
             // the ring's buffers first (they are ordinary allocations), then the timeline semaphore.
             // The timeline dies last of the three groups because slab collection reads the completed
@@ -4752,6 +4756,20 @@ public final class VulkanContext {
     private final java.util.Map<Integer, SlabAllocator> deviceLocalImageSlabsByType =
             new java.util.HashMap<Integer, SlabAllocator>();
     /**
+     * The device-local slab pools the GL-less frame target's <em>chain pair</em> images and shared depth
+     * images allocate from (prescription (f)). That population is driven by a shader pack's framebuffer
+     * identities and no count bounds it - a pair is held per identity until the pack's owner deletes the
+     * framebuffer - so it is kept apart from {@link #deviceLocalImageSlabsByType}: its growth cannot
+     * refuse the shared image pool's bounded tenants (the frame's own images, the default pair, the
+     * mirrored textures), and a refusal names this pool, so the holding is attributable on sight. One
+     * pool per memory type, created lazily. The ordinary cap of 24 slabs (1.5 GiB) is a ceiling, not a
+     * reservation - slabs only grow under demand - and reaching it is an escalation, not a number to
+     * chase: it is the exhaustion detector for a population whose total demand is only measurable by a
+     * completed pack build.
+     */
+    private final java.util.Map<Integer, SlabAllocator> frameTargetImageSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /**
      * One slab-backed buffer handed to the deferred list by {@link #celtium$retireSlabBuffer}: the handle to
      * destroy, the sub-allocation to hand back, and the submission sequence current when it retired. The
      * sequence is the destruction gate the gated drain ({@link #celtium$drainRetiredSlabBuffers()}) reads:
@@ -5024,6 +5042,28 @@ public final class VulkanContext {
     }
 
     /**
+     * {@return the frame-target image slab pool serving images whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. The dedicated pool of prescription (f): only the
+     * GL-less frame target's chain-pair and shared-depth images allocate here (see {@link GllessFrameTarget});
+     * every other image stays in {@link #celtium$deviceLocalImageSlabs}, whose bounded tenants this
+     * population must not be able to starve. Ordinary slabs are capped at 24 per type, so the live
+     * {@code vkAllocateMemory} count for the chain-pair population is bounded by the cap (plus one
+     * dedicated slab per live oversized image) - the cap is the exhaustion detector, and reaching it
+     * escalates rather than degrading silently.
+     */
+    public SlabAllocator celtium$frameTargetImageSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the frame-target image slab pool");
+        SlabAllocator allocator = this.frameTargetImageSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "frameTargetImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 24,
+                    false);
+            this.frameTargetImageSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
      * {@return per-pool live bytes for every slab pool, for the memory allocation summary}. The r7 Phase 1 leg
      * died with a host pool at 512 MiB live (8 of 8 slabs, 135,168 bytes free) and the summary could only report
      * the process-wide total, so nothing said which pool - host-visible staging, device-local buffers or images -
@@ -5039,7 +5079,8 @@ public final class VulkanContext {
         boolean first = true;
         first = appendSlabPoolSummary(summary, "deviceLocal", this.deviceLocalSlabsByType, first);
         first = appendSlabPoolSummary(summary, "hostVisible", this.hostVisibleSlabsByType, first);
-        appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        first = appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        appendSlabPoolSummary(summary, "frameTargetImage", this.frameTargetImageSlabsByType, first);
         return summary.append(']').toString();
     }
 
@@ -5111,7 +5152,7 @@ public final class VulkanContext {
      */
     public void celtium$collectSlabReleases() {
         if (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty()
-                && this.deviceLocalImageSlabsByType.isEmpty()) {
+                && this.deviceLocalImageSlabsByType.isEmpty() && this.frameTargetImageSlabsByType.isEmpty()) {
             return;
         }
         long completed = celtium$slabCompletedValue();
@@ -5122,6 +5163,9 @@ public final class VulkanContext {
             allocator.collectCompleted(completed);
         }
         for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.frameTargetImageSlabsByType.values()) {
             allocator.collectCompleted(completed);
         }
     }

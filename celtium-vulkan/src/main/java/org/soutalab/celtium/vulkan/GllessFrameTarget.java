@@ -305,7 +305,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         // the default pair is identity 0's pair, and identity 0 is pinned to the frame.
         this.frameFormatClass = context.celtium$frameFormatClass();
         this.colorFormat = this.frameFormatClass.vkFormat();
-        this.defaultPair = new Pair("default");
+        this.defaultPair = new Pair("default", false);
         context.celtium$noteFrameColorFormat(this.colorFormat);
     }
 
@@ -318,11 +318,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // The frame's own colour is the frame's class (QUEUE 404 rule R1, revised by Stage 1's BGRA
             // ignition): the image the finished frame is composed into and presented from follows the
             // surface's format, whatever a mod's own framebuffer asked for.
-            AllocatedImage color = target.allocateImage(true, width, height, target.frameFormatClass);
+            AllocatedImage color = target.allocateImage(true, width, height, target.frameFormatClass, false);
             target.colorImage = color.image;
             target.colorAllocation = color.allocation;
             target.colorView = color.view;
-            AllocatedImage depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
+            AllocatedImage depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM,
+                    false);
             target.depthImage = depth.image;
             target.depthAllocation = depth.allocation;
             target.depthView = depth.view;
@@ -354,17 +355,21 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * default pair, the resolved class for a chain pair (QUEUE 404) - and is ignored for depth, whose format
      * {@link VulkanDepthFormat} chooses.
      * <p>
-     * The backing memory is a sub-allocation of the context's device-local image slab pool, as the mirrored
-     * textures' is (R-54): there is no dedicated {@code vkAllocateMemory} per frame-target image, so the
-     * allocation census counts slabs rather than images, and a pool refusal surfaces as the allocator's own
-     * exception - there is no dedicated-allocation fallback behind it. The usage is deliberately not
+     * The backing memory is a slab sub-allocation (R-54): there is no dedicated {@code vkAllocateMemory}
+     * per frame-target image, so the allocation census counts slabs rather than images, and a pool refusal
+     * surfaces as the allocator's own exception - there is no dedicated-allocation fallback behind it.
+     * Which of the context's two image pools serves the allocation is the caller's {@code frameTargetPool}
+     * argument (prescription (f)): chain-pair and shared-depth images - the population a shader pack's
+     * framebuffer identities drive, unbounded by any count - go to the dedicated frame-target image pool,
+     * so their growth cannot refuse the frame's own images or the default pair, which stay in the
+     * device-local image slab pool with the mirrored textures. The usage is deliberately not
      * transient-attachment: every image here is sampled and copied after it is drawn, which that flag forbids.
      * <p>
      * A failure after the image or the allocation exists releases what was created here before it propagates, so the
      * caller only ever adopts complete handles and {@link #delete()} never has to know about a half-created image.
      */
     private AllocatedImage allocateImage(boolean color, int imageWidth, int imageHeight,
-            TargetFormatClass colorClass) {
+            TargetFormatClass colorClass, boolean frameTargetPool) {
         VkDevice device = this.context.device();
         long image = VK_NULL_HANDLE;
         SlabAllocator.SlabAllocation allocation = null;
@@ -401,7 +406,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // The pool picks the memory type from the requirements bits, and the bind goes through the
             // allocator, so the slab offset arithmetic lives in exactly one place (the mirrored textures'
             // shape). The ownership record is the allocation, which the destroy paths hand back to the pool.
-            SlabAllocator imageAllocator = this.context.celtium$deviceLocalImageSlabs(requirements.memoryTypeBits());
+            SlabAllocator imageAllocator = frameTargetPool
+                    ? this.context.celtium$frameTargetImageSlabs(requirements.memoryTypeBits())
+                    : this.context.celtium$deviceLocalImageSlabs(requirements.memoryTypeBits());
             allocation = imageAllocator.allocate(requirements.size(), requirements.alignment());
             imageAllocator.bindImage(image, allocation);
             if (VulkanAllocationFault.shouldFail("GllessFrameTarget:afterBind")) {
@@ -1563,7 +1570,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (pair != null) {
             return pair;
         }
-        Pair created = new Pair("chain-" + Long.toHexString(identity));
+        Pair created = new Pair("chain-" + Long.toHexString(identity), true);
         this.chainPairs.put(identity, created);
         return created;
     }
@@ -1723,7 +1730,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.sharedDepths.remove(depthKey);
             retirePairsBorrowing(depthKey);
         }
-        AllocatedImage allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
+        AllocatedImage allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM, true);
         SharedDepth created = new SharedDepth();
         created.image = allocated.image;
         created.allocation = allocated.allocation;
@@ -2777,6 +2784,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
         /** How this pair is named in every counter that describes it. */
         private final String label;
+        /**
+         * Whether this pair's images allocate from the context's dedicated frame-target image pool
+         * (prescription (f)). Chain pairs do: their population is identity-driven and unbounded, so it
+         * is isolated in its own pool. The default pair does not - it is pinned to the frame and bounded
+         * (its extras are slot-capped), so chain growth can never refuse it.
+         */
+        private final boolean dedicatedPool;
         private long colorImage;
         private SlabAllocator.SlabAllocation colorAllocation;
         private long colorView;
@@ -2829,8 +2843,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private int clears;
         private int selfTests;
 
-        private Pair(String label) {
+        private Pair(String label, boolean dedicatedPool) {
             this.label = label;
+            this.dedicatedPool = dedicatedPool;
             this.formatClass = GllessFrameTarget.this.frameFormatClass;
         }
 
@@ -2975,7 +2990,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 for (int i = 0; i < extras; i++) {
                     // The tuple's images are the pair's own class (rule R4): one class per tuple, because the
                     // render pass declares one format for every colour attachment.
-                    AllocatedImage allocated = allocateImage(true, this.width, this.height, this.formatClass);
+                    AllocatedImage allocated = allocateImage(true, this.width, this.height, this.formatClass,
+                            this.dedicatedPool);
                     images[i] = allocated.image;
                     allocations[i] = allocated.allocation;
                     views[i] = allocated.view;
@@ -3210,7 +3226,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
             retire();
             try {
-                AllocatedImage color = allocateImage(true, requestedWidth, requestedHeight, wantedClass);
+                AllocatedImage color = allocateImage(true, requestedWidth, requestedHeight, wantedClass,
+                        this.dedicatedPool);
                 this.colorImage = color.image;
                 this.colorAllocation = color.allocation;
                 this.colorView = color.view;
@@ -3220,7 +3237,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     this.depthView = sharedDepth.view;
                 } else {
                     AllocatedImage depth = allocateImage(false, requestedWidth, requestedHeight,
-                            TargetFormatClass.RGBA8_UNORM);
+                            TargetFormatClass.RGBA8_UNORM, this.dedicatedPool);
                     this.depthImage = depth.image;
                     this.depthAllocation = depth.allocation;
                     this.depthView = depth.view;
