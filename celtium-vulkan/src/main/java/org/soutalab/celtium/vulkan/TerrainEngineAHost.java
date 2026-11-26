@@ -115,6 +115,17 @@ final class TerrainEngineAHost {
      */
     private boolean worldTornDown;
     private VulkanContext context;
+    /**
+     * The device geometry pool's own slab dimensions, decoupled from the logical
+     * terrain slab size (BO convergence landing A, 2026-11-27): the pool keeps the
+     * dimensions it had while the two sizes were linked (64 MiB slabs, at most 8),
+     * so a logical slab buffer - 16 MiB since the logical resize - is an ordinary
+     * sub-allocation of a pool slab and several buffers share one slab. Linking the
+     * pool size to the logical size again would make the pool's live slab count
+     * equal the logical slab count and hand the buffer-object count back.
+     */
+    static final long GEOMETRY_POOL_SLAB_BYTES = 64L * 1024 * 1024;
+    static final int GEOMETRY_POOL_MAX_SLABS = 8;
     private SlabAllocator geometrySlabAllocator;
     /**
      * The geometry slabs' {@code VkBuffer}s, one per logical slab for every
@@ -306,14 +317,17 @@ final class TerrainEngineAHost {
     /**
      * The one geometry slab allocator shared by every pass' executor, created
      * lazily from the first slab buffer's own memory-type choice. Every pass'
-     * slab buffers carry the same usage over the shared store's slab size, so
-     * the first buffer's memory type is every buffer's; a later call's
-     * arguments are the same values by construction and are not re-read.
+     * slab buffers carry the same usage, so the first buffer's memory type is
+     * every buffer's and a later call's argument is not re-read. The pool's slab
+     * dimensions are its own ({@link #GEOMETRY_POOL_SLAB_BYTES} /
+     * {@link #GEOMETRY_POOL_MAX_SLABS}), never the logical slab size: the
+     * buffers' own size is the logical one, read at their creation seat in
+     * {@link #geometrySlabBuffer}.
      */
-    SlabAllocator geometrySlabAllocator(VulkanContext context, int memoryType, long slabBytes) {
+    SlabAllocator geometrySlabAllocator(VulkanContext context, int memoryType) {
         if (this.geometrySlabAllocator == null) {
             this.geometrySlabAllocator = new SlabAllocator(context, "terrainGeometry", memoryType,
-                    slabBytes, org.soutalab.celtium.vulkan.terrain.TerrainSlabAllocator.DEFAULT_MAX_SLABS, true);
+                    GEOMETRY_POOL_SLAB_BYTES, GEOMETRY_POOL_MAX_SLABS, true);
         }
         return this.geometrySlabAllocator;
     }
@@ -360,7 +374,10 @@ final class TerrainEngineAHost {
      * buffer count stands against the logical count - since T3 slice S4 one device buffer serves every
      * pass per logical slab, so the two counts are the two sides of the cross-pass sharing lever's
      * effect formula. The device allocator is created lazily with the first slab buffer, so before
-     * that the device side reads as zero against the ledger's own numbers.
+     * that the device side reads as zero against the ledger's own numbers. The two slab counts are
+     * counts of different-sized slabs since BO convergence landing A: the device side counts the
+     * pool's 64 MiB slabs ({@link #GEOMETRY_POOL_SLAB_BYTES}), the logical side the store's 16 MiB
+     * slabs, and several logical slabs' buffers share one device slab.
      */
     String terrainSlabSummary() {
         SlabAllocator allocator = this.geometrySlabAllocator;
@@ -873,14 +890,14 @@ final class TerrainEngineAHost {
                 // The allocator is the host's, shared by every pass: the memory
                 // type is read from this buffer's own requirement bits, and the
                 // host keeps the first buffer's choice for all of them (every
-                // pass' slab buffers carry the same usage over the same slab
-                // size, so the choice cannot differ between passes).
+                // pass' slab buffers carry the same usage, so the choice cannot
+                // differ between passes). The pool's slab dimensions are the
+                // pool's own, not this buffer's logical size.
                 int memoryType = context.memoryTypeIndex(
                         requirements.memoryTypeBits(),
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                         "a host-visible terrain slab of " + sizeBytes + " bytes");
-                SlabAllocator allocator = geometrySlabAllocator(
-                        context, memoryType, store.geometryAllocator().slabBytes());
+                SlabAllocator allocator = geometrySlabAllocator(context, memoryType);
                 try {
                     createdAllocation = allocator.allocate(
                             requirements.size(), requirements.alignment());

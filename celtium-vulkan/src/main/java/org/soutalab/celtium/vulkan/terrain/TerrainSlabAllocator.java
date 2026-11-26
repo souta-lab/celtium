@@ -6,7 +6,7 @@ import java.util.TreeMap;
 
 /**
  * The fixed-slab page allocator of the new architecture (design section 2.3): geometry
- * lives in a small number of fixed-size slabs (64 MiB by default), sub-allocated in
+ * lives in a small number of fixed-size slabs (16 MiB by default), sub-allocated in
  * 4 KiB pages from a free list. A full slab never grows and is never copied — a new slab
  * is added instead — so the flight-time grow-and-copy spike of the legacy arena cannot
  * occur. Freed pages are returned against a timeline value and only re-enter the free
@@ -17,8 +17,8 @@ import java.util.TreeMap;
  * ({@link Allocation#slabId}, {@link Allocation#byteOffset}).
  */
 public final class TerrainSlabAllocator {
-    public static final long DEFAULT_SLAB_BYTES = 64L * 1024 * 1024;
-    public static final int DEFAULT_MAX_SLABS = 8;
+    public static final long DEFAULT_SLAB_BYTES = 16L * 1024 * 1024;
+    public static final int DEFAULT_MAX_SLABS = 32;
     public static final int PAGE_BYTES = 4096;
 
     private final long slabBytes;

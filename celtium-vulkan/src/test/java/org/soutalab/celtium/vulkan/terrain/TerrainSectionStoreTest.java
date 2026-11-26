@@ -228,8 +228,8 @@ class TerrainSectionStoreTest {
         assertNotNull(wide);
         assertNotNull(narrow);
         assertEquals(TerrainSectionStore.PACK_SLAB_BASE, wide.desc.slabId);
-        assertEquals(TerrainSectionStore.PACK_SLAB_BASE + 8, narrow.desc.slabId);
-        assertEquals(28, store.packArenaOfSlab(TerrainSectionStore.PACK_SLAB_BASE + 8).stride);
+        assertEquals(TerrainSectionStore.PACK_SLAB_BASE + 32, narrow.desc.slabId);
+        assertEquals(28, store.packArenaOfSlab(TerrainSectionStore.PACK_SLAB_BASE + 32).stride);
     }
 
     @Test
