@@ -5,6 +5,7 @@ import net.minecraft.block.BlockLeaves;
 import net.minecraft.block.BlockPlanks;
 import net.minecraft.block.material.Material;
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.math.BlockPos;
@@ -14,7 +15,9 @@ import net.minecraft.world.biome.Biome;
 import org.embeddedt.embeddium.impl.gui.SodiumGameOptions.LeafCullingMode;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -52,6 +55,16 @@ class LeafCullingTest {
         @Override
         public boolean isSideSolid(IBlockState state, IBlockAccess world, BlockPos pos, EnumFacing side) {
             return false;
+        }
+
+        @Override
+        public boolean isShearable(ItemStack item, IBlockAccess world, BlockPos pos) {
+            return false;
+        }
+
+        @Override
+        public List<ItemStack> onSheared(ItemStack item, IBlockAccess world, BlockPos pos, int fortune) {
+            return Collections.emptyList();
         }
     }
 
@@ -97,6 +110,11 @@ class LeafCullingTest {
         @Override
         public boolean isAirBlock(BlockPos pos) {
             return this.getBlockState(pos) == AIR;
+        }
+
+        @Override
+        public boolean isSideSolid(BlockPos pos, EnumFacing side, boolean _default) {
+            return this.getBlockState(pos).isSideSolid(this, pos, side);
         }
 
         @Override
