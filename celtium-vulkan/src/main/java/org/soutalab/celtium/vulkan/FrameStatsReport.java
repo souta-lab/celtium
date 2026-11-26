@@ -255,11 +255,6 @@ final class FrameStatsReport {
                 + " framesNoClear=" + b.framesWithNoClearAtAll
                 + " drawn[perFrame=" + b.celtium$drawnGroupsPerFrame() + "]"
                 + " modelMerge[draws=" + b.modelRunsDrawn + " merged=" + b.modelRunsMerged + "]"
-                + " runFlush" + b.indirectRuns.indirectFlushReasons
-                + " refuse" + b.indirectRuns.indirectRefusalCounts
-                + " indirect[runs=" + b.indirectRuns.indirectRunsIssued + " singletons=" + b.indirectRuns.indirectSingletonRuns
-                + " groups=" + b.indirectRuns.indirectGroupsIssued
-                + " runsPerFrameX100=" + b.celtium$indirectRunsPerFrameX100() + "]"
                 // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
                 // if the second number falls, and a zero on the first says the predicate never fired.
                 + " preTransform[groups=" + (b.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)

@@ -774,7 +774,6 @@ final class ModelReplay {
         if (b.openModelRunGroup == group) {
             b.openModelRunGroup = null;
         }
-        b.indirectRuns.celtium$flushIndirectRun();
         try (MemoryStack groupStack = MemoryStack.stackPush()) {
             // The pass' own render area, which a routed terrain pass (item 332) takes from the pair it attaches.
             b.celtium$setGroupViewport(groupStack, group, b.passAreaWidth, b.passAreaHeight);

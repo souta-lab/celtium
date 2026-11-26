@@ -280,12 +280,24 @@ final class ImmediateRecordsPipelines {
         return total;
     }
 
+    /** {@return the block pipelines' summed descriptor-set count, for the backend's descriptor census}. */
+    long celtium$blockSetsCreated() {
+        long total = 0;
+        for (VulkanImmediateBlockRecordsPipeline twin : this.blockPipelines.values()) {
+            total += twin.setsCreated;
+        }
+        return total;
+    }
+
     /**
      * Deletes every cached pipeline of every family and empties the caches: the release the
      * backend's two teardown sites run, in place of the per-family cache walks they used to do
      * (and of the twin-map walks over the previous host's identity maps).
+     *
+     * @return how many pipelines were deleted, for the teardown sites' release count
      */
-    void celtium$releaseAll() {
+    int celtium$releaseAll() {
+        int released = 0;
         for (ConcurrentHashMap<Long, VulkanImmediateTextureRecordsPipeline> cache
                 : java.util.List.of(this.texturePipelines, this.positionTexPipelines,
                         this.positionOnlyPipelines, this.positionTexColorNormalPipelines,
@@ -293,24 +305,30 @@ final class ImmediateRecordsPipelines {
                         this.texGenPipelines, this.combine4Pipelines)) {
             for (VulkanImmediateTextureRecordsPipeline pipeline : cache.values()) {
                 pipeline.delete();
+                released++;
             }
             cache.clear();
         }
         for (VulkanImmediateColourRecordsPipeline pipeline : this.colourPipelines.values()) {
             pipeline.delete();
+            released++;
         }
         this.colourPipelines.clear();
         for (VulkanImmediateItemRecordsPipeline pipeline : this.itemPipelines.values()) {
             pipeline.delete();
+            released++;
         }
         this.itemPipelines.clear();
         for (VulkanImmediateBlockRecordsPipeline pipeline : this.blockPipelines.values()) {
             pipeline.delete();
+            released++;
         }
         this.blockPipelines.clear();
         for (VulkanImmediateParticleRecordsPipeline pipeline : this.particlePipelines.values()) {
             pipeline.delete();
+            released++;
         }
         this.particlePipelines.clear();
+        return released;
     }
 }
