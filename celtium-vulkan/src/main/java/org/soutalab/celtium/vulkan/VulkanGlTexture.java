@@ -1964,6 +1964,12 @@ public final class VulkanGlTexture {
     public boolean uploadPatchedLevels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer[] levels,
             int suppliedLevels, int glTextureId) {
         requireOwned("a patch upload");
+        // A patch writes into levels a queued shared-service upload may still be heading for:
+        // the patch must land after the upload it patches, so the queue drains first - the same
+        // discipline the deferred patch batch keeps against whole writes, one level up.
+        if (context.celtium$textureUploadServiceOrNull() != null) {
+            context.celtium$drainTextureUploads();
+        }
         if (levels == null || suppliedLevels <= 0 || levels.length < suppliedLevels) {
             throw new IllegalArgumentException("A patch upload of " + pixelWidth + "x" + pixelHeight + " at " + x + ","
                     + y + " declares " + suppliedLevels + " supplied mip level(s) but carries "
@@ -3281,6 +3287,13 @@ public final class VulkanGlTexture {
      * here - not after the new image has been created - keeps that window closed even when the creation itself fails.
      */
     private void destroyImageResources() {
+        // The shared upload service's queue names live image handles: a request still queued
+        // here would be recorded later against the image this method is about to retire. Drain
+        // it first (a no-op when nothing is queued), the same seat the patch batch's submit
+        // occupies in delete().
+        if (context.celtium$textureUploadServiceOrNull() != null) {
+            context.celtium$drainTextureUploads();
+        }
         if (!this.ownsImage) {
             // A foreign image and its view belong to whoever published them. Only the wrapper's references go.
             view = 0L;
@@ -4014,12 +4027,15 @@ public final class VulkanGlTexture {
         long bytes = requiredUploadBytes("a level-" + level + " upload of " + pixelWidth + "x" + pixelHeight,
                 pixelWidth, pixelHeight, pixels);
         if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
+        int previous = levelLayout(level);
+        if (celtium$tryServiceUploadLevel(pixels, bytes, pixelWidth, pixelHeight, level, offsetX, offsetY, previous)) {
+            return;
+        }
         ensureStaging(bytes);
         putStagingPixels(stagingAddress, pixels, pixelWidth, pixelHeight);
         if (!stagingCoherent) {
             flushStaging();
         }
-        int previous = levelLayout(level);
         VkCommandBuffer commandBuffer = context.beginCommands();
         celtium$trace("mipLevel " + level + " was=" + previous, commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -4074,6 +4090,81 @@ public final class VulkanGlTexture {
     /** {@return the recorded layout of a level}, or {@code UNDEFINED} when nothing is known about it yet. */
     private int levelLayout(int level) {
         return level >= 0 && level < this.levelLayouts.length ? this.levelLayouts[level] : VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+
+    /**
+     * {@return whether the write-time transforms are armed for this texture}: a poison colour, a
+     * flat poison, or a coordinate-encode label. The shared upload service copies the caller's
+     * bytes verbatim, so an armed texture keeps the per-texture staging path below, where
+     * {@link #putStagingPixels} applies the transform as it writes.
+     */
+    private boolean celtium$uploadTransformArmed() {
+        return this.flatPoisonColour != 0 || this.poisonColour != 0 || encodeIds.contains(this.encodeLabel);
+    }
+
+    /**
+     * Routes a whole-image (level-0) upload through the shared texture upload service (S3R-3
+     * landing A) when nothing stands in its way: no write-time transform armed, and the upload
+     * fits the shared staging pool. The service copies the bytes verbatim and records the same
+     * barriers, copy and blit chain the per-texture path records; the layout bookkeeping the
+     * recording implies is applied here, in the same order the legacy path applies it after its
+     * submission. {@code oldLayout} carries the representative previous layout - the texture's
+     * tracked layout, or level 0's when the texture field has none - whose only use is the
+     * whole-upload entry masks' initialized test.
+     *
+     * @return true when the service took the upload
+     */
+    private boolean celtium$tryServiceUploadWhole(ByteBuffer pixels, long bytes, int pixelWidth, int pixelHeight,
+            int offsetX, int offsetY) {
+        if (celtium$uploadTransformArmed()) {
+            return false;
+        }
+        TextureUploadService service = context.celtium$textureUploadService();
+        if (bytes > service.stagingPool().capacity()) {
+            return false;
+        }
+        int representative = this.currentLayout != VK_IMAGE_LAYOUT_UNDEFINED
+                ? this.currentLayout : levelLayout(0);
+        TextureUploadService.UploadRequest request = new TextureUploadService.UploadRequest(
+                this.image, representative, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true,
+                TextureUploadService.Urgency.DEFERRABLE,
+                new TextureUploadService.Region(0, 0, 1, offsetX, offsetY, 0, pixelWidth, pixelHeight, 1),
+                MemoryUtil.memAddress(pixels), bytes, this.mipLevels);
+        context.celtium$enqueueTextureUpload(request);
+        for (int covered = 0; covered < this.mipLevels; covered++) {
+            setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        recordWholeImageWrite();
+        return true;
+    }
+
+    /**
+     * The single-level form of {@link #celtium$tryServiceUploadWhole}: the level goes from its
+     * recorded layout ({@code previous}) to TRANSFER_DST and back to the sampling layout inside
+     * the service's batch, and the bookkeeping lands here exactly as the legacy path lands it
+     * after its submission.
+     *
+     * @return true when the service took the upload
+     */
+    private boolean celtium$tryServiceUploadLevel(ByteBuffer pixels, long bytes, int pixelWidth, int pixelHeight,
+            int level, int offsetX, int offsetY, int previous) {
+        if (celtium$uploadTransformArmed()) {
+            return false;
+        }
+        TextureUploadService service = context.celtium$textureUploadService();
+        if (bytes > service.stagingPool().capacity()) {
+            return false;
+        }
+        TextureUploadService.UploadRequest request = new TextureUploadService.UploadRequest(
+                this.image, previous, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false,
+                TextureUploadService.Urgency.DEFERRABLE,
+                new TextureUploadService.Region(level, 0, 1, offsetX, offsetY, 0, pixelWidth, pixelHeight, 1),
+                MemoryUtil.memAddress(pixels), bytes);
+        context.celtium$enqueueTextureUpload(request);
+        setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        recordWholeImageWrite();
+        return true;
     }
 
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight) {
@@ -4216,6 +4307,9 @@ public final class VulkanGlTexture {
                     + " (texel id " + this.encodeLabel + "); refused rather than copying past the image allocation");
         }
         if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
+        if (celtium$tryServiceUploadWhole(pixels, bytes, pixelWidth, pixelHeight, offsetX, offsetY)) {
+            return;
+        }
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL

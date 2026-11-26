@@ -42,6 +42,20 @@ final class BackendDiagnostics {
         return binding == null ? 0L : binding.overflowRegistrations();
     }
 
+    /**
+     * The shared texture upload service's counters (S3R-3 landing A): batches submitted, pixel
+     * bytes submitted, and bytes the flushes left queued by deferral. Zero when no upload has
+     * created the service yet - printed unconditionally, like the bindless counters above, so a
+     * leg reads the service's activity (or its absence) from the summary line itself.
+     */
+    private String textureUploadSummary() {
+        TextureUploadService service =
+                b.context == null ? null : b.context.celtium$textureUploadServiceOrNull();
+        return "textureUploadSubmits=" + (service == null ? 0L : service.submits())
+                + " textureUploadBytes=" + (service == null ? 0L : service.uploadedBytes())
+                + " textureUploadDeferredBytes=" + (service == null ? 0L : service.deferredBytesTotal());
+    }
+
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
@@ -56,6 +70,7 @@ final class BackendDiagnostics {
                 + " frameId=" + b.frameId + " flushCount=" + b.immediateStatistics.flushCount()
                 + " bindless=" + bindlessSummary()
                 + " bindlessOverflowDraws=" + bindlessOverflowDraws()
+                + " " + textureUploadSummary()
                 + " " + (b.modelInstances == null ? "modelInstances[absent failed=" + b.modelInstancesFailed + "]"
                         : b.modelInstances.describe())
                 + " textureIndex=hit" + b.textureIndexHits + "/miss" + b.textureIndexMisses
