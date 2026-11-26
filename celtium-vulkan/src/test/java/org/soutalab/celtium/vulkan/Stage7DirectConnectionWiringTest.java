@@ -22,10 +22,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code submitImmediateBatch} (or, for retained geometry, its sibling
  * {@code submitRetainedGeometry}, which delegates to the same append machinery), and from
  * there into group capture, the batcher's segments and the records pipelines. The frontend
- * records no Vulkan command itself. What remains of the old glue is the
- * {@code TerrainGpuBackends.current()} + {@code instanceof} escape hatch at those submit
- * sites; its removal is stage 8's charge (the receiver design's section 9-1 enumeration),
- * and this test fails if a sixth, divergent submit site ever appears beside the five.
+ * records no Vulkan command itself.
+ * <p>
+ * Stage 8 (S8-g) removed the escape hatch this test used to name - the
+ * {@code TerrainGpuBackends.current()} + {@code instanceof} arrival at those submit sites.
+ * The five sites now resolve the backend through the holder's submit-role accessor
+ * {@code TerrainGpuBackends.submitBackend()} and offer through the {@code TerrainGpuBackend}
+ * interface alone: the retained-geometry branch is the backend's
+ * {@code acceptsRetainedGeometry()} capability rather than its concrete type, and the two
+ * state queries the sites used to reach through a cast ({@code celtium$texture2dEnabled},
+ * {@code fixedFunctionLightingEnabled}) are interface reads. This test fails if a sixth,
+ * divergent submit site ever appears beside the five, or if a submit site goes back to
+ * discovering its receiver by type.
  */
 class Stage7DirectConnectionWiringTest {
 
@@ -58,10 +66,10 @@ class Stage7DirectConnectionWiringTest {
         String frontend = read(FRONTEND);
         assertEquals(5, occurrences(frontend, "submitImmediateBatch("),
                 "exactly the five identified submit sites; a sixth is a divergent draw path");
-        assertTrue(frontend.contains("vulkan.submitImmediateBatch(null, stride, layout, address, count, drawMode)"),
+        assertTrue(frontend.contains("backend.submitImmediateBatch(null, stride, layout, address, count, drawMode)"),
                 "the glEnd sink offers the captured run through the offer entry");
         assertTrue(frontend.contains(
-                        "vulkan.submitImmediateBatch(null, submission.stride, submission.format, submission.address,"),
+                        "backend.submitImmediateBatch(null, submission.stride, submission.format, submission.address,"),
                 "a compiled legacy run's replay offers through the same entry");
         assertTrue(frontend.contains("backend.submitImmediateBatch(null, submitStride, formatId,"),
                 "drawArrays offers through the same entry");
@@ -69,7 +77,31 @@ class Stage7DirectConnectionWiringTest {
                 "the indexed draws offer through the same entry");
         assertTrue(frontend.contains(
                         "backend.submitImmediateBatch(null, lit ? ITEM_STRIDE : (int) c[1], lit ? ITEM_FORMAT : (int) c[2],"),
-                "compiled client arrays on a non-Vulkan backend offer through the same entry");
+                "compiled client arrays on a backend without retained geometry offer through the same entry");
+    }
+
+    @Test
+    @DisplayName("the five submit sites resolve through the submit-role accessor, never by concrete type")
+    void submitSitesUseTheDirectConnection() throws IOException {
+        String frontend = read(FRONTEND);
+        assertEquals(5, occurrences(frontend, "TerrainGpuBackends.submitBackend()"),
+                "one submit-role resolution per submit site; the general door is for the other seats");
+        assertTrue(frontend.contains("backend.acceptsRetainedGeometry()"),
+                "compiled client arrays branch on the retained-geometry capability, not the concrete type");
+        assertTrue(frontend.contains("backend.submitRetainedGeometry(geometry, (int) c[4])"),
+                "retained geometry is offered through the interface's retained entry");
+        assertTrue(frontend.contains("backend.texture2dEnabled()"),
+                "the legacy-run replay reads the texturing state through the interface");
+        assertTrue(frontend.contains("backend.fixedFunctionLightingEnabled()"),
+                "the lighting query the submit sites share is an interface read");
+        assertTrue(!frontend.contains("vulkan.submitImmediateBatch"),
+                "no submit site addresses the concrete backend by name any more");
+        assertTrue(!frontend.contains(
+                        "((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).submitRetainedGeometry"),
+                "no submit site casts to the concrete backend for the retained offer");
+        assertTrue(!frontend.contains(
+                        "((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$texture2dEnabled()"),
+                "no submit site casts to the concrete backend for the texturing state");
     }
 
     @Test

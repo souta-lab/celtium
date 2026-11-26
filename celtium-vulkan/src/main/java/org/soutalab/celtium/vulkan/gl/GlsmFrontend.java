@@ -3044,9 +3044,9 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         boolean taken = stub.legacyCapture.end((address, stride, layout, count, drawMode) -> {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            boolean accepted = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                    && vulkan.submitImmediateBatch(null, stride, layout, address, count, drawMode);
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+            boolean accepted = backend != null
+                    && backend.submitImmediateBatch(null, stride, layout, address, count, drawMode);
             if (!accepted) {
                 stub.legacyCapture.noteRefusal("the immediate path refused it"
                         + (backend == null ? " (no backend)" : ": " + backend.lastRefusal()));
@@ -3131,8 +3131,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     private void replayLegacyRun(CompiledLegacyRun run) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        boolean vulkanBackend = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
         // GL's rule, applied here because the copy is the run's vertices: an attribute the list never set is the
         // caller's current value, and the layout is the one the caller's texturing state selects. The commands the list
         // did record (a glColor inside the compile, a glTexCoord between two vertices) have already run through this
@@ -3140,8 +3139,7 @@ public final class GlsmFrontend implements FunctionProvider {
         // a run whose list changes an attribute between its vertices.
         CompiledLegacyRun.Submission submission;
         int substitutedBefore = run.callTimeColourReplays() + run.callTimeTexReplays();
-        boolean texturedAtCall = vulkanBackend
-                && ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$texture2dEnabled();
+        boolean texturedAtCall = backend != null && backend.texture2dEnabled();
         submission = run.prepareCall(true, texturedAtCall, this.legacyCapture.red(),
                 this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
                 this.legacyCapture.texU(), this.legacyCapture.texV());
@@ -3151,8 +3149,8 @@ public final class GlsmFrontend implements FunctionProvider {
         if (run.callTimeColourReplays() + run.callTimeTexReplays() != substitutedBefore) {
             this.legacyListRunsCallState++;
         }
-        boolean taken = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                && vulkan.submitImmediateBatch(null, submission.stride, submission.format, submission.address,
+        boolean taken = backend != null
+                && backend.submitImmediateBatch(null, submission.stride, submission.format, submission.address,
                         run.count, run.mode);
         if (taken) {
             this.legacyListRunsReplayed++;
@@ -8035,7 +8033,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 submitStride = formatId == 9 ? 24 : 28;
             }
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
             if (backend != null) {
                 backend.submitImmediateBatch(null, submitStride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
@@ -8243,7 +8241,7 @@ public final class GlsmFrontend implements FunctionProvider {
             try {
                 // Resolved here rather than held as a field: this class is installed when the window is created, the
                 // backend only when the renderer comes up, and a field captured early would be permanently null.
-                backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
             } catch (RuntimeException | LinkageError error) {
                 backend = null;
                 reason = "the terrain backend could not be reached: " + error;
@@ -8640,8 +8638,7 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     private static boolean lightingOn(TerrainGpuBackend backend) {
-        return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                && vulkan.fixedFunctionLightingEnabled();
+        return backend != null && backend.fixedFunctionLightingEnabled();
     }
 
     /**
@@ -8959,11 +8956,14 @@ public final class GlsmFrontend implements FunctionProvider {
 
     private void replayCompiledArrays(long[] c) {
         try {
-            TerrainGpuBackend backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            TerrainGpuBackend backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
             boolean lit = c.length > 5 && c[5] != 0L && lightingOn(backend);
             NativeGeometryBuffer geometry = NativeGeometryBuffer.find((int) (lit ? c[5] : c[0]));
-            boolean taken = geometry != null && backend != null && (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend
-                    ? ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).submitRetainedGeometry(geometry, (int) c[4])
+            // The branch is the backend's retained-geometry capability, not its concrete type (stage 8, S8-g):
+            // a backend that takes retained geometry is offered the buffer in that form; any other is offered
+            // the same vertices by address, with the stride and format the compile recorded for this buffer.
+            boolean taken = geometry != null && backend != null && (backend.acceptsRetainedGeometry()
+                    ? backend.submitRetainedGeometry(geometry, (int) c[4])
                     : backend.submitImmediateBatch(null, lit ? ITEM_STRIDE : (int) c[1], lit ? ITEM_FORMAT : (int) c[2],
                             geometry.address(), (int) c[3], (int) c[4]));
             if (taken) {

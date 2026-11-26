@@ -309,6 +309,41 @@ public interface TerrainGpuBackend {
         return false;
     }
 
+    /**
+     * {@return whether this backend takes retained geometry at all} - geometry that stays in a buffer the backend
+     * owns and is offered again by identity, rather than by address. The submit seats ask the capability instead
+     * of testing the backend's concrete type (stage 8, S8-g: the submit path's direct connection).
+     */
+    default boolean acceptsRetainedGeometry() {
+        return false;
+    }
+
+    /**
+     * Offers one retained geometry buffer for drawing, in the retained form {@link #submitImmediateBatch} cannot
+     * express: the buffer keeps its ownership with the backend instead of being copied out of the caller's memory.
+     *
+     * @param geometry the backend's own retained-geometry type (the Vulkan backend's
+     *                 {@code NativeGeometryBuffer}), passed as {@code Object} for the same reason
+     *                 {@link #submitImmediateBatch} takes its vertex format as {@code Object}: the type lives in
+     *                 the backend's own module, which this interface cannot reference
+     * @param drawMode Minecraft/OpenGL draw mode
+     * @return {@code true} when the geometry was consumed; a backend that does not accept retained geometry
+     *         refuses, and the caller offers the same vertices through {@link #submitImmediateBatch} instead
+     */
+    default boolean submitRetainedGeometry(Object geometry, int drawMode) {
+        return false;
+    }
+
+    /** {@return whether fixed-function lighting is currently enabled}, as the submit seats need it. */
+    default boolean fixedFunctionLightingEnabled() {
+        return false;
+    }
+
+    /** {@return whether 2D texturing is currently enabled on the base unit}, as the submit seats need it. */
+    default boolean texture2dEnabled() {
+        return false;
+    }
+
     /** Consume/copy native output data before the caller deletes those outputs. */
     void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger);
 

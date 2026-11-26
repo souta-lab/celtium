@@ -19,6 +19,16 @@ public final class TerrainGpuBackends {
     }
 
     /**
+     * {@return the live backend in its submit role, or {@code null} when there is none} - the door the frontend's
+     * submit seats use (stage 8, S8-g). The holder stays this one class; the submit role gets its own accessor so
+     * a seat reaches the offer entry directly, without re-discovering the receiver through the general door and a
+     * concrete-type test at every submission.
+     */
+    public static TerrainGpuBackend submitBackend() {
+        return current;
+    }
+
+    /**
      * Texture uploads announced while no backend existed yet.
      * <p>
      * The menu's panorama PNGs load very early - before the terrain backend is created - and the upload hook's

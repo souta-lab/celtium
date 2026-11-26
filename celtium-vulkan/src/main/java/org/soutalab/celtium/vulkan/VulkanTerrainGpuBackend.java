@@ -9680,8 +9680,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * a layout only the lit ITEM pipeline shades, so the GL stub picks that layout for a lit draw and keeps its own for
      * an unlit one (whose group colour - a Mod's raw glColor - the ITEM layout's unlit shader would not apply).
      */
+    @Override
     public boolean fixedFunctionLightingEnabled() {
         return this.immediateState.lightingEnabled();
+    }
+
+    /** {@inheritDoc} This backend's retained geometry is its {@link NativeGeometryBuffer}. */
+    @Override
+    public boolean acceptsRetainedGeometry() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc} The cast lives here, with the type: the interface carries the geometry as {@code Object}
+     * because the type is this module's own.
+     */
+    @Override
+    public boolean submitRetainedGeometry(Object geometry, int drawMode) {
+        return geometry instanceof NativeGeometryBuffer retained && submitRetainedGeometry(retained, drawMode);
+    }
+
+    /** {@inheritDoc} The mirror read the frontend's replay used to reach through a concrete-type test. */
+    @Override
+    public boolean texture2dEnabled() {
+        return celtium$texture2dEnabled();
     }
 
     /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
