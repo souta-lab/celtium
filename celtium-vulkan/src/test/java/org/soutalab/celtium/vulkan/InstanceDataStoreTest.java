@@ -172,6 +172,59 @@ class InstanceDataStoreTest {
     }
 
     @Test
+    void recordAddressNamesTheWrittenRecordInTheStoresOwnHome() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        // A non-zero slot with earlier tenants in it: the slice starts past the region base,
+        // so an address computed from the region base alone - or in another ring's home -
+        // misses the record. The batch sink's push read stands on this address.
+        ring.consume(1, 4096L);
+        store.selectSlot(1);
+        assertEquals(0, store.record(pushBlock(256, 0x2A), -1));
+        assertEquals(1, store.record(pushBlock(256, 0x35), 9));
+        long first = store.recordAddress(0);
+        long second = store.recordAddress(1);
+        assertEquals(ring.mappedAddress(1, store.descriptorDynamicOffset()), first);
+        assertEquals(first + InstanceDataStore.RECORD_BYTES, second);
+        assertEquals(0x2A, MemoryUtil.memGetByte(first) & 0xFF);
+        assertEquals(0x35, MemoryUtil.memGetByte(second) & 0xFF);
+        assertEquals(9, Float.floatToRawIntBits(MemoryUtil.memGetFloat(second + 216)));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void recordAddressFollowsASliceGrowth() {
+        TestRing ring = new TestRing(2, 1L << 20);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        for (int i = 0; i < 256; i++) {
+            store.record(pushBlock(256, i & 0xFF), -1);
+        }
+        long before = store.recordAddress(1);
+        // The 257th record grows the slice; the address of an earlier record must move with
+        // it, to the copy - the descriptor bind moves the same way.
+        store.record(pushBlock(256, 0xAB), -1);
+        long after = store.recordAddress(1);
+        assertEquals(ring.mappedAddress(0, store.descriptorDynamicOffset()
+                + InstanceDataStore.RECORD_BYTES), after);
+        assertEquals(1, MemoryUtil.memGetByte(after) & 0xFF);
+        assertTrue(before != after, "the growth moved the slice, so the address must move");
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void recordAddressIsZeroWhenTheSelectionHasNoSlice() {
+        TestRing small = new TestRing(2, 32L << 10);
+        InstanceDataStore store = store(small);
+        store.selectSlot(0);
+        assertEquals(0L, store.recordAddress(0));
+        store.delete();
+        small.delete();
+    }
+
+    @Test
     void shortBlocksAreRefused() {
         TestRing ring = new TestRing(2, 1L << 20);
         InstanceDataStore store = store(ring);

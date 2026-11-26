@@ -719,6 +719,29 @@ final class InstanceDataStore {
     }
 
     /**
+     * {@return the mapped host address of record {@code index} in the current selection, for a
+     *         host-side reader of the record bytes (the batch sink's push read), or 0 when the
+     *         selection has no slice}
+     * <p>
+     * The address is computed in the store's own home, through its ring source: the records
+     * live wherever the source puts them (the dedicated records pool in production), and the
+     * slice offset is only meaningful in that home. A reader that instead adds the offset to
+     * another ring's mapping reads that ring's bytes as the record - the seat of the
+     * panel-background defect, where the batch sink pushed frame-ring geometry bytes as the
+     * array fragment's tint and alpha reference. The offset is read at call time, so a slice
+     * growth between the record's write and the read is followed, exactly as the descriptor
+     * bind follows it.
+     */
+    long recordAddress(int index) {
+        int slot = this.currentSlot;
+        if (this.offsets[slot] < 0L) {
+            return 0L;
+        }
+        return this.ring.mappedAddress(slot,
+                this.offsets[slot] + (long) index * RECORD_BYTES);
+    }
+
+    /**
      * Releases the descriptor objects and the slice source's own home. The shared ring is not
      * the store's to release (its source's delete is empty); the dedicated pool is, and is
      * released here.

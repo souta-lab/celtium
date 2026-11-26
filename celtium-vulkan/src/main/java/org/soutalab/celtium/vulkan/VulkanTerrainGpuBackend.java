@@ -25334,10 +25334,12 @@ this.frameBufferOpen = false;
                 // fragments the alpha reference, the tint and the fog, and the lit form the displaced
                 // combine reference besides): push this entry's own record bytes - exact per entry,
                 // because entries never span groups (fusion requires a shared record, so a fused
-                // entry is one group's captures of one record).
-                long address = context.celtium$frameLinearRing().mappedAddress(frameSlot,
-                        drawRecords.descriptorDynamicOffset()
-                                + (long) firstInstance * InstanceDataStore.RECORD_BYTES);
+                // entry is one group's captures of one record). The bytes are read through the
+                // store's own address for the record: the records live in the store's home (the
+                // dedicated records pool since the ring separation), and an address computed in
+                // the frame ring's mapping at the store's offset reads geometry bytes as the
+                // fragment's tint and alpha reference - the panel-background defect's seat.
+                long address = drawRecords.recordAddress(firstInstance);
                 vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }
