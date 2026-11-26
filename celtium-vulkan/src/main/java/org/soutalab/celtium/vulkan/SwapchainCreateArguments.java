@@ -106,10 +106,10 @@ public final class SwapchainCreateArguments {
      * colour-attachment usage is dropped and displayable DCC compression metadata on RDNA3 proprietary
      * drivers never collides with {@code UNDEFINED -> TRANSFER_DST} presents. This is the BH-18
      * contract's default for this entry point: {@link VulkanSwapchain} makes its own selection through
-     * the explicit overloads below, passing the transfer-only shape only when direct present is not
-     * in effect ({@code -Dceltium.present.direct=false}; direct present is the default since the
-     * Stage 2 integration landing restored it under ruling lanechat #9168), and the direct path's
-     * shape otherwise, whose mode requires colour-attachment usage and keeps transfer usage
+     * the explicit overloads below, passing the direct path's shape (direct present has been the
+     * default since the Stage 2 integration landing restored it under ruling lanechat #9168, and is
+     * the only present form since stage 8 removed the opt-out), whose mode requires
+     * colour-attachment usage and keeps transfer usage
      * wherever the surface offers it (the readback/dump block and the loading screen's standalone
      * present read those bits).
      *
@@ -127,8 +127,8 @@ public final class SwapchainCreateArguments {
      * Chooses the creation arguments, optionally dropping {@link #USAGE_COLOR_ATTACHMENT} so swapchain images are
      * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
      * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
-     * The transfer-only request is the composite fallback path's shape, reached whenever direct
-     * present is not in effect ({@code -Dceltium.present.direct=false}; it is on by default).
+     * The transfer-only request is the composite fallback path's shape, kept in the contract for
+     * the shape it describes; no caller requests it since direct present became the only form.
      *
      * @param surface             what the surface reported
      * @param requestedWidth      the window's framebuffer width
@@ -348,7 +348,8 @@ public final class SwapchainCreateArguments {
      *
      * @param swapchainFormat the format the live generation was created in, or {@link #FORMAT_UNDEFINED}
      *                        when no generation exists yet
-     * @param directPresent   whether direct present is enabled ({@code -Dceltium.present.direct})
+     * @param directPresent   whether direct present is in effect (always true in production since
+     *                        stage 8; the parameter keeps the non-direct shape in the contract)
      * @param bgraUsable      whether the device can attach, blend and sample B8G8R8A8_UNORM
      */
     public static int frameColorFormat(int swapchainFormat, boolean directPresent, boolean bgraUsable) {

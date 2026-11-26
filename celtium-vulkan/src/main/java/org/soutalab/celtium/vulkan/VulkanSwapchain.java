@@ -50,17 +50,14 @@ public final class VulkanSwapchain {
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
-     * Request transfer-only swapchain image usage (issue #422 (a)) on the composite fallback path only: the
-     * direct present path renders into the swapchain image and requires colour-attachment usage, so
-     * transfer-only applies exactly when direct present is not in effect (direct present is the
-     * default again since the Stage 2 integration landing; {@code -Dceltium.present.direct=false}
-     * opts out) and the frame path is the blit present.
-     * On that path the {@code celtium.vulkan.presentTransferOnly} property keeps
-     * its old meaning (default true; {@code false} opts back into colour-attachment usage).
+     * Transfer-only swapchain image usage (issue #422 (a)) is never requested. It was the composite
+     * fallback path's shape, in effect only while direct present could be opted out of; direct
+     * present is the only present form (stage 8 removed the opt-out, and with it the transfer-only
+     * property's only reader), and it renders into the swapchain image, which requires
+     * colour-attachment usage. The selection function keeps the parameter: its contract still
+     * covers the transfer-only shape.
      */
-    private static final boolean PRESENT_TRANSFER_ONLY =
-            !VulkanContext.PRESENT_DIRECT
-                    && !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentTransferOnly", "true"));
+    private static final boolean PRESENT_TRANSFER_ONLY = false;
     private static final boolean ASSUME_NO_PRESENT_SUPPORT =
             Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
     private final VulkanContext context;
@@ -3035,9 +3032,10 @@ public final class VulkanSwapchain {
             surfaceOfferValues.maxExtentWidth = capabilities.maxImageExtent().width();
             surfaceOfferValues.maxExtentHeight = capabilities.maxImageExtent().height();
             surfaceOfferValues.formats = offeredFormats;
+            // The last argument is directPresent: direct present is the only present form (stage 8).
             SwapchainCreateArguments.Result choice =
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
-                            desiredImageCount(), PRESENT_TRANSFER_ONLY, VulkanContext.PRESENT_DIRECT);
+                            desiredImageCount(), PRESENT_TRANSFER_ONLY, true);
             if (choice.refusal != null) {
                 // The one classification the caller acts on: a pinned 0x0 extent is a wait, carried on the
                 // outcome rather than in the reason text, so the creation escalation never has to re-read
