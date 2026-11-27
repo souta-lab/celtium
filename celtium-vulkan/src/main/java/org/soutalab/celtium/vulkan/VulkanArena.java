@@ -11,7 +11,7 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 
 /**
  * Segment allocator over one device-local {@link VulkanBuffer}, mirroring the OpenGL arena
- * ({@code org.embeddedt.embeddium.impl.gl.arena.GlBufferArena}) that the shared mesh metadata already works with.
+ * (the GL buffer arena) that the shared mesh metadata already works with.
  * <p>
  * The free list is a doubly-linked list of byte ranges ordered by offset, exactly like the OpenGL one: allocation
  * uses <b>best fit</b> (an exact-size free range wins outright, otherwise the smallest free range that is large
