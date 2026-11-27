@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK13;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -927,8 +928,12 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     }
 
     private long createShaderModule(int[] words) {
+        // The compiled SPIR-V is input-sized with no bound, so the code buffer lives on the heap:
+        // the thread MemoryStack is 64 KiB and a large module copied onto it overflows the frame
+        // (the crash class S5-b hit on the pack path). The small create-info structs stay on the
+        // stack, as in VulkanModProgramPipeline's heap-shaped equivalent of this same work.
+        ByteBuffer code = MemoryUtil.memAlloc(words.length * Integer.BYTES);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer code = stack.calloc(words.length * Integer.BYTES);
             for (int word : words) {
                 code.putInt(word);
             }
@@ -939,6 +944,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             check(VK10.vkCreateShaderModule(this.device, moduleInfo, null, module),
                     "vkCreateShaderModule(converter)");
             return module.get(0);
+        } finally {
+            MemoryUtil.memFree(code);
         }
     }
 
