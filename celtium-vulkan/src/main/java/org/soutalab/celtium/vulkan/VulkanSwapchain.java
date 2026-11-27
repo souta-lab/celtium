@@ -1444,7 +1444,9 @@ public final class VulkanSwapchain {
                 + " preRecordedBlitPresents=" + this.preRecordedBlitPresents
                 + " preRecordedBlitRecords=" + this.preRecordedBlitRecords
                 + " transitionBatchedJoins=" + this.transitionBatchedJoins
-                + " transitionSoloFlushes=" + this.transitionSoloFlushes;
+                + " transitionSoloFlushes=" + this.transitionSoloFlushes
+                + " preRecordedTransitionPresents=" + this.preRecordedTransitionPresents
+                + " abandonedAcquisitions=" + this.abandonedAcquisitions;
     }
 
     private void celtium$notePresentTime(long nanos) {

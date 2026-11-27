@@ -369,6 +369,17 @@ final class PresentSwapchain {
         }
     }
 
+    /**
+     * The extent gate's rule (D1 L4): a borrow is offered only while the swapchain generation's
+     * extent equals the frame target's extent. Pure and stateless, and consulted with the target's
+     * current extent on every borrow attempt, so a target remade at the generation's extent
+     * re-enables the borrow by itself - nothing latches in either direction.
+     */
+    static boolean celtium$extentAllowsBorrow(int swapchainWidth, int swapchainHeight,
+            int targetWidth, int targetHeight) {
+        return swapchainWidth == targetWidth && swapchainHeight == targetHeight;
+    }
+
     void celtium$ensureBorrowedFrameImage() {
         if (!(backend.frameTarget instanceof GllessFrameTarget)) {
             return;
@@ -432,6 +443,25 @@ final class PresentSwapchain {
             releaseSwapchainForRebuild();
         }
         if (!ensureSwapchain()) {
+            return;
+        }
+        // 5. The swapchain generation's extent differs from the frame target's extent (D1 L4). This
+        //    condition stands after the ensure because the generation extent exists only once the
+        //    swapchain does: the swapchain follows the surface at the end of the present body, and
+        //    this seat itself creates the new generation before borrowing, while the frame target
+        //    is remade only on the draw path - and a resize during a recording is deferred there -
+        //    so a borrow can be offered while the target still declares the old extent. The
+        //    framebuffer seats declare the target's extent while attaching its colour view, which
+        //    under a live borrow is the borrowed image's view, so borrowing across the mismatch
+        //    built framebuffers whose declared extent disagreed with their attachment
+        //    (VUID-VkFramebufferCreateInfo-04533/04534, one pair on the D1 L4 leg). The refusal
+        //    takes the format gate's shape at the borrow's other end (GllessFrameTarget): the frame
+        //    keeps its own image and takes the composed present, and once the target has been
+        //    remade at the generation's extent the borrow resumes on its own.
+        if (backend.swapchain != null && !celtium$extentAllowsBorrow(
+                backend.swapchain.width(), backend.swapchain.height(),
+                target.width(), target.height())) {
+            celtium$noteBorrowBypass("extent");
             return;
         }
         target.borrowNextPresentImage(backend.context.presentEngine(), (int) (backend.frameId & 1L));
