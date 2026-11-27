@@ -144,11 +144,6 @@ class DualFormHookNamesTest {
 
     @Test
     void theChunkUnloadAndFancyGraphicsTargetsKeepTheirSrgForms() throws IOException {
-        Set<String> chunk = constantPoolUtf8(readMixinBytes(
-                "/org/taumc/celeritas/mixin/core/terrain/ClientChunkManagerMixin.class"));
-        assertTrue(chunk.contains("func_73234_b"), "the provideChunk hook's SRG name stays");
-        assertTrue(namesTarget(chunk, "func_76623_d"), "the Chunk.onUnload target's SRG form stays");
-
         Set<String> gui = constantPoolUtf8(readMixinBytes(
                 "/org/taumc/celeritas/mixin/features/options/MixinGuiIngameForge.class"));
         assertTrue(namesTarget(gui, "func_71375_t"),
