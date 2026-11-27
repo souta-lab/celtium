@@ -81,7 +81,8 @@ public final class DirectGlExecutor {
     public void onPersistentBufferWrite(int glId, long offset, long size) {
     }
 
-    private DirectGlExecutor() {
+    /** Package-private so tests can hold an executor of their own; production uses {@link #EXECUTOR}. */
+    DirectGlExecutor() {
     }
 
     public void init() {

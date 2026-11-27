@@ -1698,6 +1698,9 @@ final class DirectGlRuntime {
         }
         ByteBuffer view = rec.shadow.duplicate();
         view.position(0);
+        // duplicate() resets the byte order to BIG_ENDIAN on current JDKs; a mapped view must
+        // hand the caller the shadow's (native) order or typed writes land byte-swapped.
+        view.order(rec.shadow.order());
         return view;
     }
 
@@ -1716,7 +1719,9 @@ final class DirectGlRuntime {
         }
         view.position((int) offset);
         view.limit((int) (offset + length));
-        return view.slice();
+        ByteBuffer slice = view.slice();
+        slice.order(rec.shadow.order());
+        return slice;
     }
 
     public long mapBufferRangeAddress(int target, long offset, long length, int access) {
