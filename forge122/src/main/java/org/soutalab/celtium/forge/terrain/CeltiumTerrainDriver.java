@@ -107,10 +107,43 @@ public final class CeltiumTerrainDriver {
                 lines.add(diagnostics);
             }
         }
+        // TEMP G1 PROBE12: client vs integrated-server skylight sums for chunk (-4,3).
+        try {
+            StringBuilder sb = new StringBuilder("lightSync");
+            net.minecraft.world.chunk.Chunk cc = world != null ? world.getChunk(-4, 3) : null;
+            sb.append(" clientY4=").append(skySum(cc));
+            net.minecraft.server.integrated.IntegratedServer server =
+                    net.minecraft.client.Minecraft.getMinecraft().getIntegratedServer();
+            net.minecraft.world.World serverWorld = server != null ? server.getWorld(0) : null;
+            net.minecraft.world.chunk.Chunk sc = serverWorld != null ? serverWorld.getChunk(-4, 3) : null;
+            sb.append(" serverY4=").append(skySum(sc));
+            sb.append(" clientPop=").append(cc != null && cc.isLightPopulated());
+            sb.append(" serverPop=").append(sc != null && sc.isLightPopulated());
+            lines.add(sb.toString());
+        } catch (Throwable t) {
+            lines.add("lightSync failed " + t);
+        }
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
         return lines;
+    }
+
+    private static long skySum(net.minecraft.world.chunk.Chunk chunk) {
+        if (chunk == null) {
+            return -1L;
+        }
+        net.minecraft.world.chunk.storage.ExtendedBlockStorage[] arr = chunk.getBlockStorageArray();
+        if (arr.length <= 4 || arr[4] == null || arr[4].getSkyLightArray() == null) {
+            return -2L;
+        }
+        long sum = 0L;
+        byte[] data = arr[4].getSkyLightArray().getData();
+        for (int i = 0; i < 4096; i++) {
+            int b = data[i >> 1] & 0xFF;
+            sum += (i & 1) == 0 ? (b & 0xF) : (b >> 4);
+        }
+        return sum;
     }
 
     private static long key(int x, int y, int z) {
