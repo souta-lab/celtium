@@ -270,9 +270,9 @@ public final class Lane1Shaders {
                 {
                     vec2 suv = gl_FragCoord.xy / vec2(1280.0, 720.0);
                     if (suv.x < 0.5) {
-                        outColor = vec4(suv.x * 2.0, suv.y, 0.0, 1.0);
+                        outColor = vec4(suv.x * 2.0, suv.y / 0.55, 0.0, 1.0);
                     } else {
-                        vec2 tuv = vec2((suv.x - 0.5) * 2.0, suv.y);
+                        vec2 tuv = vec2((suv.x - 0.5) * 2.0, suv.y / 0.55);
                         outColor = vec4(texture(lightMap, tuv).rgb, 1.0);
                     }
                     return;
