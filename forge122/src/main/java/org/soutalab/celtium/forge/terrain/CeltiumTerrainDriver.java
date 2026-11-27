@@ -69,6 +69,9 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> dirty = new HashSet<>();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
     private final Set<Long> awaitingLight = new HashSet<>();
+    /** Light-array fingerprint per resident section, taken when its mesh was built. */
+    private final Map<Long, Integer> lightFingerprints = new HashMap<>();
+    private int lightSweepCursor;
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -143,6 +146,7 @@ public final class CeltiumTerrainDriver {
             }
         }
         resident.clear();
+        lightFingerprints.clear();
         present.clear();
         dirty.clear();
         for (CompletableFuture<MeshBuffers> future : pending.values()) {
@@ -221,6 +225,7 @@ public final class CeltiumTerrainDriver {
         ensureBuildSide();
         diffLoadedSections();
         promoteAwaitingLight();
+        sweepLightFingerprints();
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
@@ -303,6 +308,7 @@ public final class CeltiumTerrainDriver {
                     backend.celtium$lane1RemoveSection(keyX(k), keyY(k), keyZ(k));
                 }
                 residentIt.remove();
+                lightFingerprints.remove(k);
                 dirty.remove(k);
                 CompletableFuture<MeshBuffers> stale = pending.remove(k);
                 if (stale != null) {
@@ -337,6 +343,75 @@ public final class CeltiumTerrainDriver {
         }
     }
 
+    /**
+     * A cheap hash of the light arrays a section's mesh was built from: the sky and
+     * block NibbleArrays of the centre chunk's own storage and the two vertical
+     * neighbours. The integrated server relights chunks after load (the save's arrays
+     * can arrive zeroed) and the client arrays then change under a resident mesh;
+     * vanilla re-meshes on those updates, so a changed fingerprint re-dirties the
+     * section. Swept in a rotating window so the whole resident set is re-checked
+     * about once a second without a per-frame full pass.
+     */
+    private int lightFingerprint(int sx, int sy, int sz) {
+        if (!(world instanceof net.minecraft.world.World w)) {
+            return 0;
+        }
+        net.minecraft.world.chunk.Chunk chunk = w.getChunk(sx, sz);
+        if (chunk == null) {
+            return 0;
+        }
+        net.minecraft.world.chunk.storage.ExtendedBlockStorage[] sections =
+                chunk.getBlockStorageArray();
+        int hash = 1;
+        for (int dy = -1; dy <= 1; dy++) {
+            int idx = sy + dy;
+            if (idx < 0 || idx >= sections.length || sections[idx] == null) {
+                hash = hash * 31 + 7;
+                continue;
+            }
+            hash = hash * 31 + nibbleHash(sections[idx].getSkyLightArray());
+            hash = hash * 31 + nibbleHash(sections[idx].getBlockLightArray());
+        }
+        return hash;
+    }
+
+    private static int nibbleHash(net.minecraft.world.chunk.NibbleArray array) {
+        if (array == null) {
+            return 3;
+        }
+        byte[] data = array.getData();
+        int hash = data.length;
+        for (byte b : data) {
+            hash = hash * 31 + b;
+        }
+        return hash;
+    }
+
+    private void sweepLightFingerprints() {
+        if (resident.isEmpty() || world == null) {
+            return;
+        }
+        List<Long> keys = new ArrayList<>(resident);
+        int n = keys.size();
+        int batch = Math.min(n, 96);
+        for (int i = 0; i < batch; i++) {
+            long k = keys.get((lightSweepCursor + i) % n);
+            if (pending.containsKey(k) || dirty.contains(k)) {
+                continue;
+            }
+            Integer recorded = lightFingerprints.get(k);
+            if (recorded == null) {
+                continue;
+            }
+            int current = lightFingerprint(keyX(k), keyY(k), keyZ(k));
+            if (current != recorded.intValue()) {
+                lightFingerprints.put(k, current);
+                dirty.add(k);
+            }
+        }
+        lightSweepCursor = (lightSweepCursor + batch) % n;
+    }
+
     private void scheduleBuilds(double cameraX, double cameraY, double cameraZ) {
         frameCounter++;
         if (dirty.isEmpty()) {
@@ -362,6 +437,7 @@ public final class CeltiumTerrainDriver {
             int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
             WorldSectionSnapshot snapshot = new WorldSectionSnapshot();
             ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
+            lightFingerprints.put(k, lightFingerprint(sx, sy, sz));
             if (!populatedChunks.contains(net.minecraft.util.math.ChunkPos.asLong(sx, sz))) {
                 // The chunk's light is not populated yet: this mesh will carry zero light.
                 // Queue a rebuild for when the light arrives (vanilla re-meshes on light

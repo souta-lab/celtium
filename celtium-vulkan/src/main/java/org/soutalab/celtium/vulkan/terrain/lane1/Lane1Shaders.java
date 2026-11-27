@@ -270,11 +270,6 @@ public final class Lane1Shaders {
                 // very sample path). fragLightMap carries (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges.
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
-                // TEMP G1 BISECT29: the light sample as greyscale.
-                {
-                    outColor = vec4(light, 1.0);
-                    return;
-                }
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
