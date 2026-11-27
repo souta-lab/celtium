@@ -53,7 +53,7 @@ def main():
 
     status = STATUS.read_text(encoding='utf-8')
     require('the live rule is the renderer class, not "some backend is installed"',
-            RENDERER_CLASS in status and 'TerrainGpuBackends.current()' in status)
+            RENDERER_CLASS in status and 'CeltiumBackends.current()' in status)
 
     fixture = FIXTURE.read_text(encoding='utf-8')
     require('the fixture no longer asserts the constant', 'equals("opengl") == false' not in fixture)

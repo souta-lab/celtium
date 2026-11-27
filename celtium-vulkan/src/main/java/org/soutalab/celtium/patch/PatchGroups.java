@@ -191,10 +191,7 @@ public final class PatchGroups {
               "core.terrain.ActiveRenderInfoAccessor",
               "core.terrain.BlockColorsAccessor",
               "core.terrain.ChunkProviderClientAccessor",
-              "core.terrain.ClientChunkManagerMixin",
-              "core.terrain.WorldClientMixin",
               "core.terrain.ChunkEntityMembershipMixin",
-              "core.terrain.BlockRendererDispatcherMixin",
               "core.BufferBuilderAccessor",
               "core.EntityRendererLightmapAccessor",
               "core.collections.ClassInheritanceMultiMapMixin",
@@ -203,16 +200,8 @@ public final class PatchGroups {
         );
         group("terrain_geometry", "terrain geometry", true,
               "model and quad capture stops and meshes fall back to the GL replay path, but the group also carries an interface that non-mixin code casts to (see the class javadoc), so removing it is a ClassCastException",
-              "core.terrain.BakedQuadFactoryMixin",
-              "core.terrain.BakedQuadMixin",
-              "core.terrain.SimpleBakedModelBuilderMixin",
-              "core.terrain.BiomeColorHelperMixin",
               "core.TexturedQuadMixin",
               "features.render.MultipartBakedModelMixin"
-        );
-        group("leaf_culling", "leaf culling", false,
-              "leaf face suppression stops and leaf faces return to vanilla's answers everywhere; the fast renderer's material swap for surrounded leaves is not a mixin and still runs, so surrounded leaves still render opaque but their hidden faces are built again",
-              "core.terrain.BlockLeavesMixin"
         );
         group("entities", "entities", true,
               "range limiting, the light cache and some TESRs return to the vanilla path; the design marks this group as still to be audited, so it stays essential until that read is done",
