@@ -16,6 +16,15 @@ public interface CeltiumBackend {
         return "";
     }
 
+    /**
+     * Hands the Lane 1 frontend the sprite index-to-atlas-cell table (packed
+     * {@code cellU | (cellV << 8)} per texture index) that the general stream's shaders resolve a
+     * quad's texture index through. The forge driver pushes a fresh snapshot whenever its sprite
+     * index grows.
+     */
+    default void celtium$setTextureCellTable(int[] packedCells) {
+    }
+
     // ---------------------------------------------------------------- Lane 1 terrain (S2-b)
 
     /** Uploads one meshed section's geometry to the Lane 1 resident store. */

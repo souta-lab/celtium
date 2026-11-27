@@ -86,6 +86,9 @@ public final class Lane1TerrainFrontend {
     private static final int PUSH_BYTES = 112;
     /** FogBlock: vec4 fogColor (0) + vec3 camera (16) + start (28) + end (32) + density (36) + mode (40) + cutoff (44). */
     private static final int FOG_BYTES = 48;
+    /** Texture-cell table capacity: one uvec2 (cellU, cellV) per sprite texture index. */
+    private static final int MAX_TEXTURE_CELLS = 8192;
+    private static final long TEXTURE_CELL_BYTES = (long) MAX_TEXTURE_CELLS * 8L;
     private static final int FRAME_SLOTS = 3;
     private static final int KIND_COUNT = 3;
 
@@ -100,6 +103,7 @@ public final class Lane1TerrainFrontend {
     private final VulkanHostBuffer descBuffer;
     private final VulkanHostBuffer lightBuffer;
     private final VulkanHostBuffer maskBuffer;
+    private final VulkanHostBuffer textureCellBuffer;
     private final VulkanHostBuffer[] fogBuffers = new VulkanHostBuffer[KIND_COUNT];
 
     private final long setLayout;
@@ -128,6 +132,8 @@ public final class Lane1TerrainFrontend {
     private int gridOriginY;
     private int gridOriginZ;
     private int lightCount;
+    private float atlasCellsAcross = 64.0f;
+    private int textureCellCount;
     private long frameId;
     private int refusedUploads;
 
@@ -142,6 +148,8 @@ public final class Lane1TerrainFrontend {
         this.store = new TerrainSectionStore(axisSpace, generalSpace, auxSpace);
         this.world = new TerrainWorld(store);
         this.descBuffer = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        this.textureCellBuffer = new VulkanHostBuffer(context, TEXTURE_CELL_BYTES,
+                VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.lightBuffer = new VulkanHostBuffer(context, LightGridBuilder.UBO_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.maskBuffer = new VulkanHostBuffer(context, LightGridBuilder.CLUSTER_MASK_BYTES,
@@ -205,6 +213,22 @@ public final class Lane1TerrainFrontend {
 
     public synchronized void collectCompleted() {
         store.collectCompleted(VulkanContext.completedEpoch());
+    }
+
+    /**
+     * Replaces the texture-cell table the general stream's shaders read (binding 3): one
+     * {@code (cellU, cellV)} pair per texture index, unpacked from the driver's
+     * {@code cellU | (cellV << 8)} packing. Indices past the table resolve to cell 0 in the shader.
+     */
+    public synchronized void setTextureCellTable(int[] packedCells) {
+        int count = Math.min(packedCells.length, MAX_TEXTURE_CELLS);
+        MemorySegment segment = MemorySegment.ofAddress(textureCellBuffer.mappedAddress())
+                .reinterpret(TEXTURE_CELL_BYTES);
+        for (int i = 0; i < count; i++) {
+            segment.set(ValueLayout.JAVA_INT, (long) i * 8L, packedCells[i] & 0xFF);
+            segment.set(ValueLayout.JAVA_INT, (long) i * 8L + 4L, (packedCells[i] >> 8) & 0xFF);
+        }
+        this.textureCellCount = count;
     }
 
     public int refusedUploads() {
@@ -291,7 +315,11 @@ public final class Lane1TerrainFrontend {
      * no-op begin/end rendering.
      */
     public synchronized void recordPass(TerrainPassKind kind, VkCommandBuffer commandBuffer,
-                                        long renderPass, int frameSlot, long atlasView, long lightmapView) {
+                                        long renderPass, int frameSlot, long atlasView, long lightmapView,
+                                        float atlasCellsAcross) {
+        if (atlasCellsAcross > 0.0f) {
+            this.atlasCellsAcross = atlasCellsAcross;
+        }
         int kindOrdinal = kind.ordinal();
         int slot = Math.floorMod(frameSlot, FRAME_SLOTS);
         if (boundViews[slot][0] != atlasView || boundViews[slot][1] != lightmapView) {
@@ -379,7 +407,11 @@ public final class Lane1TerrainFrontend {
         ints.position(20);
         ints.put(gridOriginX).put(gridOriginY).put(gridOriginZ).put(0);
         ints.position(24);
-        ints.put(lightCount).put(0).put(0).put(0);
+        ints.put(lightCount);
+        floats.position(25);
+        floats.put(atlasCellsAcross);
+        ints.position(26);
+        ints.put(textureCellCount).put(0);
         push.position(0);
     }
 
@@ -419,6 +451,7 @@ public final class Lane1TerrainFrontend {
         bindings.add(new DescriptorBindingPlan.Binding(0, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         bindings.add(new DescriptorBindingPlan.Binding(1, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         bindings.add(new DescriptorBindingPlan.Binding(2, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
+        bindings.add(new DescriptorBindingPlan.Binding(3, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         bindings.add(new DescriptorBindingPlan.Binding(4, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         bindings.add(new DescriptorBindingPlan.Binding(5, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         bindings.add(new DescriptorBindingPlan.Binding(6, DescriptorBindingPlan.Kind.COMBINED_IMAGE_SAMPLER, fragment, 1));
@@ -587,7 +620,7 @@ public final class Lane1TerrainFrontend {
 
     private long createSetLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            int[] bindings = {0, 1, 2, 4, 5, 6, 7, 8};
+            int[] bindings = {0, 1, 2, 3, 4, 5, 6, 7, 8};
             VkDescriptorSetLayoutBinding.Buffer layoutBindings =
                     VkDescriptorSetLayoutBinding.calloc(bindings.length, stack);
             for (int i = 0; i < bindings.length; i++) {
@@ -636,7 +669,7 @@ public final class Lane1TerrainFrontend {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int setCount = FRAME_SLOTS * KIND_COUNT * 2;
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
-            sizes.get(0).type(VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(setCount * 5);
+            sizes.get(0).type(VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(setCount * 6);
             sizes.get(1).type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(setCount * 2);
             sizes.get(2).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(setCount);
             VkDescriptorPoolCreateInfo info = VkDescriptorPoolCreateInfo.calloc(stack)
@@ -686,6 +719,7 @@ public final class Lane1TerrainFrontend {
                                 ? axisSpace.bufferHandle() : generalSpace.bufferHandle(),
                                 stream == 0 ? AXIS_SLAB_BYTES : GENERAL_SLAB_BYTES));
                         writes.add(bufferWrite(stack, set, 2, auxSpace.bufferHandle(), AUX_SLAB_BYTES));
+                        writes.add(bufferWrite(stack, set, 3, textureCellBuffer.buffer(), TEXTURE_CELL_BYTES));
                         writes.add(bufferWrite(stack, set, 4, lightBuffer.buffer(),
                                 LightGridBuilder.UBO_BYTES));
                         writes.add(bufferWrite(stack, set, 5, maskBuffer.buffer(),
@@ -788,6 +822,7 @@ public final class Lane1TerrainFrontend {
             fog.delete();
         }
         descBuffer.delete();
+        textureCellBuffer.delete();
         lightBuffer.delete();
         maskBuffer.delete();
         axisSpace.close();

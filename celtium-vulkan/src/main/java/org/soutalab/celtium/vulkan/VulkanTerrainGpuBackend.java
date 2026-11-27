@@ -1389,6 +1389,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
     private long lane1PreparedFrame = -1L;
 
+    @Override
+    public void celtium$setTextureCellTable(int[] packedCells) {
+        celtium$lane1().setTextureCellTable(packedCells);
+    }
+
     /** Lane 1 store/draw counters for the F3 panel and status reports; never starts the frontend. */
     public String celtium$lane1DiagnosticsSummary() {
         String base = this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();
@@ -1501,7 +1506,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 frontend.recordPass(
                         org.soutalab.celtium.core.shader.TerrainPassKind.values()[layerOrdinal],
                         this.commandBuffer, renderPass, this.frameSlot,
-                        this.atlasTexture.view(), this.lightmapTexture.view());
+                        this.atlasTexture.view(), this.lightmapTexture.view(),
+                        this.atlasTexture.width() / 16.0f);
             } finally {
                 vkCmdEndRenderPass(this.commandBuffer);
                 this.commandState.endPass();

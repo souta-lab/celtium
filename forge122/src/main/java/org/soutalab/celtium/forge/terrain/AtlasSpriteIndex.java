@@ -16,6 +16,7 @@ import java.util.Map;
 public final class AtlasSpriteIndex {
     private final Map<TextureAtlasSprite, Integer> indices = new IdentityHashMap<>();
     private final Map<TextureAtlasSprite, Integer> cells = new IdentityHashMap<>();
+    private final java.util.List<TextureAtlasSprite> byIndex = new java.util.ArrayList<>();
     private int atlasWidthPx;
     private int atlasHeightPx;
     private int nextIndex;
@@ -37,7 +38,29 @@ public final class AtlasSpriteIndex {
         }
         int index = ++nextIndex;
         indices.put(sprite, index);
+        while (byIndex.size() <= index) {
+            byIndex.add(null);
+        }
+        byIndex.set(index, sprite);
         return index;
+    }
+
+    /** The number of table entries a {@link #cellTable()} snapshot carries (index 0 included). */
+    public synchronized int size() {
+        return nextIndex + 1;
+    }
+
+    /**
+     * A snapshot of the index-to-cell table, packed {@code cellU | (cellV << 8)} per index, for the
+     * backend's texture-cell buffer. Entry 0 (the unknown sprite) is cell 0.
+     */
+    public synchronized int[] cellTable() {
+        int[] table = new int[nextIndex + 1];
+        for (int i = 1; i <= nextIndex; i++) {
+            TextureAtlasSprite sprite = i < byIndex.size() ? byIndex.get(i) : null;
+            table[i] = sprite != null ? cellFor(sprite) : 0;
+        }
+        return table;
     }
 
     /** The sprite's atlas cell, packed {@code cellU | (cellV << 8)}; 0 when unknown. */

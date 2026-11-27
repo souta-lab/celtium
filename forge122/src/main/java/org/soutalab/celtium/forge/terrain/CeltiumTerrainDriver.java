@@ -57,6 +57,8 @@ public final class CeltiumTerrainDriver {
     private WorldClient world;
     private TerrainBuildScheduler scheduler;
     private ForgeBlockFaceData faceData;
+    private AtlasSpriteIndex spriteIndex;
+    private int pushedTextureCellCount = -1;
     private FluidloggedProbe fluids;
 
     /** Section keys (packed) whose geometry is in the backend store. */
@@ -227,10 +229,27 @@ public final class CeltiumTerrainDriver {
             fluids = FluidloggedProbe.resolve();
         }
         if (faceData == null) {
-            AtlasSpriteIndex sprites = new AtlasSpriteIndex();
-            sprites.setAtlasSize(atlasWidthPx(), atlasWidthPx());
-            faceData = ForgeBlockFaceData.build(sprites);
+            spriteIndex = new AtlasSpriteIndex();
+            spriteIndex.setAtlasSize(atlasWidthPx(), atlasWidthPx());
+            faceData = ForgeBlockFaceData.build(spriteIndex);
         }
+        pushTextureCellTableIfGrown();
+    }
+
+    /**
+     * The general stream's shaders resolve a quad's texture index through the backend's texture-cell
+     * table; push a fresh snapshot whenever meshing has indexed new sprites since the last push.
+     */
+    private void pushTextureCellTableIfGrown() {
+        if (spriteIndex == null || spriteIndex.size() == pushedTextureCellCount) {
+            return;
+        }
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+        if (backend == null) {
+            return;
+        }
+        backend.celtium$setTextureCellTable(spriteIndex.cellTable());
+        pushedTextureCellCount = spriteIndex.size();
     }
 
     /** The block atlas' pixel width, derived from one known sprite's UV span. */

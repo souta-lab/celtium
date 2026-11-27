@@ -118,8 +118,8 @@ public final class Lane1Shaders {
                 vec4 cameraPos;
                 ivec4 gridOrigin;
                 int lightCount;
-                int pushPad0;
-                int pushPad1;
+                float atlasCellsAcross;
+                int textureCellCount;
                 int pushPad2;
             } pc;
             layout(location = 0) out vec2 fragUv;
@@ -162,7 +162,8 @@ public final class Lane1Shaders {
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
-                fragUv = (vec2(cellU, cellV) + corner * vec2(float(extentU), float(extentV))) / 256.0;
+                fragUv = (vec2(cellU, cellV) + corner * vec2(float(extentU), float(extentV)))
+                        / max(pc.atlasCellsAcross, 1.0);
                 float shade = float((q.z >> 24) & 255u) / 255.0;
                 vec3 tint = ((q.w & (1u << 24)) != 0u)
                         ? vec3(float(q.w & 255u), float((q.w >> 8) & 255u), float((q.w >> 16) & 255u)) / 255.0
@@ -185,13 +186,14 @@ public final class Lane1Shaders {
             // array member cannot be indexed dynamically without GL_EXT_nonuniform_qualifier,
             // so the shader reads the same 64 B record through a flat float array instead.
             layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads { float generalWords[]; };
+            layout(std430, set = 0, binding = 3) readonly buffer TextureCells { uvec2 textureCells[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
                 vec4 cameraPos;
                 ivec4 gridOrigin;
                 int lightCount;
-                int pushPad0;
-                int pushPad1;
+                float atlasCellsAcross;
+                int textureCellCount;
                 int pushPad2;
             } pc;
             layout(location = 0) out vec2 fragUv;
@@ -210,7 +212,16 @@ public final class Lane1Shaders {
                                   generalWords[wordBase + uint(corner * 3) + 2u]);
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
                 gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos.xyz, 1.0);
-                fragUv = vec2(0.0);
+                // The quad's texture index resolves through the frontend's cell table; the corner
+                // maps onto the sprite's full extent (the S2-a full-sprite approximation: the
+                // mesher's 64 B record carries no per-vertex sprite UVs).
+                int textureIndex = floatBitsToInt(generalWords[wordBase + 12u]);
+                vec2 cell = vec2(0.0);
+                if (textureIndex > 0 && textureIndex < pc.textureCellCount) {
+                    cell = vec2(textureCells[textureIndex]);
+                }
+                vec2 cornerUv = vec2(float(corner & 1), float((corner >> 1) & 1));
+                fragUv = (cell + cornerUv) / max(pc.atlasCellsAcross, 1.0);
                 int flags = floatBitsToInt(generalWords[wordBase + 15u]);
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
