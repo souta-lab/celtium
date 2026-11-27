@@ -116,7 +116,14 @@ public final class TerrainDrawStage implements PackTerrainDriver {
             cachedRanges = ranges;
             cachedSlots = slots.stream().mapToInt(Integer::intValue).toArray();
         }
+        // Opaque kinds are depth-tested and order-free, so their commands are grouped by
+        // stream (all axis, then all general): the sink binds a pipeline per stream switch,
+        // and interleaving the streams per section made it bind ~once per draw (Gate G1
+        // profile). Translucent kinds keep section order - their blending is order-bound.
+        boolean groupStreams = kind != TerrainPassKind.MAIN_TRANSLUCENT
+                && kind != TerrainPassKind.SHADOW_TRANSLUCENT;
         List<DrawCommand> commands = new ArrayList<>();
+        List<DrawCommand> generalCommands = groupStreams ? new ArrayList<>() : commands;
         long quads = 0L;
         int visibleCount = cachedVisible.size();
         for (int i = 0; i < cachedVisible.size(); i++) {
@@ -129,10 +136,13 @@ public final class TerrainDrawStage implements PackTerrainDriver {
                 quads += range.axisQuadCount();
             }
             if (range.generalQuadCount() > 0) {
-                commands.add(new DrawCommand(range.generalQuadCount() * 6,
+                generalCommands.add(new DrawCommand(range.generalQuadCount() * 6,
                         (int) (desc.generalSlabOffset() / GeneralQuad.BYTE_SIZE) + range.generalQuadOffset(), slot, layer, true));
                 quads += range.generalQuadCount();
             }
+        }
+        if (groupStreams) {
+            commands.addAll(generalCommands);
         }
         cmd.beginRendering(targets);
         try {

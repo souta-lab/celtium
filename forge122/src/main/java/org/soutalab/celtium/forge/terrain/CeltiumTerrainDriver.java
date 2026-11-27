@@ -40,6 +40,14 @@ public final class CeltiumTerrainDriver {
 
     /** Builds allowed in flight at once; the initial load streams in instead of hitching. */
     private static final int MAX_PENDING_BUILDS = 96;
+    /**
+     * Snapshots taken per frame at most. The snapshot is render-thread work (a direct
+     * chunk-storage read since the Gate G1 fix, ~0.3-0.5 ms per section), and filling the
+     * whole pending cap every frame made tick frames cost ~46 ms in the flight scene
+     * while the backlog lasted. The flight's steady-state demand is ~3 sections/frame;
+     * a budget of 12 drains a load backlog over a second or two without hitching frames.
+     */
+    private static final int MAX_SNAPSHOTS_PER_FRAME = 12;
     /** Finished builds uploaded per frame at most. */
     private static final int MAX_UPLOADS_PER_FRAME = 160;
 
@@ -291,8 +299,9 @@ public final class CeltiumTerrainDriver {
         List<Long> queue = new ArrayList<>(dirty);
         queue.sort((a, b) -> Double.compare(distanceSq(a, cameraX, cameraY, cameraZ),
                 distanceSq(b, cameraX, cameraY, cameraZ)));
+        int snapshots = 0;
         for (long k : queue) {
-            if (pending.size() >= MAX_PENDING_BUILDS) {
+            if (pending.size() >= MAX_PENDING_BUILDS || snapshots >= MAX_SNAPSHOTS_PER_FRAME) {
                 break;
             }
             Long starved = starvedUntil.get(k);
@@ -302,6 +311,7 @@ public final class CeltiumTerrainDriver {
                 continue;
             }
             dirty.remove(k);
+            snapshots++;
             int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
             WorldSectionSnapshot snapshot = new WorldSectionSnapshot();
             ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
