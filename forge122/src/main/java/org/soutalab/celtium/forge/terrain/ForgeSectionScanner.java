@@ -111,6 +111,11 @@ public final class ForgeSectionScanner {
                 }
             }
         }
+        // The snapshot's light is render light (what World.getCombinedLight returns per
+        // cell), not the raw stored values: states that use neighbour brightness take
+        // the maximum over their neighbours. The old scanner read getCombinedLight per
+        // cell; this pass computes the same values from the raw arrays just captured.
+        snapshot.applyRenderLightRule();
         if (fluids != null && fluids.present() && world instanceof net.minecraft.world.World realWorld2) {
             Chunk chunk = realWorld2.getChunk(sectionX, sectionZ);
             int[] sectionFluids = fluids.sectionFluids(chunk, sectionY);

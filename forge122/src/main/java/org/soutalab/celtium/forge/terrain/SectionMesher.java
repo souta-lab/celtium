@@ -423,8 +423,8 @@ public final class SectionMesher {
                     for (int q = 0; q < count; q++) {
                         data.readGeneralQuad(state, q, quadView);
                         int lightIndex = lightIndexForNormal(snapshot, i, quadView.normalPacked);
-                        int sky = snapshot.renderSkyLightAt(lightIndex);
-                        int block = snapshot.renderBlockLightAt(lightIndex);
+                        int sky = snapshot.skyLightAt(lightIndex);
+                        int block = snapshot.blockLightAt(lightIndex);
                         int lightWord = (sky * 17) | ((block * 17) << 8);
                         int flags = 0;
                         if (quadView.usesTint && tint != WorldSectionSnapshot.NO_TINT) {

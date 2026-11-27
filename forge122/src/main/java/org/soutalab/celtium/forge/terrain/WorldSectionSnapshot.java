@@ -111,69 +111,58 @@ public final class WorldSectionSnapshot {
     }
 
     /**
-     * The render light at a face cell, following vanilla's getLightFromNeighborsFor rule
-     * (the rule World.getCombinedLight delegates to and the old slice applied): when the
-     * face cell's own state uses neighbour brightness - air, leaves, and every other
-     * non-full-cube state - the light is the maximum over the cell's six neighbours,
-     * not the cell's own stored value. The stored arrays legitimately hold 0 for pocket
-     * cells under a canopy; the neighbour maximum is what lifts those faces in vanilla.
+     * Applies vanilla's render-light rule (World.getCombinedLight, via
+     * getLightFromNeighborsFor) to the raw per-cell light in place: a cell whose state
+     * uses neighbour brightness - air, leaves, and every other non-full-cube state -
+     * takes the maximum light over its six neighbours instead of its own stored value.
+     * The stored arrays in this fixture are a binary cast (15 in the open, 0 in every
+     * shadowed cell, no propagation gradient), so raw face reads go black across whole
+     * canopies; the neighbour maximum at the face cell is what vanilla samples. Called
+     * once at the end of a fill, over the raw arrays.
      */
-    public int renderSkyLightAt(int faceIndex) {
-        if (!neighborBrightness[faceIndex]) {
-            return skyLightAt(faceIndex);
-        }
-        int max = 0;
-        int fx = faceIndex % SIZE;
-        int fz = (faceIndex / SIZE) % SIZE;
-        int fy = faceIndex / (SIZE * SIZE);
-        for (int dir = 0; dir < 6; dir++) {
-            int nx = fx + TerrainDirs.DX[dir];
-            int ny = fy + TerrainDirs.DY[dir];
-            int nz = fz + TerrainDirs.DZ[dir];
-            if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) {
-                // One cell past the apron: the slice does not reach it; skip rather
-                // than wrap the flat index onto an unrelated cell (or off the array).
-                continue;
-            }
-            int value = skyLightAt(faceIndex + offset(dir));
-            if (value > max) {
-                max = value;
-            }
-        }
-        return max;
-    }
-
-    /** The block-light twin of {@link #renderSkyLightAt(int)}. */
-    public int renderBlockLightAt(int faceIndex) {
-        if (!neighborBrightness[faceIndex]) {
-            return blockLightAt(faceIndex);
-        }
-        int max = 0;
-        int fx = faceIndex % SIZE;
-        int fz = (faceIndex / SIZE) % SIZE;
-        int fy = faceIndex / (SIZE * SIZE);
-        for (int dir = 0; dir < 6; dir++) {
-            int nx = fx + TerrainDirs.DX[dir];
-            int ny = fy + TerrainDirs.DY[dir];
-            int nz = fz + TerrainDirs.DZ[dir];
-            if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) {
-                continue;
-            }
-            int value = blockLightAt(faceIndex + offset(dir));
-            if (value > max) {
-                max = value;
+    public void applyRenderLightRule() {
+        byte[] rawSky = skyLight.clone();
+        byte[] rawBlock = blockLight.clone();
+        for (int y = 0; y < SIZE; y++) {
+            for (int z = 0; z < SIZE; z++) {
+                for (int x = 0; x < SIZE; x++) {
+                    int idx = index(x, y, z);
+                    if (!neighborBrightness[idx]) {
+                        continue;
+                    }
+                    int maxSky = 0;
+                    int maxBlock = 0;
+                    for (int dir = 0; dir < 6; dir++) {
+                        int nx = x + TerrainDirs.DX[dir];
+                        int ny = y + TerrainDirs.DY[dir];
+                        int nz = z + TerrainDirs.DZ[dir];
+                        if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) {
+                            continue;
+                        }
+                        int nIdx = idx + offset(dir);
+                        int sky = rawSky[nIdx] & 0xFF;
+                        if (sky > maxSky) {
+                            maxSky = sky;
+                        }
+                        int block = rawBlock[nIdx] & 0xFF;
+                        if (block > maxBlock) {
+                            maxBlock = block;
+                        }
+                    }
+                    skyLight[idx] = (byte) maxSky;
+                    blockLight[idx] = (byte) maxBlock;
+                }
             }
         }
-        return max;
     }
 
     /** The light of the cell a face points into: the neighbour cell along {@code dir}. */
     public int faceBlockLight(int index, int dir) {
-        return renderBlockLightAt(index + offset(dir)) & 0xFF;
+        return blockLightAt(index + offset(dir)) & 0xFF;
     }
 
     public int faceSkyLight(int index, int dir) {
-        return renderSkyLightAt(index + offset(dir)) & 0xFF;
+        return skyLightAt(index + offset(dir)) & 0xFF;
     }
 
     public int tintAt(int index) {
