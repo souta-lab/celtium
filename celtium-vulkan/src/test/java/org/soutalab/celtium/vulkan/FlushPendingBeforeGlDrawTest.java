@@ -29,6 +29,10 @@ class FlushPendingBeforeGlDrawTest {
         setField(backend, "immediateStatistics", new ImmediateStatistics());
         setField(backend, "fontBatch", new FontBatch());
         setField(backend, "immediateGroups", new ArrayList<ImmediateGroup>());
+        // Unsafe allocation skips the field initializers, so the arrays the flush path touches are
+        // installed by hand: the per-format post-accept drop row is one of them since the drawpath
+        // audit (DP-10) wired it at the replacement-drop seat below.
+        setField(backend, "postAcceptDroppedByFormat", new int[VulkanImmediateFormats.COUNT]);
         return backend;
     }
 
@@ -55,6 +59,8 @@ class FlushPendingBeforeGlDrawTest {
         assertTrue(backend.immediateGroups.isEmpty(),
                 "queued immediate group must be processed rather than left stranded for menu frame boundary drop");
         assertEquals(3, backend.immediateStatistics.postAcceptDroppedGroups());
+        assertEquals(3, backend.postAcceptDroppedByFormat[VulkanImmediateFormats.ITEM],
+                "the per-format row counts the same drop in the same unit (batches), by format");
     }
 
     @Test
