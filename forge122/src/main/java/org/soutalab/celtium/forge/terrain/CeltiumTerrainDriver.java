@@ -372,8 +372,16 @@ public final class CeltiumTerrainDriver {
         }
     }
 
+    private boolean relightRebuildDone; // TEMP G1 EXPERIMENT
+
     private void scheduleBuilds(double cameraX, double cameraY, double cameraZ) {
         frameCounter++;
+        // TEMP G1 EXPERIMENT: one-shot full rebuild well after world entry, to test
+        // whether sections built in the first frames carry zero light.
+        if (!relightRebuildDone && frameCounter > 150 && !resident.isEmpty()) {
+            relightRebuildDone = true;
+            dirty.addAll(resident);
+        }
         if (dirty.isEmpty()) {
             return;
         }
