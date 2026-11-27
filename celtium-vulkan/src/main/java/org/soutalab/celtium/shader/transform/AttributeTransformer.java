@@ -52,27 +52,27 @@ class AttributeTransformer {
 				transformer.injectVariable("layout(location = 4) in vec3 iris_Normal;");
 				// Upstream-Iris attribute aliases: packs written against Iris read
 				// vaPosition / vaNormal / vaUV0 / vaColor (Complementary's line
-				// program is the measured case). They alias the iris_ seats at the
-				// same locations, so an unused alias is eliminated by the compiler
-				// and a used one reads the same attribute data.
-				transformer.injectVariable("layout(location = 0) in vec3 vaPosition;");
-				transformer.injectVariable("layout(location = 4) in vec3 vaNormal;");
+				// program is the measured case). The lowering refuses two inputs
+				// at one location, so the aliases are rewritten onto the iris_
+				// seats as expressions instead of being declared alongside them.
+				transformer.replaceExpression("vaPosition", "iris_Vertex.xyz");
+				transformer.rename("vaNormal", "iris_Normal");
 				if (!cubeVertex) {
-					transformer.injectVariable("layout(location = 2) in vec2 vaUV0;");
-				}
-				if (parameters.inputs.color()) {
-					transformer.injectVariable("layout(location = 1) in vec4 vaColor;");
+					transformer.replaceExpression("vaUV0", "iris_MultiTexCoord0.xy");
 				}
 				if (instancedVertex) {
 					transformer.injectVariable("layout(location = 1) in vec4 iris_Color;");
 					transformer.injectVariable("uniform vec4 iris_ColorModulator;");
 					transformer.replaceExpression("gl_Color", "(iris_Color * iris_ColorModulator * iris_InstColor)");
+					transformer.rename("vaColor", "iris_Color");
 				} else if (parameters.inputs.color()) {
 					transformer.injectVariable("layout(location = 1) in vec4 iris_Color;");
 					transformer.rename("gl_Color", "iris_Color");
+					transformer.rename("vaColor", "iris_Color");
 				} else {
 					transformer.injectVariable("uniform vec4 iris_ColorModulator;");
 					transformer.rename("gl_Color", "iris_ColorModulator");
+					transformer.replaceExpression("vaColor", "iris_ColorModulator");
 				}
 			}
 

@@ -13,9 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Complementary's line program reads the upstream-Iris attribute names
- * vaPosition / vaNormal / vaUV0, which the transform must declare as aliases
- * of the iris_ attribute seats (same locations). Before the alias injection
- * the real ComplementaryReimagined r5.9.3 pack failed to compile with
+ * vaPosition / vaNormal / vaUV0, which the transform rewrites onto the iris_
+ * attribute seats as expressions (the lowering refuses two inputs at one
+ * location, so they cannot be declared alongside). Before the rewrite the
+ * real ComplementaryReimagined r5.9.3 pack failed to compile with
  * 'vaPosition' : undeclared identifier.
  */
 class VaAttributeAliasTest {
@@ -46,9 +47,10 @@ class VaAttributeAliasTest {
         assertNotNull(transformed);
         String vsh = transformed.get(PatchShaderType.VERTEX);
         assertNotNull(vsh);
-        assertTrue(vsh.contains("layout(location = 0) in vec3 vaPosition;"), vsh);
-        assertTrue(vsh.contains("layout(location = 4) in vec3 vaNormal;"), vsh);
-        assertTrue(vsh.contains("layout(location = 2) in vec2 vaUV0;"), vsh);
+        assertTrue(vsh.contains("iris_Vertex.xyz"), vsh);
+        assertTrue(vsh.contains("iris_Normal"), vsh);
+        assertTrue(vsh.contains("iris_MultiTexCoord0.xy"), vsh);
+        assertTrue(!vsh.contains("vaPosition") && !vsh.contains("vaNormal") && !vsh.contains("vaUV0"), vsh);
         PackSpirvCompiler.CompiledProgram compiled = PackSpirvCompiler.SHADERC.compileGraphics(
                 "gbuffers_line", vsh, transformed.get(PatchShaderType.FRAGMENT), null);
         assertNotNull(compiled);
