@@ -28,7 +28,9 @@ import java.util.Random;
  * than at each block's place in it.
  * <p>
  * Collection only happens inside {@link #begin()}/{@link #flush()}, which the block-entity pass brackets; a portal
- * rendered anywhere else is left to vanilla. {@code -Dceltium.native.endPortalBatch=false} turns the producer off.
+ * rendered anywhere else is left to vanilla. If a window's flush never runs (an exception mid-pass), the next
+ * {@link #begin()} counts and discards the leftovers rather than losing them silently (DP-30).
+ * {@code -Dceltium.native.endPortalBatch=false} turns the producer off.
  * Threading: render thread only.
  */
 public final class EndPortalProducer {
@@ -49,12 +51,33 @@ public final class EndPortalProducer {
     private static boolean collecting;
     private static long batchedBlocks;
     private static long flushes;
+    /** Windows that opened with the previous window's collection still unflushed (DP-30), and their blocks. */
+    private static long leftoverWindows;
+    private static long leftoverBlocks;
+    private static int leftoverPrints;
 
     private EndPortalProducer() {
     }
 
     /** Opens collection for one block-entity pass. */
     public static void begin() {
+        if (PORTALS.count > 0 || GATEWAYS.count > 0) {
+            // DP-30: the previous window's flush never ran - an exception between collect and the end of
+            // the block-entity pass is the shape that does this, and because the portal render is cancelled
+            // at collect time, those faces left the picture with no record anywhere. Count and name them
+            // here, at the one point that can still see them, and drop them: they belong to a dead frame,
+            // and drawing them in this pass would place last frame's collection under this frame's state.
+            leftoverWindows++;
+            leftoverBlocks += PORTALS.count + GATEWAYS.count;
+            if (leftoverPrints < 3) {
+                leftoverPrints++;
+                System.out.println("[Celtium] CELTIUM_END_PORTAL_LEFTOVER portals=" + PORTALS.count
+                        + " gateways=" + GATEWAYS.count
+                        + " (collected last window and never flushed; discarded and counted in describe())");
+            }
+            PORTALS.count = 0;
+            GATEWAYS.count = 0;
+        }
         collecting = ENABLED;
     }
 
@@ -92,7 +115,8 @@ public final class EndPortalProducer {
 
     /** {@return a one-line census}, for the frame report. */
     public static String describe() {
-        return "endPortalBatch enabled=" + ENABLED + " blocks=" + batchedBlocks + " flushes=" + flushes;
+        return "endPortalBatch enabled=" + ENABLED + " blocks=" + batchedBlocks + " flushes=" + flushes
+                + " leftoverWindows=" + leftoverWindows + " leftoverBlocks=" + leftoverBlocks;
     }
 
     /** {@code TileEntityEndPortalRenderer.render}, with the block loop moved inside the layer loop. */

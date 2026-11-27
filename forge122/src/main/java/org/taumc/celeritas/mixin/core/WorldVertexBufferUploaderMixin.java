@@ -206,7 +206,10 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$offers;
     /** How often the backend returned true, i.e. claimed the batch. */
     private static int celtium$acceptedByBackend;
-    /** How many swallowed failures have been reported, so a recurring one is visible without flooding the log. */
+    /**
+     * The swallowed-failure print budget, so a recurring one is visible without flooding the log. Print
+     * budget only since DP-01: the count itself lives in {@code OfferFunnelCensus} and never stops.
+     */
     private static int celtium$swallowed;
 
     /**
@@ -286,6 +289,12 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             ByteBuffer data = celtium$byteBuffer(buffer);
             if (data == null || vertices <= 0) {
+                if (data == null) {
+                    // DP-01: a finished batch with no readable buffer dies here, before the backend can
+                    // accept or refuse it - counted unconditionally in the funnel census, because the
+                    // backend's refusal account only sees batches that reach it.
+                    org.soutalab.celtium.vulkan.OfferFunnelCensus.noteNoData();
+                }
                 if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
                     org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(vertices <= 0
                             ? org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_EMPTY
@@ -295,6 +304,8 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             long address = org.lwjgl.system.MemoryUtil.memAddress(data);
             if (address == 0L) {
+                // DP-01: same funnel death as the null buffer, one step later - counted, not silent.
+                org.soutalab.celtium.vulkan.OfferFunnelCensus.noteNoAddress();
                 if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
                     org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
                             org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_NO_DATA);
@@ -555,6 +566,9 @@ public abstract class WorldVertexBufferUploaderMixin {
                 org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
                         org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_SWALLOWED);
             }
+            // DP-01: the count itself is unconditional now - the print budget below used to stop the
+            // counting with it, so the fourth swallowed failure onwards left no trace anywhere.
+            org.soutalab.celtium.vulkan.OfferFunnelCensus.noteSwallowed();
             if (celtium$swallowed < 3) {
                 celtium$swallowed++;
                 StackTraceElement[] trace = error.getStackTrace();
