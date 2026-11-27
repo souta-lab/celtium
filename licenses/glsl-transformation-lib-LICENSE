@@ -1,0 +1,5 @@
+Celtium bundles the GLSL transformation library (org.taumc:glsl-transformation-lib
+0.2.0-32.g7dd88a4-GTNH, a GTNH build of embeddedt's Embeddium GLSL tooling).
+The direct-GL converter (org.soutalab.celtium.glcompat) parses GLSL with it when
+it transforms fixed-function shaders. License: LGPL-3.0; the full text ships with
+this mod as COPYING.LESSER (GNU Lesser General Public License v3).

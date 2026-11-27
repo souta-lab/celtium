@@ -5,7 +5,13 @@ plugins {
 group = 'org.soutalab.celtium'
 version = '0.1.0-dev.1'
 
-repositories { mavenCentral() }
+repositories {
+    mavenCentral()
+    // The GLSL transformation library the direct-GL converter's FFP shader
+    // transformer parses with is published as a GTNH build on the GTNH nexus
+    // (the same artifact Actinium bundles); it is not on Maven Central.
+    maven { url = 'https://nexus.gtnewhorizons.com/repository/public/' }
+}
 
 tasks.withType(JavaCompile).configureEach {
     // Java 25 since the v0.4.0 S1-a stage (design V040-FINAL-PLAN section 2.4): the FFM
@@ -80,6 +86,15 @@ dependencies {
     // A mod's GLSL program is compiled at link time when shaderc is present (ModShaderCompiler checks for it and
     // reports when it is not); it is not bundled until its distribution is decided.
     compileOnly 'org.lwjgl:lwjgl-shaderc'
+    // The direct-GL converter (org.soutalab.celtium.glcompat, S4) parses GLSL for its FFP
+    // shader transforms with the Embeddium GLSL transformation library, running on the
+    // ANTLR 4 runtime. Both are compileOnly here; forge122 embeds the two jars into the
+    // distribution, the same way Actinium bundles them. Non-transitive, matching
+    // Actinium's own bundling (the ANTLR runtime is named separately).
+    compileOnly('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
+    compileOnly 'org.antlr:antlr4-runtime:4.13.2'
+    testImplementation('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
+    testImplementation 'org.antlr:antlr4-runtime:4.13.2'
     compileOnly 'com.google.code.gson:gson:2.10.1'
     // The mod's core API exposes joml matrices. They are relocated into the mod's own namespace by the shadow
     // step, and this module goes through that same step, so it compiles against the original coordinates.

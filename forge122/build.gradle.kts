@@ -84,12 +84,11 @@ repositories {
         filter {
             includeGroupAndSubgroups("com.gtnewhorizons")
             includeGroup("com.github.GTNewHorizons")
-        }
-    }
-    exclusiveContent {
-        forRepository { maven("https://maven.taumc.org/releases") }
-        filter {
-            includeGroupAndSubgroups("org.taumc")
+            // The one org.taumc artifact this build consumes - the GLSL transformation
+            // library the direct-GL converter embeds (S4) - is a GTNH build published
+            // only on this nexus; the maven.taumc.org exclusive block that used to claim
+            // the group resolved nothing and was removed so the group can land here.
+            includeGroup("org.taumc")
         }
     }
     mavenCentral()
@@ -169,6 +168,16 @@ dependencies {
     validationHarnessEmbed(project(":celtium-core", configuration = "harnessJar")) {
         isTransitive = false
     }
+    // The direct-GL converter's GLSL transformation library and its ANTLR 4 runtime
+    // (S4): the converter classes embedded above parse FFP shaders with them at
+    // runtime, so the two jars ship inside the mod jar, the way Actinium bundles
+    // them. Non-transitive on both, matching Actinium's shadowBundle declarations.
+    modEmbedDependencies("org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH") {
+        isTransitive = false
+    }
+    modEmbedDependencies("org.antlr:antlr4-runtime:4.13.2") {
+        isTransitive = false
+    }
     modEmbedDependencies("org.joml:joml:1.10.5")
     implementation("org.joml:joml:1.10.5")
     implementation("zone.rong:mixinbooter:10.5")
@@ -242,6 +251,13 @@ tasks.named<Jar>("jar") {
     }
     // The shaderc natives embedded above link shaderc, SPIRV-Tools, SPIRV-Headers and glslang; their notices.
     from(file("$repositoryRoot/licenses/shaderc-LICENSE")) {
+        into("licenses")
+    }
+    // The GLSL transformation library and ANTLR 4 runtime embedded above (S4); their notices.
+    from(file("$repositoryRoot/licenses/glsl-transformation-lib-LICENSE")) {
+        into("licenses")
+    }
+    from(file("$repositoryRoot/licenses/antlr4-runtime-LICENSE")) {
         into("licenses")
     }
     manifest {
