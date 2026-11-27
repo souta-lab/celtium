@@ -258,6 +258,58 @@ public final class TerrainSectionStore {
         return "readbackG4 total=" + total + " sky15=" + sky15 + " dark=" + dark;
     }
 
+    // TEMP G1 PROBE7c: per-section read-back dark fractions (both streams), worst first.
+    public synchronized String worstSectionReadback() {
+        java.util.List<long[]> rows = new java.util.ArrayList<>();
+        for (Resident resident : sections.values()) {
+            SectionDesc desc = resident.desc;
+            if (desc == null || desc.sectionY() != 4) {
+                continue;
+            }
+            long aDark = 0L;
+            long aTot = 0L;
+            if (resident.axisBytes > 0L) {
+                MemorySegment seg = axisSpace.segment(desc.axisSlabOffset(), resident.axisBytes);
+                int quads = (int) (resident.axisBytes / 16L);
+                for (int i = 0; i < quads; i++) {
+                    int w2 = seg.get(ValueLayout.JAVA_INT, (long) i * 16L + 8L);
+                    aTot++;
+                    if (((w2 >>> 16) & 0xFF) == 0) {
+                        aDark++;
+                    }
+                }
+            }
+            long gDark = 0L;
+            long gTot = 0L;
+            if (resident.generalBytes > 0L) {
+                MemorySegment seg = generalSpace.segment(desc.generalSlabOffset(), resident.generalBytes);
+                int quads = (int) (resident.generalBytes / 64L);
+                for (int i = 0; i < quads; i++) {
+                    int lightWord = seg.get(ValueLayout.JAVA_INT, (long) i * 64L + 52L);
+                    gTot++;
+                    if ((lightWord & 0xFF) == 0) {
+                        gDark++;
+                    }
+                }
+            }
+            long tot = aTot + gTot;
+            long dark = aDark + gDark;
+            if (tot > 0L) {
+                rows.add(new long[]{desc.sectionX(), desc.sectionZ(), dark * 1000L / tot,
+                        aDark, aTot, gDark, gTot});
+            }
+        }
+        rows.sort((a, b) -> Long.compare(b[2], a[2]));
+        StringBuilder sb = new StringBuilder("worstSlab");
+        for (int i = 0; i < Math.min(6, rows.size()); i++) {
+            long[] r = rows.get(i);
+            sb.append(" [").append(r[0]).append(',').append(r[1]).append("]=").append(r[2])
+                    .append("\u2030 a").append(r[3]).append('/').append(r[4])
+                    .append(" g").append(r[5]).append('/').append(r[6]);
+        }
+        return sb.toString();
+    }
+
     /** Removes a section; its ranges return timeline-deferred. Returns false when it was not resident. */
     public synchronized boolean remove(int sectionX, int sectionY, int sectionZ, long timelineValue) {
         generation++;
