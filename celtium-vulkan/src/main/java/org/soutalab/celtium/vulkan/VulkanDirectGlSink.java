@@ -357,7 +357,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                 int offset = 0;
                 for (int i = 0; i < program.attribs.length; i++) {
                     AttribDesc attrib = program.attribs[i];
-                    attributes.get(i).location(attrib.location).binding(0)
+                    attributes.get(i).location(attrib.location()).binding(0)
                             .format(attrib.vkFormat()).offset(offset);
                     offset += attrib.byteSize();
                 }
