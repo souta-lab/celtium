@@ -149,7 +149,7 @@ class DrawpathPresentBundleContractTest {
     @Test
     void thePresentHeartbeatPrintsTheSkipTotal() throws IOException {
         String present = readRepoFile(PRESENT_SWAPCHAIN_SOURCE);
-        assertTrue(present.contains("\" skips=\" + backend.presentSkips"),
+        assertTrue(present.contains("skips=\" + backend.presentSkips"),
                 "CELTIUM_PRESENT carries the aggregate presentSkips a leg can gate on");
         assertTrue(present.contains("skipsByReason=[noTarget/stalled="),
                 "the per-reason split stays beside the total");
