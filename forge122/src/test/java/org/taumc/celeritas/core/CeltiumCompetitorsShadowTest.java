@@ -32,6 +32,31 @@ class CeltiumCompetitorsShadowTest {
     }
 
     @Test
+    void sameJarDifferentClassEntriesDoNotDiffer() throws Exception {
+        // The shape a launch class loader actually reports: the full resource URL of each class,
+        // same jar, different entries. This is Celtium running alone and must not read as shadowing.
+        URL plugin = url("jar:file:/instance/mods/celtium-forge-mc1.12.2-0.2.2.jar"
+                + "!/org/taumc/celeritas/core/CeleritasLoadingPlugin.class");
+        URL mod = url("jar:file:/instance/mods/celtium-forge-mc1.12.2-0.2.2.jar"
+                + "!/org/taumc/celeritas/CeleritasVintage.class");
+        assertFalse(CeltiumCompetitors.sourcesDiffer(plugin, mod));
+    }
+
+    @Test
+    void jarWrapperAndPlainFileFormsOfOneJarDoNotDiffer() throws Exception {
+        assertFalse(CeltiumCompetitors.sourcesDiffer(
+                url("jar:file:/instance/mods/celtium.jar!/org/taumc/celeritas/core/CeleritasLoadingPlugin.class"),
+                url("file:/instance/mods/celtium.jar")));
+    }
+
+    @Test
+    void differentJarsInEntryFormDiffer() throws Exception {
+        assertTrue(CeltiumCompetitors.sourcesDiffer(
+                url("jar:file:/instance/mods/actinium.jar!/org/taumc/celeritas/core/CeleritasLoadingPlugin.class"),
+                url("jar:file:/instance/mods/celtium.jar!/org/taumc/celeritas/CeleritasVintage.class")));
+    }
+
+    @Test
     void unknownLocationNeverDiffers() throws Exception {
         URL jar = url("file:/instance/mods/celtium.jar");
         assertFalse(CeltiumCompetitors.sourcesDiffer(null, jar));

@@ -207,9 +207,31 @@ public final class CeltiumCompetitors {
         return source == null ? null : source.getLocation();
     }
 
-    /** Whether two code source locations name different artifacts; an unknown location never differs. */
+    /**
+     * Whether two code source locations name different artifacts; an unknown location never differs.
+     * The comparison is per artifact, not per class: a launch class loader may report a class's code
+     * source as the full {@code jar:file:...!/path/Class.class} resource URL, so two classes from the
+     * same jar carry different location strings. Both locations are reduced to the artifact they name
+     * before comparing.
+     */
     static boolean sourcesDiffer(URL first, URL second) {
-        return first != null && second != null && !first.toExternalForm().equals(second.toExternalForm());
+        return first != null && second != null && !artifactForm(first).equals(artifactForm(second));
+    }
+
+    /** The artifact a code source location points at: the {@code jar:} wrapper and any {@code !/entry} part removed. */
+    static String artifactForm(URL source) {
+        String form = source.toExternalForm();
+        if (form.startsWith("jar:")) {
+            form = form.substring("jar:".length());
+        }
+        int bang = form.indexOf('!');
+        if (bang >= 0) {
+            form = form.substring(0, bang);
+        }
+        if (form.endsWith("/")) {
+            form = form.substring(0, form.length() - 1);
+        }
+        return form;
     }
 
     /** The file name a code source location points at (the jar, or the last path segment of a classes directory). */
@@ -217,14 +239,7 @@ public final class CeltiumCompetitors {
         if (source == null) {
             return "an unknown jar";
         }
-        String form = source.toExternalForm();
-        int bang = form.indexOf("!/");
-        if (bang >= 0) {
-            form = form.substring(0, bang);
-        }
-        if (form.endsWith("/")) {
-            form = form.substring(0, form.length() - 1);
-        }
+        String form = artifactForm(source);
         int slash = form.lastIndexOf('/');
         String name = slash >= 0 ? form.substring(slash + 1) : form;
         return name.isEmpty() ? form : name;
