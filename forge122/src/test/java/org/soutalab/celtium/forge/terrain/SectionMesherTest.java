@@ -53,6 +53,11 @@ class SectionMesherTest {
             for (int i = 0; i < rows.length; i++) {
                 rows[i] = new Row();
             }
+            // State 0 is air: it occludes nothing and is solid on no side (the real table's
+            // air row, without which every leaf looks "surrounded" by air).
+            rows[0].fullCube = false;
+            rows[0].occludes = false;
+            rows[0].sideSolid = false;
             rows[STONE].texture = 10;
             rows[STONE2].texture = 11;
             rows[GLASS].occludes = false;
