@@ -163,7 +163,7 @@ public final class Lane1Shaders {
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
-                fragCell = vec2(cellU, cellV);
+                fragCell = vec2(26.0, 13.0); // TEMP G1 BISECT6: constant stone cell (axis)
                 fragLocalUv = corner * vec2(float(extentU), float(extentV));
                 float shade = float((q.z >> 24) & 255u) / 255.0;
                 vec3 tint = ((q.w & (1u << 24)) != 0u)
