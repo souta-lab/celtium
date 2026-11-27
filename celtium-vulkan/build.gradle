@@ -97,6 +97,10 @@ dependencies {
     // carries them at runtime, so compileOnly suffices.
     compileOnly 'org.jetbrains:annotations:24.1.0'
     testImplementation 'org.jetbrains:annotations:24.1.0'
+    // The converted GLSM sources log through log4j directly (the module's own code
+    // reaches it through :common until now). The game provides log4j at runtime;
+    // the version matches the testImplementation named below.
+    compileOnly 'org.apache.logging.log4j:log4j-api:2.0-beta9'
     testImplementation('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
     testImplementation 'org.antlr:antlr4-runtime:4.13.2'
     compileOnly 'com.google.code.gson:gson:2.10.1'
