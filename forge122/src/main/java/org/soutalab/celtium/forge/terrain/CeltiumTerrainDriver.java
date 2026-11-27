@@ -136,6 +136,62 @@ public final class CeltiumTerrainDriver {
         }
         lines.add("drainLight axisSky15=" + DRAIN_SKY15.get() + " axisTotal=" + DRAIN_TOTAL.get()
                 + " axisDark=" + DRAIN_DARK.get());
+        // TEMP G1 PROBE16: for the top faces of solid cells in section (-4,4,3), compare
+        // the flat face-cell combined light against vanilla's AO corner blend (the mean
+        // of getCombinedLight at the face cell and the three cells diagonally across
+        // each vertex is approximated here by the max over the face cell's 3x3 ring at
+        // the same height plus the cell above).
+        try {
+            if (world != null) {
+                long flatDark = 0L;
+                long blendDark = 0L;
+                long faces = 0L;
+                net.minecraft.util.math.BlockPos.MutableBlockPos mp =
+                        new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                for (int ly = 1; ly < 15; ly++) {
+                    for (int lz = 1; lz < 15; lz++) {
+                        for (int lx = 1; lx < 15; lx++) {
+                            int wx = -64 + lx;
+                            int wy = 64 + ly;
+                            int wz = 48 + lz;
+                            mp.setPos(wx, wy, wz);
+                            if (!world.getBlockState(mp).isOpaqueCube()) {
+                                continue;
+                            }
+                            mp.setPos(wx, wy + 1, wz);
+                            if (!world.getBlockState(mp).getBlock()
+                                    .isAir(world.getBlockState(mp), world, mp)) {
+                                continue;
+                            }
+                            faces++;
+                            int flat = (world.getCombinedLight(mp, 0) >> 20) & 0xF;
+                            if (flat == 0) {
+                                flatDark++;
+                            }
+                            int best = flat;
+                            for (int dx = -1; dx <= 1; dx++) {
+                                for (int dz = -1; dz <= 1; dz++) {
+                                    for (int dy = 0; dy <= 1; dy++) {
+                                        mp.setPos(wx + dx, wy + 1 + dy, wz + dz);
+                                        int v = (world.getCombinedLight(mp, 0) >> 20) & 0xF;
+                                        if (v > best) {
+                                            best = v;
+                                        }
+                                    }
+                                }
+                            }
+                            if (best == 0) {
+                                blendDark++;
+                            }
+                        }
+                    }
+                }
+                lines.add("aoBlend faces=" + faces + " flatDark=" + flatDark
+                        + " ringMaxDark=" + blendDark);
+            }
+        } catch (Throwable t) {
+            lines.add("aoBlend failed " + t);
+        }
         // TEMP G1 PROBE14: storage-direct vs chunk-API light reads for chunk (-4,3) y4.
         try {
             net.minecraft.world.chunk.Chunk c14 = world != null ? world.getChunk(-4, 3) : null;
