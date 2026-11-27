@@ -299,8 +299,9 @@ public final class Lane1TerrainFrontend {
                 + " | " + probeDescBlock()
                 + " | " + drawStage.probeCommandDump(store)
                 + " | " + store.probeOverlaps()
-                + " | " + store.probeSection(-4, 4, 3)
-                + " | " + store.probeSection(0, 4, 0);
+                + " | " + store.probeSection(8, 4, 0)
+                + " | " + store.probeSection(8, 3, 0)
+                + " | " + store.probeSection(6, 3, -5);
     }
 
     // ------------------------------------------------------------------
