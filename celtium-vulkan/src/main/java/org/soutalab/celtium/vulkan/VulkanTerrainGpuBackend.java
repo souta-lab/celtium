@@ -16375,6 +16375,7 @@ this.frameBufferOpen = false;
                     .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                             | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
+            BackendCallCounters.noteBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
                             | org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -16433,6 +16434,7 @@ this.frameBufferOpen = false;
                         .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
                         .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                         .image(probePair).subresourceRange(probeRange);
+                BackendCallCounters.noteBarrier();
                 vkCmdPipelineBarrier(this.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, probeBarrier);
                 String probeLine = "CELTIUM_PAIR_PROBE_CLEAR frame=" + this.frameId
@@ -16459,6 +16461,7 @@ this.frameBufferOpen = false;
         }
         gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
         FramePassTimings.begin("winBeginPass");
+        BackendCallCounters.noteFboSwitch();
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         FramePassTimings.end("winBeginPass");
         if (this.pendingChainPairClear != 0L) {
@@ -19715,6 +19718,7 @@ this.frameBufferOpen = false;
                     .framebuffer(framebuffer);
             begin.renderArea().offset().set(0, 0);
             begin.renderArea().extent().set(passW, passH);
+            BackendCallCounters.noteFboSwitch();
             vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
             this.activeImmediateTarget = drawIdentity;
             this.passAreaWidth = passW;
@@ -21553,6 +21557,7 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBeginPass");
         try {
         long passBeginStarted = System.nanoTime();
+        BackendCallCounters.noteFboSwitch();
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.terrainPassBeginNanos += System.nanoTime() - passBeginStarted;
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
@@ -27931,6 +27936,7 @@ this.frameBufferOpen = false;
             org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_HOST_READ_BIT);
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(this.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
                     barrier, null, null);
         }

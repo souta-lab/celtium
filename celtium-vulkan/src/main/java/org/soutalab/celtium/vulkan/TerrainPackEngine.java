@@ -429,6 +429,7 @@ final class TerrainPackEngine {
         VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
                 .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer,
                 VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, barrier, null, null);
@@ -452,6 +453,7 @@ final class TerrainPackEngine {
         vkCmdDispatch(commandBuffer, (snapshot.recordCount() + WORKGROUP - 1) / WORKGROUP, 1, 1);
         barrier.get(0).srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, barrier, null, null);
     }

@@ -811,6 +811,7 @@ public final class VulkanContext {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(request.image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer, entryMasks[0], VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 
         org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
@@ -839,6 +840,7 @@ public final class VulkanContext {
                         .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                         .image(request.image);
                 toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
+                BackendCallCounters.noteBarrier();
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toSource);
             }
@@ -864,6 +866,7 @@ public final class VulkanContext {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(request.image);
             toSrc.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toSrc);
             levelWidth = nextWidth;
@@ -876,6 +879,7 @@ public final class VulkanContext {
                 .oldLayout(levels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
                         : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                 .newLayout(request.newLayout);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, TEXTURE_SAMPLING_STAGES, 0, null,
                 null, barrier);
     }
@@ -901,6 +905,7 @@ public final class VulkanContext {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(request.image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, region.mipLevel, 1, 0, 1);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer, TEXTURE_SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 
@@ -918,6 +923,7 @@ public final class VulkanContext {
                 .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                 .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                 .newLayout(request.newLayout);
+        BackendCallCounters.noteBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, TEXTURE_SAMPLING_STAGES, 0, null,
                 null, barrier);
     }
@@ -5254,6 +5260,7 @@ public final class VulkanContext {
                 preCopyBarrier.get(0).sType$Default()
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT)
                         .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                BackendCallCounters.noteBarrier();
                 vkCmdPipelineBarrier(commandBuffer,
                         VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT
                                 | VK_PIPELINE_STAGE_HOST_BIT,
@@ -5300,6 +5307,7 @@ public final class VulkanContext {
                                 | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
                                 | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
                                 | VK_ACCESS_MEMORY_READ_BIT);
+                BackendCallCounters.noteBarrier();
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, barrier, null, null);
             }
@@ -6148,6 +6156,7 @@ public final class VulkanContext {
             preCopy.get(0).sType$Default()
                     .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(commandBuffer,
                     VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, preCopy, null, null);
@@ -6160,6 +6169,7 @@ public final class VulkanContext {
                     .dstAccessMask(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
                             | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT
                             | VK_ACCESS_TRANSFER_WRITE_BIT);
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT
                             | VK_PIPELINE_STAGE_TRANSFER_BIT,

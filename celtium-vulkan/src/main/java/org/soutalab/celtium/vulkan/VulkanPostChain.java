@@ -1237,6 +1237,7 @@ public final class VulkanPostChain {
                 VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
                         .renderPass(renderPassFor(outFormatClass)).framebuffer(outFramebuffer)
                         .renderArea(renderArea);
+                BackendCallCounters.noteFboSwitch();
                 vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline);
                 VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
@@ -1696,6 +1697,7 @@ public final class VulkanPostChain {
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
                             .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
         }
@@ -1711,6 +1713,7 @@ public final class VulkanPostChain {
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
                             .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            BackendCallCounters.noteBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
         }
