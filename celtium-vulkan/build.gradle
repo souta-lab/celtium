@@ -58,6 +58,11 @@ if (celtiumCoreProject != null) {
     dependencies {
         compileOnly(project(':celtium-core')) { transitive = false }
         testImplementation(project(':celtium-core')) { transitive = false }
+        // The default project dependency resolves to :celtium-core's main classes directory,
+        // which does not carry the harness source set's classes (they live in their own output);
+        // HarnessConfig comes from the harnessJar artifact, the same way :common consumes it.
+        compileOnly(project(path: ':celtium-core', configuration: 'harnessJar')) { transitive = false }
+        testImplementation(project(path: ':celtium-core', configuration: 'harnessJar')) { transitive = false }
     }
 }
 
