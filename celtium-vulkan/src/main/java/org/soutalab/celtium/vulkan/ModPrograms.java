@@ -337,7 +337,7 @@ final class ModPrograms {
             // into main would composite that cleared black over the world the frame already drew. Refuse
             // this one frame's pass; from the next frame the borrow is bypassed on the backend's
             // main-sampled latch and the chain samples the frame's own image.
-            return celtium$modFailure(programId, "the frame's colour publication was refused over a"
+            return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "the frame's colour publication was refused over a"
                     + " borrowed present image this frame (borrow closure), so the blend-off pass into"
                     + " the game's framebuffer is refused for this frame only");
         }
