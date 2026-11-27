@@ -71,13 +71,19 @@ class RetireBeforeRebuildTest {
         // Guards the harness premise itself: if the MemoryUtil memory seat the storage heap and the
         // native buffers are built on stopped working without a GL context, every test here would fail
         // in setUp - this assertion names the reason instead of leaving an allocation stack trace.
+        // Byte-wise on purpose: allocateDirect defaults to BIG_ENDIAN while the native buffer reads in
+        // native order, so an int round-trip would compare byte-swapped values on little-endian hosts.
         ByteBuffer src = ByteBuffer.allocateDirect(4);
-        src.putInt(0, 0x11223344);
+        src.put(0, (byte) 0x11).put(1, (byte) 0x22).put(2, (byte) 0x33).put(3, (byte) 0x44);
 
         NativeBuffer buffer = NativeBuffer.copy(src);
         try {
             assertEquals(4, buffer.getLength());
-            assertEquals(0x11223344, buffer.getDirectBuffer().getInt(0));
+            ByteBuffer back = buffer.getDirectBuffer();
+            assertEquals(0x11, back.get(0) & 0xFF);
+            assertEquals(0x22, back.get(1) & 0xFF);
+            assertEquals(0x33, back.get(2) & 0xFF);
+            assertEquals(0x44, back.get(3) & 0xFF);
         } finally {
             buffer.free();
         }
