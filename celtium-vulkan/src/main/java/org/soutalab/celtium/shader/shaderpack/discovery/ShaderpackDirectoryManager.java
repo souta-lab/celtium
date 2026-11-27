@@ -4,12 +4,15 @@ import org.soutalab.celtium.shader.ShaderLogger;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.ZipError;
 
 public class ShaderpackDirectoryManager {
 	private final Path root;
@@ -19,7 +22,7 @@ public class ShaderpackDirectoryManager {
 	}
 
 	public void copyPackIntoDirectory(String name, Path source) throws IOException {
-		Path target = Iris.getShaderpacksDirectory().resolve(name);
+		Path target = root.resolve(name);
 
 		// Copy the pack file into the shaderpacks folder.
 		Files.copy(source, target);
@@ -71,10 +74,55 @@ public class ShaderpackDirectoryManager {
 		};
 
 		try (Stream<Path> list = Files.list(root)) {
-			return list.filter(Iris::isValidShaderpack)
+			return list.filter(this::isValidShaderpack)
 				.map(path -> path.getFileName().toString())
 				.sorted(comparator).collect(Collectors.toList());
 		}
+	}
+
+	/**
+	 * Whether {@code pack} looks like a shader pack: a folder containing a {@code shaders}
+	 * directory, or a zip containing one. Ported from the Iris facade predicate, with the
+	 * shaderpacks-directory self-check resolved against this manager's own root.
+	 */
+	public boolean isValidShaderpack(Path pack) {
+		if (Files.isDirectory(pack)) {
+			// Sometimes the shaderpack directory itself can be
+			// identified as a shader pack due to it containing
+			// folders which contain "shaders" folders, this is
+			// necessary to check against that
+			if (pack.equals(root)) {
+				return false;
+			}
+			try (Stream<Path> stream = Files.walk(pack)) {
+				return stream.filter(Files::isDirectory)
+					// Prevent a pack simply named "shaders" from being
+					// identified as a valid pack
+					.filter(path -> !path.equals(pack)).anyMatch(path -> path.endsWith("shaders"));
+			} catch (IOException e) {
+				// Not a valid pack, but never fail silently: this is what makes a
+				// configured pack vanish from the selection list.
+				ShaderLogger.LOGGER.warn("Failed to inspect potential shaderpack folder \"{}\", it will be skipped", pack, e);
+			}
+		}
+
+		if (pack.toString().endsWith(".zip")) {
+			try (FileSystem zipSystem = FileSystems.newFileSystem(pack, ShaderpackDirectoryManager.class.getClassLoader())) {
+				final Path zipRoot = zipSystem.getRootDirectories().iterator().next();
+				try (Stream<Path> stream = Files.walk(zipRoot)) {
+					return stream.filter(Files::isDirectory).anyMatch(path -> path.endsWith("shaders"));
+				}
+			} catch (ZipError zipError) {
+				// Java 8 seems to throw a ZipError instead of a subclass of IOException
+				ShaderLogger.LOGGER.warn("The ZIP at " + pack + " is corrupt");
+			} catch (IOException e) {
+				// Same here: a transient read failure (file lock, sync client) hides
+				// the pack from the list, which then silently drops apply requests.
+				ShaderLogger.LOGGER.warn("Failed to inspect potential shaderpack zip \"{}\", it will be skipped", pack, e);
+			}
+		}
+
+		return false;
 	}
 
 	/**

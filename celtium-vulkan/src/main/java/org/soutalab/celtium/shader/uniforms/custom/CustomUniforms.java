@@ -154,8 +154,21 @@ public class CustomUniforms implements FunctionContext {
         return result;
     }
 
+    @Override
     public CachedUniform getVariable(String name) {
-        return variables.get(name);
+        // Lookup order from the original: fixed inputs first, then custom variables.
+        // Dropping the input fallback (returning null for builtin inputs) silently marked
+        // every custom variable that depends on a builtin input as broken in the
+        // topological ordering, which emptied the exported uniform set entirely.
+        CachedUniform inputUniform = this.inputHolder.get(name);
+        if (inputUniform != null) {
+            return inputUniform;
+        }
+        CachedUniform customUniform = this.variables.get(name);
+        if (customUniform != null) {
+            return customUniform;
+        }
+        throw new RuntimeException("Unknown variable: " + name);
     }
 
     @Override
@@ -163,7 +176,6 @@ public class CustomUniforms implements FunctionContext {
         return variables.containsKey(name) || inputHolder.get(name) != null;
     }
 
-    @Override
     public VariableExpression getVariableExpression(String name) {
         CachedUniform v = variables.get(name);
         if (v != null) {

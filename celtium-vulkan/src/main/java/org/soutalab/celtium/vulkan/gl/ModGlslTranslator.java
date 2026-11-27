@@ -463,7 +463,6 @@ public final class ModGlslTranslator {
 
         List<Attribute> attributes = new ArrayList<>();
         Map<String, Declaration> vertexAttributes = new LinkedHashMap<>();
-        java.util.BitSet attributeLocations = new java.util.BitSet();
         for (Declaration d : vertexDecls) {
             if ("attribute".equals(d.qualifier)) {
                 Declaration prev = vertexAttributes.get(d.name);
@@ -475,10 +474,28 @@ public final class ModGlslTranslator {
                     continue;
                 }
                 vertexAttributes.put(d.name, d);
-                int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
-                attributes.add(new Attribute(d.name, d.type,
-                        claimLocation(attributeLocations, d.explicitLocation, width, "attribute " + d.name)));
             }
+        }
+        // Explicit locations are claimed before any free assignment. The declaration scan
+        // collects legacy spellings before modern ones, so claiming in scan order would let
+        // an unlocated legacy attribute take a slot a modern declaration explicitly owns
+        // (the Iris attribute patch's output is exactly that mix). Pure-legacy and
+        // pure-modern sources claim identically under both orders.
+        java.util.BitSet attributeLocations = new java.util.BitSet();
+        Map<String, Integer> attributeLocationByName = new LinkedHashMap<>();
+        for (Declaration d : vertexAttributes.values()) {
+            if (d.explicitLocation >= 0) {
+                int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
+                attributeLocationByName.put(d.name,
+                        claimLocation(attributeLocations, d.explicitLocation, width, "attribute " + d.name));
+            }
+        }
+        for (Declaration d : vertexAttributes.values()) {
+            Integer claimed = attributeLocationByName.get(d.name);
+            int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
+            int location = claimed != null ? claimed
+                    : claimLocation(attributeLocations, -1, width, "attribute " + d.name);
+            attributes.add(new Attribute(d.name, d.type, location));
         }
         List<String> varyings = new ArrayList<>();
         Map<String, Declaration> vertexVaryings = new LinkedHashMap<>();
@@ -551,6 +568,10 @@ public final class ModGlslTranslator {
         }
         StringBuilder fs = new StringBuilder("#version 450\n").append(common);
         java.util.BitSet varyingLocations = new java.util.BitSet();
+        // Locations are decided for every varying before any text is emitted, with explicit
+        // locations claimed first (the same mixed-spelling reason as the attribute claims
+        // above: the scan collects legacy varyings before modern ones).
+        Map<String, Integer> varyingExplicitByName = new LinkedHashMap<>();
         for (Declaration d : vertexVaryings.values()) {
             Declaration f = fragmentVaryings.get(d.name);
             if (f != null) {
@@ -579,8 +600,23 @@ public final class ModGlslTranslator {
                 }
                 explicit = f.explicitLocation;
             }
-            int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
-            int location = claimLocation(varyingLocations, explicit, width, "varying " + d.name);
+            varyingExplicitByName.put(d.name, explicit);
+        }
+        Map<String, Integer> varyingLocationByName = new LinkedHashMap<>();
+        for (int pass = 0; pass < 2; pass++) {
+            for (Declaration d : vertexVaryings.values()) {
+                int explicit = varyingExplicitByName.get(d.name);
+                if ((pass == 0) != (explicit >= 0)) {
+                    continue;
+                }
+                int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
+                varyingLocationByName.put(d.name,
+                        claimLocation(varyingLocations, explicit, width, "varying " + d.name));
+            }
+        }
+        for (Declaration d : vertexVaryings.values()) {
+            Declaration f = fragmentVaryings.get(d.name);
+            int location = varyingLocationByName.get(d.name);
             String array = d.arrayLength > 0 ? "[" + d.arrayLength + "]" : "";
             vs.append("layout(location = ").append(location).append(") ").append(interpolationPrefix(d))
                     .append("out ").append(d.type).append(' ').append(d.name).append(array).append(";\n");

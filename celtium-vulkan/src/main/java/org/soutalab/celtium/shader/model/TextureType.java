@@ -4,7 +4,6 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL31;
 
-import java.nio.ByteBuffer;
 import java.util.Optional;
 
 public enum TextureType {
@@ -31,11 +30,7 @@ public enum TextureType {
 		return glType;
 	}
 
-	public void apply(int texture, int sizeX, int sizeY, int sizeZ, int internalFormat, int format, int pixelType, ByteBuffer pixels) {
-		switch (this) {
-			case TEXTURE_1D -> RenderSystem.texImage1D(texture, glType, 0, internalFormat, sizeX, 0, format, pixelType, pixels);
-			case TEXTURE_2D, TEXTURE_RECTANGLE -> RenderSystem.texImage2D(texture, glType, 0, internalFormat, sizeX, sizeY, 0, format, pixelType, pixels);
-			case TEXTURE_3D -> RenderSystem.texImage3D(texture, glType, 0, internalFormat, sizeX, sizeY, sizeZ, 0, format, pixelType, pixels);
-		}
-	}
+	// No upload method here by design: the original applied this type through the GL-side
+	// RenderSystem texImage calls. Texture upload belongs to the executor's own texture
+	// model (S5-b); this enum stays a pure pack-model description of the target kind.
 }

@@ -19,12 +19,15 @@ public class OptionMenuProfileElement extends OptionMenuElement {
 	}
 
 	/**
+	 * @param pendingValues values currently pending application, owned by the
+	 * runtime's pack-options flow (the Iris facade queue in the original design;
+	 * wiring it up belongs to the pack runtime, not this option model)
 	 * @return an {@link OptionValues} that also contains values currently
 	 * pending application.
 	 */
-	public OptionValues getPendingOptionValues() {
+	public OptionValues getPendingOptionValues(java.util.Map<String, String> pendingValues) {
 		MutableOptionValues values = packAppliedValues.mutableCopy();
-		values.addAll(Iris.getShaderPackOptionQueue());
+		values.addAll(pendingValues);
 
 		return values;
 	}

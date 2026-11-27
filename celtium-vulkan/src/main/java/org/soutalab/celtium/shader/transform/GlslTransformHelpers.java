@@ -132,21 +132,17 @@ public final class GlslTransformHelpers {
         return source;
     }
 
-    public static List<String> declarators(GLSLParser.Init_declarator_listContext list) {
+    public static List<GLSLParser.Typeless_declarationContext> declarators(GLSLParser.Init_declarator_listContext list) {
         if (list == null) {
             return Collections.emptyList();
         }
-        List<String> names = new ArrayList<>();
+        List<GLSLParser.Typeless_declarationContext> declarators = new ArrayList<>();
         GLSLParser.Single_declarationContext single = list.single_declaration();
-        if (single != null && single.IDENTIFIER() != null) {
-            names.add(single.IDENTIFIER().getText());
+        if (single != null && single.typeless_declaration() != null) {
+            declarators.add(single.typeless_declaration());
         }
-        if (list.IDENTIFIER() != null) {
-            for (TerminalNode id : list.IDENTIFIER()) {
-                names.add(id.getText());
-            }
-        }
-        return names;
+        declarators.addAll(list.typeless_declaration());
+        return declarators;
     }
 
     public static boolean hasStorageQualifier(GLSLParser.Type_qualifierContext qualifier, String name) {

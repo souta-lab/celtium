@@ -25,6 +25,7 @@ import org.soutalab.celtium.shader.block_rendering.BlockRenderingSettings;
 import org.soutalab.celtium.shader.features.PackCompilerCapabilities;
 import org.soutalab.celtium.shader.model.AlphaTestOverride;
 import org.soutalab.celtium.shader.model.BlendModeOverride;
+import org.soutalab.celtium.shader.model.BufferBlendInformation;
 import org.soutalab.celtium.shader.model.BufferBlendOverride;
 import org.soutalab.celtium.shader.model.InputAvailability;
 import org.soutalab.celtium.shader.model.InternalTextureFormat;
@@ -104,9 +105,7 @@ public final class CeltiumPackCompiler {
             ProgramId.Hand,
             ProgramId.Water,
             ProgramId.Weather,
-            ProgramId.HandWater,
-            ProgramId.ShadowEntities,
-            ProgramId.ShadowBlock
+            ProgramId.HandWater
     };
 
     private final PackSpirvCompiler spirvCompiler;
@@ -170,18 +169,23 @@ public final class CeltiumPackCompiler {
         ShaderFrameState frameState = new ShaderFrameState();
         Std140UniformPacker uniformPacker = Std140UniformPacker.buildStandard(pack.customUniforms, frameState);
 
+        // Stained glass writes depth exactly when the translucent terrain program is the
+        // water program with blending forced off (the original pipeline derivation).
+        boolean writeStainedGlassDepth = resolver.resolve(ProgramId.Water)
+                .filter(source -> ProgramId.Water.getSourceName().equals(source.getName()))
+                .flatMap(source -> source.getDirectives().getBlendModeOverride())
+                .orElse(null) == BlendModeOverride.OFF;
+
         BlockRenderingSettings blockSettings = BlockRenderingSettings.fromIdMap(
                 pack.getIdMap(),
                 directives.getAmbientOcclusionLevel(),
-                !directives.shouldUseOldLighting(),
+                !directives.isOldLighting(),
                 directives.shouldUseSeparateAo(),
-                directives.shouldWriteStainedGlassDepth());
+                writeStainedGlassDepth);
 
         // 1. Render targets
         boolean hasShadow = programSet.getShadow().isPresent()
-                || programSet.getShadowSolid().isPresent()
-                || programSet.getShadowCutout().isPresent()
-                || programSet.getShadowTranslucent().isPresent();
+                || programSet.getShadowWater().isPresent();
         List<RenderTargetSpec> renderTargets = buildRenderTargets(directives, hasShadow);
 
         // 2. Terrain 6-stage program set (Interface 1)
@@ -229,7 +233,7 @@ public final class CeltiumPackCompiler {
             AttachmentFormatKey formats = buildAttachmentFormats(directives, src.getDirectives(), isShadowKind);
             BlendStateSpec blendSpec = buildBlendSpec(src.getDirectives(), formats.colorAttachmentCount(), kind);
             float alphaThreshold = resolveAlphaThreshold(src.getDirectives(), kind);
-            boolean depthWrite = resolveDepthWrite(directives, kind);
+            boolean depthWrite = resolveDepthWrite(writeStainedGlassDepth, kind);
             boolean faceCull = !isShadowKind;
 
             terrainPrograms.put(kind, new TerrainStageProgram(
@@ -274,16 +278,16 @@ public final class CeltiumPackCompiler {
                 continue;
             }
             PackSpirvCompiler.CompiledProgram compiled = spirvCompiler.compileGraphics(
-                    id.getName(), patchedVsh, patchedFsh, patchedGsh);
+                    id.getSourceName(), patchedVsh, patchedFsh, patchedGsh);
 
-            boolean isShadow = id.getName().startsWith("shadow");
+            boolean isShadow = id.getSourceName().startsWith("shadow");
             AttachmentFormatKey formats = buildAttachmentFormats(directives, src.getDirectives(), isShadow);
             BlendStateSpec blendSpec = buildBlendSpec(src.getDirectives(), formats.colorAttachmentCount(), null);
             float alphaThreshold = src.getDirectives().getAlphaTestOverride()
                     .map(AlphaTestOverride::getReference)
                     .orElse(0.0f);
-            nonTerrainSpecs.put(id.getName(), new NonTerrainProgramCatalog.ProgramSpec(
-                    id.getName(), compiled.spirv(), formats, blendSpec, alphaThreshold, compiled.bindings()));
+            nonTerrainSpecs.put(id.getSourceName(), new NonTerrainProgramCatalog.ProgramSpec(
+                    id.getSourceName(), compiled.spirv(), formats, blendSpec, alphaThreshold, compiled.bindings()));
         }
         NonTerrainProgramCatalog nonTerrainCatalog = new NonTerrainProgramCatalog(nonTerrainSpecs);
 
@@ -368,9 +372,11 @@ public final class CeltiumPackCompiler {
             InternalTextureFormat fmt = setting != null ? setting.getInternalFormat() : InternalTextureFormat.RGBA;
             int vkFormat = fmt.getColorRenderableFallback().getVkFormat();
             float[] clear = new float[]{0, 0, 0, 0};
-            if (setting != null && setting.getClearColor() != null) {
-                var c = setting.getClearColor();
-                clear = new float[]{c.x(), c.y(), c.z(), c.w()};
+            if (setting != null) {
+                var c = setting.getClearColor().orElse(null);
+                if (c != null) {
+                    clear = new float[]{c.x, c.y, c.z, c.w};
+                }
             }
             specs.add(new RenderTargetSpec(
                     "colortex" + i,
@@ -396,7 +402,7 @@ public final class CeltiumPackCompiler {
 
         // Shadow stage
         if (hasShadowPass) {
-            addComputePasses(passes, programSet.getShadowCompute(), false, directives);
+            addComputePasses(passes, new ComputeSource[][]{programSet.getShadowCompute()}, false, directives);
             List<TerrainPassKind> shadowKinds = List.of(
                     TerrainPassKind.SHADOW_SOLID,
                     TerrainPassKind.SHADOW_CUTOUT,
@@ -559,9 +565,9 @@ public final class CeltiumPackCompiler {
             case MAIN_SOLID -> resolver.resolve(ProgramId.TerrainSolid);
             case MAIN_CUTOUT -> resolver.resolve(ProgramId.TerrainCutout);
             case MAIN_TRANSLUCENT -> resolver.resolve(ProgramId.Water);
-            case SHADOW_SOLID -> programSet.getShadowSolid().or(programSet::getShadow);
-            case SHADOW_CUTOUT -> programSet.getShadowCutout().or(programSet::getShadow);
-            case SHADOW_TRANSLUCENT -> programSet.getShadowTranslucent().or(programSet::getShadow);
+            case SHADOW_SOLID -> resolver.resolve(ProgramId.ShadowSolid);
+            case SHADOW_CUTOUT -> resolver.resolve(ProgramId.ShadowCutout);
+            case SHADOW_TRANSLUCENT -> resolver.resolve(ProgramId.ShadowWater);
         };
     }
 
@@ -591,10 +597,10 @@ public final class CeltiumPackCompiler {
             ProgramDirectives directives, int attachmentCount, @Nullable TerrainPassKind kind) {
         int count = Math.max(1, attachmentCount);
         AttachmentBlendSpec defaultSpec = (kind == TerrainPassKind.MAIN_TRANSLUCENT || kind == TerrainPassKind.SHADOW_TRANSLUCENT)
-                ? AttachmentBlendSpec.standardAlpha()
+                ? AttachmentBlendSpec.alphaBlend()
                 : AttachmentBlendSpec.opaque();
 
-        BlendModeOverride globalOverride = directives.getBlendModeOverride();
+        BlendModeOverride globalOverride = directives.getBlendModeOverride().orElse(null);
         if (globalOverride != null) {
             defaultSpec = globalOverride.toAttachmentBlendSpec();
         }
@@ -603,7 +609,8 @@ public final class CeltiumPackCompiler {
         for (int i = 0; i < count; i++) {
             list.add(defaultSpec);
         }
-        for (BufferBlendOverride bo : directives.getBufferBlendOverrides()) {
+        for (BufferBlendInformation info : directives.getBufferBlendOverrides()) {
+            BufferBlendOverride bo = new BufferBlendOverride(info.getIndex(), info.getBlendMode());
             if (bo.getIndex() >= 0 && bo.getIndex() < count) {
                 list.set(bo.getIndex(), bo.toAttachmentBlendSpec());
             }
@@ -624,9 +631,9 @@ public final class CeltiumPackCompiler {
         };
     }
 
-    private static boolean resolveDepthWrite(PackDirectives directives, TerrainPassKind kind) {
+    private static boolean resolveDepthWrite(boolean writeStainedGlassDepth, TerrainPassKind kind) {
         if (kind == TerrainPassKind.MAIN_TRANSLUCENT || kind == TerrainPassKind.SHADOW_TRANSLUCENT) {
-            return directives.shouldWriteStainedGlassDepth();
+            return writeStainedGlassDepth;
         }
         return true;
     }

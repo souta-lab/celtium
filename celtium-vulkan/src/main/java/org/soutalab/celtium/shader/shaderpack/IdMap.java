@@ -62,6 +62,20 @@ public class IdMap {
 
     record ParsedIdMap(Object2IntMap<NamespacedId> simpleMap, Int2ObjectMap<List<BlockEntry>> nbtEntries) {}
 
+    /** A map with no entries at all: nothing resolves, nothing is overridden. */
+    public static final IdMap EMPTY = new IdMap();
+
+    private IdMap() {
+        this.itemIdMap = Object2IntMaps.emptyMap();
+        this.itemNbtEntries = new Int2ObjectOpenHashMap<>();
+        this.entityIdMap = Object2IntMaps.emptyMap();
+        this.entityNbtEntries = new Int2ObjectOpenHashMap<>();
+        this.blockPropertiesMap = new Int2ObjectOpenHashMap<>();
+        this.blockTagMap = new Int2ObjectOpenHashMap<>();
+        this.blockRenderTypeMap = Collections.emptyMap();
+        this.hasLegacySection = false;
+    }
+
     IdMap(Path shaderPath, ShaderPackOptions shaderPackOptions, Iterable<StringPair> environmentDefines) {
         this(shaderPath, detectLegacySection(shaderPath), shaderPackOptions, environmentDefines);
     }
@@ -387,7 +401,7 @@ public class IdMap {
         return blockTagMap;
     }
 
-    public Object2IntFunction<NamespacedId> getItemIdMap() {
+    public Object2IntMap<NamespacedId> getItemIdMap() {
         return itemIdMap;
     }
 
@@ -395,7 +409,7 @@ public class IdMap {
         return itemNbtEntries;
     }
 
-    public Object2IntFunction<NamespacedId> getEntityIdMap() {
+    public Object2IntMap<NamespacedId> getEntityIdMap() {
         return entityIdMap;
     }
 

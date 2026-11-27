@@ -103,11 +103,11 @@ public final class BlockRenderingSettings {
 
         Object2IntOpenHashMap<NamespacedId> entityMap = new Object2IntOpenHashMap<>();
         entityMap.defaultReturnValue(UNMAPPED_ID);
-        idMap.getEntityIdMap().forEach((k, v) -> entityMap.put(k, v.intValue()));
+        idMap.getEntityIdMap().object2IntEntrySet().forEach(e -> entityMap.put(e.getKey(), e.getIntValue()));
 
         Object2IntOpenHashMap<NamespacedId> itemMap = new Object2IntOpenHashMap<>();
         itemMap.defaultReturnValue(UNMAPPED_ID);
-        idMap.getItemIdMap().forEach((k, v) -> itemMap.put(k, v.intValue()));
+        idMap.getItemIdMap().object2IntEntrySet().forEach(e -> itemMap.put(e.getKey(), e.getIntValue()));
 
         return new BlockRenderingSettings(
                 metaMap, defaultIds, passOverrides, entityMap, itemMap,

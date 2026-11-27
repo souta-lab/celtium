@@ -54,7 +54,7 @@ class AttributeTransformer {
 					transformer.injectVariable("layout(location = 1) in vec4 iris_Color;");
 					transformer.injectVariable("uniform vec4 iris_ColorModulator;");
 					transformer.replaceExpression("gl_Color", "(iris_Color * iris_ColorModulator * iris_InstColor)");
-				} else if (parameters.inputs.color) {
+				} else if (parameters.inputs.color()) {
 					transformer.injectVariable("layout(location = 1) in vec4 iris_Color;");
 					transformer.rename("gl_Color", "iris_Color");
 				} else {
@@ -71,16 +71,16 @@ class AttributeTransformer {
 			transformer.injectFunction("vec4 iris_ftransform() { return (iris_ProjectionMatrix * iris_ModelViewMatrix) * iris_Vertex; }");
 
 			// gl_MultiTexCoord1 and gl_MultiTexCoord2 are both lightmap
-			if (parameters.inputs.lightmap) {
+			if (parameters.inputs.lightmap()) {
 				transformer.rename("gl_MultiTexCoord2", "gl_MultiTexCoord1");
 			}
 
 			Map<String, String> texCoordReplacements = new HashMap<>();
-			if (!parameters.inputs.lightmap) {
+			if (!parameters.inputs.lightmap()) {
 				texCoordReplacements.put("gl_MultiTexCoord1", "vec4(240.0, 240.0, 0.0, 1.0)");
 				texCoordReplacements.put("gl_MultiTexCoord2", "vec4(240.0, 240.0, 0.0, 1.0)");
 			}
-			if (!parameters.inputs.texture) {
+			if (!parameters.inputs.texture()) {
 				texCoordReplacements.put("gl_MultiTexCoord0", "vec4(240.0, 240.0, 0.0, 1.0)");
 			}
 			texCoordReplacements.forEach(transformer::replaceExpression);
