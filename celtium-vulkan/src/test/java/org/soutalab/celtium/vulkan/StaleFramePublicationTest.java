@@ -34,7 +34,7 @@ class StaleFramePublicationTest {
     private static final long FRAME = 0x1000L;
     private static final long OFF_TARGET = 0x2000L;
     private static final long OLD_BORROW = 0x3000L;
-    private static final long PAIR_OWNER = 0x8000000000000000L;
+    private static final long PAIR_OWNER = 0x5000L;
     private static final long DEPTH_KEY = 0x4000L;
 
     // --- the decision table ---
