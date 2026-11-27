@@ -2930,7 +2930,7 @@ public final class ValidationClient {
                     || GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING) != main.framebufferObject) {
                 throw new IllegalStateException("Format-2 fixture requires the main FBO bound in overlay ALL, at least 256x256");
             }
-            Object backend = Class.forName("org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends")
+            Object backend = Class.forName("org.soutalab.celtium.vulkan.CeltiumBackends")
                     .getMethod("current").invoke(null);
             if (backend == null) throw new IllegalStateException("No live backend for required format-2 target test");
             java.lang.reflect.Method counters = backend.getClass().getMethod("immediateExecutionCounters");
@@ -9476,7 +9476,7 @@ public final class ValidationClient {
      */
     private static Object celtium$vulkanBackend() {
         try {
-            Object current = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object current = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current != null
                     && "org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend".equals(current.getClass().getName())) {
                 return current;

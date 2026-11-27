@@ -44,7 +44,7 @@ final class RawFboIdentityProbe {
                 || GlsmFrontend.celtium$textureExtent(texture) != null) {
             throw new IllegalStateException("GL-less stub unavailable or synthetic names already in use");
         }
-        Object backend = Class.forName("org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends")
+        Object backend = Class.forName("org.soutalab.celtium.vulkan.CeltiumBackends")
                 .getMethod("current").invoke(null);
         if (backend == null || !backend.getClass().getName().endsWith("VulkanTerrainGpuBackend")) {
             throw new IllegalStateException("Vulkan backend unavailable");
