@@ -172,7 +172,7 @@ public final class Lane1TerrainFrontend {
         this.pipelineLayout = createPipelineLayout();
         this.descriptorPool = createDescriptorPool();
         allocateSets();
-        this.atlasSampler = createSampler(VK10.VK_FILTER_NEAREST, true);
+        this.atlasSampler = createSampler(VK10.VK_FILTER_NEAREST, false); // TEMP G1 BISECT: mip off
         this.lightmapSampler = createSampler(VK10.VK_FILTER_LINEAR, false);
         buildPrograms();
         rebuildDrawStage();
