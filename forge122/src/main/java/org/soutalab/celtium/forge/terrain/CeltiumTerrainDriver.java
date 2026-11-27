@@ -179,6 +179,28 @@ public final class CeltiumTerrainDriver {
                 }
                 lines.add("snap830 faceDark=" + faceDark + " faceLit=" + faceLit
                         + " rawAboveDark=" + rawDark + " apiDark=" + apiDark);
+                for (int probeSx : new int[]{8, 2}) {
+                    WorldSectionSnapshot snap2 = new WorldSectionSnapshot();
+                    ForgeSectionScanner.fill(snap2, world, faceData, fluids, probeSx, 3, 0);
+                    long ownDark = 0L;
+                    long ownLit = 0L;
+                    long aboveDark = 0L;
+                    for (int lz = 1; lz <= 16; lz++) {
+                        for (int lx = 1; lx <= 16; lx++) {
+                            int top = WorldSectionSnapshot.index(lx, 16, lz);
+                            if (snap2.skyLightAt(top) == 0) {
+                                ownDark++;
+                            } else {
+                                ownLit++;
+                            }
+                            if (snap2.skyLightAt(top + WorldSectionSnapshot.offset(1)) == 0) {
+                                aboveDark++;
+                            }
+                        }
+                    }
+                    lines.add("col" + probeSx + " ownDark=" + ownDark + " ownLit=" + ownLit
+                            + " aboveDark=" + aboveDark);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
