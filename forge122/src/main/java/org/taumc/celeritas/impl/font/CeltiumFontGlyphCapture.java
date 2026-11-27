@@ -363,6 +363,9 @@ public final class CeltiumFontGlyphCapture {
     private static long refused;
     /** Individual buffered quads the per-quad fallback could not place anywhere (B16). */
     private static long refusedQuads;
+    /** Buffered quads dropped at flush because no backend was installed (DP-24). */
+    private static long nullBackendDroppedQuads;
+    private static boolean nullBackendDropLogged;
     private static boolean firstQuadReported;
     private static final Map<String, Integer> REFUSALS = new LinkedHashMap<String, Integer>();
     /**
@@ -430,6 +433,9 @@ public final class CeltiumFontGlyphCapture {
         // the window rather than counted as a refusal: measured, that is 291500 glyph quads in 45 s of startup and
         // none of them geometry.
         armed = TerrainGpuBackends.current() != null;
+        if (armed) {
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowBegin();
+        }
         windowUnicode = unicode;
         if (GLYPH_DEBUG && unicode && openLogged < 60) {
             openLogged++;
@@ -872,10 +878,27 @@ public final class CeltiumFontGlyphCapture {
                 }
                 accepted += takenThisFlush;
             } else if (backend != null) {
+                int takenThisFlush = 0;
                 for (int k = 0; k < bufferedQuadCount; k++) {
-                    backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                    if (backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
                             FORMAT_ID, bufferedQuadsBase + (long) k * 6 * STRIDE, MAX_VERTICES,
-                            GL_TRIANGLE_STRIP);
+                            GL_TRIANGLE_STRIP)) {
+                        takenThisFlush++;
+                    }
+                }
+                if (takenThisFlush != bufferedQuadCount) {
+                    refusedQuads += bufferedQuadCount - takenThisFlush;
+                    refuse("flush-quad-refused", "quadCount=" + bufferedQuadCount
+                            + " accepted=" + takenThisFlush);
+                }
+                accepted += takenThisFlush;
+            } else if (bufferedQuadCount > 0) {
+                nullBackendDroppedQuads += bufferedQuadCount;
+                if (!nullBackendDropLogged) {
+                    nullBackendDropLogged = true;
+                    System.out.println("[Celtium] CELTIUM_FONT_GLYPH_REFUSED reason=flush-no-backend"
+                            + " detail=quadCount=" + bufferedQuadCount
+                            + " (first of this reason; nullBackendDroppedQuads=" + nullBackendDroppedQuads + ")");
                 }
             }
         } catch (Throwable error) {
@@ -965,6 +988,7 @@ public final class CeltiumFontGlyphCapture {
         if (!TIMINGS) {
             window = false;
             armed = false;
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowEnd();
             reset();
             return;
         }
@@ -972,6 +996,7 @@ public final class CeltiumFontGlyphCapture {
         try {
             window = false;
             armed = false;
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowEnd();
             reset();
         } finally {
             windowNanos += System.nanoTime() - started;
@@ -1446,6 +1471,7 @@ public final class CeltiumFontGlyphCapture {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
                 + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " refusedQuads=" + refusedQuads
+                + " nullBackendDroppedQuads=" + nullBackendDroppedQuads
                 + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)
                 + " glyphMillis=" + (glyphNanos / 1000000L) + " glyphCalls=" + glyphCalls

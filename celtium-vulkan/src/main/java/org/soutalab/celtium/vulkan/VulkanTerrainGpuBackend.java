@@ -24747,6 +24747,8 @@ this.frameBufferOpen = false;
     /** Model runs drawn and how many of those absorbed a following run; the ratio is the merge rate. */
     long modelRunsDrawn;
     long modelRunsMerged;
+    /** Model runs dropped at draw time because modelInstances or bindlessBinding was absent (DP-22). */
+    long modelRunDropped;
 
     /** Draws the model run held back for merging; called before anything else draws or the segment ends. */
     void celtium$flushPendingModelRun() {

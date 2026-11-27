@@ -149,17 +149,18 @@ public final class CeltiumFontAtlas {
      * mirror all follow the path any other texture takes.
      */
     private static void build() {
-        Minecraft mc = Minecraft.getMinecraft();
+        Minecraft mc;
+        try {
+            mc = Minecraft.getMinecraft();
+        } catch (LinkageError ignored) {
+            return;
+        }
         if (mc == null || mc.getResourceManager() == null) {
-            buildFailed = true;
-            org.soutalab.celtium.vulkan.FontAtlasRegistry.invalidate();
             return;
         }
         BufferedImage image = rasterise(mc);
         TextureManager tm = mc.getTextureManager();
         if (tm == null) {
-            buildFailed = true;
-            org.soutalab.celtium.vulkan.FontAtlasRegistry.invalidate();
             return;
         }
         atlasTexture = new AtlasTexture(image);

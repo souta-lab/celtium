@@ -2675,6 +2675,25 @@ public final class GlsmFrontend implements FunctionProvider {
     private int legacyRefusalLogs;
     private int legacyModeRefusalsLogged;
 
+    /** Ownership flag while CeltiumFontGlyphCapture holds an armed font window (DP-26). */
+    private static boolean fontWindowActive;
+    private static long legacyFontWindowSuppressed;
+
+    /** Marks entry into an armed font-glyph capture window so legacy immediate capture does not double-draw. */
+    public static void celtium$fontWindowBegin() {
+        fontWindowActive = true;
+    }
+
+    /** Marks exit from the font-glyph capture window. */
+    public static void celtium$fontWindowEnd() {
+        fontWindowActive = false;
+    }
+
+    /** {@return how many legacy glBegin calls were suppressed while a font capture window owned the geometry}. */
+    public static long celtium$legacyFontWindowSuppressed() {
+        return legacyFontWindowSuppressed;
+    }
+
     /**
      * How many distinct legacy runs the census prints, {@code -Dceltium.debug.legacyRuns=N}; 0 (the default) is off.
      * <p>
@@ -2745,6 +2764,10 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
     public static void celtium$legacyBegin(int mode) {
+        if (fontWindowActive) {
+            legacyFontWindowSuppressed++;
+            return;
+        }
         GlsmFrontend stub = installed;
         if (stub == null) {
             return;

@@ -775,6 +775,14 @@ final class ModelReplay {
         if (b.openModelRunGroup == group) {
             b.openModelRunGroup = null;
         }
+        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding bindlessBinding =
+                b.context.celtium$bindlessBindingOrNull();
+        if (b.modelInstances == null || bindlessBinding == null) {
+            b.modelRunDropped++;
+            b.retiredImmediateGroups.add(group);
+            b.immediateStatistics.noteImmediateGroupsDiscarded();
+            return;
+        }
         try (MemoryStack groupStack = MemoryStack.stackPush()) {
             // The pass' own render area, which a routed terrain pass (item 332) takes from the pair it attaches.
             b.celtium$setGroupViewport(groupStack, group, b.passAreaWidth, b.passAreaHeight);
@@ -784,33 +792,29 @@ final class ModelReplay {
             b.passBiasC = 0.0F;
             b.passBiasS = 0.0F;
         }
-        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding bindlessBinding =
-                b.context.celtium$bindlessBindingOrNull();
-        if (b.modelInstances != null && bindlessBinding != null) {
-            long textureSet = bindlessBinding.descriptorSet();
-            VulkanModelInstances.Run run = group.modelRun;
-            // Runs whose commands continue the previous run in the same buffer pair and whose state matches merge into
-            // one indirect range; the merged draw happens at the flush below, after the group that ends the sequence.
-            if (b.pendingModelActive && b.pendingModelTextureSet == textureSet
-                    && b.pendingModelRun.pipeline.handle == run.pipeline.handle
-                    && b.pendingModelRun.commandBuffer == run.commandBuffer
-                    && b.pendingModelRun.vertexBuffer == run.vertexBuffer
-                    && b.pendingModelRun.indexBuffer == run.indexBuffer
-                    && run.firstCommand == b.pendingModelRun.firstCommand + b.pendingModelRun.count
-                    && b.pendingModelViewportHash == group.viewportHash()
-                    && java.util.Arrays.equals(b.pendingModelProjection, group.projection)
-                    && java.util.Arrays.equals(b.pendingModelFog, group.fog)) {
-                b.pendingModelRun.count += run.count;
-                b.modelRunsMerged++;
-            } else {
-                b.celtium$flushPendingModelRun();
-                b.pendingModelActive = true;
-                b.pendingModelRun = run;
-                b.pendingModelTextureSet = textureSet;
-                b.pendingModelProjection = group.projection;
-                b.pendingModelFog = group.fog;
-                b.pendingModelViewportHash = group.viewportHash();
-            }
+        long textureSet = bindlessBinding.descriptorSet();
+        VulkanModelInstances.Run run = group.modelRun;
+        // Runs whose commands continue the previous run in the same buffer pair and whose state matches merge into
+        // one indirect range; the merged draw happens at the flush below, after the group that ends the sequence.
+        if (b.pendingModelActive && b.pendingModelTextureSet == textureSet
+                && b.pendingModelRun.pipeline.handle == run.pipeline.handle
+                && b.pendingModelRun.commandBuffer == run.commandBuffer
+                && b.pendingModelRun.vertexBuffer == run.vertexBuffer
+                && b.pendingModelRun.indexBuffer == run.indexBuffer
+                && run.firstCommand == b.pendingModelRun.firstCommand + b.pendingModelRun.count
+                && b.pendingModelViewportHash == group.viewportHash()
+                && java.util.Arrays.equals(b.pendingModelProjection, group.projection)
+                && java.util.Arrays.equals(b.pendingModelFog, group.fog)) {
+            b.pendingModelRun.count += run.count;
+            b.modelRunsMerged++;
+        } else {
+            b.celtium$flushPendingModelRun();
+            b.pendingModelActive = true;
+            b.pendingModelRun = run;
+            b.pendingModelTextureSet = textureSet;
+            b.pendingModelProjection = group.projection;
+            b.pendingModelFog = group.fog;
+            b.pendingModelViewportHash = group.viewportHash();
         }
         java.util.Arrays.fill(b.immediateBindCache, -1L);
         VulkanPushCache.SHARED.invalidate();

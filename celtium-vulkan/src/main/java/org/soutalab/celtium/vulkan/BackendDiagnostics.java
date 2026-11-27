@@ -609,6 +609,9 @@ final class BackendDiagnostics {
                 + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
                 + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + b.modelDrawRefusals
+                + " modelRunDropped=" + b.modelRunDropped
+                + " modelInstancesFailed=" + b.modelInstancesFailed
+                + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + b.modelLastRefusal
                 + " modelMeshLists=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
@@ -837,6 +840,9 @@ final class BackendDiagnostics {
                 // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
                 // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
                 + b.fontStats.run0()
+                + " " + b.fontStats.retentionSummary()
+                + " legacyFontWindowSuppressed="
+                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyFontWindowSuppressed()
                 // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
