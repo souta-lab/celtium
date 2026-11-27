@@ -99,7 +99,7 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
     public List<String> getMixins() {
         List<Path> rootPaths = new ArrayList<>();
 
-        rootPaths.addAll(Stream.of("org.taumc.celeritas.mixin")
+        rootPaths.addAll(Stream.of("org.taumc.celeritas.mixin", "org.soutalab.celtium.forge.mixin")
                 .flatMap(str -> {
                     URL url = CeleritasVintageMixinPlugin.class.getResource("/" + str.replace('.', '/'));
                     if (url == null) {

@@ -65,6 +65,12 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
     private int draggingSliderLeft;
     private int draggingSliderWidth;
 
+    // The Shaders placeholder page's "open packs" button rect (S5-b).
+    private int shadersButtonX = -1;
+    private int shadersButtonY = -1;
+    private int shadersButtonW;
+    private int shadersButtonH;
+
     private final List<RowLayout> visibleRows = new ArrayList<>();
 
     private record RowLayout(OptionEntry<?> entry, int x, int y, int w, int h, int controlX, int controlW) {
@@ -362,6 +368,20 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
             this.fontRenderer.drawStringWithShadow(line, textX, y, TEXT_MUTED);
             y += 11;
         }
+        if ("shaders".equals(page.getId())) {
+            // The pack screen lives behind this button (S5-b wiring).
+            y += 10;
+            this.shadersButtonX = textX;
+            this.shadersButtonY = y;
+            this.shadersButtonW = 200;
+            this.shadersButtonH = 20;
+            Gui.drawRect(textX, y, textX + this.shadersButtonW, y + this.shadersButtonH, BG_ROW);
+            Gui.drawRect(textX, y, textX + this.shadersButtonW, y + 1, BORDER);
+            String label = net.minecraft.client.resources.I18n.format("celtium.options.shaders.openPacks");
+            this.fontRenderer.drawStringWithShadow(label,
+                    textX + (this.shadersButtonW - this.fontRenderer.getStringWidth(label)) / 2,
+                    y + 6, TEXT_PRIMARY);
+        }
     }
 
     private OptionEntry<?> drawOptionPage(OptionPage page, int left, int top, int bottom, int width,
@@ -542,6 +562,16 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         super.mouseClicked(mouseX, mouseY, mouseButton);
+
+        // The Shaders placeholder page's "open packs" button (S5-b).
+        if (mouseButton == 0 && this.shadersButtonX >= 0
+                && this.pages.get(this.activePageIndex).isPlaceholder()
+                && "shaders".equals(this.pages.get(this.activePageIndex).getId())
+                && mouseX >= this.shadersButtonX && mouseX < this.shadersButtonX + this.shadersButtonW
+                && mouseY >= this.shadersButtonY && mouseY < this.shadersButtonY + this.shadersButtonH) {
+            this.mc.displayGuiScreen(new CeltiumShaderPackScreen(this));
+            return;
+        }
 
         int left = listLeft();
         int width = listWidth();

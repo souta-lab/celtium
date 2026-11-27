@@ -41,7 +41,11 @@ public final class ShaderPackAccess {
 
     public static synchronized CeltiumConfig config() {
         if (config == null) {
-            config = CeltiumConfig.load();
+            try {
+                config = org.taumc.celeritas.CeleritasVintage.options();
+            } catch (IllegalStateException notYetAvailable) {
+                config = CeltiumConfig.load();
+            }
         }
         return config;
     }

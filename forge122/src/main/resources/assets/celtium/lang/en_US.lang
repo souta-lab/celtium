@@ -93,4 +93,12 @@ celtium.options.leaf_culling_mode.hollow=Hollow
 celtium.options.leaf_culling_mode.solid_aggressive=Solid (Aggressive)
 celtium.options.leaf_culling_mode.solid=Solid
 
-celtium.options.shaders.placeholder=Celtium's built-in Vulkan shader pack engine (BSL / Complementary) will connect to this tab in Stage S5-b. No external shader mod is required.
+celtium.options.shaders.placeholder=Celtium's built-in Vulkan shader pack engine (BSL / Complementary) runs packs from the shaderpacks folder. No external shader mod is required.
+celtium.options.shaders.openPacks=Open Shader Packs...
+celtium.options.shaders.title=Shader Packs
+celtium.options.shaders.off=Off
+celtium.options.shaders.apply=Apply
+celtium.options.shaders.back=Back
+celtium.options.shaders.none=No shader packs found in the shaderpacks folder
+celtium.options.shaders.profile=Profile
+celtium.options.shaders.custom=Custom
