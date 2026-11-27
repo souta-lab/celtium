@@ -54,17 +54,17 @@ class PatchErrorRecorderTest {
     @Test
     void aQuarantinableApplyFailureIsFiledUnderItsGroup() throws IOException {
         PatchErrorRecorder.Result result = PatchErrorRecorder.record(ledger(), "apply",
-                "org.taumc.celeritas.mixin.core.CloudDrawProbeMixin",
+                "org.taumc.celeritas.mixin.core.ForgeCloudCellsMixin",
                 new IllegalStateException("@Inject could not find the anchor"));
 
         assertEquals(PatchErrorRecorder.Outcome.QUARANTINED, result.outcome());
         assertEquals("sky", result.group());
-        assertEquals("CELTIUM_PATCH_QUARANTINED group=sky mixin=CloudDrawProbeMixin"
+        assertEquals("CELTIUM_PATCH_QUARANTINED group=sky mixin=ForgeCloudCellsMixin"
                 + " error=IllegalStateException: @Inject could not find the anchor", result.line());
 
         PatchLedger reloaded = PatchLedger.load(ledgerFile(), Map.of(), false);
         assertTrue(reloaded.isSkipped("sky"), "the next launch skips the group this launch failed in");
-        assertEquals("apply CloudDrawProbeMixin: IllegalStateException: @Inject could not find the anchor",
+        assertEquals("apply ForgeCloudCellsMixin: IllegalStateException: @Inject could not find the anchor",
                 reloaded.skip("sky").reason());
     }
 
@@ -120,12 +120,12 @@ class PatchErrorRecorderTest {
     @Test
     void aMissingLedgerIsReportedAsAFailedRecord() {
         PatchErrorRecorder.Result result = PatchErrorRecorder.record(null, "apply",
-                "org.taumc.celeritas.mixin.core.RainDrawProbeMixin", new IllegalStateException("gone"));
+                "org.taumc.celeritas.mixin.core.ForgeCloudCellsMixin", new IllegalStateException("gone"));
 
         assertEquals(PatchErrorRecorder.Outcome.RECORD_FAILED, result.outcome());
         assertEquals("sky", result.group());
         assertTrue(result.line().startsWith(
-                "CELTIUM_PATCH_RECORD_FAILED group=sky mixin=RainDrawProbeMixin"), result.line());
+                "CELTIUM_PATCH_RECORD_FAILED group=sky mixin=ForgeCloudCellsMixin"), result.line());
         assertTrue(result.line().contains("next launch will fail the same way"), result.line());
     }
 
@@ -135,7 +135,7 @@ class PatchErrorRecorderTest {
         PatchLedger ledger = PatchLedger.load(directory, Map.of(), false);
 
         PatchErrorRecorder.Result result = PatchErrorRecorder.record(ledger, "apply",
-                "org.taumc.celeritas.mixin.core.RainDrawProbeMixin", new IllegalStateException("gone"));
+                "org.taumc.celeritas.mixin.core.ForgeCloudCellsMixin", new IllegalStateException("gone"));
 
         assertEquals(PatchErrorRecorder.Outcome.RECORD_FAILED, result.outcome(),
                 "the ledger path is a directory, so the atomic move cannot land: " + result.line());
@@ -144,12 +144,12 @@ class PatchErrorRecorderTest {
     @Test
     void aNullErrorIsRecordedAsNone() {
         PatchErrorRecorder.Result result = PatchErrorRecorder.record(ledger(), "apply",
-                "org.taumc.celeritas.mixin.core.CloudDrawProbeMixin", null);
+                "org.taumc.celeritas.mixin.core.ForgeCloudCellsMixin", null);
 
         assertEquals(PatchErrorRecorder.Outcome.QUARANTINED, result.outcome());
         assertTrue(result.line().endsWith("error=none"), result.line());
         PatchLedger reloaded = PatchLedger.load(ledgerFile(), Map.of(), false);
-        assertEquals("apply CloudDrawProbeMixin: none", reloaded.skip("sky").reason());
+        assertEquals("apply ForgeCloudCellsMixin: none", reloaded.skip("sky").reason());
     }
 
     @Test

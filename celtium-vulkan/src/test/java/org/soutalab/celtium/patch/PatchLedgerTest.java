@@ -63,13 +63,13 @@ class PatchLedgerTest {
 
     @Test
     void aQuarantineSkipsTheGroupAndCarriesItsReason() {
-        PatchLedger ledger = ledger(fileProps("quarantine.sky", "apply CloudDrawProbeMixin: anchor missing"),
+        PatchLedger ledger = ledger(fileProps("quarantine.sky", "apply ForgeCloudCellsMixin: anchor missing"),
                 Map.of());
 
         assertTrue(ledger.isSkipped("sky"));
         assertEquals(PatchLedger.SkipKind.QUARANTINE, ledger.skip("sky").kind());
         String line = ledger.skippedLine("sky");
-        assertTrue(line.contains("why=quarantined reason=apply CloudDrawProbeMixin: anchor missing"), line);
+        assertTrue(line.contains("why=quarantined reason=apply ForgeCloudCellsMixin: anchor missing"), line);
         assertTrue(line.contains("remedy=delete quarantine.sky"), line);
         assertTrue(ledger.tableLine(86, 83).contains("off=0 quarantined=1"), ledger.tableLine(86, 83));
     }
