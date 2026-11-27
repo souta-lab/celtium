@@ -79,6 +79,9 @@ configurations {
         attributes {
             attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
             attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+            // Disambiguates this consumable from mainJar below: Gradle requires consumable
+            // configurations of one project to carry distinct attribute sets.
+            attribute(Attribute.of('org.soutalab.celtium.coreArtifact', String), 'harness')
         }
     }
 }
@@ -102,6 +105,7 @@ configurations {
         attributes {
             attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
             attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+            attribute(Attribute.of('org.soutalab.celtium.coreArtifact', String), 'main')
         }
     }
 }
