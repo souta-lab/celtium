@@ -454,6 +454,7 @@ final class BackendDiagnostics {
                 + " preTransformedBatches=" + b.immediateStatistics.preTransformedBatches()
                 + " preTransformedVertices=" + b.immediateStatistics.preTransformedVertices()
                 + " selfCompositeSkips=" + b.immediateStatistics.selfCompositeSkips()
+                + " framebufferHintFailures=" + b.framebufferHintFailures
                 + " pairNameSamplingDraws=" + b.pairNameSamplingDraws
                 + " presentedDumpFailure=" + (b.swapchain == null ? "none" : b.swapchain.lastDumpFailure())
                 + " " + b.postChainBridge.celtium$pairLayoutSummary()
@@ -626,6 +627,13 @@ final class BackendDiagnostics {
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
                 + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
+                // The mod-program refusals by reason (drawpath audit DP-35): the total above counts
+                // the batches the shutter refused; this aggregate says why, per fixed category.
+                + " " + b.modPrograms.celtium$refusalSummary()
+                // The native-pass refusals (DP-37): until now they existed only in the
+                // CELTIUM_NATIVE_PASS census line at snapshot time, outside this verify body.
+                + " nativePassExecRefusals=" + b.nativePassRegistry.executionRefusalCount()
+                + " nativePassCompileRefusals=" + b.nativePassRegistry.compileRefusalCount()
                 + " acceptedBatches=" + b.immediateStatistics.frameAccepted()
                 + " imageFilledMirrors=" + (b.textureRegistry != null ? b.textureRegistry.imageUploads() : 0)
                 + " imageUploadsSkipped="
@@ -657,6 +665,13 @@ final class BackendDiagnostics {
                 + " windowFramesMarkedPresentable=" + b.targetStatistics.windowFramesMarkedPresentable()
                 + " lastPairClearRefusal=[" + b.targetStatistics.lastPairClearRefusal() + "]"
                 + " " + (b.postChain != null ? b.postChain.status() : "postChains=0 postPasses=0")
+                // The bridge-level chain refusals and the stage gate's own summary (drawpath audit
+                // DP-31): printed whether or not an executor exists, because the refusals that
+                // happen before one exists are exactly the ones the executor status cannot see.
+                // The chain-input flush failures (DP-32) ride beside them.
+                + " " + b.postChainBridge.celtium$status()
+                + " " + StageGate.system().summary()
+                + " chainInputFlushFailures=" + b.chainInputFlushFailures
                 + " " + VulkanContext.pipelineCreationSummary()
                 // The prewarm's fallback census, beside the creation summary it qualifies: a warm
                 // window with no synchronous creations reads very differently when the number of

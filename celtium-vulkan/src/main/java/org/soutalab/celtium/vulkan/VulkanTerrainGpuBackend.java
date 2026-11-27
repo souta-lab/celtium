@@ -2028,8 +2028,43 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The post-process chain bridge: runs a collected shader chain natively, adopts its framebuffers and keeps the textures it publishes to the game in the right layout. */
     final PostChainBridge postChainBridge = new PostChainBridge(this);
 
+    /** Chain-input flush failures the ShaderGroupMixin boundary swallowed (drawpath audit DP-32). */
+    long chainInputFlushFailures;
+    /** Framebuffer hint/probe failures the FramebufferMixin boundary swallowed (drawpath audit DP-34). */
+    long framebufferHintFailures;
+
     public boolean celtium$postChainRun(java.util.List<VulkanPostChain.Pass> passes) {
         return this.postChainBridge.celtium$postChainRun(passes);
+    }
+
+    /**
+     * Counts a chain-input flush failure (DP-32). The mixin's catch at the chain boundary used to
+     * swallow these whole: a flush that keeps failing leaves the pending geometry unsubmitted at
+     * exactly the moment the chain reads the frame, and the run showed a chain reading stale content
+     * with no record anywhere. Counted always, printed for the first few, and read by the verify
+     * line as {@code chainInputFlushFailures}.
+     */
+    public void celtium$noteChainInputFlushFailure(Throwable error) {
+        this.chainInputFlushFailures++;
+        if (this.chainInputFlushFailures <= 3) {
+            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH_FAILED failures="
+                    + this.chainInputFlushFailures + " error=" + describe(error));
+        }
+    }
+
+    /**
+     * Counts a framebuffer hint/probe failure (DP-34). The FramebufferMixin seats are deliberately
+     * unbreakable - a bind-size hint or a GL-error probe must never stop the frame - but swallowing
+     * them silently made a persistently failing hint indistinguishable from a working one. Counted
+     * always, printed for the first few with the seat's name, and read by the verify line as
+     * {@code framebufferHintFailures}.
+     */
+    public void celtium$noteFramebufferHintFailure(String seat, Throwable error) {
+        this.framebufferHintFailures++;
+        if (this.framebufferHintFailures <= 3) {
+            System.out.println("[Celtium] CELTIUM_FRAMEBUFFER_HINT_FAILED seat=" + seat
+                    + " failures=" + this.framebufferHintFailures + " error=" + describe(error));
+        }
     }
 
     public int celtium$flushPendingForChainInput() {
@@ -13448,6 +13483,10 @@ this.frameBufferOpen = false;
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer();
+        // The frame buffer this call just finished is the submission a post chain's deferred
+        // first-use commit waits on (drawpath audit DP-32): settle it now that the recording is
+        // ended and batched for the queue - or, on a stall, now that it was reset instead.
+        this.postChainBridge.celtium$settleDeferredCommit(!this.gpuStalled);
     }
 
     /**
@@ -27593,6 +27632,9 @@ this.frameBufferOpen = false;
         }
         this.frameCoordinator.celtium$finishFrameBuffer();
         this.context.celtium$flushBatchedSubmits();
+        // The mid-frame finish is also a queueing of the frame buffer (DP-32): a post chain that
+        // recorded into it earlier this frame settles its deferred first-use commit here.
+        this.postChainBridge.celtium$settleDeferredCommit(!this.gpuStalled);
     }
 
     /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */

@@ -14,6 +14,8 @@ final class NativeFramebufferCompositor {
     private LeasedResource<VulkanDynamicMesh> quad;
     private float uMax, vMax;
     private long queued, selfCopiesSkipped;
+    /** Refused composites (drawpath audit DP-34): both throw seats below, counted so the verify line can gate on them. */
+    private long compositeRefusals;
 
     /** Rebuilt per composite; the group copies or shares the state, so the scratch itself is never retained. */
     private int[] stateScratch = new int[16];
@@ -39,6 +41,12 @@ final class NativeFramebufferCompositor {
             return;
         }
         if (texture <= 0 || textureWidth <= 0 || textureHeight <= 0) {
+            // A refusal like the material one below, not a silent throw (DP-34): counted and printed
+            // under the same event name before the exception propagates as before.
+            this.compositeRefusals++;
+            System.out.println("[Celtium] CELTIUM_COMPOSITE_REFUSED texture=" + texture
+                    + " sourceIdentity=0x" + Long.toHexString(sourceIdentity) + " sourceIsMain=" + sourceIsMain
+                    + " reason=no native source extent/name");
             throw new IllegalArgumentException("framebuffer composite has no native source extent/name");
         }
         b.closeCurrentImmediateGroup();
@@ -85,6 +93,7 @@ final class NativeFramebufferCompositor {
         long key = b.celtium$stateKey(VulkanImmediateFormats.POSITION_TEX_COLOR, state);
         PreparedImmediate material = b.prepareImmediate(VulkanImmediateFormats.POSITION_TEX_COLOR, texture, key, state);
         if (material == null) {
+            this.compositeRefusals++;
             System.out.println("[Celtium] CELTIUM_COMPOSITE_REFUSED texture=" + texture
                     + " sourceIdentity=0x" + Long.toHexString(sourceIdentity) + " sourceIsMain=" + sourceIsMain
                     + " prepareFailure=[" + b.lastPrepareFailure + "]");
@@ -138,5 +147,5 @@ final class NativeFramebufferCompositor {
     void release() {
         if (this.quad != null) { this.quad.close(); this.quad = null; }
     }
-    String describe() { return "nativeFramebufferComposites=" + this.queued + " nativeSelfCopiesSkipped=" + this.selfCopiesSkipped; }
+    String describe() { return "nativeFramebufferComposites=" + this.queued + " nativeSelfCopiesSkipped=" + this.selfCopiesSkipped + " nativeCompositeRefusals=" + this.compositeRefusals; }
 }
