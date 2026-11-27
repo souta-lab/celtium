@@ -2,6 +2,7 @@ package org.soutalab.celtium.forge.ui;
 
 import net.minecraft.client.Minecraft;
 import org.soutalab.celtium.core.frame.FrameContext;
+import org.soutalab.celtium.forge.ShaderFrameStateFeeder;
 import org.soutalab.celtium.vulkan.pack.PackFrameEnvironment;
 import org.soutalab.celtium.vulkan.pack.ShaderPackRuntime;
 
