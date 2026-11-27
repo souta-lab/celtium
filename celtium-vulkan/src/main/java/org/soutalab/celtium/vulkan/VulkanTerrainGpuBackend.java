@@ -1397,6 +1397,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Lane 1 store/draw counters for the F3 panel and status reports; never starts the frontend. */
     public String celtium$lane1DiagnosticsSummary() {
         String base = this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();
+        base += " atlasW=" + (this.atlasTexture == null ? -1 : this.atlasTexture.width());
         return base + " drawCalls=" + this.lane1DrawCalls + " guardCmd=" + this.lane1GuardCmd
                 + " guardStall=" + this.lane1GuardStall + " guardTarget=" + this.lane1GuardTarget
                 + " guardPass=" + this.lane1GuardPass + " guardViews=" + this.lane1GuardViews
