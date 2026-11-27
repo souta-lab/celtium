@@ -280,7 +280,9 @@ public final class Lane1Shaders {
                 // The lightmap is a 16x16 texel grid indexed (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges
                 // (measured at Gate G1 by probing the bound image's corners).
-                vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
+                vec2 lightUv = (fragLightMap * 15.0 + 0.5) / 16.0;
+                lightUv.y = 1.0 - lightUv.y;
+                vec3 light = texture(lightMap, lightUv).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
