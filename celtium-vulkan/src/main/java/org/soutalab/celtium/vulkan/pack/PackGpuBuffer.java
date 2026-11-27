@@ -84,11 +84,12 @@ final class PackGpuBuffer implements AutoCloseable {
             this.memory = handle.get(0);
             vkBindBufferMemory(device, buffer, memory, 0L);
 
-            java.nio.ByteBuffer mappedBuffer = vkMapMemory(device, memory, 0L, sizeBytes, 0L);
-            if (mappedBuffer == null) {
-                throw new IllegalStateException("vkMapMemory returned null");
+            org.lwjgl.PointerBuffer dataPointer = stack.mallocPointer(1);
+            int mapResult = vkMapMemory(device, memory, 0L, sizeBytes, 0, dataPointer);
+            if (mapResult != VK_SUCCESS || dataPointer.get(0) == 0L) {
+                throw new IllegalStateException("vkMapMemory failed: " + mapResult);
             }
-            this.mapped = MemorySegment.ofBuffer(mappedBuffer);
+            this.mapped = MemorySegment.ofAddress(dataPointer.get(0)).reinterpret(sizeBytes);
         }
     }
 

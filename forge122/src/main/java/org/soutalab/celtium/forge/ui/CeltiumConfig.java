@@ -92,6 +92,9 @@ public class CeltiumConfig {
          * pack runtime at world load; edited through the shader pack screen.
          */
         public String shaderPack = "";
+
+        /** The user's option-menu choices for the selected pack, as compile overrides. */
+        public java.util.Map<String, String> shaderPackOptionOverrides = new java.util.LinkedHashMap<>();
     }
 
     public enum GraphicsQuality {
@@ -182,6 +185,9 @@ public class CeltiumConfig {
         config.advanced.cpuRenderAheadLimit = clamp(config.advanced.cpuRenderAheadLimit, 0, 9);
         if (config.shaders.shaderPack == null) {
             config.shaders.shaderPack = "";
+        }
+        if (config.shaders.shaderPackOptionOverrides == null) {
+            config.shaders.shaderPackOptionOverrides = new java.util.LinkedHashMap<>();
         }
     }
 

@@ -47,6 +47,11 @@ public interface PackSpirvCompiler {
         return null;
     }
 
+    /** The compute module words of a program returned by {@link #compileCompute}. */
+    static int[] computeWords(CompiledProgram compiled) {
+        return compiled.spirv().vertexWords();
+    }
+
     /**
      * Default production compiler backed by Celtium's {@link ModGlslTranslator} (Vulkan GLSL 450
      * lowering + fractional pow NaN guard + std140 UBO packing) and {@link ModShaderCompiler}
@@ -88,11 +93,6 @@ public interface PackSpirvCompiler {
                     new SpirvModuleBundle(words, words, null),
                     DescriptorBindingPlan.empty(),
                     scanComputeNamedBindings(computeGlsl));
-        }
-
-        /** The compute module words of a program returned by {@link #compileCompute}. */
-        static int[] computeWords(CompiledProgram compiled) {
-            return compiled.spirv().vertexWords();
         }
 
         private static java.util.List<NamedDescriptorBinding> namedBindings(

@@ -67,7 +67,7 @@ public final class PackWeatherFeed {
 
     private static void writeVec4(PackExecutionPlan.PackUniformLayout layout, MemorySegment slot,
                                   String fieldName, float x, float y, float z, float w) {
-        Optional<PackExecutionPlan.UniformField> field = layout.fieldNamed(fieldName);
+        Optional<PackExecutionPlan.PackUniformLayout.UniformField> field = layout.fieldNamed(fieldName);
         if (field.isEmpty()) {
             return;
         }

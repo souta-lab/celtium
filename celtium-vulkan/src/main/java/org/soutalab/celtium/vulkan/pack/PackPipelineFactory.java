@@ -78,9 +78,11 @@ final class PackPipelineFactory implements AutoCloseable {
         }
         VkDevice device = context.device();
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.ByteBuffer code = stack.malloc(words.length * 4);
+            code.asIntBuffer().put(words);
             VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
-                    .pCode(stack.ints(words));
+                    .pCode(code);
             LongBuffer handle = stack.mallocLong(1);
             if (vkCreateShaderModule(device, moduleInfo, null, handle) != VK_SUCCESS) {
                 throw new IllegalStateException("vkCreateShaderModule failed");

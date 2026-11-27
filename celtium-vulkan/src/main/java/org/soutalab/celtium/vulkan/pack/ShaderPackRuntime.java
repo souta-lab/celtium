@@ -230,7 +230,7 @@ public final class ShaderPackRuntime {
                         .commandPool(pool)
                         .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
                         .commandBufferCount(1);
-                java.nio.PointerBuffer cmdPointer = stack.mallocPointer(1);
+                org.lwjgl.PointerBuffer cmdPointer = stack.mallocPointer(1);
                 if (vkAllocateCommandBuffers(device, allocInfo, cmdPointer) != VK_SUCCESS) {
                     throw new IllegalStateException("vkAllocateCommandBuffers failed for " + label);
                 }
