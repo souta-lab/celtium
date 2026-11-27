@@ -668,6 +668,15 @@ b.frameBufferOpen = false;
      */
     private long publishedCacheVersion = Long.MIN_VALUE;
     private long publishedCachePairs = Long.MIN_VALUE;
+    /**
+     * The frame target's colour image as of the last prune and cache rebuild. The prune's liveness rule
+     * for a name published over the frame image compares against the live {@code frameTarget.colorImage()},
+     * but neither the publication version nor the pair generation moves when that image does - the
+     * borrowed swapchain image rotates every frame, and a borrow bypass swaps in the owned image - so
+     * without this component the prune never re-ran once the chain pairs settled, and the main name
+     * stayed published over a single already-presented swapchain image.
+     */
+    private long publishedCacheFrameImage = Long.MIN_VALUE;
 
     /**
      * Item 673's lab switch: {@code -Dceltium.vulkan.terrainPreparePublishWalkOnce=true} lets a sampling-side
@@ -992,12 +1001,17 @@ b.frameBufferOpen = false;
             this.samplingWalkSkips++;
             return;
         }
-        if (publications != this.publishedCacheVersion || pairs != this.publishedCachePairs) {
+        long frameColorImage = b.frameTarget == null ? 0L : b.frameTarget.colorImage();
+        if (publications != this.publishedCacheVersion || pairs != this.publishedCachePairs
+                || frameColorImage != this.publishedCacheFrameImage) {
             // The prune re-publishes a name whose pair image was recreated; it is the reason a stale resolution cannot
-            // simply be cached forever, and the generation is part of the key for exactly that case.
+            // simply be cached forever, and the generation is part of the key for exactly that case. The frame
+            // image is part of the key for the twin case: a name published over it goes stale when the image
+            // rotates or is swapped, which neither of the other two components can see.
             celtium$pruneStalePublishedNames();
             this.publishedCacheVersion = b.publishedTextures.publishedVersion();
             this.publishedCachePairs = pairs;
+            this.publishedCacheFrameImage = frameColorImage;
             celtium$rebuildPublishedCache();
             if (b.publishedTextures.isEmptyPublished()) {
                 return;

@@ -489,17 +489,29 @@ final class ModPrograms {
             }
         }
         VulkanGlTexture texture = registry.get(name);
-        if (texture != null && b.publishedFrameImages.get(name) != 0L) {
+        long publishedImage = b.publishedFrameImages.get(name);
+        // A publication over the frame target's own colour image goes stale when that image moves - the
+        // borrowed swapchain image rotates every frame in direct-present mode, and a borrow bypass swaps
+        // in the owned image - and the cached wrapper then names an image that was already presented.
+        // The prune walk unpublishes such a name when it runs, but its trigger does not watch the frame
+        // image, so the resolution checks liveness itself and re-publishes over the live image below
+        // instead of returning the stale wrapper.
+        GllessFrameTarget liveTarget = b.offTargetTarget();
+        boolean staleFramePublication = texture != null && celtium$staleFramePublication(publishedImage,
+                b.frameTarget == null ? 0L : b.frameTarget.colorImage(),
+                liveTarget == null ? 0L : liveTarget.offTargetColorImage(),
+                b.publishedFrameImageIdentities.get(name), b.publishedFrameDepthKeys.get(name));
+        if (texture != null && publishedImage != 0L && !staleFramePublication) {
             // Already the framebuffer's own image (the wrapper is the published one: r34-gt logged wimg == img for
             // every sampler), so there is nothing to publish again. Not a fix for the black world - r33-gt was black
             // with this in place - only a lookup that does not repeat the publication.
             return texture;
         }
         boolean unpublishedAttachment = texture != null && celtium$unpublishedColorAttachment(
-                b.publishedFrameImages.get(name) == 0L,
+                publishedImage == 0L,
                 b.celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE,
                 b.publishedTextures.slotIdentityForColorTexture(name) != Long.MIN_VALUE);
-        if (texture == null || !texture.hasFullContent() || unpublishedAttachment) {
+        if (texture == null || !texture.hasFullContent() || unpublishedAttachment || staleFramePublication) {
             boolean published = b.celtium$publishFramebufferColorTexture(name);
             if (!published && b.celtium$adoptRawFramebufferColorTexture(name)) {
                 published = b.celtium$publishFramebufferColorTexture(name);
@@ -531,6 +543,22 @@ final class ModPrograms {
     static boolean celtium$unpublishedColorAttachment(boolean frameImageUnpublished, boolean slotZeroRecord,
             boolean extraSlotRecord) {
         return frameImageUnpublished && (slotZeroRecord || extraSlotRecord);
+    }
+
+    /**
+     * {@return whether a published colour name's image is stale}: the name was published over the frame
+     * target's own colour image - the publication carries neither a chain-pair owner nor a depth record,
+     * the two records that give a publication another liveness source - and the image it names is no
+     * longer either live colour image the target holds (the frame image, or the off-target image).
+     * This is the liveness rule {@code PostChainBridge.celtium$pruneStalePublishedNames} applies when it
+     * runs; the resolutions that read the published table cannot wait for that walk, because the walk's
+     * trigger does not watch the frame image and the borrowed swapchain image rotates under the
+     * published name every frame. Static and pure so the rule is pinned without a device.
+     */
+    static boolean celtium$staleFramePublication(long publishedImage, long frameColorImage,
+            long offTargetColorImage, long publishedIdentity, long publishedDepthKey) {
+        return publishedImage != 0L && publishedDepthKey == 0L && publishedIdentity == Long.MIN_VALUE
+                && publishedImage != frameColorImage && publishedImage != offTargetColorImage;
     }
 
     /**
