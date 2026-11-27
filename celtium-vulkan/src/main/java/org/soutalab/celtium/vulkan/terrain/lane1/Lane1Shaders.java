@@ -268,6 +268,8 @@ public final class Lane1Shaders {
                 // the atlas and the lightmap), so V is flipped back here.
                 uv.y = 1.0 - uv.y;
                 vec4 texel = texture(atlas, uv);
+                // TEMP G1 BISECT10: show fragLightMap itself (R=block, G=sky).
+                outColor = vec4(fragLightMap, 0.0, 1.0); return;
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, vec2(fragLightMap.x, 1.0 - fragLightMap.y)).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
