@@ -69,6 +69,14 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> dirty = new HashSet<>();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
     private final Set<Long> awaitingLight = new HashSet<>();
+    // TEMP G1 PROBE13 counters.
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_SKY15 =
+            new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_TOTAL =
+            new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_DARK =
+            new java.util.concurrent.atomic.AtomicLong();
+
     /** Light-array fingerprint per resident section, taken when its mesh was built. */
     private final Map<Long, Integer> lightFingerprints = new HashMap<>();
     private int lightSweepCursor;
@@ -123,6 +131,8 @@ public final class CeltiumTerrainDriver {
         } catch (Throwable t) {
             lines.add("lightSync failed " + t);
         }
+        lines.add("drainLight axisSky15=" + DRAIN_SKY15.get() + " axisTotal=" + DRAIN_TOTAL.get()
+                + " axisDark=" + DRAIN_DARK.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
@@ -510,6 +520,19 @@ public final class CeltiumTerrainDriver {
             MeshBuffers buffers = future.getNow(null);
             if (buffers == null) {
                 continue;
+            }
+            // TEMP G1 PROBE13: census of the axis sky values as geometry leaves the mesher.
+            for (int layer = 0; layer < 3; layer++) {
+                for (org.soutalab.celtium.core.geometry.PackedAxisQuad q
+                        : buffers.axisLayerList(layer)) {
+                    DRAIN_TOTAL.incrementAndGet();
+                    if (q.skyLight() == 15) {
+                        DRAIN_SKY15.incrementAndGet();
+                    }
+                    if (q.skyLight() == 0 && q.blockLight() == 0) {
+                        DRAIN_DARK.incrementAndGet();
+                    }
+                }
             }
             long k = entry.getKey();
             try {
