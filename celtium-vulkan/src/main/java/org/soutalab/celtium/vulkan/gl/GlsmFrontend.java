@@ -4775,6 +4775,9 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     void legacyDispatch(int functionId, long result, long args) {
         long value;
+        // The common backend-call counter (BackendCallCounters) times this entry like the FFM one:
+        // every stub-served call is one backend call, whichever trampoline carried it in.
+        long callBegin = org.soutalab.celtium.vulkan.BackendCallCounters.noteCallBegin();
         try {
             value = legacyDispatchBody(functionId, args);
         } catch (Throwable failure) {
@@ -4783,6 +4786,8 @@ public final class GlsmFrontend implements FunctionProvider {
             // into libffi leaves it unwritten and unwinds through native frames (audit-gl-deep G1).
             celtium$noteDispatchFailure(celtium$fnNameForId(functionId), failure);
             value = 0L;
+        } finally {
+            org.soutalab.celtium.vulkan.BackendCallCounters.noteCallEnd(callBegin);
         }
         APIUtil.apiClosureRetP(result, value);
     }
@@ -4827,6 +4832,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
             long c8, long c9, long c10, long c11) {
+        long callBegin = org.soutalab.celtium.vulkan.BackendCallCounters.noteCallBegin();
         try {
             return dispatchBody(functionId, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11);
         } catch (Throwable failure) {
@@ -4834,6 +4840,8 @@ public final class GlsmFrontend implements FunctionProvider {
             // them, so no Java exception crosses the FFM upcall boundary from this entry either (audit-gl-deep G1).
             celtium$noteDispatchFailure(celtium$fnNameForId(functionId), failure);
             return 0L;
+        } finally {
+            org.soutalab.celtium.vulkan.BackendCallCounters.noteCallEnd(callBegin);
         }
     }
 

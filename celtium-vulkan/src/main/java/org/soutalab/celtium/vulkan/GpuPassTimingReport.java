@@ -40,17 +40,27 @@ public final class GpuPassTimingReport {
     /**
      * Prints the collected pass timings when due.
      *
-     * @param frameId  the frame the timings were collected in
-     * @param timings  nanoseconds per pass, as the timestamp pool recorded them
+     * @param frameId     the frame the timings were collected in
+     * @param timings     nanoseconds per pass, as the timestamp pool recorded them
+     * @param packTimings nanoseconds per pack stage name ({@code shadow} / {@code gbuffers}), for the
+     *                    slots the pack route timed - its stages are the pack pipeline's, not
+     *                    {@link TerrainRenderPass}es, so they travel under their own names
      */
-    public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings, long immediatePassNanos,
+    public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings,
+            Map<String, Long> packTimings, long immediatePassNanos,
             long frameNanos, long headNanos, long tailNanos, int windows, long windowMainNanos, long windowOffNanos,
             long windowMaxNanos, String markTimeline) {
-        if (!ENABLED || frameId % EVERY_FRAME != 0 || timings.isEmpty()) {
+        if (!ENABLED || frameId % EVERY_FRAME != 0 || (timings.isEmpty() && packTimings.isEmpty())) {
             return;
         }
         StringBuilder line = new StringBuilder(192);
         for (Map.Entry<TerrainRenderPass, Long> entry : timings.entrySet()) {
+            if (line.length() > 0) {
+                line.append(' ');
+            }
+            line.append(entry.getKey()).append('=').append(entry.getValue().longValue() / 1000L).append("us");
+        }
+        for (Map.Entry<String, Long> entry : packTimings.entrySet()) {
             if (line.length() > 0) {
                 line.append(' ');
             }

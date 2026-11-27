@@ -1112,7 +1112,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         this.gpuMarkLabels[this.gpuMarkCount] = label;
         vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                MARK_BASE + this.gpuMarkCount);
+                celtium$timestampPoolBase() + MARK_BASE + this.gpuMarkCount);
         this.gpuMarkCount++;
     }
     /**
@@ -1197,11 +1197,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
     private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
+    /**
+     * The pack route's per-stage timings, under the pack pipeline's own stage names ({@code shadow} /
+     * {@code gbuffers}): the same last-measured-value persistence as {@link #passTimings}, keyed by name
+     * because one subpass object serves both stages in a frame and cannot name them apart.
+     */
+    private final java.util.Map<String, Long> packPassTimings = new java.util.LinkedHashMap<>();
     private int readbackSlots;
     private long readbackOffset;
     private int timestampSlots;
 
     private final Reference2ReferenceMap<Integer, TerrainRenderPass> timestampPasses = new Reference2ReferenceOpenHashMap<>();
+    /** Which pack stage each live timed slot belongs to, for the slots the pack route armed. */
+    private final java.util.Map<Integer, String> timestampPackPassNames = new java.util.HashMap<>();
+
+    /** The offset of the recording frame slot's query range within the timestamp pool. */
+    private int celtium$timestampPoolBase() {
+        return this.frameSlot * TIMESTAMP_SLOTS;
+    }
     /**
      * Per-submission snapshots of the timing state above, and which of them a readback may consume.
      * The live accumulators are moved into a snapshot at submit time and restart empty; the readback
@@ -13484,12 +13497,14 @@ this.frameBufferOpen = false;
         // The recording ends here: whatever records next is a new recording,
         // so Tier-A streams armed into this one stop being issuable (INV-2c).
         this.recordingEpoch++;
-        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
+        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.packPassTimings,
+                this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
         celtium$reportFlushReasons(false);
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
+        BackendCallCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer();
         // The frame buffer this call just finished is the submission a post chain's deferred
         // first-use commit waits on (drawpath audit DP-32): settle it now that the recording is
@@ -16440,7 +16455,7 @@ this.frameBufferOpen = false;
             this.windowTimestampTargets[this.windowTimestampCount] = this.targetRegistry.currentIdentity();
             this.windowTimestampCount++;
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                    windowSlot * 2);
+                    celtium$timestampPoolBase() + (windowSlot * 2));
         }
         gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
         FramePassTimings.begin("winBeginPass");
@@ -16514,7 +16529,7 @@ this.frameBufferOpen = false;
         gpuMark("win-end");
         if (windowSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                    (windowSlot * 2) + 1);
+                    celtium$timestampPoolBase() + (windowSlot * 2) + 1);
             this.immediatePassTimed = true;
         }
     }
@@ -17637,7 +17652,7 @@ this.frameBufferOpen = false;
         this.frameEndTimestampWritten = true;
         gpuMark("end");
         vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                (FRAME_TIMESTAMP_SLOT * 2) + 1);
+                celtium$timestampPoolBase() + (FRAME_TIMESTAMP_SLOT * 2) + 1);
         this.frameGpuTimed = true;
     }
 
@@ -17662,8 +17677,8 @@ this.frameBufferOpen = false;
             int queries = (snapshot.immediateTimed || snapshot.frameTimed)
                     ? TIMESTAMP_SLOTS : snapshot.passSlots * 2;
             LongBuffer data = stack.mallocLong(queries * 2);
-            int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, 0, queries, data,
-                    Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, snapshot.poolBase,
+                    queries, data, Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
             if (result != VK_SUCCESS && result != VK_NOT_READY) {
                 // The snapshot stays queued, as the live state used to stay uncleared: the next
                 // begin retries the read, unless a newer confirmation drops it as overwritten.
@@ -17673,6 +17688,7 @@ this.frameBufferOpen = false;
             }
             consumed = true;
             long terrainGpuNanos = 0L;
+            java.util.Map<String, Long> framePackNanos = new java.util.LinkedHashMap<>();
             for (int slot = 0; slot < snapshot.passSlots; slot++) {
                 long startAvailable = data.get((slot * 2 * 2) + 1);
                 long endAvailable = data.get((slot * 2 * 2) + 3);
@@ -17688,12 +17704,22 @@ this.frameBufferOpen = false;
                 long end = data.get((slot * 2 * 2) + 2);
                 if (end >= start) {
                     long passNanos = (long) ((end - start) * this.timestampPeriod);
-                    this.passTimings.put(snapshot.passes.get(slot), passNanos);
+                    String packName = snapshot.packPassNames.get(Integer.valueOf(slot));
+                    if (packName != null) {
+                        // A pack stage's subpasses share one name: the stage's frame total is their sum,
+                        // filed under the name once, beside the native passes' own entries.
+                        framePackNanos.merge(packName, Long.valueOf(passNanos), Long::sum);
+                    } else {
+                        this.passTimings.put(snapshot.passes.get(slot), passNanos);
+                    }
                     // The frame budget's terrain column is this frame's passes summed fresh from the readback:
-                    // the map above keeps a pass's last measured value across frames, so summing it would file
+                    // the maps above keep a pass's last measured value across frames, so summing them would file
                     // stale durations for passes whose readback has not landed yet.
                     terrainGpuNanos += passNanos;
                 }
+            }
+            if (!framePackNanos.isEmpty()) {
+                this.packPassTimings.putAll(framePackNanos);
             }
             FrameBudgetTimings.setTerrainGpuPass(terrainGpuNanos);
             if (snapshot.frameTimed) {
@@ -17707,11 +17733,15 @@ this.frameBufferOpen = false;
                     }
                 }
             }
-            if (this.frameGpuNanos > 0L && !snapshot.passes.isEmpty()) {
+            if (this.frameGpuNanos > 0L && (!snapshot.passes.isEmpty() || !snapshot.packPassNames.isEmpty())) {
                 // The first and last pass of this frame, by the slot they were recorded in: slot order is recording order.
                 int firstSlot = Integer.MAX_VALUE;
                 int lastSlot = -1;
                 for (Integer slot : snapshot.passes.keySet()) {
+                    firstSlot = Math.min(firstSlot, slot.intValue());
+                    lastSlot = Math.max(lastSlot, slot.intValue());
+                }
+                for (Integer slot : snapshot.packPassNames.keySet()) {
                     firstSlot = Math.min(firstSlot, slot.intValue());
                     lastSlot = Math.max(lastSlot, slot.intValue());
                 }
@@ -17765,8 +17795,8 @@ this.frameBufferOpen = false;
         if (consumed && snapshot.markCount > 1) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer marks = stack.mallocLong(snapshot.markCount * 2);
-                int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, MARK_BASE,
-                        snapshot.markCount, marks, Long.BYTES * 2,
+                int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool,
+                        snapshot.poolBase + MARK_BASE, snapshot.markCount, marks, Long.BYTES * 2,
                         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
                 if (result == VK_SUCCESS || result == VK_NOT_READY) {
                     // Summed per label: the delta before each mark is charged to that mark's label (the commands
@@ -17808,7 +17838,8 @@ this.frameBufferOpen = false;
             // the terrain column filed real values, CELTIUM_PASS_GPU never printed). Printing here,
             // keyed on the snapshot's own frame id, pairs each report with the frame it measures.
             // The marks timeline is not the snapshot's own string, so it is left to the boundary site.
-            GpuPassTimingReport.printIfDue(snapshot.frameId, this.passTimings, this.immediatePassGpuNanos,
+            GpuPassTimingReport.printIfDue(snapshot.frameId, this.passTimings, this.packPassTimings,
+                    this.immediatePassGpuNanos,
                     this.frameGpuNanos, this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount,
                     this.windowGpuMainNanos, this.windowGpuOffNanos, this.windowGpuMaxNanos, null);
         }
@@ -19150,6 +19181,44 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Opens a timed pass slot for the pack route, mirroring the native pass's arming in
+     * {@code recordRenderPass}: the top-of-pipe write lands at the pass' head, and
+     * {@link #celtium$closePackPassTimestamp} writes the pair and registers the slot under the pack
+     * stage's name at the pass' end. The pack route used to record no pass timestamps at all - it
+     * returns from {@code recordRenderPass} before that method's own arming - so on a pack scene the
+     * readback's pass map stayed empty, the frame budget's terrain column filed zero and
+     * {@code CELTIUM_PASS_GPU} never printed (shader-breakdown, 2026-11-27: both runs, 0 lines).
+     *
+     * @return the armed slot, or -1 when the instrument is not collecting for this frame
+     */
+    private int celtium$beginPackPassTimestamp() {
+        if (this.timestampPool == 0L || !this.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
+            return -1;
+        }
+        int slot = this.timestampSlots;
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
+                celtium$timestampPoolBase() + (slot * 2));
+        return slot;
+    }
+
+    /**
+     * Closes a pack-route timed slot opened by {@link #celtium$beginPackPassTimestamp}: the
+     * bottom-of-pipe write after the pass' render pass has ended, and the slot's registration under
+     * the pack stage's name ({@code shadow} while the pack renders its shadow map, {@code gbuffers}
+     * otherwise) - the names the pack pipeline itself is structured by, which no
+     * {@link TerrainRenderPass} can carry because one subpass object serves both stages.
+     */
+    private void celtium$closePackPassTimestamp(int slot, boolean shadowStage) {
+        if (slot < 0) {
+            return;
+        }
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                celtium$timestampPoolBase() + (slot * 2) + 1);
+        this.timestampPackPassNames.put(Integer.valueOf(slot), shadowStage ? "shadow" : "gbuffers");
+        this.timestampSlots++;
+    }
+
+    /**
      * Attempts to render a terrain pass using the active shader pack's terrain program ({@code gbuffers_terrain} /
      * {@code gbuffers_water} / {@code shadow}) obtained via Demonica's {@code ShaderTerrain.packProgram}.
      * Returns {@code true} if the pass was drawn natively on Vulkan with the pack's shader, or {@code false} to
@@ -19636,7 +19705,10 @@ this.frameBufferOpen = false;
                         occlusionCamera, useBlockFaceCulling, view, packVariantArmed);
             }
 
-            // Begin the load/store-depth MRT render pass.
+            // Begin the load/store-depth MRT render pass. The pass is timed like a native one - top
+            // write before the pass opens, pair written in the draw loop's finally after it ends -
+            // under the pack stage's name, so a pack scene's per-stage GPU time is readable at all.
+            int packTimestampSlot = celtium$beginPackPassTimestamp();
             VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack)
                     .sType$Default()
                     .renderPass(targetRenderPass)
@@ -20144,6 +20216,7 @@ this.frameBufferOpen = false;
                 vkCmdEndRenderPass(this.commandBuffer);
                 this.commandState.endPass();
                 org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
+                celtium$closePackPassTimestamp(packTimestampSlot, shadowStage);
                 if (pairOwner != null) {
                     pairOwner.recordChainPairAttachRelease(drawIdentity, routedDepthKey);
                 } else if (onMain) {
@@ -21428,7 +21501,7 @@ this.frameBufferOpen = false;
         gpuMark("terrain-begin");
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                    timestampSlot * 2);
+                    celtium$timestampPoolBase() + (timestampSlot * 2));
         }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepPublish");
         if (this.publishedChainOutput != null
@@ -21993,7 +22066,7 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                    (timestampSlot * 2) + 1);
+                    celtium$timestampPoolBase() + (timestampSlot * 2) + 1);
             this.timestampPasses.put(timestampSlot, pass);
             this.timestampSlots++;
         }
@@ -24436,8 +24509,12 @@ this.frameBufferOpen = false;
             // Writing timestamps on a queue that cannot record them, or with a zero period, produces meaningless
             // numbers; the overlay then keeps its "?? ms" instead of reporting fiction.
             this.timestampsUsable = timestampValidBits > 0L && this.timestampPeriod > 0.0f;
+            // One query range of TIMESTAMP_SLOTS per frame slot: a frame's results then live in its own
+            // slot's range until that slot records again, which is what lets the readback consume
+            // snapshots in submit order instead of losing every confirmed snapshot but the newest
+            // (see TerrainTimingReadback).
             org.lwjgl.vulkan.VkQueryPoolCreateInfo queryPool = org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack)
-                    .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS);
+                    .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS * FRAME_SLOTS);
             if (this.timestampsUsable && !FORCE_NO_TIMESTAMPS) {
                 check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
                 this.timestampPool = handle.get(0);
@@ -24618,7 +24695,7 @@ this.frameBufferOpen = false;
                 // paid for a report it does not run (measured: 1.032x slower against the build before). The range must
                 // follow the write path's own predicate - a window write without its reset is precisely
                 // VUID-vkCmdWriteTimestamp-00830, which the frame budget's first leg reproduced.
-                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0,
+                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, celtium$timestampPoolBase(),
                         celtium$windowTimestampsActive() ? TIMESTAMP_SLOTS : WINDOW_SLOT_BASE * 2);
                 this.windowTimestampCount = 0;
                 this.gpuMarkCount = 0;
@@ -24627,7 +24704,7 @@ this.frameBufferOpen = false;
                     // that is not asking for them should not carry extra query writes (measured: ten
                     // VUID-vkCmdWriteTimestamp-00830 errors on the discrete card when the batched end path also wrote one).
                     vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                            FRAME_TIMESTAMP_SLOT * 2);
+                            celtium$timestampPoolBase() + (FRAME_TIMESTAMP_SLOT * 2));
                     this.frameEndTimestampWritten = false;
                 }
             }
@@ -27547,13 +27624,15 @@ this.frameBufferOpen = false;
             return;
         }
         this.timingReadback.offer(new TerrainTimingReadback.Snapshot(
-                this.scheduler.submitSequence() + 1L, this.frameId,
+                this.scheduler.submitSequence() + 1L, this.frameId, celtium$timestampPoolBase(),
                 this.timestampSlots, new java.util.HashMap<>(this.timestampPasses),
+                new java.util.HashMap<>(this.timestampPackPassNames),
                 this.windowTimestampCount,
                 java.util.Arrays.copyOf(this.windowTimestampTargets, this.windowTimestampCount),
                 this.immediatePassTimed, this.frameGpuTimed,
                 this.gpuMarkCount, java.util.Arrays.copyOf(this.gpuMarkLabels, this.gpuMarkCount)));
         this.timestampPasses.clear();
+        this.timestampPackPassNames.clear();
         this.timestampSlots = 0;
         this.windowTimestampCount = 0;
         this.immediatePassTimed = false;
