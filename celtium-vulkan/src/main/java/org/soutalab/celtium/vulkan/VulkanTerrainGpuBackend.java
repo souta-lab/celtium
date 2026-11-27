@@ -15044,10 +15044,27 @@ this.frameBufferOpen = false;
         // a mirror under the name: a mod that allocates its attachment with glTexImage2D(null) gets an (empty) mirror,
         // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
         // scaling framebuffer held the map (pair dump, leg pairdump2-amd) - the minimap was see-through.
+        long publishedImage = textureId == 0 ? 0L : this.publishedFrameImages.get(textureId);
         boolean unpublishedAttachment = textureId != 0 && texture != null
-                && this.publishedFrameImages.get(textureId) == 0L
+                && publishedImage == 0L
                 && celtium$framebufferIdentityForColorTexture(textureId) != Long.MIN_VALUE;
-        if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment)) {
+        // The published twin of the check above: a name published over the frame target's own colour
+        // image keeps naming that image after the image moves - the borrowed swapchain image rotates
+        // every frame, and a borrow bypass swaps in the owned image - so the publication is stale and
+        // the publish below re-runs against the live image rather than leaving the name pointing at an
+        // already-presented one. The prune walk unpublishes such a name when it runs, but its trigger
+        // does not watch the frame image.
+        boolean staleFramePublication = false;
+        if (textureId != 0 && texture != null && publishedImage != 0L) {
+            GllessFrameTarget liveTarget = offTargetTarget();
+            staleFramePublication = ModPrograms.celtium$staleFramePublication(publishedImage,
+                    this.frameTarget == null ? 0L : this.frameTarget.colorImage(),
+                    liveTarget == null ? 0L : liveTarget.offTargetColorImage(),
+                    this.publishedFrameImageIdentities.get(textureId),
+                    this.publishedFrameDepthKeys.get(textureId));
+        }
+        if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment
+                || staleFramePublication)) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
             // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
             // name becomes a descriptor, so every sampling path gets the same rule.
