@@ -374,6 +374,11 @@ public final class CeltiumTerrainDriver {
         ensureBuildSide();
         diffLoadedSections();
         promoteAwaitingLight();
+        // TEMP G1 PROBE10: rolling full rebuild - does the picture heal when every
+        // section is re-meshed periodically?
+        if (frameCounter > 0L && frameCounter % 600L == 0L) {
+            dirty.addAll(present);
+        }
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
