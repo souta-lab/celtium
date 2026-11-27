@@ -50,6 +50,11 @@ public final class TerrainSectionStore {
         public static final LayerRange EMPTY = new LayerRange(0, 0, 0, 0);
     }
 
+    /** Bumped on every residency change; the frontend gates its descriptor rewrite on it. */
+    private long generation;
+    /** Cached key-ordered descriptor snapshot, rebuilt lazily after a residency change. */
+    private List<SectionDesc> cachedDescriptors;
+
     private static final class Resident {
         final long key;
         SectionDesc desc;
@@ -192,6 +197,8 @@ public final class TerrainSectionStore {
         resident.desc = new SectionDesc(sectionX, sectionY, sectionZ, 0,
                 axisOffset, generalOffset, axisCount, generalCount, 0, mcEntityBase);
 
+        generation++;
+        cachedDescriptors = null;
         Resident previous = sections.put(key, resident);
         if (previous != null) {
             releaseRanges(previous, timelineValue);
@@ -201,6 +208,8 @@ public final class TerrainSectionStore {
 
     /** Removes a section; its ranges return timeline-deferred. Returns false when it was not resident. */
     public synchronized boolean remove(int sectionX, int sectionY, int sectionZ, long timelineValue) {
+        generation++;
+        cachedDescriptors = null;
         Resident previous = sections.remove(sectionKey(sectionX, sectionY, sectionZ));
         if (previous == null) {
             return false;
@@ -270,7 +279,26 @@ public final class TerrainSectionStore {
 
     /** Snapshot of the resident descriptors, in key order - the cull stage's CPU-side input. */
     public synchronized List<SectionDesc> descriptors() {
-        return sections.keySet().stream().sorted().map(key -> sections.get(key).desc).toList();
+        if (cachedDescriptors == null) {
+            cachedDescriptors = sections.keySet().stream().sorted()
+                    .map(key -> sections.get(key).desc).toList();
+        }
+        return cachedDescriptors;
+    }
+
+    /** The residency generation: unchanged while no section was uploaded or removed. */
+    public synchronized long generation() {
+        return generation;
+    }
+
+    /**
+     * The per-layer ranges of a resident section, WITHOUT the defensive copy
+     * {@link #layerRanges} makes: the draw stage reads them on the render thread inside the
+     * store's own call frame and never retains or mutates the array.
+     */
+    public synchronized LayerRange[] layerRangesRef(int sectionX, int sectionY, int sectionZ) {
+        Resident resident = sections.get(sectionKey(sectionX, sectionY, sectionZ));
+        return resident == null ? null : resident.layers;
     }
 
     public long axisUsedBytes() {

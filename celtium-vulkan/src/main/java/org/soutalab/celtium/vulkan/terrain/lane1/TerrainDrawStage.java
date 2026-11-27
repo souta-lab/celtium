@@ -50,6 +50,17 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     private long lastDrawnQuads;
     private int lastVisibleSections;
 
+    // The visible set and its layer ranges, computed once per (view, store generation):
+    // the three main-layer passes of a frame share one frustum and one residency, and the
+    // first version of this stage re-ran the full cull + a cloning range lookup for every
+    // section on every layer (2,902 sections x 3 layers per frame at Gate G1).
+    private FrustumPlanes cachedFrustum;
+    private boolean cachedShadow;
+    private long cachedGeneration = -1L;
+    private List<SectionDesc> cachedVisible = List.of();
+    private List<TerrainSectionStore.LayerRange[]> cachedRanges = List.of();
+    private int[] cachedSlots = new int[0];
+
     public TerrainDrawStage(TerrainWorld world, TerrainCullStage cullStage, DrawSink drawSink) {
         this.world = world;
         this.cullStage = cullStage;
@@ -76,18 +87,42 @@ public final class TerrainDrawStage implements PackTerrainDriver {
                     + "was prepared");
         }
         int layer = layerOf(kind);
-        List<SectionDesc> descriptors = world.store().descriptors();
+        TerrainSectionStore store = world.store();
+        long generation = store.generation();
+        if (cachedFrustum != frustum || cachedShadow != kind.isShadow()
+                || cachedGeneration != generation) {
+            List<SectionDesc> descriptors = store.descriptors();
+            List<SectionDesc> visible = new ArrayList<>();
+            List<TerrainSectionStore.LayerRange[]> ranges = new ArrayList<>();
+            List<Integer> slots = new ArrayList<>();
+            for (int slot = 0; slot < descriptors.size(); slot++) {
+                SectionDesc desc = descriptors.get(slot);
+                if (!TerrainCullStage.sectionVisible(frustum, desc)) {
+                    continue;
+                }
+                TerrainSectionStore.LayerRange[] layerRanges = store.layerRangesRef(
+                        desc.sectionX(), desc.sectionY(), desc.sectionZ());
+                if (layerRanges == null) {
+                    continue;
+                }
+                visible.add(desc);
+                ranges.add(layerRanges);
+                slots.add(Integer.valueOf(slot));
+            }
+            cachedFrustum = frustum;
+            cachedShadow = kind.isShadow();
+            cachedGeneration = generation;
+            cachedVisible = visible;
+            cachedRanges = ranges;
+            cachedSlots = slots.stream().mapToInt(Integer::intValue).toArray();
+        }
         List<DrawCommand> commands = new ArrayList<>();
         long quads = 0L;
-        int visibleCount = 0;
-        for (int slot = 0; slot < descriptors.size(); slot++) {
-            SectionDesc desc = descriptors.get(slot);
-            if (!TerrainCullStage.sectionVisible(frustum, desc)) {
-                continue;
-            }
-            visibleCount++;
-            TerrainSectionStore.LayerRange range = world.store()
-                    .layerRanges(desc.sectionX(), desc.sectionY(), desc.sectionZ())[layer];
+        int visibleCount = cachedVisible.size();
+        for (int i = 0; i < cachedVisible.size(); i++) {
+            SectionDesc desc = cachedVisible.get(i);
+            int slot = cachedSlots[i];
+            TerrainSectionStore.LayerRange range = cachedRanges.get(i)[layer];
             if (range.axisQuadCount() > 0) {
                 commands.add(new DrawCommand(range.axisQuadCount() * 6,
                         (int) (desc.axisSlabOffset() / 16L) + range.axisQuadOffset(), slot, layer, false));

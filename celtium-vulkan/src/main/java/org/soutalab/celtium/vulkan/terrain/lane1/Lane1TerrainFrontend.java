@@ -116,6 +116,9 @@ public final class Lane1TerrainFrontend {
     private final Map<Long, Long> shaderModules = new HashMap<>();
     private final Map<PipelineKey, Long> pipelines = new HashMap<>();
 
+    private TerrainSectionStore descStore;
+    private long descGeneration = -1L;
+
     // Per-frame state, written by prepareFrame and consumed by recordPass / push constants.
     private final float[] viewProj = new float[16];
     private double camX;
@@ -237,9 +240,15 @@ public final class Lane1TerrainFrontend {
         this.frameId = frameId;
         world.setMainView(new CameraPose(camX, camY, camZ, 0.0f, 0.0f),
                 FrustumPlanes.of(frustumCoefficients), frameId);
-        MemorySegment descSegment = MemorySegment.ofAddress(descBuffer.mappedAddress())
-                .reinterpret(DESC_BYTES);
-        store.writeDescriptors(descSegment, 0L);
+        // The descriptor block only changes when residency does; rewriting its ~140 KB
+        // every frame was pure overhead in a steady view (Gate G1 profile).
+        if (descStore != store || descGeneration != store.generation()) {
+            MemorySegment descSegment = MemorySegment.ofAddress(descBuffer.mappedAddress())
+                    .reinterpret(DESC_BYTES);
+            store.writeDescriptors(descSegment, 0L);
+            descStore = store;
+            descGeneration = store.generation();
+        }
         MemorySegment lightSegment = MemorySegment.ofAddress(lightBuffer.mappedAddress())
                 .reinterpret(LightGridBuilder.UBO_BYTES);
         MemorySegment maskSegment = MemorySegment.ofAddress(maskBuffer.mappedAddress())

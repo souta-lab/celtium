@@ -4039,6 +4039,7 @@ public final class VulkanContext {
 
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     private boolean multiDrawIndirectSupported;
+    private boolean shaderInt64Supported;
     /** Whether pipelineStatisticsQuery was reported by the device and therefore enabled at creation. */
     private boolean pipelineStatisticsQuerySupported;
     private boolean storageImageReadWithoutFormatSupported;
@@ -4607,11 +4608,17 @@ public final class VulkanContext {
             vkGetPhysicalDeviceFeatures(this.physicalDevice, supportedFeatures);
             org.lwjgl.vulkan.VkPhysicalDeviceFeatures enabledFeatures = org.lwjgl.vulkan.VkPhysicalDeviceFeatures.calloc(stack);
             this.multiDrawIndirectSupported = supportedFeatures.multiDrawIndirect();
+            // Lane 1's terrain shaders declare the Int64 capability by design (the section
+            // descriptor carries 64-bit slab offsets and the light cluster masks are 64-bit
+            // words); creating their modules without the feature is a validation error
+            // (VUID-VkShaderModuleCreateInfo-pCode-08740, measured at Gate G1).
+            this.shaderInt64Supported = supportedFeatures.shaderInt64();
             this.drawIndirectFirstInstanceSupported = supportedFeatures.drawIndirectFirstInstance();
             this.storageImageReadWithoutFormatSupported = supportedFeatures.shaderStorageImageReadWithoutFormat();
             this.storageImageWriteWithoutFormatSupported = supportedFeatures.shaderStorageImageWriteWithoutFormat();
             this.pipelineStatisticsQuerySupported = supportedFeatures.pipelineStatisticsQuery();
             enabledFeatures.multiDrawIndirect(this.multiDrawIndirectSupported);
+            enabledFeatures.shaderInt64(this.shaderInt64Supported);
             enabledFeatures.drawIndirectFirstInstance(this.drawIndirectFirstInstanceSupported);
             enabledFeatures.shaderStorageImageReadWithoutFormat(this.storageImageReadWithoutFormatSupported);
             enabledFeatures.shaderStorageImageWriteWithoutFormat(this.storageImageWriteWithoutFormatSupported);
