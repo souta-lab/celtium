@@ -77,8 +77,13 @@ final class PackPipelineFactory implements AutoCloseable {
             return existing;
         }
         VkDevice device = context.device();
+        // The code buffer lives on the heap, not the MemoryStack: a real pack's
+        // module can be far larger than the stack (Complementary's
+        // gbuffers_entities fragment is 55,496 words = 222 KB against a 64 KiB
+        // default stack), and an overflowing stack allocation writes the words
+        // into adjacent heap memory instead of failing.
+        java.nio.ByteBuffer code = org.lwjgl.system.MemoryUtil.memAlloc(words.length * 4);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            java.nio.ByteBuffer code = stack.malloc(words.length * 4);
             code.asIntBuffer().put(words);
             VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
@@ -89,6 +94,8 @@ final class PackPipelineFactory implements AutoCloseable {
             }
             shaderModules.put(key, handle.get(0));
             return handle.get(0);
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(code);
         }
     }
 
