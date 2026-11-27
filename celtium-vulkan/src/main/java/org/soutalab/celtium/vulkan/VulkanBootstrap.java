@@ -19,11 +19,13 @@ import org.lwjgl.vulkan.VkInstanceCreateInfo;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceExternalImageFormatInfo;
 import org.lwjgl.vulkan.VkPhysicalDeviceExternalSemaphoreInfo;
+import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
 import org.lwjgl.vulkan.VkPhysicalDeviceIDProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceImageFormatInfo2;
 import org.lwjgl.vulkan.VkPhysicalDeviceProperties2;
+import org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features;
 import org.lwjgl.vulkan.VK;
-import org.lwjgl.vulkan.VK12;
+import org.lwjgl.vulkan.VK13;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
 
 import java.nio.FloatBuffer;
@@ -50,7 +52,10 @@ import static org.lwjgl.vulkan.VK11.*;
  */
 public final class VulkanBootstrap {
     private static final int REQUIRED_API_MAJOR = 1;
-    private static final int REQUIRED_API_MINOR = 2;
+    // Vulkan 1.3 since the v0.4.0 S1-a stage: the HAL is built on the 1.3 core (dynamic rendering and
+    // synchronization2 as core features, no render-pass objects), so a 1.2 device no longer satisfies
+    // the contract. Every leg environment (HD 620 / UHD 630 ANV, RX 6400 RADV) reports 1.3.
+    private static final int REQUIRED_API_MINOR = 3;
 
     private VulkanBootstrap() {
     }
@@ -110,7 +115,7 @@ public final class VulkanBootstrap {
         if (VK_VERSION_MAJOR(loaderVersion) < REQUIRED_API_MAJOR
                 || (VK_VERSION_MAJOR(loaderVersion) == REQUIRED_API_MAJOR
                 && VK_VERSION_MINOR(loaderVersion) < REQUIRED_API_MINOR)) {
-            report.reasons.add("Vulkan loader " + report.loaderVersion + " is older than the required 1.2.");
+            report.reasons.add("Vulkan loader " + report.loaderVersion + " is older than the required 1.3.");
             return;
         }
 
@@ -119,7 +124,7 @@ public final class VulkanBootstrap {
             VkApplicationInfo application = VkApplicationInfo.calloc(stack).sType$Default()
                     .pApplicationName(stack.UTF8("Celtium terrain backend"))
                     .applicationVersion(1)
-                    .apiVersion(Math.min(loaderVersion, VK12.VK_API_VERSION_1_2));
+                    .apiVersion(Math.min(loaderVersion, VK13.VK_API_VERSION_1_3));
             VkInstanceCreateInfo create = VkInstanceCreateInfo.calloc(stack).sType$Default()
                     .pApplicationInfo(application);
             PointerBuffer handle = stack.mallocPointer(1);
@@ -171,6 +176,12 @@ public final class VulkanBootstrap {
                 report.reasons.add("The matched device has no graphics and transfer queue family.");
                 return;
             }
+            if (!report.matched.dynamicRendering || !report.matched.synchronization2) {
+                report.reasons.add("The matched device does not report the Vulkan 1.3 core features "
+                        + "the HAL requires (dynamicRendering=" + report.matched.dynamicRendering
+                        + ", synchronization2=" + report.matched.synchronization2 + ").");
+                return;
+            }
 
             VkDevice logical = createLogicalDevice(matched, stack, report);
             if (logical != null) {
@@ -196,9 +207,16 @@ public final class VulkanBootstrap {
             names.put(stack.UTF8(extension));
         }
         names.flip();
+        // The 1.3 core features are enabled through their own struct: the device was verified to
+        // report both, and enabling an unreported feature would fail creation.
+        VkPhysicalDeviceVulkan13Features features13 = VkPhysicalDeviceVulkan13Features.calloc(stack)
+                .sType$Default()
+                .dynamicRendering(report.matched.dynamicRendering)
+                .synchronization2(report.matched.synchronization2);
         VkDeviceCreateInfo create = VkDeviceCreateInfo.calloc(stack).sType$Default()
                 .pQueueCreateInfos(queues)
-                .ppEnabledExtensionNames(names);
+                .ppEnabledExtensionNames(names)
+                .pNext(features13.address());
         PointerBuffer handle = stack.mallocPointer(1);
         int result = vkCreateDevice(device, create, null, handle);
         if (result != VK_SUCCESS) {
@@ -220,6 +238,16 @@ public final class VulkanBootstrap {
         }
         matched.externalMemoryFd = extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
         matched.externalSemaphoreFd = extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceVulkan13Features supported13 = VkPhysicalDeviceVulkan13Features.calloc(stack)
+                    .sType$Default();
+            VkPhysicalDeviceFeatures2 features2 = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default()
+                    .pNext(supported13.address());
+            vkGetPhysicalDeviceFeatures2(device, features2);
+            matched.dynamicRendering = supported13.dynamicRendering();
+            matched.synchronization2 = supported13.synchronization2();
+        }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceExternalSemaphoreInfo semaphoreInfo = VkPhysicalDeviceExternalSemaphoreInfo.calloc(stack)
@@ -334,7 +362,9 @@ public final class VulkanBootstrap {
                 && report.matched.binarySemaphoreImportable
                 && report.matched.binarySemaphoreExportable
                 && report.matched.colorImportable
-                && report.matched.depthImportable;
+                && report.matched.depthImportable
+                && report.matched.dynamicRendering
+                && report.matched.synchronization2;
         if (contractSatisfied) {
             report.status = "DEVICE_READY";
         } else if (report.matched != null) {

@@ -198,7 +198,7 @@ def verify(path):
             "FMLCorePluginContainsFMLMod": "true",
             "ForceLoadAsMod": "true",
             "Celtium-License": "LGPL-3.0",
-            "Celtium-Vulkan-Minimum": "1.2",
+            "Celtium-Vulkan-Minimum": "1.3",
             "Celtium-Upstream-Commit": "989ebf2e52ceed052ec112a569e0c1d172095756",
         }
         for key, expected in expected_manifest.items():

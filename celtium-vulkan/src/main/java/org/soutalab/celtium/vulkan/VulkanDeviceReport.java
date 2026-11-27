@@ -53,7 +53,7 @@ public final class VulkanDeviceReport {
         };
         public final String[] semaphoreDirections = {"import", "export"};
         public final int apiVersionMajor = 1;
-        public final int apiVersionMinor = 2;
+        public final int apiVersionMinor = 3;
     }
 
     public static final class MatchedDevice {
@@ -76,6 +76,9 @@ public final class VulkanDeviceReport {
         public boolean colorImportable;
         public boolean depthImportable;
         public boolean dedicatedAllocationRequired;
+        /** Vulkan 1.3 core features the v0.4.0 HAL is built on; both are part of the contract. */
+        public boolean dynamicRendering;
+        public boolean synchronization2;
         public final List<String> enabledExtensions = new ArrayList<String>();
         public final List<String> missingExtensions = new ArrayList<String>();
     }

@@ -96,7 +96,10 @@ public final class VulkanContext {
             "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pipelineCache"));
 
     private static final int REQUIRED_API_MAJOR = 1;
-    private static final int REQUIRED_API_MINOR = 2;
+    // Vulkan 1.3 since the v0.4.0 S1-a stage: the HAL is built on the 1.3 core (dynamic rendering and
+    // synchronization2 as core features), so a 1.2 device is passed over at selection like a CPU
+    // device is. Every leg environment (HD 620 / UHD 630 ANV, RX 6400 RADV) reports 1.3.
+    private static final int REQUIRED_API_MINOR = 3;
 
     /**
      * Whether a {@code VK_PHYSICAL_DEVICE_TYPE_CPU} device may be selected. Default off: a software ICD (lavapipe)
@@ -1139,7 +1142,7 @@ public final class VulkanContext {
     }
 
     /**
-     * Returns null when the Vulkan loader supports at least 1.2, or a bounded,
+     * Returns null when the Vulkan loader supports at least 1.3, or a bounded,
      * actionable diagnostic. This deliberately does not create a Vulkan instance.
      * A missing Java binding and a broken native loader must not produce the same
      * misleading "bindings unavailable on classpath" error.
@@ -1147,11 +1150,11 @@ public final class VulkanContext {
     public static String availabilityProblem() {
         try {
             int version = VK.getInstanceVersionSupported();
-            if (version >= VK12.VK_API_VERSION_1_2) {
+            if (version >= org.lwjgl.vulkan.VK13.VK_API_VERSION_1_3) {
                 return null;
             }
             return "Vulkan loader API " + ((version >>> 22) & 0x7f) + "."
-                    + ((version >>> 12) & 0x3ff) + " is below the required Vulkan 1.2";
+                    + ((version >>> 12) & 0x3ff) + " is below the required Vulkan 1.3";
         } catch (NoClassDefFoundError error) {
             return "LWJGL Vulkan Java binding class missing: " + error;
         } catch (RuntimeException | LinkageError error) {
@@ -3803,7 +3806,7 @@ public final class VulkanContext {
             VkApplicationInfo application = VkApplicationInfo.calloc(stack).sType$Default()
                     .pApplicationName(stack.UTF8(applicationName))
                     .applicationVersion(1)
-                    .apiVersion(VK12.VK_API_VERSION_1_2);
+                    .apiVersion(org.lwjgl.vulkan.VK13.VK_API_VERSION_1_3);
             VkInstanceCreateInfo createInfo = VkInstanceCreateInfo.calloc(stack).sType$Default()
                     .pApplicationInfo(application);
             // The platform surface extensions are instance extensions, so they have to be enabled here.
@@ -3863,7 +3866,7 @@ public final class VulkanContext {
 
     /**
      * Matches the physical device by GL device UUID. The rules are the ones {@link VulkanBootstrap} proves on the
-     * target GPUs: a CPU device and a device without Vulkan 1.2 are rejected, the UUID must equal one of the GL
+     * target GPUs: a CPU device and a device without Vulkan 1.3 are rejected, the UUID must equal one of the GL
      * device UUIDs, and there is no fallback to a different GPU. The first match wins.
      */
     private void matchPhysicalDevice(GlDeviceIdentity openGl) {
@@ -4003,8 +4006,12 @@ public final class VulkanContext {
     private Set<String> advertisedDeviceExtensions;
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
     private List<String> enabledDeviceExtensions = new ArrayList<String>();
-    /** Whether VK_KHR_dynamic_rendering was enabled on the device, which the shaderpack path builds pipelines on. */
+    /** Whether dynamic rendering (Vulkan 1.3 core) was enabled on the device, which the shaderpack path builds pipelines on. */
     private boolean dynamicRenderingSupported;
+    /** Whether synchronization2 (Vulkan 1.3 core) was enabled on the device: the barrier2 surface the frame executor is built on. */
+    private boolean synchronization2Supported;
+    /** The memory profile the frame's upload path is built against (UMA zero-copy / ReBAR / staged). */
+    private org.soutalab.celtium.vulkan.hal.VulkanMemoryProfile memoryProfile;
     /** {@code VkPhysicalDeviceVulkan11Features.shaderDrawParameters}: gl_DrawID in shaders, Vulkan 1.1. */
     private boolean shaderDrawParametersSupported;
     /** Whether the device can index one sampled-image array from the draw (section 11.6). */
@@ -4018,6 +4025,16 @@ public final class VulkanContext {
     /** {@return whether dynamic rendering is enabled on this device}. */
     public boolean dynamicRenderingSupported() {
         return dynamicRenderingSupported;
+    }
+
+    /** {@return whether synchronization2 is enabled on this device}. */
+    public boolean synchronization2Supported() {
+        return synchronization2Supported;
+    }
+
+    /** {@return the memory profile selected for this device at creation}. */
+    public org.soutalab.celtium.vulkan.hal.VulkanMemoryProfile memoryProfile() {
+        return memoryProfile;
     }
 
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
@@ -4546,12 +4563,12 @@ public final class VulkanContext {
             }
             // Dynamic rendering, for the shaderpack path: a pack's fragment stage writes however many colour attachments
             // its DRAWBUFFERS line asks for, and a VkPipeline has to be created against render targets whose formats
-            // match. The extension form is used rather than the Vulkan 1.3 core feature because this instance is created
-            // at API 1.2 - the KHR extension works from 1.0 and every driver that has the core feature advertises it.
+            // match. Since the v0.4.0 S1-a stage the instance is created at API 1.3 and the feature itself is enabled
+            // through the VkPhysicalDeviceVulkan13Features struct below (the core query there is the authority for
+            // dynamicRenderingSupported); the KHR extension stays enabled when advertised, so the KHR entry points
+            // remain addressable beside the core ones.
             Set<String> advertised = deviceExtensionNames(stack, this.physicalDevice);
-            this.dynamicRenderingSupported = advertised.contains(
-                    org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
-            if (this.dynamicRenderingSupported) {
+            if (advertised.contains(org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
                 deviceExtensions.add(org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
             }
             // Mesh shading (item 652, stage 0): an optional capability in the same shape as dynamic
@@ -4628,19 +4645,30 @@ public final class VulkanContext {
                     .pQueueCreateInfos(queues)
                     .ppEnabledExtensionNames(names)
                     .pEnabledFeatures(enabledFeatures);
-            org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRendering = null;
-            if (this.dynamicRenderingSupported) {
-                dynamicRendering = org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack)
-                        .sType$Default().dynamicRendering(true);
-                org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR supported =
-                        org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack).sType$Default();
+            // The Vulkan 1.3 core pair the HAL is built on (v0.4.0 S1-a): dynamic rendering (the
+            // render-pass-less frame structure) and synchronization2 (the barrier2 surface). Both are
+            // queried through VkPhysicalDeviceVulkan13Features and enabled through the same struct -
+            // a pNext chain may not also carry the KHR dynamic-rendering features struct beside it
+            // (VUID-VkDeviceCreateInfo-pNext-06521 family), which is why the KHR struct that used to
+            // sit here is gone. Each field is set to exactly what the device reported: enabling an
+            // unreported feature fails vkCreateDevice. A device that reports neither is created
+            // without the struct, exactly as a pre-1.3 device was.
+            org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features vulkan13Features = null;
+            {
+                org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features supported13 =
+                        org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features.calloc(stack).sType$Default();
                 org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features2 =
-                        org.lwjgl.vulkan.VkPhysicalDeviceFeatures2.calloc(stack).sType$Default().pNext(supported.address());
+                        org.lwjgl.vulkan.VkPhysicalDeviceFeatures2.calloc(stack).sType$Default()
+                                .pNext(supported13.address());
                 org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features2);
-                this.dynamicRenderingSupported = supported.dynamicRendering();
-                dynamicRendering.dynamicRendering(this.dynamicRenderingSupported);
-                if (this.dynamicRenderingSupported) {
-                    createInfo.pNext(dynamicRendering.address());
+                this.dynamicRenderingSupported = supported13.dynamicRendering();
+                this.synchronization2Supported = supported13.synchronization2();
+                if (this.dynamicRenderingSupported || this.synchronization2Supported) {
+                    vulkan13Features = org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features.calloc(stack)
+                            .sType$Default()
+                            .dynamicRendering(this.dynamicRenderingSupported)
+                            .synchronization2(this.synchronization2Supported);
+                    createInfo.pNext(vulkan13Features.address());
                 }
             }
             // gl_DrawID is the mechanism the per-group data merge is built on: one command draws many groups and the
@@ -4798,11 +4826,16 @@ public final class VulkanContext {
                                 + " timelineSemaphore=" + this.timelineSemaphoreSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
+                                + " synchronization2=" + this.synchronization2Supported
                                 + " textureArray=" + this.textureArraySupported
                                 + " meshShader=" + this.meshShaderSupported,
                         lastDeviceLossReport));
             }
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
+            this.memoryProfile = org.soutalab.celtium.vulkan.hal.VulkanMemoryProfile.fromDevice(
+                    this.physicalDevice);
+            System.out.println("[Celtium] CELTIUM_MEMORY_PROFILE profile=" + this.memoryProfile
+                    + " zeroCopyUploads=" + this.memoryProfile.zeroCopyUploads());
             if (this.timelineSemaphoreSupported) {
                 // Stage 2: the frame timeline is born with the device and dies just before it (delete()).
                 this.frameTimeline = new org.soutalab.celtium.vulkan.hal.FrameTimeline(this.device);
@@ -4814,6 +4847,8 @@ public final class VulkanContext {
                     + " timelineSemaphore=" + this.timelineSemaphoreSupported
                     + " textureArray=" + this.textureArraySupported
                     + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
+                    + " dynamicRendering=" + this.dynamicRenderingSupported
+                    + " synchronization2=" + this.synchronization2Supported
                     + " meshShader=" + this.meshShaderSupported);
         }
     }
@@ -6217,9 +6252,9 @@ public final class VulkanContext {
             throw new IllegalStateException("The LWJGL Vulkan bindings or the Vulkan loader are unavailable: "
                     + describe(error), error);
         }
-        if (loaderVersion < VK12.VK_API_VERSION_1_2) {
+        if (loaderVersion < org.lwjgl.vulkan.VK13.VK_API_VERSION_1_3) {
             throw new IllegalStateException("The Vulkan loader supports " + versionString(loaderVersion)
-                    + ", but Celtium requires 1.2 or newer.");
+                    + ", but Celtium requires 1.3 or newer.");
         }
     }
 

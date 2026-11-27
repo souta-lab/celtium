@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/instruments.md"
 SCAN_DIRS = (
     "celtium-vulkan/src/main", "forge122/src/main", "common/src/main",
+    "celtium-core/src/main", "celtium-core/src/harness",
     "validation/client",
 )
 STRING = r'"(?:\\.|[^"\\])*"'
