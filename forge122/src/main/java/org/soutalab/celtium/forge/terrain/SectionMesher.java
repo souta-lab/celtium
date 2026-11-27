@@ -134,6 +134,13 @@ public final class SectionMesher {
                     long bit = 1L << (i & 63);
                     layerFull[data.layer(state)][word] &= ~bit;
                     layerFull[TerrainLayer.SOLID.ordinal()][word] |= bit;
+                    // The swap is a material change, not a layer relabel: the cell stops being
+                    // leaves for suppression (its faces must emit - that is the swap's point) and
+                    // starts occluding like the solid cube it now is.
+                    leaves[word] &= ~bit;
+                    for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
+                        occl[dir][word] |= bit;
+                    }
                 }
             }
         }

@@ -312,9 +312,10 @@ class SectionMesherTest {
         set(snap, 9, 8, 8, GLASS);
         set(snap, 10, 8, 8, STONE);
         MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
-        // Glass pair: the shared faces are culled by the same-state rule, leaving 10 unit
-        // faces of glass; the stone keeps all 6 faces because glass occludes nothing.
-        assertEquals(10, faceArea(out, TerrainLayer.CUTOUT.ordinal(), 20));
+        // Glass pair: the shared faces are culled by the same-state rule and the face against
+        // the stone is culled by the stone's occlusion, leaving 9 unit faces of glass; the
+        // stone keeps all 6 faces because glass occludes nothing.
+        assertEquals(9, faceArea(out, TerrainLayer.CUTOUT.ordinal(), 20));
         assertEquals(6, faceArea(out, TerrainLayer.SOLID.ordinal(), 10));
     }
 
