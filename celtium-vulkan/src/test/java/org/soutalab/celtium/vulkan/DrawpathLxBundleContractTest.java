@@ -161,8 +161,9 @@ class DrawpathLxBundleContractTest {
     @Test
     void everyModFailureSeatCarriesItsCategory() throws IOException {
         String programs = read(MOD_PROGRAMS);
-        assertEquals(15, count(programs, "celtium$modFailure(programId, ModRefusal."),
-                "every refusal seat in celtium$modPrepared names its category");
+        assertEquals(16, count(programs, "celtium$modFailure(programId, ModRefusal."),
+                "every refusal seat in celtium$modPrepared names its category"
+                        + " (15 from the L-X bundle plus the blackness fix A borrow-closure seat, aggregated at landing)");
         assertTrue(programs.contains("celtium$modFailure(int programId, ModRefusal category, String reason)"),
                 "the funnel itself takes the category");
         assertTrue(programs.contains("celtium$noteModRefusal(ModRefusal.DISABLED)"),
