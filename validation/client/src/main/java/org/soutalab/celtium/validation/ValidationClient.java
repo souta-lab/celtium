@@ -1233,6 +1233,7 @@ public final class ValidationClient {
      */
     private final String celtium$tourMode = HarnessConfig.string("videoSettingsTour", "");
     private int celtium$tourStep = -1;
+    private int celtium$tourScreenSeenTick = -1;
     private String celtium$tourFileBefore;
     private String celtium$tourCeltiumConfigBefore;
     private Object celtium$tourRenderDistanceBefore;
@@ -10581,9 +10582,15 @@ public final class ValidationClient {
                 return celtium$runNativeSettingsTour(mc);
             }
             if (celtium$isNativeSettingsScreen(mc)) {
-                boolean laidOut = celtium$guiSettingsAtTick >= 0
-                        && worldTicks - celtium$guiSettingsAtTick >= celtium$guiLayoutTicks;
-                if (laidOut) {
+                // The tour is driven from the chain's first call site, which runs before the stage
+                // records its own layout tick, so the layout wait uses the tour's own first-seen
+                // tick: the screen's rows exist only after it has drawn, which a few ticks of the
+                // screen being current guarantees. (Waiting on the stage's tick deadlocked the
+                // first tour leg: that tick is only assigned below the call site.)
+                if (celtium$tourScreenSeenTick < 0) {
+                    celtium$tourScreenSeenTick = worldTicks;
+                }
+                if (worldTicks - celtium$tourScreenSeenTick >= celtium$guiLayoutTicks) {
                     celtium$tourStep = 0;
                     return celtium$runNativeSettingsTour(mc);
                 }
