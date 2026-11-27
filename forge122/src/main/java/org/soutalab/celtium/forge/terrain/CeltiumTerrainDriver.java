@@ -363,6 +363,10 @@ public final class CeltiumTerrainDriver {
         ensureBuildSide();
         diffLoadedSections();
         promoteAwaitingLight();
+        // TEMP G1 PROBE8: one late full rebuild, long after world load settled.
+        if (frameCounter == 3000L) {
+            dirty.addAll(present);
+        }
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
