@@ -128,6 +128,7 @@ public final class Lane1Shaders {
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
+            layout(location = 6) flat out uint rawZ;
             const vec2 CORNERS[6] = vec2[](vec2(0,0), vec2(1,0), vec2(0,1), vec2(0,1), vec2(1,0), vec2(1,1));
             vec3 evaluateLights(vec3 worldPos) {
                 ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin.xyz)) / 16.0));
@@ -161,6 +162,7 @@ public final class Lane1Shaders {
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
                 vec3 relative = worldPos - pc.cameraPos.xyz;
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
+                rawZ = q.z;
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
                 fragCell = vec2(cellU, cellV);
@@ -203,6 +205,7 @@ public final class Lane1Shaders {
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
+            layout(location = 6) flat out uint rawZ;
             const int CORNER_INDEX[6] = int[](0, 1, 2, 2, 1, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
@@ -217,6 +220,7 @@ public final class Lane1Shaders {
                 // The quad's texture index resolves through the frontend's cell table; the corner
                 // maps onto the sprite's full extent (the S2-a full-sprite approximation: the
                 // mesher's 64 B record carries no per-vertex sprite UVs).
+                rawZ = uint(floatBitsToInt(generalWords[wordBase + 13u]));
                 int textureIndex = floatBitsToInt(generalWords[wordBase + 12u]);
                 vec2 cell = vec2(0.0);
                 if (textureIndex > 0 && textureIndex < pc.textureCellCount) {
@@ -258,8 +262,13 @@ public final class Lane1Shaders {
             layout(location = 2) in vec2 fragLightMap;
             layout(location = 3) in vec3 fragWorldPos;
             layout(location = 4) in vec3 fragDynamicLight;
+            layout(location = 6) flat in uint rawZ;
             layout(location = 0) out vec4 outColor;
             void main() {
+                // TEMP G1 BISECT14: raw slab word fields - R=sky/15, G=block/15, B=cellU/255.
+                outColor = vec4(float((rawZ >> 16) & 15u) / 15.0, float((rawZ >> 20) & 15u) / 15.0,
+                        float(rawZ & 255u) / 255.0, 1.0);
+                return;
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
@@ -272,7 +281,7 @@ public final class Lane1Shaders {
                 // The lightmap image's axes run (u = sky, v = block) as stored - measured
                 // at Gate G1 by displaying the bound image: brightness grows along U and
                 // peaks at (1, 0). fragLightMap carries (block, sky), so sample swapped.
-                vec3 light = texture(lightMap, vec2(fragLightMap.y, 1.0 - fragLightMap.x)).rgb; // TEMP G1 BISECT13: (sky, 1-block)
+                vec3 light = texture(lightMap, fragLightMap.yx).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
