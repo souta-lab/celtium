@@ -85,7 +85,22 @@ jobs:
           # class): likewise referenced by nothing until QUEUE 640. The wrapper resolves the LWJGL
           # version the project builds against, from the Gradle cache or Maven Central (SHA-256
           # pinned), which is why it too belongs after setup-java.
-          python3 scripts/cpu-contract/glyph_address_check.py
+          # The wrapper's cold-cache path downloads the LWJGL jars from Maven Central, and Central
+          # intermittently answers 429 (audit #17 F-2: runs 46015893350, 46019296394 and 46024240239
+          # all failed this step on the rate limit alone). Retry with backoff instead of failing the
+          # job: the download cache persists between attempts, so a retry refetches only what failed,
+          # and a check that still fails after the last attempt still fails the step.
+          attempt=1
+          until python3 scripts/cpu-contract/glyph_address_check.py; do
+            if [ "$attempt" -ge 4 ]; then
+              echo "glyph_address_check: still failing after $attempt attempts"
+              exit 1
+            fi
+            delay=$((15 * 2 ** (attempt - 1)))
+            echo "glyph_address_check: attempt $attempt failed; retrying in ${delay}s"
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done
           python3 scripts/cpu-contract/isolated_game_directory_check.py
           python3 scripts/cpu-contract/glless_early_install_check.py
           python3 scripts/cpu-contract/glless_transformer_injection_check.py
