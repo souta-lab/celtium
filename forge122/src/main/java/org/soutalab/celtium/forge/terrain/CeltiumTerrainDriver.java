@@ -80,6 +80,12 @@ public final class CeltiumTerrainDriver {
             new java.util.concurrent.atomic.AtomicLong();
     static final java.util.concurrent.atomic.AtomicLong DRAIN_S4_DARK =
             new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_G4_TOTAL =
+            new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_G4_SKY15 =
+            new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_G4_DARK =
+            new java.util.concurrent.atomic.AtomicLong();
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -234,7 +240,10 @@ public final class CeltiumTerrainDriver {
                 + " axisDark=" + DRAIN_AXIS_DARK.get()
                 + " s4Total=" + DRAIN_S4_TOTAL.get()
                 + " s4Sky15=" + DRAIN_S4_SKY15.get()
-                + " s4Dark=" + DRAIN_S4_DARK.get());
+                + " s4Dark=" + DRAIN_S4_DARK.get()
+                + " g4Total=" + DRAIN_G4_TOTAL.get()
+                + " g4Sky15=" + DRAIN_G4_SKY15.get()
+                + " g4Dark=" + DRAIN_G4_DARK.get());
         lines.add("fillCensus total=" + ForgeSectionScanner.FILLS_TOTAL.get()
                 + " centerUnpopulated=" + ForgeSectionScanner.FILLS_CENTER_UNPOPULATED.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
@@ -547,6 +556,17 @@ public final class CeltiumTerrainDriver {
                             DRAIN_AXIS_DARK.incrementAndGet();
                         }
                         if (surface) {
+                            for (org.soutalab.celtium.core.geometry.GeneralQuad gq
+                                    : buffers.generalLayerList(layer)) {
+                                DRAIN_G4_TOTAL.incrementAndGet();
+                                int lw = gq.lightWord();
+                                if ((lw & 0xFF) == 255) {
+                                    DRAIN_G4_SKY15.incrementAndGet();
+                                }
+                                if ((lw & 0xFFFF) == 0) {
+                                    DRAIN_G4_DARK.incrementAndGet();
+                                }
+                            }
                             DRAIN_S4_TOTAL.incrementAndGet();
                             if (q.skyLight() == 15) {
                                 DRAIN_S4_SKY15.incrementAndGet();
