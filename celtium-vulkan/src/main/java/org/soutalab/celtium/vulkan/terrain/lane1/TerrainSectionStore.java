@@ -286,6 +286,37 @@ public final class TerrainSectionStore {
         return cachedDescriptors;
     }
 
+    // TEMP G1 PROBE18: overlap census over all resident ranges, per region.
+    public synchronized String probeOverlaps() {
+        java.util.List<long[]> axis = new java.util.ArrayList<>();
+        java.util.List<long[]> general = new java.util.ArrayList<>();
+        for (Resident resident : sections.values()) {
+            if (resident.axisBytes > 0L) {
+                axis.add(new long[]{resident.desc.axisSlabOffset(),
+                        resident.desc.axisSlabOffset() + resident.axisBytes});
+            }
+            if (resident.generalBytes > 0L) {
+                general.add(new long[]{resident.desc.generalSlabOffset(),
+                        resident.desc.generalSlabOffset() + resident.generalBytes});
+            }
+        }
+        return "overlaps axis=" + countOverlaps(axis) + " general=" + countOverlaps(general)
+                + " residents=" + sections.size();
+    }
+
+    private static int countOverlaps(java.util.List<long[]> ranges) {
+        ranges.sort(java.util.Comparator.comparingLong(r -> r[0]));
+        int overlaps = 0;
+        long maxEnd = -1L;
+        for (long[] range : ranges) {
+            if (range[0] < maxEnd) {
+                overlaps++;
+            }
+            maxEnd = Math.max(maxEnd, range[1]);
+        }
+        return overlaps;
+    }
+
     // TEMP G1 PROBE17: host-side geometry sanity of one resident section, read back from
     // the slab spaces exactly as uploaded.
     public synchronized String probeSection(int sectionX, int sectionY, int sectionZ) {
