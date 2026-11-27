@@ -24904,6 +24904,21 @@ this.frameBufferOpen = false;
         int recordIndex = this.drawRecords.record(push, arrayIndex);
         celtium$logCaptureForSlotDump(textureSlot, textureInRecord, arrayIndex, group, mesh, push);
         if (recordIndex < 0) {
+            // The store refused the record: the window's selection found no slice, or its
+            // slice could not grow to hold this one. The open segment's entries still read
+            // the selection through the offset their flush binds, so the segment is flushed
+            // before the store takes its fallback selection - the same order the mid-flush
+            // retry below uses - the state is interned afresh in the new segment, and the
+            // record is retried once against the fresh selection. A group the retry still
+            // cannot record keeps the direct path, counted below as before.
+            celtium$flushBatchSegment();
+            celtium$ensureBatchSegment();
+            stateKey = celtium$internBatchState(group);
+            if (this.drawRecords.reselectFallback()) {
+                recordIndex = this.drawRecords.record(push, arrayIndex);
+            }
+        }
+        if (recordIndex < 0) {
             this.batchFallbackGroups++;
             return false;
         }
@@ -25008,6 +25023,32 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Writes one group's record for a direct (per-group) twin draw, taking the store's
+     * fallback selection when the window's selection refuses the record. The window's
+     * selection is sized for the batch capture's whole-window economy, so its refusal - no
+     * room for the demand-sized slice, or for a growth doubling it - is not a refusal of
+     * the one record a direct draw needs; the store carves a small selection of its own
+     * for the asking (see {@link InstanceDataStore#reselectFallback}). Every seat that
+     * calls this stands after the open batch segment's flush, which is the reselection's
+     * precondition: the segment's entries bind the selection they were recorded against
+     * at their flush, and no unflushed capture reads the selection this replaces.
+     *
+     * @return the record's index, or -1 when there is no store or the fallback selection
+     *         could not be carved either - the region is then full to the last handful
+     *         of records, and the caller's counted drop is the honest remainder
+     */
+    private int celtium$recordForDirectDraw(java.nio.ByteBuffer push) {
+        if (this.drawRecords == null) {
+            return -1;
+        }
+        int recordIndex = this.drawRecords.record(push, -1);
+        if (recordIndex < 0 && this.drawRecords.reselectFallback()) {
+            recordIndex = this.drawRecords.record(push, -1);
+        }
+        return recordIndex;
+    }
+
+    /**
      * Draws one particle group through its record-reading twin directly: the family's per-group form
      * since Stage 5 S5-3 deleted the per-group pipeline. The group's push block is written as a single
      * record and the mesh is drawn with the record's index as the instance index - a one-group segment
@@ -25016,8 +25057,8 @@ this.frameBufferOpen = false;
      * Reached when the batcher did not capture the group (an ineligible mesh, or no room in the ring or
      * the shared index space). The prepared descriptor is the one the drain's eviction guard left current
      * for this group, so no second eviction question is asked here. A group whose record cannot be
-     * written is counted in the route census' dropped counter and not drawn: never drawn with a wrong
-     * binding, and never silently.
+     * written - the store's fallback selection refused it too - is counted in the route census' dropped
+     * counter and not drawn: never drawn with a wrong binding, and never silently.
      *
      * @return always true: the group is consumed here, drawn or counted
      */
@@ -25025,7 +25066,7 @@ this.frameBufferOpen = false;
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
         VulkanImmediateParticleRecordsPipeline twin =
                 (VulkanImmediateParticleRecordsPipeline) prepared.pipeline;
-        int recordIndex = this.drawRecords == null ? -1 : this.drawRecords.record(push, -1);
+        int recordIndex = celtium$recordForDirectDraw(push);
         if (recordIndex < 0 || mesh == null || mesh.indexCount() <= 0) {
             this.batchDroppedDraws++;
             return true;
@@ -25133,16 +25174,16 @@ this.frameBufferOpen = false;
      * record and the mesh is drawn with the record's index as the instance index, under the
      * viewport and depth bias the drain already issued for this group.
      * <p>
-     * A group whose record cannot be written, or whose mesh is empty, is counted in the
-     * route census' dropped counter and not drawn: never drawn with a wrong binding, and
-     * never silently.
+     * A group whose record cannot be written - the store's fallback selection refused it
+     * too - or whose mesh is empty, is counted in the route census' dropped counter and
+     * not drawn: never drawn with a wrong binding, and never silently.
      *
      * @return always true: the group is consumed here, drawn or counted
      */
     private boolean celtium$drawGroupDirect(ImmediateGroup group, VulkanDynamicMesh mesh,
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
         TwinDraw twin = celtium$twinDraw(prepared.pipeline);
-        int recordIndex = this.drawRecords == null ? -1 : this.drawRecords.record(push, -1);
+        int recordIndex = celtium$recordForDirectDraw(push);
         if (twin == null || twin.handle == 0L || recordIndex < 0 || mesh == null
                 || mesh.indexCount() <= 0) {
             this.batchDroppedDraws++;
@@ -25198,7 +25239,7 @@ this.frameBufferOpen = false;
         if (emission == null) {
             return celtium$drawGroupDirect(group, mesh, prepared, push);
         }
-        int recordIndex = this.drawRecords == null ? -1 : this.drawRecords.record(push, -1);
+        int recordIndex = celtium$recordForDirectDraw(push);
         if (recordIndex < 0) {
             this.batchDroppedDraws++;
             return true;

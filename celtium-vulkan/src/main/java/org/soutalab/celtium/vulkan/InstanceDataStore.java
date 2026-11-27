@@ -56,6 +56,10 @@ import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
  * degrades the geometry side's way: the store refuses, the caller keeps the direct path, and the
  * drawing survives. Setting {@code celtium.vulkan.recordsDedicatedPool=false} restores the
  * shared-ring source, which remains a supported configuration and the separation's A/B arm.
+ * The per-group path's own record is served the same way: its need is one group at a time, so
+ * when the window's selection refuses it, {@link #reselectFallback} carves it a small selection
+ * of its own - the refusal of a window-sized ask, or of a growth doubling one, is not a refusal
+ * of a handful of records.
  *
  * <p>The store only ever allocates from its source; it never resets, holds or releases the
  * shared ring's slots, because that ring's completion discipline belongs to the frame scheduler
@@ -98,6 +102,9 @@ final class InstanceDataStore {
 
     /** Records a fresh slot asks room for; the slice doubles on demand from here. */
     private static final int INITIAL_RECORDS = 256;
+
+    /** Records a fallback selection asks room for: a per-group path's handful, not a window's. */
+    private static final int FALLBACK_RECORDS = 16;
 
     /** The smallest push block the two families produce; shorter blocks are refused. */
     private static final int MIN_BLOCK_BYTES = 208;
@@ -439,17 +446,47 @@ final class InstanceDataStore {
             throw new IllegalArgumentException("slot " + slot);
         }
         this.currentSlot = slot;
+        select(slot, this.demand[slot]);
+    }
+
+    /** Carves one selection of {@code bytes} in {@code slot}, replacing whatever it held. */
+    private void select(int slot, long bytes) {
         this.records[slot] = 0;
         this.growFailed[slot] = false;
-        long offset = this.ring.alloc(slot, this.demand[slot], this.alignment);
+        long offset = this.ring.alloc(slot, bytes, this.alignment);
         if (offset < 0L) {
             this.offsets[slot] = -1L;
             this.capacities[slot] = 0;
             this.selectFailures[slot]++;
         } else {
             this.offsets[slot] = offset;
-            this.capacities[slot] = (int) (this.demand[slot] / RECORD_BYTES);
+            this.capacities[slot] = (int) (bytes / RECORD_BYTES);
         }
+    }
+
+    /**
+     * Takes a fresh, small selection of the current slot for a caller the current selection
+     * refused: the per-group (direct) path, whose record need is one group at a time. The
+     * window's selection is the batch capture's economy - a whole window's records in one
+     * slice, asked at the remembered demand - so its refusal (no room for the demand-sized
+     * ask, or for a growth doubling it) says nothing about room for a handful of records.
+     * The fallback selection asks only that handful; growth from it proceeds as from any
+     * selection, and the remembered demand is left alone - the frame boundary's decay, not
+     * this seat, owns what the next window asks.
+     *
+     * <p>The caller owns this seat's precondition: nothing already recorded against the
+     * current selection may still be waiting to bind it. The batch capture's entries bind
+     * the selection's offset at their segment's flush, so a caller holding unflushed
+     * captures must flush the segment before calling this - the drain's seats all stand
+     * after a flush (the group loop flushes the open segment before the direct dispatch,
+     * and the capture seat flushes before its retry).
+     *
+     * @return whether the current slot now holds a slice records can be written into
+     */
+    boolean reselectFallback() {
+        int slot = this.currentSlot;
+        select(slot, (long) FALLBACK_RECORDS * RECORD_BYTES);
+        return this.offsets[slot] >= 0L;
     }
 
     int currentSlot() {
@@ -620,7 +657,14 @@ final class InstanceDataStore {
         if (this.growFailed[slot]) {
             return false;
         }
-        long wanted = Math.max(this.demand[slot] * 2L, (this.records[slot] + 1L) * RECORD_BYTES);
+        // The doubling is of the slice the selection actually holds, not of the remembered
+        // demand: the two agree for a window selection (the demand is its size, and a growth
+        // raises both together), but a fallback selection is deliberately smaller than the
+        // demand, and doubling the demand from there would ask for room the region has
+        // already refused once. The demand itself only ever rises here - a fallback
+        // selection's small growth must not shrink what the next window asks.
+        long wanted = Math.max((long) this.capacities[slot] * RECORD_BYTES * 2L,
+                (this.records[slot] + 1L) * RECORD_BYTES);
         long offset = this.ring.alloc(slot, wanted, this.alignment);
         if (offset < 0L) {
             this.growFailed[slot] = true;
@@ -630,7 +674,7 @@ final class InstanceDataStore {
         long to = this.ring.mappedAddress(slot, offset);
         MemoryUtil.memCopy(from, to, (long) this.records[slot] * RECORD_BYTES);
         this.offsets[slot] = offset;
-        this.demand[slot] = wanted;
+        this.demand[slot] = Math.max(this.demand[slot], wanted);
         this.capacities[slot] = (int) (wanted / RECORD_BYTES);
         return true;
     }

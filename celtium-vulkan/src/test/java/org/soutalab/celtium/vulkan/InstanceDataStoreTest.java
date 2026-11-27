@@ -6,6 +6,7 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InstanceDataStoreTest {
@@ -429,6 +430,132 @@ class InstanceDataStoreTest {
         assertEquals(2L, store.refusalsGrow());
         assertEquals(0L, store.refusalsNoSlice());
         assertEquals(256L, store.recordsWritten());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void fallbackReselectionServesARecordTheWindowSelectionRefused() {
+        // A region too small for the window's initial slice (64 KiB) but with room for a
+        // per-group handful: the window selection is refused, and with it every record -
+        // the window-wide loss the audit measured, in which the direct path's groups fell
+        // with the batch's. The fallback reselection carves the handful and the direct
+        // path's record lands: the degradation the separation's landing record promised
+        // (the store refuses, the caller keeps the direct path, the drawing survives).
+        TestRing ring = new TestRing(2, 32L << 10);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        assertEquals(1L, store.selectFailures(0));
+        assertEquals(-1, store.record(pushBlock(256, 1), -1));
+        assertEquals(1L, store.refusalsNoSlice());
+        assertTrue(store.reselectFallback());
+        assertEquals(0, store.record(pushBlock(256, 0x5A), -1));
+        assertEquals(1, store.count());
+        long base = store.descriptorDynamicOffset();
+        assertEquals(0x5A, ring.byteAt(0, base));
+        assertEquals(ring.mappedAddress(0, base), store.recordAddress(0));
+        assertEquals(1L, store.recordsWritten());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void fallbackReselectionServesAfterAGrowthRefusal() {
+        // The growth shape of the same defect: the initial slice fits and fills, its
+        // growth does not, and every later record of the window is refused - including
+        // the direct path's one record, which is written into the same selection. The
+        // fallback reselection starts a fresh small slice past the full one and serves
+        // it; the abandoned slice's records are the caller's already-flushed business,
+        // not this seat's.
+        TestRing ring = new TestRing(2, 96L << 10);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        for (int i = 0; i < 256; i++) {
+            assertEquals(i, store.record(pushBlock(256, i & 0xFF), -1));
+        }
+        assertEquals(-1, store.record(pushBlock(256, 0xAB), -1));
+        assertEquals(1L, store.refusalsGrow());
+        long full = store.descriptorDynamicOffset();
+        assertTrue(store.reselectFallback());
+        assertEquals(0, store.record(pushBlock(256, 0xCD), -1));
+        assertEquals(1, store.count());
+        long fresh = store.descriptorDynamicOffset();
+        assertTrue(fresh > full, "the fallback slice is carved past the full one");
+        assertEquals(0xCD, ring.byteAt(0, fresh));
+        assertEquals(257L, store.recordsWritten());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void fallbackSelectionGrowsAndKeepsItsRecords() {
+        // A fallback selection is a selection: when the handful fills, it grows by the
+        // same doubling and carries its records across, so a window whose direct path
+        // serves many groups is not re-carved per group. The growth doubles the slice
+        // actually held (8 KiB from the 4 KiB handful), not the window's remembered
+        // demand - and it does not shrink that demand either: what the next window
+        // asks is the frame boundary's decay to decide, not this seat's.
+        TestRing ring = new TestRing(2, 96L << 10);
+        InstanceDataStore store = store(ring);
+        ring.consume(0, 64L << 10);
+        store.selectSlot(0);
+        assertEquals(-1, store.record(pushBlock(256, 1), -1));
+        assertTrue(store.reselectFallback());
+        for (int i = 0; i < 17; i++) {
+            assertEquals(i, store.record(pushBlock(256, i + 1), -1));
+        }
+        assertEquals(17, store.count());
+        assertEquals(1, MemoryUtil.memGetByte(store.recordAddress(0)) & 0xFF);
+        assertEquals(17, MemoryUtil.memGetByte(store.recordAddress(16)) & 0xFF);
+        assertEquals(256L * InstanceDataStore.RECORD_BYTES, store.demandBytes(0));
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void fallbackReselectionFailsWhenTheRegionIsTrulyFull() {
+        // The honest remainder: a region the initial slice fills to the last byte has
+        // no handful to carve either. The reselection reports false and records keep
+        // refusing - the caller's counted drop, not a silent success or a thrown error.
+        // The failed reselection voids the selection like any failed selection.
+        TestRing ring = new TestRing(2, 64L << 10);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        for (int i = 0; i < 256; i++) {
+            assertEquals(i, store.record(pushBlock(256, i & 0xFF), -1));
+        }
+        assertEquals(-1, store.record(pushBlock(256, 0xAB), -1));
+        assertFalse(store.reselectFallback());
+        assertEquals(1L, store.selectFailures(0));
+        assertEquals(-1, store.record(pushBlock(256, 0xCD), -1));
+        assertEquals(0, store.count());
+        store.delete();
+        ring.delete();
+    }
+
+    @Test
+    void aRecordRescuedByTheFallbackSelectionIsWrittenNotDropped() {
+        // The counting contract the drain's pass shape reads (rulings D-8/D-9 name the
+        // fallback counter and the dropped counter as the shape's two sides): a group
+        // the fallback selection serves must arrive as a drawn group, never as a drop.
+        // At the store's level that means the rescued record counts as written, the one
+        // refusal that triggered the reselection stays counted under its own cause, and
+        // the successful reselection adds no selection failure. The batcher's own
+        // counters - the identity's other side - live outside this store and are not
+        // this fix's to move; the wiring test pins their seats in the backend.
+        TestRing ring = new TestRing(2, 96L << 10);
+        InstanceDataStore store = store(ring);
+        store.selectSlot(0);
+        for (int i = 0; i < 256; i++) {
+            assertEquals(i, store.record(pushBlock(256, i & 0xFF), -1));
+        }
+        assertEquals(-1, store.record(pushBlock(256, 0xAB), -1));
+        assertTrue(store.reselectFallback());
+        assertEquals(0, store.record(pushBlock(256, 0xCD), -1));
+        assertEquals(257L, store.recordsWritten());
+        assertEquals(1L, store.refusalsGrow());
+        assertEquals(0L, store.refusalsNoSlice());
+        assertEquals(0L, store.selectFailures(0));
         store.delete();
         ring.delete();
     }
