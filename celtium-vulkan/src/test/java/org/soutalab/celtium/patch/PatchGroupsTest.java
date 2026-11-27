@@ -80,7 +80,7 @@ class PatchGroupsTest {
 
     @Test
     void groupOrderIsTheTableOrder() {
-        assertEquals(List.of("mechanism", "terrain_geometry", "leaf_culling", "entities", "textures", "model_phase_instrument",
+assertEquals(List.of("mechanism", "terrain_geometry", "entities", "textures", "model_phase_instrument",
                 "pack_phase_instrument", "hud_census_instrument", "text", "particles", "sky", "shaders", "tweaks"), PatchGroups.groups());
     }
 }

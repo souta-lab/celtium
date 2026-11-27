@@ -1391,8 +1391,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** Lane 1 store/draw counters for the F3 panel and status reports; never starts the frontend. */
     public String celtium$lane1DiagnosticsSummary() {
-        return this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();
+        String base = this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();
+        return base + " drawCalls=" + this.lane1DrawCalls + " guardCmd=" + this.lane1GuardCmd
+                + " guardStall=" + this.lane1GuardStall + " guardTarget=" + this.lane1GuardTarget
+                + " guardPass=" + this.lane1GuardPass + " guardViews=" + this.lane1GuardViews
+                + " recordPass=" + this.lane1RecordPasses;
     }
+
+    private long lane1DrawCalls;
+    private long lane1GuardCmd;
+    private long lane1GuardStall;
+    private long lane1GuardTarget;
+    private long lane1GuardPass;
+    private long lane1GuardViews;
+    private long lane1RecordPasses;
 
     private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend celtium$lane1() {
         if (this.lane1 == null) {
@@ -1443,12 +1455,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     @Override
     public void celtium$lane1DrawLayer(int layerOrdinal, float[] projection, float[] modelView,
                                        double cameraX, double cameraY, double cameraZ) {
-        if (this.commandBuffer == null || this.gpuStalled || this.frameTarget == null
-                || this.commandState == null || this.commandState.inRenderPass()) {
+        this.lane1DrawCalls++;
+        if (this.commandBuffer == null) {
+            this.lane1GuardCmd++;
+            return;
+        }
+        if (this.gpuStalled) {
+            this.lane1GuardStall++;
+            return;
+        }
+        if (this.frameTarget == null || this.commandState == null) {
+            this.lane1GuardTarget++;
+            return;
+        }
+        if (this.commandState.inRenderPass()) {
+            this.lane1GuardPass++;
             return;
         }
         if (this.atlasTexture == null || this.lightmapTexture == null
                 || this.atlasTexture.view() == 0L || this.lightmapTexture.view() == 0L) {
+            this.lane1GuardViews++;
             return;
         }
         org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend = celtium$lane1();
@@ -1467,6 +1493,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.commandState.beginPass(this.activeImmediateTarget);
             try {
                 setViewportAndScissor(stack, this.targetWidth, this.targetHeight);
+                this.lane1RecordPasses++;
                 frontend.recordPass(
                         org.soutalab.celtium.core.shader.TerrainPassKind.values()[layerOrdinal],
                         this.commandBuffer, renderPass, this.frameSlot,
