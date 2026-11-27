@@ -241,6 +241,48 @@ public final class Lane1TerrainFrontend {
         this.textureCellCount = count;
     }
 
+    // TEMP G1 PROBE20: the descriptor block exactly as the GPU reads it, for two sections,
+    // compared against the store's CPU-side descriptors.
+    private String probeDescBlock() {
+        try {
+            java.util.List<org.soutalab.celtium.core.geometry.SectionDesc> descs =
+                    store.descriptors();
+            MemorySegment seg = MemorySegment.ofAddress(descBuffer.mappedAddress())
+                    .reinterpret(DESC_BYTES);
+            StringBuilder out = new StringBuilder("descBlock");
+            int[][] targets = {{-4, 4, 3}, {0, 4, 0}};
+            for (int[] t : targets) {
+                int slot = -1;
+                for (int i = 0; i < descs.size(); i++) {
+                    org.soutalab.celtium.core.geometry.SectionDesc d = descs.get(i);
+                    if (d.sectionX() == t[0] && d.sectionY() == t[1] && d.sectionZ() == t[2]) {
+                        slot = i;
+                        break;
+                    }
+                }
+                if (slot < 0) {
+                    out.append(" (").append(t[0]).append(',').append(t[1]).append(',').append(t[2])
+                            .append(")=noslot");
+                    continue;
+                }
+                org.soutalab.celtium.core.geometry.SectionDesc cpu = descs.get(slot);
+                org.soutalab.celtium.core.geometry.SectionDesc gpu =
+                        org.soutalab.celtium.core.geometry.SectionDesc.readFrom(seg,
+                                (long) slot * org.soutalab.celtium.core.geometry.SectionDesc.BYTE_SIZE);
+                out.append(" slot").append(slot)
+                        .append(" cpu=[").append(cpu.sectionX()).append(',').append(cpu.sectionY())
+                        .append(',').append(cpu.sectionZ()).append(" a").append(cpu.axisSlabOffset())
+                        .append(" g").append(cpu.generalSlabOffset()).append(']')
+                        .append(" gpu=[").append(gpu.sectionX()).append(',').append(gpu.sectionY())
+                        .append(',').append(gpu.sectionZ()).append(" a").append(gpu.axisSlabOffset())
+                        .append(" g").append(gpu.generalSlabOffset()).append(']');
+            }
+            return out.toString();
+        } catch (Throwable t) {
+            return "descBlock failed " + t;
+        }
+    }
+
     public int refusedUploads() {
         return refusedUploads;
     }
@@ -254,6 +296,7 @@ public final class Lane1TerrainFrontend {
                 + " refusedUploads=" + refusedUploads
                 + " atlasCells=" + atlasCellsAcross
                 + " texCells=" + textureCellCount
+                + " | " + probeDescBlock()
                 + " | " + store.probeOverlaps()
                 + " | " + store.probeSection(-4, 4, 3)
                 + " | " + store.probeSection(0, 4, 0);
