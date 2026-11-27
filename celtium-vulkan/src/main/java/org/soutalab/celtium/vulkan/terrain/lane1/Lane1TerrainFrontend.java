@@ -411,6 +411,8 @@ public final class Lane1TerrainFrontend {
         VkCommandBuffer cmd = shell.commandBuffer();
         int slot = shell.slot();
         boolean useIndirect = false;
+        // TEMP G1 BISECT34: draw only the axis stream.
+        commands.removeIf(c -> c.general());
         int index = 0;
         while (index < commands.size()) {
             boolean general = commands.get(index).general();
