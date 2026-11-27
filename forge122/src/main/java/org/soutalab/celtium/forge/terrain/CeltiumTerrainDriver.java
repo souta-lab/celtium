@@ -133,6 +133,41 @@ public final class CeltiumTerrainDriver {
         }
         lines.add("drainLight axisSky15=" + DRAIN_SKY15.get() + " axisTotal=" + DRAIN_TOTAL.get()
                 + " axisDark=" + DRAIN_DARK.get());
+        // TEMP G1 PROBE14: storage-direct vs chunk-API light reads for chunk (-4,3) y4.
+        try {
+            net.minecraft.world.chunk.Chunk c14 = world != null ? world.getChunk(-4, 3) : null;
+            if (c14 != null) {
+                net.minecraft.world.chunk.storage.ExtendedBlockStorage st14 =
+                        c14.getBlockStorageArray()[4];
+                long apiDark = 0L;
+                long directDark = 0L;
+                long disagree = 0L;
+                net.minecraft.util.math.BlockPos.MutableBlockPos pos14 =
+                        new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                for (int ly = 0; ly < 16; ly++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        for (int lx = 0; lx < 16; lx++) {
+                            int direct = st14 == null ? -1 : st14.getSkyLight(lx, ly, lz);
+                            pos14.setPos(-64 + lx, 64 + ly, 48 + lz);
+                            int api = c14.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, pos14);
+                            if (api == 0) {
+                                apiDark++;
+                            }
+                            if (direct == 0) {
+                                directDark++;
+                            }
+                            if (api != direct) {
+                                disagree++;
+                            }
+                        }
+                    }
+                }
+                lines.add("lightReadback apiDark=" + apiDark + " directDark=" + directDark
+                        + " disagree=" + disagree);
+            }
+        } catch (Throwable t) {
+            lines.add("lightReadback failed " + t);
+        }
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
