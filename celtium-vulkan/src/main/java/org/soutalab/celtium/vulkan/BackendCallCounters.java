@@ -1,22 +1,26 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * The common counters the RenderBackend adoption gate (REV2 §4.2 item 3, gate G2) reads from both
- * arms in one shape: how many calls cross from the GL-hosting layer into the backend, how much CPU
- * time they take, how many explicit barriers the frame records and how many times the render target
- * switches. Arm A is the current form wired here; Arm B (the {@code CeltiumVulkanRenderBackend}
- * prototype, REV2 Step C-3) records into the same keys from its own boundary, so a G2 breakdown run
- * prints the same line for either arm and the numbers sit side by side without translation.
+ * The common counters the RenderBackend adoption gate (REV2 §4.2 item 3, gate G2) reads in one
+ * shape: how many calls enter through the stub's dispatch and how much CPU time they take, how
+ * many explicit barriers the frame records and how many times the render target switches. The
+ * current form is wired here; a form with a single backend seam (a {@code RenderBackend}
+ * implementation) records into the same line shape from its own boundary, so a breakdown run
+ * prints the same line for either form and the numbers sit side by side without translation.
  *
  * <p>The counting contract, which an Arm B wiring must match event for event:
  * <ul>
- *   <li>{@code backendCalls} / {@code backendCallNanos}: one per call entering the backend's
- *   execution surface from the hosting layer, timed entry to return. On Arm A the entry is the GLSM
- *   stub's uniform dispatch ({@code GlsmFrontend.dispatch} / {@code legacyDispatch}) - every
- *   stub-served GL call lands there exactly once, no-op class included. On Arm B the entry is one
- *   {@code RenderBackend} method invocation. The two timings are not the same quantity - Arm A's
- *   span includes the stub's state work, Arm B's starts below Actinium's GLSM - so the key is a
- *   structural indicator beside the gate's P50/P95/P99 verdict, never a substitute for it.</li>
+ *   <li>{@code stubDispatchCalls} / {@code stubDispatchNanos}: one per call entering through the
+ *   GLSM stub's uniform dispatch ({@code GlsmFrontend.dispatch} / {@code legacyDispatch}), timed
+ *   entry to return - the calls that arrive as native function pointers (FFM upcalls and libffi
+ *   trampolines). Measured limit, stated plainly so nobody reads this key as the GL call volume:
+ *   on the BSL pack scene (2026-11-27, agera) it counted 8 calls in the first 200 frames and none
+ *   after, because that scene's mod GL arrives through the stub's Java method surface, which has
+ *   no single entry point to count at. The Java-surface volume on the current form is carried by
+ *   the existing GLSM census counters ({@code windowRecords}, the flush site counts, the draw
+ *   counters). Where a real single seam exists - a {@code RenderBackend} interface's method
+ *   invocations - the same shape of key at that seam is the exact call count, and that is where a
+ *   future arm records it; this class's dispatch keys stay what they measure.</li>
  *   <li>{@code explicitBarriers}: one per {@code vkCmdPipelineBarrier} recorded into a frame
  *   command buffer, counted at the call site. Every call site in this module is wired (the G0 sweep
  *   is grep-verifiable: one {@code noteBarrier} per {@code vkCmdPipelineBarrier} invocation outside
@@ -90,7 +94,7 @@ public final class BackendCallCounters {
 
     /** The four keys as one space-separated fragment, for a reader that prints its own line. */
     public static String format() {
-        return "backendCalls=" + calls + " backendCallNanos=" + callNanos
+        return "stubDispatchCalls=" + calls + " stubDispatchNanos=" + callNanos
                 + " explicitBarriers=" + barriers + " fboSwitches=" + fboSwitches;
     }
 
@@ -105,8 +109,8 @@ public final class BackendCallCounters {
         }
         long frames = lastReportedFrame < 0L ? frameId : frameId - lastReportedFrame;
         System.out.println("[Celtium] CELTIUM_BACKEND_CALLS frame=" + frameId + " frames=" + frames
-                + " backendCalls=" + (calls - lastReportedCalls)
-                + " backendCallNanos=" + (callNanos - lastReportedCallNanos)
+                + " stubDispatchCalls=" + (calls - lastReportedCalls)
+                + " stubDispatchNanos=" + (callNanos - lastReportedCallNanos)
                 + " explicitBarriers=" + (barriers - lastReportedBarriers)
                 + " fboSwitches=" + (fboSwitches - lastReportedFboSwitches));
         lastReportedCalls = calls;
