@@ -408,6 +408,11 @@ sourceSets.named("test") {
 dependencies {
     "testImplementation"("org.junit.jupiter:junit-jupiter:5.13.4")
     "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+    // The feeder's static initialiser allocates its GL matrix buffers through LWJGL,
+    // which Cleanroom supplies at runtime and the main source set therefore only
+    // compile-links (compileOnly above). Unit tests that load the feeder class need
+    // the core jar on the test runtime classpath; nothing here ships in the mod jar.
+    "testRuntimeOnly"("org.lwjgl:lwjgl:3.4.1")
 }
 tasks.named<JavaCompile>("compileTestJava") {
     options.release = 21

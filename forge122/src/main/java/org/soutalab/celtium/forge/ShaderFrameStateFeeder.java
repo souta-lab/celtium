@@ -251,11 +251,17 @@ public final class ShaderFrameStateFeeder {
     /** Gribb-Hartmann frustum extraction from a combined projection*view matrix. */
     static FrustumPlanes frustumFromMatrix(Matrix4f m) {
         float[] planes = new float[FrustumPlanes.FLOAT_COUNT];
-        // Rows of the combined matrix (JOML is column-major; get(row, col) reads logically).
+        // Rows of the combined matrix, read through the column-major flat array.
+        // Matrix4f.get(int, int) must not be used for this: on JOML 1.10.5 it returns
+        // the element transposed relative to the logical matrix transform applies
+        // (a translation's x offset, logically at row 0 / column 3, comes back from
+        // get(3, 0)), so rows read that way are the transposed matrix's rows and the
+        // extracted frustum ends up around the world origin instead of the camera.
+        float[] flat = m.get(new float[16]);
         float[][] rows = new float[4][4];
         for (int row = 0; row < 4; row++) {
             for (int col = 0; col < 4; col++) {
-                rows[row][col] = m.get(row, col);
+                rows[row][col] = flat[col * 4 + row];
             }
         }
         writePlane(planes, FrustumPlanes.LEFT, rows[3], rows[0], 1.0f);
