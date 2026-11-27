@@ -73,8 +73,12 @@ import java.util.Map;
  */
 public final class Lane1TerrainFrontend {
 
-    private static final long AXIS_SLAB_BYTES = 192L * 1024L * 1024L;
-    private static final long GENERAL_SLAB_BYTES = 64L * 1024L * 1024L;
+    // Sized from the Gate G1 flight scene's measured demand (2,269 sections resident):
+    // axis 32.6 MB (~14 KB/section), general 67.1 MB and FULL at 64 MB (~30 KB/section -
+    // the general quad is 64 B against the axis quad's 16 B, and un-packed geometry
+    // (leaves, cutout, non-cube) lands there). General gets the headroom; axis keeps 2x.
+    private static final long AXIS_SLAB_BYTES = 96L * 1024L * 1024L;
+    private static final long GENERAL_SLAB_BYTES = 192L * 1024L * 1024L;
     private static final long AUX_SLAB_BYTES = 32L * 1024L * 1024L;
     private static final int MAX_SECTIONS = 32768;
     private static final long DESC_BYTES = (long) MAX_SECTIONS * 48L;

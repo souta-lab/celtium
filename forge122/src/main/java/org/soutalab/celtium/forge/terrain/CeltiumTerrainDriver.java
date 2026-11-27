@@ -61,6 +61,11 @@ public final class CeltiumTerrainDriver {
 
     private int visibleSectionCount;
 
+    /** Sections whose upload the store refused, with the frame at which a retry is due. */
+    private final Map<Long, Long> starvedUntil = new HashMap<>();
+    /** setupTerrain calls so far; the refusal cooldown's clock. */
+    private long frameCounter;
+
     public CeltiumTerrainDriver() {
         instance = this;
     }
@@ -278,6 +283,7 @@ public final class CeltiumTerrainDriver {
     }
 
     private void scheduleBuilds(double cameraX, double cameraY, double cameraZ) {
+        frameCounter++;
         if (dirty.isEmpty()) {
             return;
         }
@@ -288,6 +294,12 @@ public final class CeltiumTerrainDriver {
         for (long k : queue) {
             if (pending.size() >= MAX_PENDING_BUILDS) {
                 break;
+            }
+            Long starved = starvedUntil.get(k);
+            if (starved != null && starved.longValue() > frameCounter) {
+                // Refused recently: rebuilding now would only be refused again and the
+                // snapshot+mesh cost is what starves the frame. Retry on the cooldown.
+                continue;
             }
             dirty.remove(k);
             int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
@@ -331,12 +343,16 @@ public final class CeltiumTerrainDriver {
                     backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
                     if (backend.celtium$lane1HasSection(keyX(k), keyY(k), keyZ(k))) {
                         resident.add(k);
+                        starvedUntil.remove(k);
                         uploads++;
                     } else {
                         // The store refused the upload (slab pressure): keep the section
                         // dirty so it is rebuilt and retried once space frees, instead of
-                        // marking a residency that does not exist (a permanent hole).
+                        // marking a residency that does not exist (a permanent hole). The
+                        // retry waits out a cooldown so a full slab cannot turn into a
+                        // rebuild-every-frame churn (Gate G1 measured 8,146 refusals).
                         dirty.add(k);
+                        starvedUntil.put(k, frameCounter + 30L);
                     }
                 }
             } finally {

@@ -1472,15 +1472,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.lane1GuardPass++;
             return;
         }
+        org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend = celtium$lane1();
+        if (this.lane1PreparedFrame != this.frameId) {
+            // The retired terrain pass refreshed the atlas/lightmap mirrors once per frame
+            // before drawing; the lane1 entry inherits that seat, or the mirrors never
+            // establish and every layer is skipped at the views guard below.
+            refreshTextures();
+            celtium$lane1PrepareFrame(frontend, projection, modelView, cameraX, cameraY, cameraZ);
+            this.lane1PreparedFrame = this.frameId;
+        }
         if (this.atlasTexture == null || this.lightmapTexture == null
                 || this.atlasTexture.view() == 0L || this.lightmapTexture.view() == 0L) {
             this.lane1GuardViews++;
             return;
-        }
-        org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend = celtium$lane1();
-        if (this.lane1PreparedFrame != this.frameId) {
-            celtium$lane1PrepareFrame(frontend, projection, modelView, cameraX, cameraY, cameraZ);
-            this.lane1PreparedFrame = this.frameId;
         }
         celtium$preflushBeforeTerrain();
         try (MemoryStack stack = MemoryStack.stackPush()) {
