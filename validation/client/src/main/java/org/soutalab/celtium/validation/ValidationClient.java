@@ -10957,7 +10957,15 @@ public final class ValidationClient {
                 return false;
             }
             case 13: {
-                celtium$tourClickRow(screen, "celtium.options.vignette.name", false);
+                // Back on the Quality page its scroll reset with the tab switch, so the Vignette
+                // row is below the fold again: scroll first, press it a tick later.
+                celtium$tourScrollToBottom(screen);
+                celtium$tourStep = 14;
+                return false;
+            }
+            case 14: {
+                boolean clicked = celtium$tourClickRow(screen, "celtium.options.vignette.name", false);
+                report.addProperty("videoSettingsTourVignetteReclicked", Boolean.valueOf(clicked));
                 int[] apply = celtium$tourFooterCenter(screen, 1);
                 celtium$tourClick(screen, apply[0], apply[1]);
                 report.addProperty("videoSettingsTourPendingAfterApply",
@@ -10970,19 +10978,19 @@ public final class ValidationClient {
                 report.addProperty("videoSettingsTourCeltiumConfigDiff",
                         celtium$vsOptionsDiff(celtium$tourCeltiumConfigBefore, celtium$tourCeltiumConfigFile(mc)));
                 celtium$captureGlScreenshot(mc, "celtium-tour-applied.png", "tourApplied");
-                celtium$tourStep = 14;
-                return false;
-            }
-            case 14: {
-                celtium$tourClickTab(mc, screen, 0);
                 celtium$tourStep = 15;
                 return false;
             }
             case 15: {
+                celtium$tourClickTab(mc, screen, 0);
+                celtium$tourStep = 16;
+                return false;
+            }
+            case 16: {
                 int[] done = celtium$tourFooterCenter(screen, 2);
                 celtium$tourClick(screen, done[0], done[1]);
                 report.addProperty("videoSettingsTourScreenAfterDone", celtium$screenName(mc));
-                celtium$tourStep = 16;
+                celtium$tourStep = 17;
                 return false;
             }
             default: {
