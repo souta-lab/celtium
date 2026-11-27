@@ -1,16 +1,11 @@
 package org.soutalab.celtium.forge.ui;
 
 import net.minecraft.client.Minecraft;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import org.soutalab.celtium.core.frame.ActiveRenderTargets;
 import org.soutalab.celtium.core.frame.FrameContext;
-import org.soutalab.celtium.core.shader.PackTerrainDriver;
-import org.soutalab.celtium.vulkan.VulkanContext;
 import org.soutalab.celtium.vulkan.pack.PackFrameEnvironment;
 import org.soutalab.celtium.vulkan.pack.ShaderPackRuntime;
 
 import java.nio.file.Path;
-import java.util.function.Function;
 
 /**
  * The forge side's single seat for the shader pack runtime: owns the runtime instance (rooted
@@ -28,13 +23,6 @@ public final class ShaderPackAccess {
     private static ShaderPackRuntime runtime;
     private static CeltiumConfig config;
     private static String syncedSelection;
-
-    // The native frame seat, opened by the frame owner for the duration of one frame.
-    private static VulkanContext seatContext;
-    private static VkCommandBuffer seatCommandBuffer;
-    private static ActiveRenderTargets seatSwapchain;
-    private static Function<VulkanContext, PackTerrainDriver> seatTerrainDriverFactory;
-    private static long seatFrameId;
 
     private ShaderPackAccess() {
     }
@@ -56,30 +44,6 @@ public final class ShaderPackAccess {
             runtime = new ShaderPackRuntime(gameDir.resolve("shaderpacks"));
         }
         return runtime;
-    }
-
-    /** Opens the native frame seat for one frame (frame-owner integration point). */
-    public static synchronized void beginNativeFrame(VulkanContext context, VkCommandBuffer cmd,
-                                                     ActiveRenderTargets swapchain,
-                                                     Function<VulkanContext, PackTerrainDriver> terrainDriverFactory,
-                                                     long frameId) {
-        seatContext = context;
-        seatCommandBuffer = cmd;
-        seatSwapchain = swapchain;
-        seatTerrainDriverFactory = terrainDriverFactory;
-        seatFrameId = frameId;
-    }
-
-    /** Closes the native frame seat opened by {@link #beginNativeFrame}. */
-    public static synchronized void endNativeFrame() {
-        seatContext = null;
-        seatCommandBuffer = null;
-        seatSwapchain = null;
-        seatTerrainDriverFactory = null;
-    }
-
-    public static synchronized boolean nativeFrameOpen() {
-        return seatContext != null && seatCommandBuffer != null;
     }
 
     /**
@@ -133,34 +97,27 @@ public final class ShaderPackAccess {
             return;
         }
         ShaderPackRuntime rt;
-        VulkanContext context;
-        VkCommandBuffer cmd;
-        ActiveRenderTargets swapchain;
-        Function<VulkanContext, PackTerrainDriver> driverFactory;
-        long frameId;
         synchronized (ShaderPackAccess.class) {
             syncSelection();
             rt = runtime();
             if (!rt.packActive()) {
                 return;
             }
-            context = seatContext;
-            cmd = seatCommandBuffer;
-            swapchain = seatSwapchain;
-            driverFactory = seatTerrainDriverFactory;
-            frameId = seatFrameId;
         }
         // Feed the pack's frame state from the live world, seat or no seat.
         ShaderFrameStateFeeder.fill(mc, rt.compiledPack().frameState(), partialTicks);
-        if (context == null || cmd == null || driverFactory == null) {
+        // The native frame seat lives on ShaderPackRuntime (the forge module cannot name
+        // LWJGL types); the frame owner opens it there for the duration of one frame.
+        if (!ShaderPackRuntime.nativeFrameOpen()) {
             return;
         }
         PackFrameEnvironment env = ShaderFrameStateFeeder.buildEnvironment(
-                mc, rt.compiledPack().frameState(), partialTicks, swapchain);
-        FrameContext ctx = new FrameContext(frameId,
+                mc, rt.compiledPack().frameState(), partialTicks,
+                ShaderPackRuntime.seatSwapchainTargets());
+        FrameContext ctx = new FrameContext(ShaderPackRuntime.seatFrameId(),
                 mc.world.getWorldTime() > Integer.MAX_VALUE ? Integer.MAX_VALUE
                         : (int) mc.world.getWorldTime(),
                 partialTicks);
-        rt.onFrame(context, cmd, ctx, env, driverFactory);
+        rt.recordSeatedFrame(ctx, env);
     }
 }

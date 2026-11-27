@@ -10,6 +10,7 @@ import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
 import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
 import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
+import org.soutalab.celtium.core.frame.ActiveRenderTargets;
 import org.soutalab.celtium.core.frame.FrameContext;
 import org.soutalab.celtium.core.shader.PackTerrainDriver;
 import org.soutalab.celtium.shader.ShaderLogger;
@@ -196,6 +197,71 @@ public final class ShaderPackRuntime {
     /** The executor of the active pack, once built (integration + diagnostics seat). */
     public PackFrameExecutor executor() {
         return executor;
+    }
+
+    // ---- The native frame seat ------------------------------------------------------
+    // Opened by the frame owner (the S3-b FrameCoordinator) for the duration of one frame.
+    // The seat lives here, not in the forge module: forge122 sees this module's classes but
+    // not its LWJGL dependency, so no forge-side signature may name VkCommandBuffer.
+
+    private static VulkanContext seatContext;
+    private static VkCommandBuffer seatCommandBuffer;
+    private static ActiveRenderTargets seatSwapchain;
+    private static Function<VulkanContext, PackTerrainDriver> seatTerrainDriverFactory;
+    private static long seatFrameId;
+
+    /** Opens the native frame seat for one frame (frame-owner integration point). */
+    public static synchronized void beginNativeFrame(VulkanContext context, VkCommandBuffer cmd,
+                                                     ActiveRenderTargets swapchain,
+                                                     Function<VulkanContext, PackTerrainDriver> terrainDriverFactory,
+                                                     long frameId) {
+        seatContext = context;
+        seatCommandBuffer = cmd;
+        seatSwapchain = swapchain;
+        seatTerrainDriverFactory = terrainDriverFactory;
+        seatFrameId = frameId;
+    }
+
+    /** Closes the native frame seat opened by {@link #beginNativeFrame}. */
+    public static synchronized void endNativeFrame() {
+        seatContext = null;
+        seatCommandBuffer = null;
+        seatSwapchain = null;
+        seatTerrainDriverFactory = null;
+    }
+
+    public static synchronized boolean nativeFrameOpen() {
+        return seatContext != null && seatCommandBuffer != null;
+    }
+
+    /** The swapchain targets of the open seat (null when no seat is open). */
+    public static synchronized ActiveRenderTargets seatSwapchainTargets() {
+        return seatSwapchain;
+    }
+
+    /** The frame id of the open seat. */
+    public static synchronized long seatFrameId() {
+        return seatFrameId;
+    }
+
+    /**
+     * Records the pack frame from the open native seat.
+     *
+     * @return true when a pack frame was recorded; false when no seat is open
+     */
+    public boolean recordSeatedFrame(FrameContext ctx, PackFrameEnvironment env) {
+        VulkanContext context;
+        VkCommandBuffer cmd;
+        Function<VulkanContext, PackTerrainDriver> factory;
+        synchronized (ShaderPackRuntime.class) {
+            context = seatContext;
+            cmd = seatCommandBuffer;
+            factory = seatTerrainDriverFactory;
+        }
+        if (context == null || cmd == null || factory == null) {
+            return false;
+        }
+        return onFrame(context, cmd, ctx, env, factory);
     }
 
     private static int shadowExtentOf(CompiledShaderPack compiled) {
