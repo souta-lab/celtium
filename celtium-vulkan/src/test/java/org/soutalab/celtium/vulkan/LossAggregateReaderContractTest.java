@@ -109,19 +109,30 @@ class LossAggregateReaderContractTest {
                 "offTargetRefusals must be printed exactly once, by the live reason map");
     }
 
+    /**
+     * Removes block comments before a member search: a removal may be documented by name in a
+     * class comment (the batch bundle's TargetStatistics header names the three counters it
+     * removed), and the contract below is about members, not mentions. Landing reconciliation:
+     * on the L-R branch alone the names appeared nowhere, so the raw search passed there; with
+     * L-B landed first, the merged file carries both the removals and their documentation.
+     */
+    private static String stripBlockComments(String text) {
+        return text.replaceAll("(?s)/\\*.*?\\*/", " ");
+    }
+
     @Test
     void zombieCountersAreRemovedFromTheStatistics() throws IOException {
-        String target = read(TARGET_STATISTICS);
+        String target = stripBlockComments(read(TARGET_STATISTICS));
         for (String member : new String[] {"offTargetRefusals", "outsideWorldPassRefusals",
                 "compositePresentRefusals", "unflushedTargetPassFailures", "windowFlushDroppedBatches"}) {
             assertFalse(target.contains(member), "zombie member still in TargetStatistics: " + member);
         }
-        String immediate = read(IMMEDIATE_STATISTICS);
+        String immediate = stripBlockComments(read(IMMEDIATE_STATISTICS));
         for (String member : new String[] {"drawsWithoutCommandBuffer", "immediateDeferredNextFrame"}) {
             assertFalse(immediate.contains(member),
                     "zombie member still in ImmediateStatistics: " + member);
         }
-        String backend = read(BACKEND);
+        String backend = stripBlockComments(read(BACKEND));
         assertFalse(backend.contains("lastUnflushedTargetFailure"),
                 "the never-written last-failure text is removed with its counter");
         assertFalse(backend.contains("immediateDeferredNextFrame()"),
