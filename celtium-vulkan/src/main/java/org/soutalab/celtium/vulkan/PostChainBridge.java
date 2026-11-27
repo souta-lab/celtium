@@ -17,8 +17,56 @@ final class PostChainBridge {
 
     private final VulkanTerrainGpuBackend b;
 
+    // The bridge-level refusal census (drawpath audit DP-31): refusals that happen before an executor
+    // exists, or that the executor's own status never sees - the stage gate answering for the frame,
+    // executor creation failing, the one-frame borrow closure, and a chain whose programs fall outside
+    // the executor's supported set. Each was previously visible only as an absence (the GL chain ran,
+    // postChains stayed 0), so a leg could not tell a refused chain from a frame that never asked for
+    // one. Counted here and surfaced beside the executor status in the verify line.
+    private long gateRefusals;
+    private long creationFailures;
+    private long borrowRefusals;
+    private long unsupportedRefusals;
+
+    /**
+     * The recording token whose first-use commit is deferred (drawpath audit DP-32): set when the
+     * frame coordinator answered RECORDED - the unified frame buffer is still open, so the recording
+     * carrying this chain's barriers has not reached the queue and can still be reset or abandoned.
+     * Settled by {@link #celtium$settleDeferredCommit(boolean)} when the backend finishes that buffer;
+     * -1 when nothing is deferred.
+     */
+    private int deferredCommitToken = -1;
+
     PostChainBridge(VulkanTerrainGpuBackend backend) {
         this.b = backend;
+    }
+
+    /** The bridge-level refusal census, in the verify line's key shape. */
+    String celtium$status() {
+        return "postChainGateRefusals=" + this.gateRefusals
+                + " postChainCreationFailures=" + this.creationFailures
+                + " postChainBorrowRefusals=" + this.borrowRefusals
+                + " postChainUnsupportedRefusals=" + this.unsupportedRefusals;
+    }
+
+    /**
+     * Settles a deferred first-use commit at the frame boundary (DP-32). Called by the backend from
+     * both paths that finish the unified frame buffer, with whether that finish actually handed the
+     * submission to the queue: only then are the deferred recording's barriers fact, so only then does
+     * the executor mark its targets initialized. A finish that queued nothing (the device is stalled
+     * and the buffer was reset instead) drops the token uncommitted - the targets stay uninitialized
+     * and the next recording carries their barriers again. A token from a recording that was superseded
+     * meanwhile is stale, and the executor counts it as such rather than committing.
+     */
+    void celtium$settleDeferredCommit(boolean queued) {
+        int token = this.deferredCommitToken;
+        if (token < 0) {
+            return;
+        }
+        this.deferredCommitToken = -1;
+        if (queued && b.postChain != null) {
+            b.postChain.commitPasses(token);
+        }
     }
 
     /**
@@ -36,6 +84,7 @@ final class PostChainBridge {
         // false before any work - the caller's GL chain carries the frame, and a quarantined executor is never
         // retried. The trip itself was recorded once by the gate; per-frame silence is correct here.
         if (!StageGate.system().enabled(StageGate.Stage.POST_CHAIN)) {
+            this.gateRefusals++;
             return false;
         }
         try {
@@ -46,6 +95,7 @@ final class PostChainBridge {
             // A creation that failed on this context and target fails identically every frame: quarantine the
             // stage instead of retrying the corpse on every subsequent frame (item 327).
             StageGate.system().trip(StageGate.Stage.POST_CHAIN, error);
+            this.creationFailures++;
             b.record("post chain executor creation failed: " + b.describe(error));
             return false;
         }
@@ -63,6 +113,7 @@ final class PostChainBridge {
                 boolean readsMain = pass.inIsMain
                         || (pass.auxFbIds.length > 0 && pass.auxFbIds[0] == 0);
                 if (readsMain) {
+                    this.borrowRefusals++;
                     b.record("post chain refused for one frame: the frame holds a borrowed present image"
                             + " (Stage 1 borrow closure; borrows bypass while a chain is live)");
                     return false;
@@ -71,6 +122,7 @@ final class PostChainBridge {
         }
         RenderTargetRegistry.TargetFormatClass chainFormatClass = celtium$chainFormatClass(passes);
         if (!b.postChain.supportsAll(passes, chainFormatClass)) {
+            this.unsupportedRefusals++;
             StringBuilder reason = new StringBuilder("post chain refused:");
             for (VulkanPostChain.Pass pass : passes) {
                 reason.append(' ').append(pass.program).append('(').append(pass.pushBytes).append("B)");
@@ -133,7 +185,7 @@ final class PostChainBridge {
                 b.publishedChainOutput.ensureSampledLayout(b.commandBuffer);
             }
             b.frameTarget.recordReleaseBarriers(b.commandBuffer);
-            b.frameCoordinator.submitCommands();
+            FrameCoordinator.Submission submission = b.frameCoordinator.submitCommands();
             submitted = true;
             // The chain's effect on the picture, asked where it can still be attributed: one readback of the frame image
             // immediately after this submission, before anything later in the frame can overwrite it, and one of the
@@ -141,10 +193,23 @@ final class PostChainBridge {
             // with it: a run holds several chains, and a sharp frame image after a chain whose output target is not
             // `main` is expected rather than evidence, so every dump line names the chain it took.
             celtium$dumpImagesAtChainTime(passes);
-            // The queue accepted this submission, so the first-use barriers of *this* recording are fact - and only
-            // this recording's: the token names it, so any other submission's success (a terrain pass, the next
-            // frame, a buffer that was reset or abandoned) cannot commit these targets. N05 item 1.
-            b.postChain.commitPasses(chainRecording);
+            // The first-use barriers of *this* recording become fact only when the submission carrying
+            // them actually reaches the queue - and only this recording's: the token names it, so any
+            // other submission's success (a terrain pass, the next frame, a buffer that was reset or
+            // abandoned) cannot commit these targets. N05 item 1. When that is depends on the
+            // coordinator's outcome (drawpath audit DP-32): QUEUED means submitCommands handed the
+            // submission to the queue itself, so the commit is fact now; RECORDED means the unified
+            // frame buffer is still open - nothing has been ended or submitted, and the recording can
+            // still be reset or abandoned at the boundary - so the commit defers to
+            // celtium$settleDeferredCommit, which the backend calls when it finishes that buffer;
+            // SKIPPED (the device is stalled) submits nothing, so the targets stay uninitialized and
+            // the next recording carries their barriers again.
+            if (submission == FrameCoordinator.Submission.QUEUED) {
+                b.postChain.commitPasses(chainRecording);
+                this.deferredCommitToken = -1;
+            } else if (submission == FrameCoordinator.Submission.RECORDED) {
+                this.deferredCommitToken = chainRecording;
+            }
             StageGate.system().noteSuccess(StageGate.Stage.POST_CHAIN);
         } catch (RuntimeException | LinkageError error) {
             // Counted toward the stage's quarantine (item 327): three consecutive submission failures

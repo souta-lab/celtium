@@ -39,6 +39,25 @@ public abstract class FramebufferMixin {
     private static final java.util.Set<Long> FBO_BIND_SEEN =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /**
+     * Counts a swallowed hint/probe failure on the backend when one is reachable (drawpath audit
+     * DP-34). The seats below must never break the frame, and they still do not - but swallowing
+     * their failures whole made a persistently failing hint indistinguishable from a working one,
+     * so the failure is handed to the backend's census, which the verify line reads.
+     */
+    private static void celtium$noteHintFailure(String seat, Throwable error) {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
+                        .celtium$noteFramebufferHintFailure(seat, error);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // The note itself must never break the frame either.
+        }
+    }
+
     /** Native phase boundary: metadata only; the renderer owns the fullscreen geometry/material and execution. */
     @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$nativeComposite(int width, int height, boolean opaque, CallbackInfo info) {
@@ -97,8 +116,9 @@ public abstract class FramebufferMixin {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
                         .celtium$noteBindSize(self.framebufferWidth, self.framebufferHeight, main);
             }
-        } catch (RuntimeException | LinkageError ignored) {
-            // A hint must never break the frame.
+        } catch (RuntimeException | LinkageError error) {
+            // A hint must never break the frame; the failure is counted instead (DP-34).
+            celtium$noteHintFailure("bind size", error);
         }
         // Probe A: right after the game's framebuffer is bound. Reading the error clears it, so the first probe that finds
         // one names the window it was produced in; the frame's own begin path then sees a clean state.
@@ -109,8 +129,9 @@ public abstract class FramebufferMixin {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
                         .celtium$noteGlErrorAt("after bindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
             }
-        } catch (RuntimeException | LinkageError ignored) {
-            // A probe must never break the frame.
+        } catch (RuntimeException | LinkageError error) {
+            // A probe must never break the frame; the failure is counted instead (DP-34).
+            celtium$noteHintFailure("gl error probe after bind", error);
         }
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null) {
@@ -226,8 +247,9 @@ public abstract class FramebufferMixin {
                 vulkan.celtium$noteFramebufferAdopted();
                 vulkan.celtium$noteGlErrorAt("at the swap", org.lwjgl.opengl.GL11.glGetError());
             }
-        } catch (RuntimeException | LinkageError ignored) {
-            // A hint must never break the frame.
+        } catch (RuntimeException | LinkageError error) {
+            // A hint must never break the frame; the failure is counted instead (DP-34).
+            celtium$noteHintFailure("adopt after bind", error);
         }
     }
 
@@ -241,8 +263,9 @@ public abstract class FramebufferMixin {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
                         .celtium$noteGlErrorAt("before unbindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
             }
-        } catch (RuntimeException | LinkageError ignored) {
-            // A probe must never break the frame.
+        } catch (RuntimeException | LinkageError error) {
+            // A probe must never break the frame; the failure is counted instead (DP-34).
+            celtium$noteHintFailure("gl error probe before unbind", error);
         }
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null) backend.bindFramebuffer(0L, false);

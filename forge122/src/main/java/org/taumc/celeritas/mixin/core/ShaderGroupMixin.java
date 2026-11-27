@@ -154,8 +154,12 @@ public abstract class ShaderGroupMixin {
             if (CHAIN_INPUT_FLUSH) {
                 try {
                     backend.celtium$flushPendingForChainInput();
-                } catch (RuntimeException | LinkageError ignored) {
-                    // An ordering hint must never stop the chain from running.
+                } catch (RuntimeException | LinkageError error) {
+                    // An ordering hint must never stop the chain from running - but a flush that
+                    // fails here leaves the pending geometry unsubmitted at the moment the chain
+                    // reads the frame, so the failure is counted and printed by the backend
+                    // instead of swallowed whole (drawpath audit DP-32).
+                    backend.celtium$noteChainInputFlushFailure(error);
                 }
             }
             // The handoff validates the bound framebuffer, and under adoption the game framebuffer's binding is the

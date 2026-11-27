@@ -120,16 +120,78 @@ final class ModPrograms {
     private VulkanModProgramPipeline lastModPipeline;
     String lastModProgramFailure = "none";
 
+    /**
+     * The refusal categories of the per-reason census (drawpath audit DP-35). Every mod-program
+     * refusal funnels through {@link #celtium$modFailure} or the executable query, but the reason
+     * there is free-form prose - per program, per pass, per texture name - so no reader could
+     * aggregate it: the verify line carried only the backend shutter's total. The category is fixed
+     * at the seat; the prose stays in {@link #lastModProgramFailure} and the per-program census
+     * lines, and the counts aggregate in {@link #modRefusalCounts}.
+     */
+    enum ModRefusal {
+        DISABLED("disabled"),
+        UNSUPPORTED("unsupported"),
+        VARIANT("variant"),
+        MRT("mrt"),
+        PIPELINE("pipeline"),
+        SAMPLER_UNIT("samplerUnit"),
+        SAMPLER_NO_IMAGE("samplerNoImage"),
+        SAMPLER_SHADOW("samplerShadow"),
+        FEEDBACK("feedback"),
+        LAB_SWITCH("labSwitch"),
+        IMAGE_NOT_BOUND("imageNotBound"),
+        IMAGE_NO_IMAGE("imageNoImage"),
+        IMAGE_MIRRORED("imageMirrored"),
+        DESCRIPTOR_EXHAUSTED("descriptorExhausted");
+
+        final String key;
+
+        ModRefusal(String key) {
+            this.key = key;
+        }
+    }
+
+    private final long[] modRefusalCounts = new long[ModRefusal.values().length];
+    private long modRefusals;
+
+    private void celtium$noteModRefusal(ModRefusal category) {
+        this.modRefusalCounts[category.ordinal()]++;
+        this.modRefusals++;
+    }
+
+    /** The per-reason refusal aggregate, in the verify line's key shape. */
+    String celtium$refusalSummary() {
+        return celtium$formatRefusalSummary(this.modRefusals, this.modRefusalCounts);
+    }
+
+    static String celtium$formatRefusalSummary(long total, long[] counts) {
+        StringBuilder out = new StringBuilder("modRefusals=").append(total)
+                .append(" modRefusalsByReason[");
+        ModRefusal[] categories = ModRefusal.values();
+        for (int i = 0; i < categories.length; i++) {
+            if (i > 0) {
+                out.append(' ');
+            }
+            out.append(categories[i].key).append('=').append(counts[i]);
+        }
+        return out.append(']').toString();
+    }
+
     /** {@return the registry's program when this batch can be drawn with it}, or null to refuse as before. */
     org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program celtium$executableModProgram(int program,
                                                                                                     int formatId) {
         if (!MOD_PROGRAMS) {
+            // Counted in the aggregate only: the lab switch is a deliberate configuration, and a
+            // per-batch line for it would be spam - but the refusal itself must not be invisible
+            // in the census the way it was when this seat returned in silence (DP-35).
+            celtium$noteModRefusal(ModRefusal.DISABLED);
             return null;
         }
         org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program p =
                 org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(program);
         String reason = VulkanModProgramPipeline.unsupported(p, formatId);
         if (reason != null) {
+            celtium$noteModRefusal(ModRefusal.UNSUPPORTED);
             celtium$reportModProgram(program, false, reason);
             return null;
         }
@@ -145,7 +207,7 @@ final class ModPrograms {
     PreparedImmediate celtium$modPrepared(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program,
                                                   int programId, int formatId, PreparedImmediate standard) {
         if (!(standard.pipeline instanceof VulkanImmediateTextureRecordsPipeline like)) {
-            return celtium$modFailure(programId, "the batch's own variant is "
+            return celtium$modFailure(programId, ModRefusal.VARIANT, "the batch's own variant is "
                     + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
         }
         // The target's colour count decides both the refusal and the pass: a program writing more fragment
@@ -155,7 +217,7 @@ final class ModPrograms {
         int targetColors = celtium$modTargetColors();
         String mrtRefusal = celtium$mrtRefusal(program.lowered().fragOutputCount(), targetColors);
         if (mrtRefusal != null) {
-            return celtium$modFailure(programId, mrtRefusal);
+            return celtium$modFailure(programId, ModRefusal.MRT, mrtRefusal);
         }
         // The pass variant matches the target pair's format class (QUEUE 404, S4): for several targets the
         // (count, class) chain pass; for one target the standard pipeline's own pass, which the prepare path
@@ -179,7 +241,7 @@ final class ModPrograms {
                                     targetRenderPass, targetColors)
                             : VulkanModProgramPipeline.create(b.context, program, formatId, like);
                 } catch (RuntimeException | LinkageError failure) {
-                    return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
+                    return celtium$modFailure(programId, ModRefusal.PIPELINE, "pipeline: " + failure.getMessage());
                 }
                 this.modProgramPipelines.put(key.copy(), pipeline);
             }
@@ -207,13 +269,13 @@ final class ModPrograms {
             int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
             String unitRefusal = celtium$samplerUnitRefusal(sampler.name(), unit);
             if (unitRefusal != null) {
-                return celtium$modFailure(programId, unitRefusal);
+                return celtium$modFailure(programId, ModRefusal.SAMPLER_UNIT, unitRefusal);
             }
             int name = b.immediateState.boundTextureName(unit);
             VulkanGlTexture texture = name > 0 ? celtium$modSamplerTexture(name) : null;
             if (texture == null || texture.view() == 0L) {
                 celtium$probeSamplerDepthAttach(programId, sampler.name(), unit, name);
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                return celtium$modFailure(programId, ModRefusal.SAMPLER_NO_IMAGE, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") has no native image");
             }
             if (sampler.type().contains("Shadow") && !texture.celtium$samplerCompares()) {
@@ -222,7 +284,7 @@ final class ModPrograms {
                 // recorded with COMPARE_REF_TO_TEXTURE. A shadow binding resolved to a texture without it
                 // would fetch through a plain sampler - undefined, and a validation error against the
                 // shader's shadow type - so the pairing is refused by name here, at prepare.
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                return celtium$modFailure(programId, ModRefusal.SAMPLER_SHADOW, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") is declared " + sampler.type()
                         + " but the texture's sampler does not compare");
             }
@@ -230,11 +292,11 @@ final class ModPrograms {
                 // The pass would read the image it is drawing into: inside one Vulkan render pass that is a feedback
                 // loop whose result is undefined (measured: leg r17-gt drew the whole world black). Refused until the
                 // target is snapshotted before the pass.
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                return celtium$modFailure(programId, ModRefusal.FEEDBACK, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") is the colour image of the framebuffer being drawn into");
             }
             if (!MOD_PROGRAMS_SAMPLE_MAIN && b.mainFramebufferColorNames.contains(name)) {
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " reads the game's colour and "
+                return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "sampler " + sampler.name() + " reads the game's colour and "
                         + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
             }
             textures[i] = texture;
@@ -252,16 +314,16 @@ final class ModPrograms {
                 int[] unitValue = program.ints(image.name());
                 int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
                 int name = imageLedger.texture(unit);
-                if (name <= 0) return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ") is not bound");
+                if (name <= 0) return celtium$modFailure(programId, ModRefusal.IMAGE_NOT_BOUND, "image " + image.name() + " (unit " + unit + ") is not bound");
                 VulkanGlTexture texture = celtium$modSamplerTexture(name);
                 if (texture == null || texture.view() == 0L)
-                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                    return celtium$modFailure(programId, ModRefusal.IMAGE_NO_IMAGE, "image " + image.name() + " (unit " + unit + ", texture "
                             + name + ") has no native image");
                 if (b.celtium$samplesCurrentTargetColor(name))
-                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                    return celtium$modFailure(programId, ModRefusal.FEEDBACK, "image " + image.name() + " (unit " + unit + ", texture "
                             + name + ") is the colour image of the framebuffer being drawn into");
                 if (texture.celtium$ownsImage())
-                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                    return celtium$modFailure(programId, ModRefusal.IMAGE_MIRRORED, "image " + image.name() + " (unit " + unit + ", texture "
                             + name + ") is a mirrored texture whose layout the storage path cannot transition");
                 imageTextures[i] = texture;
                 drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 11);
@@ -269,16 +331,16 @@ final class ModPrograms {
         }
         if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
                 && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, "a blend-off pass into the game's framebuffer and "
+            return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "a blend-off pass into the game's framebuffer and "
                     + "-Dceltium.vulkan.modProgramsOpaqueToMain=false refuses that");
         }
         if (!MOD_PROGRAMS_TO_MAIN && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
+            return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "the pass draws into the game's framebuffer and "
                     + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
         }
         long set = pipeline.samplersAndImages(textures, imageTextures, program, b.frameId);
         if ((samplerCount + imageCount > 0 || pipeline.uniformsViaBuffer()) && set == 0L) {
-            return celtium$modFailure(programId, "no descriptor set could be allocated");
+            return celtium$modFailure(programId, ModRefusal.DESCRIPTOR_EXHAUSTED, "no descriptor set could be allocated");
         }
         String label = null;
         boolean needsCensusReport = this.modProgramReported.size() < 64
@@ -870,7 +932,8 @@ final class ModPrograms {
                 + " colorIdentity=0x" + Long.toHexString(colorIdentity));
     }
 
-    PreparedImmediate celtium$modFailure(int programId, String reason) {
+    PreparedImmediate celtium$modFailure(int programId, ModRefusal category, String reason) {
+        celtium$noteModRefusal(category);
         this.lastModProgramFailure = reason;
         celtium$reportModProgram(programId, false, reason);
         return null;
