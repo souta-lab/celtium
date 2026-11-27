@@ -134,7 +134,7 @@ public final class Lane1Shaders {
                 uint64_t mask = masks[(cell.y * 16 + cell.z) * 16 + cell.x];
                 vec3 sum = vec3(0.0);
                 while (mask != 0ul) {
-                    int bit = findLSB(mask);
+                    int bit = int(findLSB(mask));
                     mask &= mask - 1ul;
                     LightRecord light = lights[bit];
                     float distance = length(light.position - worldPos);
@@ -180,13 +180,11 @@ public final class Lane1Shaders {
             + "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
             + COMMON + """
             layout(std430, set = 0, binding = 0) readonly buffer Descs { SectionDesc descs[]; };
-            layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads {
-                float positions[12];
-                int textureIndex;
-                int lightWord;
-                int normalPacked;
-                int flags;
-            } generalQuads[];
+            // Flat word stream, 16 words per GeneralQuad (12 position floats, then
+            // textureIndex / lightWord / normalPacked / flags as bit-cast ints). A struct
+            // array member cannot be indexed dynamically without GL_EXT_nonuniform_qualifier,
+            // so the shader reads the same 64 B record through a flat float array instead.
+            layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads { float generalWords[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
                 vec4 cameraPos;
@@ -206,18 +204,19 @@ public final class Lane1Shaders {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
                 int corner = CORNER_INDEX[gl_VertexIndex % 6];
                 SectionDesc d = descs[gl_InstanceIndex];
-                vec3 local = vec3(generalQuads[quadIndex].positions[corner * 3],
-                                  generalQuads[quadIndex].positions[corner * 3 + 1],
-                                  generalQuads[quadIndex].positions[corner * 3 + 2]);
+                uint wordBase = quadIndex * 16u;
+                vec3 local = vec3(generalWords[wordBase + uint(corner * 3)],
+                                  generalWords[wordBase + uint(corner * 3) + 1u],
+                                  generalWords[wordBase + uint(corner * 3) + 2u]);
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
                 gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos.xyz, 1.0);
                 fragUv = vec2(0.0);
-                int flags = generalQuads[quadIndex].flags;
+                int flags = floatBitsToInt(generalWords[wordBase + 15u]);
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
                         : vec3(1.0);
                 fragColor = vec4(tint, 1.0);
-                int lightWord = generalQuads[quadIndex].lightWord;
+                int lightWord = floatBitsToInt(generalWords[wordBase + 13u]);
                 fragLightMap = vec2(float((lightWord >> 8) & 255), float(lightWord & 255)) / 255.0;
                 fragWorldPos = worldPos;
                 fragDynamicLight = vec3(0.0);
