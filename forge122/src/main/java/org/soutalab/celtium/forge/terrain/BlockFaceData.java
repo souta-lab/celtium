@@ -7,7 +7,9 @@ package org.soutalab.celtium.forge.terrain;
  * registry and baked models, and unit tests build small tables by hand.
  * <p>
  * Two geometry shapes exist. A <b>full-cube</b> state emits its six axis faces through the
- * SWAR/greedy path into {@code PackedAxisQuad}s. Any other state emits <b>general quads</b>
+ * SWAR/greedy path into {@code PackedAxisQuad}s - except a face whose baked UVs are a partial
+ * rectangle or rotated/flipped, which escapes into the general pool per face
+ * ({@link #faceEscapesToGeneral}). Any other state emits <b>general quads</b>
  * (its baked model's quads, in block-local coordinates) into {@code GeneralQuad}s; the mesher
  * translates them into section space and bakes light and tint.
  */
@@ -49,6 +51,16 @@ public interface BlockFaceData {
     /** Whether this state's face on side {@code dir} takes the cell's resolved tint colour. */
     boolean faceUsesTint(int state, int dir);
 
+    /**
+     * Whether this full-cube state's face on side {@code dir} escapes the axis path into the
+     * general pool: the face's baked quads carry partial-rectangle or rotated/flipped UVs (or
+     * the face has more than one quad), which the packed axis form cannot express. The mesher
+     * suppresses the axis face for such a (state, dir) and the face's quads are read through
+     * {@link #generalQuadCount} / {@link #readGeneralQuad} instead (Neon UV ruling
+     * NEON-UV-RULING-2026-11-28 section 5.3). Always false for non-full-cube states.
+     */
+    boolean faceEscapesToGeneral(int state, int dir);
+
     /** Whether the state is leaves (the leaf-culling predicates apply). */
     boolean isLeaves(int state);
 
@@ -65,7 +77,10 @@ public interface BlockFaceData {
     /** The {@code mc_Entity} id the pack auxiliary column carries for this state. */
     short mcEntityId(int state);
 
-    /** The number of general (baked-model) quads this state emits; 0 for full cubes and air. */
+    /**
+     * The number of general (baked-model) quads this state emits; 0 for air and for full cubes
+     * whose faces all stay on the axis path (escaped faces contribute their quads here).
+     */
     int generalQuadCount(int state);
 
     /**
@@ -86,5 +101,7 @@ public interface BlockFaceData {
         public boolean usesTint;
         /** Whether greedy-style merging is off for this quad under a pack (sway). */
         public boolean noGreedyWhenPack;
+        /** 4 packed Q1.15 sprite-local UV words, one per corner ({@code GeneralQuad.packUv}). */
+        public final int[] uvPacked = new int[4];
     }
 }

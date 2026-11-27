@@ -59,4 +59,32 @@ public final class AtlasSpriteIndex {
     public synchronized int size() {
         return indices.size();
     }
+
+    /**
+     * The registered sprite whose atlas rectangle contains the point {@code (u, v)}, or null
+     * when none does. When several rectangles contain the point the smallest wins (the most
+     * specific sprite). Used by the face table's defensive correction for baked quads whose
+     * declared sprite does not match the UVs they carry.
+     */
+    public synchronized TextureAtlasSprite spriteContaining(float u, float v) {
+        TextureAtlasSprite best = null;
+        float bestArea = Float.POSITIVE_INFINITY;
+        for (TextureAtlasSprite sprite : indices.keySet()) {
+            float du = sprite.getMaxU() - sprite.getMinU();
+            float dv = sprite.getMaxV() - sprite.getMinV();
+            if (du <= 0.0f || dv <= 0.0f) {
+                continue;
+            }
+            if (u < sprite.getMinU() || u > sprite.getMaxU()
+                    || v < sprite.getMinV() || v > sprite.getMaxV()) {
+                continue;
+            }
+            float area = du * dv;
+            if (area < bestArea) {
+                bestArea = area;
+                best = sprite;
+            }
+        }
+        return best;
+    }
 }

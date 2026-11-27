@@ -45,6 +45,8 @@ class SectionMesherTest {
             short mcEntity = 0;
             float[][] quads = new float[0][];
             int quadTexture = 0;
+            boolean[] generalFaces = new boolean[6];
+            int[] quadUvs = null;
         }
 
         final Row[] rows = new Row[16];
@@ -126,6 +128,11 @@ class SectionMesherTest {
         }
 
         @Override
+        public boolean faceEscapesToGeneral(int state, int dir) {
+            return rows[state].generalFaces[dir];
+        }
+
+        @Override
         public boolean isLeaves(int state) {
             return rows[state].leaves;
         }
@@ -157,6 +164,9 @@ class SectionMesherTest {
             out.textureIndex = rows[state].quadTexture;
             out.usesTint = false;
             out.noGreedyWhenPack = rows[state].noGreedy;
+            int[] uvs = rows[state].quadUvs != null ? rows[state].quadUvs
+                    : GeneralQuad.FULL_SPRITE_UV_PACKED;
+            System.arraycopy(uvs, 0, out.uvPacked, 0, 4);
         }
     }
 
@@ -378,6 +388,38 @@ class SectionMesherTest {
         assertEquals(5.0f, quad.cornerY(0));
         assertEquals(5.0f, quad.cornerZ(0));
         assertEquals(15 * 17, quad.lightWord() & 0xFF, "sky light 15 scaled by 17");
+    }
+
+    @Test
+    void generalQuadCarriesUvPacked() {
+        Stub stub = new Stub();
+        int[] uvs = {GeneralQuad.packUv(0.25f, 0.25f), GeneralQuad.packUv(0.25f, 0.5f),
+                GeneralQuad.packUv(0.5f, 0.5f), GeneralQuad.packUv(0.5f, 0.25f)};
+        stub.rows[MODEL].quadUvs = uvs;
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 3, 4, 5, MODEL);
+        MeshBuffers out = mesh(snap, stub, MesherOptions.PACK_OFF);
+        assertEquals(1, out.generalTotal());
+        GeneralQuad quad = out.generalQuad(TerrainLayer.SOLID.ordinal(), 0);
+        for (int c = 0; c < 4; c++) {
+            assertEquals(uvs[c], quad.uvPacked(c));
+        }
+    }
+
+    @Test
+    void escapedFaceLeavesAxisPathAndEmitsGeneral() {
+        Stub stub = new Stub();
+        // A full cube whose UP face escaped into the general pool (partial-rectangle UVs):
+        // the axis UP face must vanish and the pooled quad must be emitted instead.
+        stub.rows[STONE].generalFaces[TerrainDirs.UP] = true;
+        stub.rows[STONE].quads = new float[][]{{
+                0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0}};
+        stub.rows[STONE].quadTexture = 10;
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 8, 8, 8, STONE);
+        MeshBuffers out = mesh(snap, stub, MesherOptions.PACK_OFF);
+        assertEquals(5, out.axisCount(TerrainLayer.SOLID.ordinal()));
+        assertEquals(1, out.generalTotal());
     }
 
     @Test

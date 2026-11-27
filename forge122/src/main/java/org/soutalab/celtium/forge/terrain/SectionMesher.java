@@ -22,9 +22,10 @@ import org.soutalab.celtium.core.geometry.PackedAxisQuad;
  * because the pack animates those vertices per original quad.
  * <p>
  * {@link GeneralQuad} flags as produced here: bit 0 = tint present, bits 8..31 = the tint
- * colour {@code 0xRRGGBB}. General-quad UVs map the full sprite in corner order (the contract
- * carries no UV fields; sub-rectangle sprite UVs of baked models are a known fidelity limit,
- * recorded in the stage landing record).
+ * colour {@code 0xRRGGBB}. General-quad UVs are the 80 B contract's per-corner Q1.15
+ * sprite-local UVs (Neon UV ruling NEON-UV-RULING-2026-11-28): baked-model quads carry their
+ * real sub-rectangle / rotated UVs from the face table, and the synthetic fluid faces below
+ * carry the canonical full-sprite assignment in corner order.
  * <p>
  * One instance is one worker's mesher: it holds scratch bitboards and allocates nothing per
  * section once warm. Not thread-safe; the build scheduler gives each platform thread its own.
@@ -177,6 +178,7 @@ public final class SectionMesher {
                 for (int w = 0; w < WORDS; w++) {
                     mask[w] = layerFull[layer][w] & ~shifted[w];
                 }
+                correctEscapedFaces(data, states, dir);
                 correctSameState(snapshot, states, dir);
                 correctLeafSuppression(snapshot, data, options, dir);
                 if (options.packInUse()) {
@@ -187,6 +189,25 @@ public final class SectionMesher {
                     emitSingles(snapshot, data, options, out, dir, layer);
                 }
                 greedyLayer(snapshot, data, options, out, dir, layer);
+            }
+        }
+    }
+
+    /**
+     * UV-escape suppression (ruling section 5.3): a full-cube cell whose face on this direction
+     * escaped into the general pool (partial-rectangle or rotated/flipped UVs) loses its axis
+     * face here; the general path emits the face's real quads instead.
+     */
+    private void correctEscapedFaces(BlockFaceData data, int[] states, int dir) {
+        for (int w = 0; w < WORDS; w++) {
+            long bits = mask[w];
+            while (bits != 0L) {
+                int bit = Long.numberOfTrailingZeros(bits);
+                bits &= bits - 1;
+                int i = (w << 6) + bit;
+                if (i < WorldSectionSnapshot.VOLUME && data.faceEscapesToGeneral(states[i], dir)) {
+                    mask[w] &= ~(1L << bit);
+                }
             }
         }
     }
@@ -415,7 +436,7 @@ public final class SectionMesher {
                             generalPositions[c * 3 + 2] = quadView.positions[c * 3 + 2] + (z - 1);
                         }
                         out.addGeneralQuad(layer, generalPositions, quadView.textureIndex,
-                                lightWord, quadView.normalPacked, flags);
+                                lightWord, quadView.normalPacked, flags, quadView.uvPacked);
                     }
                 }
             }
@@ -492,7 +513,8 @@ public final class SectionMesher {
                         writeFluidFace(x - 1, y - 1, z - 1, dir, top);
                         out.addGeneralQuad(layer, generalPositions, data.faceTexture(fluid, dir),
                                 lightWord, GeneralQuad.packNormal(
-                                        TerrainDirs.DX[dir], TerrainDirs.DY[dir], TerrainDirs.DZ[dir]), flags);
+                                        TerrainDirs.DX[dir], TerrainDirs.DY[dir], TerrainDirs.DZ[dir]), flags,
+                                GeneralQuad.FULL_SPRITE_UV_PACKED);
                     }
                 }
             }

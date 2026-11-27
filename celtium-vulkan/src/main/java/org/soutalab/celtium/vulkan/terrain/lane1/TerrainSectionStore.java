@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * The Lane 1 section store (design V040-FINAL-PLAN section 2.1): every resident section's axis
- * quads (16 B), general quads (64 B) and - only while a pack asks for it - {@code mc_Entity}
+ * quads (16 B), general quads (80 B) and - only while a pack asks for it - {@code mc_Entity}
  * auxiliary column (2 B per axis quad) live in ONE slab shared by the main pass and the shadow
  * pass; there is no shadow-only geometry copy. Each section is described by the core
  * {@link SectionDesc} (48 B), which the cull stage reads from the descriptor region.
@@ -75,7 +75,7 @@ public final class TerrainSectionStore {
 
     /**
      * @param axisSpace    slab space for the 16 B axis quads
-     * @param generalSpace slab space for the 64 B general quads
+     * @param generalSpace slab space for the 80 B general quads
      * @param auxSpace     slab space for the 2 B-per-quad auxiliary columns
      */
     public TerrainSectionStore(SlabSpace axisSpace, SlabSpace generalSpace, SlabSpace auxSpace) {

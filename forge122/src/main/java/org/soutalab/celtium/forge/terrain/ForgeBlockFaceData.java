@@ -89,10 +89,12 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     private final int[] faceTexture;       // [state * 6 + dir]
     private final int[] faceCell;          // [state * 6 + dir]
     private final boolean[] faceTint;      // [state * 6 + dir]
+    private final boolean[] faceGeneral;   // [state * 6 + dir] face escapes the axis path
     private final int[] generalOffset;     // per state, into the quad pool
     private final int[] generalCount;
     private final float[] quadPositions;   // pool: 12 floats per quad
     private final int[] quadMeta;          // pool: texture, normalPacked, tintFlag per quad
+    private final int[] quadUvs;           // pool: 4 packed Q1.15 UV words per quad
 
     private ForgeBlockFaceData(AtlasSpriteIndex sprites, Tables tables) {
         this.sprites = sprites;
@@ -109,10 +111,12 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         this.faceTexture = tables.faceTexture;
         this.faceCell = tables.faceCell;
         this.faceTint = tables.faceTint;
+        this.faceGeneral = tables.faceGeneral;
         this.generalOffset = tables.generalOffset;
         this.generalCount = tables.generalCount;
         this.quadPositions = tables.quadPositions;
         this.quadMeta = tables.quadMeta;
+        this.quadUvs = tables.quadUvs;
     }
 
     /** Builds the table from the live registries and the client's baked models. */
@@ -136,14 +140,18 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         tables.allocate();
         List<Float> positions = new ArrayList<>();
         List<Integer> meta = new ArrayList<>();
+        List<Integer> uvs = new ArrayList<>();
+        List<Float> atlasUvs = new ArrayList<>();
+        List<Integer> needsCorrection = new ArrayList<>();
         for (int id = 0; id < tables.size; id++) {
             IBlockState state = states.get(id);
             if (state == null) {
                 tables.air[id] = true;
                 continue;
             }
-            fillRow(tables, sprites, id, state, positions, meta);
+            fillRow(tables, sprites, id, state, positions, meta, uvs, atlasUvs, needsCorrection);
         }
+        correctMisdeclaredSprites(sprites, meta, uvs, atlasUvs, needsCorrection);
         tables.quadPositions = new float[positions.size()];
         for (int i = 0; i < positions.size(); i++) {
             tables.quadPositions[i] = positions.get(i);
@@ -152,11 +160,60 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         for (int i = 0; i < meta.size(); i++) {
             tables.quadMeta[i] = meta.get(i);
         }
+        tables.quadUvs = new int[uvs.size()];
+        for (int i = 0; i < uvs.size(); i++) {
+            tables.quadUvs[i] = uvs.get(i);
+        }
         return new ForgeBlockFaceData(sprites, tables);
     }
 
+    /**
+     * The defensive correction of ruling section 5.2-4, run once the whole table exists (so the
+     * sprite index knows every sprite any quad referenced): a pooled quad whose declared sprite
+     * was missing, degenerate or did not contain its own UV centroid is re-based on the sprite
+     * that actually contains the centroid - both its texture index and its sprite-local UVs.
+     * Quads with no containing sprite keep their provisional (clamped) values.
+     */
+    private static void correctMisdeclaredSprites(AtlasSpriteIndex sprites, List<Integer> meta,
+                                                  List<Integer> uvs, List<Float> atlasUvs,
+                                                  List<Integer> needsCorrection) {
+        for (int poolIndex : needsCorrection) {
+            float centroidU = 0.0f;
+            float centroidV = 0.0f;
+            int finite = 0;
+            for (int c = 0; c < 4; c++) {
+                float u = atlasUvs.get(poolIndex * 8 + c * 2);
+                float v = atlasUvs.get(poolIndex * 8 + c * 2 + 1);
+                if (Float.isFinite(u) && Float.isFinite(v)) {
+                    centroidU += u;
+                    centroidV += v;
+                    finite++;
+                }
+            }
+            if (finite == 0) {
+                continue;
+            }
+            centroidU /= finite;
+            centroidV /= finite;
+            TextureAtlasSprite found = sprites.spriteContaining(centroidU, centroidV);
+            if (found == null) {
+                continue;
+            }
+            meta.set(poolIndex * 3, sprites.indexFor(found));
+            float du = found.getMaxU() - found.getMinU();
+            float dv = found.getMaxV() - found.getMinV();
+            for (int c = 0; c < 4; c++) {
+                float u = atlasUvs.get(poolIndex * 8 + c * 2);
+                float v = atlasUvs.get(poolIndex * 8 + c * 2 + 1);
+                uvs.set(poolIndex * 4 + c, org.soutalab.celtium.core.geometry.GeneralQuad.packUv(
+                        (u - found.getMinU()) / du, (v - found.getMinV()) / dv));
+            }
+        }
+    }
+
     private static void fillRow(Tables t, AtlasSpriteIndex sprites, int id, IBlockState state,
-                                List<Float> positions, List<Integer> meta) {
+                                List<Float> positions, List<Integer> meta, List<Integer> uvs,
+                                List<Float> atlasUvs, List<Integer> needsCorrection) {
         Block block = state.getBlock();
         Material material = state.getMaterial();
         t.air[id] = material == Material.AIR;
@@ -200,15 +257,34 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             return;
         }
         if (t.fullCube[id]) {
+            t.generalOffset[id] = meta.size() / 3;
+            int written = 0;
             for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
                 List<BakedQuad> quads = safeQuads(model, state, EnumFacing.VALUES[dir]);
-                if (!quads.isEmpty()) {
+                if (quads.isEmpty()) {
+                    continue;
+                }
+                if (quads.size() == 1 && hasCanonicalFullSpriteUv(quads.get(0))) {
                     BakedQuad quad = quads.get(0);
                     TextureAtlasSprite sprite = quad.getSprite();
                     t.faceTexture[id * 6 + dir] = sprites.indexFor(sprite);
                     t.faceCell[id * 6 + dir] = sprites.cellFor(sprite);
                     t.faceTint[id * 6 + dir] = quad.getTintIndex() != -1;
+                } else {
+                    // Routing invariant (ruling section 5.3): a face whose UVs are a partial
+                    // rectangle or rotated/flipped - or which has several quads - must not be
+                    // absorbed by the packed axis path; it escapes into the general pool.
+                    t.faceGeneral[id * 6 + dir] = true;
+                    for (BakedQuad quad : quads) {
+                        if (appendQuad(positions, meta, uvs, atlasUvs, needsCorrection, sprites, quad)) {
+                            written++;
+                        }
+                    }
                 }
+            }
+            t.generalCount[id] = written;
+            if (written == 0) {
+                t.generalOffset[id] = 0;
             }
             return;
         }
@@ -221,7 +297,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         t.generalOffset[id] = meta.size() / 3;
         int written = 0;
         for (BakedQuad quad : all) {
-            if (appendQuad(positions, meta, sprites, quad)) {
+            if (appendQuad(positions, meta, uvs, atlasUvs, needsCorrection, sprites, quad)) {
                 written++;
             }
         }
@@ -229,6 +305,72 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (written == 0) {
             t.generalOffset[id] = 0;
         }
+    }
+
+    /** The canonical full-sprite corner assignment, in corner order: (0,0), (0,1), (1,1), (1,0). */
+    private static final float[] CANONICAL_U = {0.0f, 0.0f, 1.0f, 1.0f};
+    private static final float[] CANONICAL_V = {0.0f, 1.0f, 1.0f, 0.0f};
+    private static final float CANONICAL_EPSILON = 1e-4f;
+
+    /**
+     * Whether the quad's UVs are exactly the canonical unrotated full-sprite assignment - the
+     * only UV shape the packed axis path may absorb (ruling section 5.3). A quad with no usable
+     * UV element counts as canonical (there is no partial UV to lose); a quad whose declared
+     * sprite is missing or degenerate does not (its UVs cannot be trusted to the cell path).
+     */
+    private static boolean hasCanonicalFullSpriteUv(BakedQuad quad) {
+        TextureAtlasSprite sprite = quad.getSprite();
+        if (sprite == null) {
+            return false;
+        }
+        float du = sprite.getMaxU() - sprite.getMinU();
+        float dv = sprite.getMaxV() - sprite.getMinV();
+        if (du <= 0.0f || dv <= 0.0f) {
+            return false;
+        }
+        float[] uv = new float[8];
+        if (!extractAtlasUvs(quad, uv)) {
+            return true;
+        }
+        for (int c = 0; c < 4; c++) {
+            float localU = (uv[c * 2] - sprite.getMinU()) / du;
+            float localV = (uv[c * 2 + 1] - sprite.getMinV()) / dv;
+            if (Math.abs(localU - CANONICAL_U[c]) > CANONICAL_EPSILON
+                    || Math.abs(localV - CANONICAL_V[c]) > CANONICAL_EPSILON) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Reads the quad's four corner atlas UVs (8 floats: u, v per corner) from its vertex data,
+     * using the {@code EnumUsage.UV} element with index 0. False when the format carries no
+     * such element, the element is not FLOAT, or the vertex data is too short.
+     */
+    private static boolean extractAtlasUvs(BakedQuad quad, float[] out) {
+        int[] vertexData = quad.getVertexData();
+        VertexFormat format = quad.getFormat();
+        int uvOffset = -1;
+        boolean uvFloat = false;
+        int elementByteOffset = 0;
+        for (VertexFormatElement element : format.getElements()) {
+            if (element.getUsage() == VertexFormatElement.EnumUsage.UV && element.getIndex() == 0) {
+                uvOffset = elementByteOffset / 4;
+                uvFloat = element.getType() == VertexFormatElement.EnumType.FLOAT;
+            }
+            elementByteOffset += element.getSize();
+        }
+        int strideInts = format.getIntegerSize();
+        if (uvOffset < 0 || !uvFloat || vertexData.length < strideInts * 4) {
+            return false;
+        }
+        for (int corner = 0; corner < 4; corner++) {
+            int base = corner * strideInts + uvOffset;
+            out[corner * 2] = Float.intBitsToFloat(vertexData[base]);
+            out[corner * 2 + 1] = Float.intBitsToFloat(vertexData[base + 1]);
+        }
+        return true;
     }
 
     private static int layerOf(IBlockState state) {
@@ -263,8 +405,19 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         }
     }
 
-    /** Appends one baked quad to the pool; false when the vertex format carries no positions. */
-    private static boolean appendQuad(List<Float> positions, List<Integer> meta,
+    /** The centroid tolerance of ruling section 5.2-4, in atlas UV space. */
+    private static final float CENTROID_EPSILON = 1e-3f;
+
+    /**
+     * Appends one baked quad to the pool; false when the vertex format carries no positions.
+     * The quad's corner UVs are extracted, normalised against its sprite and packed Q1.15
+     * (ruling section 5.2). A quad whose sprite is missing/degenerate or does not contain its
+     * own UV centroid is provisionally packed against what it declared and flagged for the
+     * post-build correction ({@link #correctMisdeclaredSprites}); a quad with no usable UV
+     * element gets the canonical full-sprite UV.
+     */
+    private static boolean appendQuad(List<Float> positions, List<Integer> meta, List<Integer> uvs,
+                                      List<Float> atlasUvs, List<Integer> needsCorrection,
                                       AtlasSpriteIndex sprites, BakedQuad quad) {
         int[] vertexData = quad.getVertexData();
         VertexFormat format = quad.getFormat();
@@ -287,6 +440,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (positionOffset < 0 || vertexData.length < strideInts * 4) {
             return false;
         }
+        int poolIndex = meta.size() / 3;
         for (int corner = 0; corner < 4; corner++) {
             int base = corner * strideInts + positionOffset;
             positions.add(Float.intBitsToFloat(vertexData[base]));
@@ -308,6 +462,44 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         meta.add(sprites.indexFor(quad.getSprite()));
         meta.add(normalPacked);
         meta.add(quad.getTintIndex() != -1 ? 1 : 0);
+
+        float[] cornerUv = new float[8];
+        boolean hasUv = extractAtlasUvs(quad, cornerUv);
+        TextureAtlasSprite sprite = quad.getSprite();
+        float du = sprite == null ? 0.0f : sprite.getMaxU() - sprite.getMinU();
+        float dv = sprite == null ? 0.0f : sprite.getMaxV() - sprite.getMinV();
+        boolean spriteUsable = sprite != null && du > 0.0f && dv > 0.0f;
+        if (hasUv) {
+            for (int i = 0; i < 8; i++) {
+                atlasUvs.add(cornerUv[i]);
+            }
+            float centroidU = (cornerUv[0] + cornerUv[2] + cornerUv[4] + cornerUv[6]) / 4.0f;
+            float centroidV = (cornerUv[1] + cornerUv[3] + cornerUv[5] + cornerUv[7]) / 4.0f;
+            boolean centroidInside = spriteUsable
+                    && centroidU >= sprite.getMinU() - CENTROID_EPSILON
+                    && centroidU <= sprite.getMaxU() + CENTROID_EPSILON
+                    && centroidV >= sprite.getMinV() - CENTROID_EPSILON
+                    && centroidV <= sprite.getMaxV() + CENTROID_EPSILON;
+            if (!spriteUsable || !centroidInside) {
+                needsCorrection.add(poolIndex);
+            }
+            for (int c = 0; c < 4; c++) {
+                if (spriteUsable) {
+                    uvs.add(org.soutalab.celtium.core.geometry.GeneralQuad.packUv(
+                            (cornerUv[c * 2] - sprite.getMinU()) / du,
+                            (cornerUv[c * 2 + 1] - sprite.getMinV()) / dv));
+                } else {
+                    uvs.add(org.soutalab.celtium.core.geometry.GeneralQuad.FULL_SPRITE_UV_PACKED[c]);
+                }
+            }
+        } else {
+            for (int i = 0; i < 8; i++) {
+                atlasUvs.add(Float.NaN);
+            }
+            for (int c = 0; c < 4; c++) {
+                uvs.add(org.soutalab.celtium.core.geometry.GeneralQuad.FULL_SPRITE_UV_PACKED[c]);
+            }
+        }
         return true;
     }
 
@@ -356,6 +548,11 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     }
 
     @Override
+    public boolean faceEscapesToGeneral(int state, int dir) {
+        return state >= 0 && state < stateCount && faceGeneral[state * 6 + dir];
+    }
+
+    @Override
     public boolean isLeaves(int state) {
         return state >= 0 && state < stateCount && leaves[state];
     }
@@ -388,6 +585,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         out.normalPacked = quadMeta[poolIndex * 3 + 1];
         out.usesTint = quadMeta[poolIndex * 3 + 2] != 0;
         out.noGreedyWhenPack = noGreedy[state];
+        System.arraycopy(quadUvs, poolIndex * 4, out.uvPacked, 0, 4);
     }
 
     /** Whether any face or general quad of the state takes a tint (the scanner resolves colours only then). */
@@ -426,10 +624,12 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         int[] faceTexture;
         int[] faceCell;
         boolean[] faceTint;
+        boolean[] faceGeneral;
         int[] generalOffset;
         int[] generalCount;
         float[] quadPositions;
         int[] quadMeta;
+        int[] quadUvs;
 
         void allocate() {
             air = new boolean[size];
@@ -444,6 +644,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             faceTexture = new int[size * 6];
             faceCell = new int[size * 6];
             faceTint = new boolean[size * 6];
+            faceGeneral = new boolean[size * 6];
             generalOffset = new int[size];
             generalCount = new int[size];
         }

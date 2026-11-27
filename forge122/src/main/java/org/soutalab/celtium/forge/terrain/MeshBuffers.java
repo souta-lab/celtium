@@ -15,8 +15,9 @@ import java.util.Arrays;
  * Axis quads are stored as their four packed words. When the mesh ran with an auxiliary column
  * (a pack asked for {@code mc_Entity}), a parallel {@code short} per axis quad is stored in the
  * matching {@code aux} arrays; otherwise they stay empty. General quads are stored raw (12
- * position floats + texture/light/normal/flags) and materialise as {@link GeneralQuad} only on
- * demand - the store writes them into slab segments straight from these arrays.
+ * position floats + texture/light/normal/flags + 4 packed UV words, the 80 B contract) and
+ * materialise as {@link GeneralQuad} only on demand - the store writes them into slab segments
+ * straight from these arrays.
  */
 public final class MeshBuffers {
     private final int[][] axisWords = new int[TerrainLayer.COUNT][];
@@ -32,7 +33,7 @@ public final class MeshBuffers {
             axisWords[layer] = new int[256 * 4];
             axisAux[layer] = new short[256];
             generalPositions[layer] = new float[256 * 12];
-            generalMeta[layer] = new int[256 * 4];
+            generalMeta[layer] = new int[256 * 8];
         }
     }
 
@@ -64,18 +65,19 @@ public final class MeshBuffers {
     }
 
     public void addGeneralQuad(int layer, float[] positions, int textureIndex, int lightWord,
-                               int normalPacked, int flags) {
+                               int normalPacked, int flags, int[] uvPacked) {
         int count = generalCounts[layer];
         if ((count + 1) * 12 > generalPositions[layer].length) {
             generalPositions[layer] = Arrays.copyOf(generalPositions[layer], generalPositions[layer].length * 2);
             generalMeta[layer] = Arrays.copyOf(generalMeta[layer], generalMeta[layer].length * 2);
         }
         System.arraycopy(positions, 0, generalPositions[layer], count * 12, 12);
-        int meta = count * 4;
+        int meta = count * 8;
         generalMeta[layer][meta] = textureIndex;
         generalMeta[layer][meta + 1] = lightWord;
         generalMeta[layer][meta + 2] = normalPacked;
         generalMeta[layer][meta + 3] = flags;
+        System.arraycopy(uvPacked, 0, generalMeta[layer], meta + 4, 4);
         generalCounts[layer] = count + 1;
     }
 
@@ -108,9 +110,11 @@ public final class MeshBuffers {
     public GeneralQuad generalQuad(int layer, int i) {
         float[] positions = new float[12];
         System.arraycopy(generalPositions[layer], i * 12, positions, 0, 12);
-        int meta = i * 4;
+        int meta = i * 8;
         int[] m = generalMeta[layer];
-        return new GeneralQuad(positions, m[meta], m[meta + 1], m[meta + 2], m[meta + 3]);
+        int[] uvPacked = new int[4];
+        System.arraycopy(m, meta + 4, uvPacked, 0, 4);
+        return new GeneralQuad(positions, m[meta], m[meta + 1], m[meta + 2], m[meta + 3], uvPacked);
     }
 
     /** One layer's axis quads as a list, in emission order - the store's input shape. */
