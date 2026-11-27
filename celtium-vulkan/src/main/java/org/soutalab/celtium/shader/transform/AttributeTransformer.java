@@ -50,6 +50,19 @@ class AttributeTransformer {
 					? "vec4 iris_MultiTexCoord1;"
 					: "layout(location = 3) in vec4 iris_MultiTexCoord1;");
 				transformer.injectVariable("layout(location = 4) in vec3 iris_Normal;");
+				// Upstream-Iris attribute aliases: packs written against Iris read
+				// vaPosition / vaNormal / vaUV0 / vaColor (Complementary's line
+				// program is the measured case). They alias the iris_ seats at the
+				// same locations, so an unused alias is eliminated by the compiler
+				// and a used one reads the same attribute data.
+				transformer.injectVariable("layout(location = 0) in vec3 vaPosition;");
+				transformer.injectVariable("layout(location = 4) in vec3 vaNormal;");
+				if (!cubeVertex) {
+					transformer.injectVariable("layout(location = 2) in vec2 vaUV0;");
+				}
+				if (parameters.inputs.color()) {
+					transformer.injectVariable("layout(location = 1) in vec4 vaColor;");
+				}
 				if (instancedVertex) {
 					transformer.injectVariable("layout(location = 1) in vec4 iris_Color;");
 					transformer.injectVariable("uniform vec4 iris_ColorModulator;");

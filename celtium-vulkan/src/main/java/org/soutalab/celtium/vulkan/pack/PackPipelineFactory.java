@@ -29,6 +29,7 @@ import org.soutalab.celtium.core.shader.BlendStateSpec;
 import org.soutalab.celtium.vulkan.VulkanContext;
 
 import java.nio.LongBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -140,7 +141,19 @@ final class PackPipelineFactory implements AutoCloseable {
             }
 
             // Vertex input from reflection: attributes in location order, tightly packed.
-            List<SpirvReflection.InterfaceVariable> attributes = vertexInfo.inputs();
+            // Two reflected inputs can share one location (the transform's va*
+            // aliases of the iris_ attribute seats): the vertex input state takes
+            // one description per location, the widest - the narrower shader input
+            // reads the leading components of the same attribute data.
+            List<SpirvReflection.InterfaceVariable> reflected = vertexInfo.inputs();
+            Map<Integer, SpirvReflection.InterfaceVariable> byLocation = new LinkedHashMap<>();
+            for (SpirvReflection.InterfaceVariable attribute : reflected) {
+                SpirvReflection.InterfaceVariable kept = byLocation.get(attribute.location());
+                if (kept == null || attribute.vectorWidth() > kept.vectorWidth()) {
+                    byLocation.put(attribute.location(), attribute);
+                }
+            }
+            List<SpirvReflection.InterfaceVariable> attributes = new ArrayList<>(byLocation.values());
             VkVertexInputAttributeDescription.Buffer attributeDescriptions =
                     VkVertexInputAttributeDescription.calloc(attributes.size(), stack);
             int stride = 0;
