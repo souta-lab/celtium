@@ -253,7 +253,9 @@ public final class Lane1TerrainFrontend {
                 + " auxUsed=" + store.auxUsedBytes()
                 + " refusedUploads=" + refusedUploads
                 + " atlasCells=" + atlasCellsAcross
-                + " texCells=" + textureCellCount;
+                + " texCells=" + textureCellCount
+                + " | " + store.probeSection(-4, 4, 3)
+                + " | " + store.probeSection(0, 4, 0);
     }
 
     // ------------------------------------------------------------------

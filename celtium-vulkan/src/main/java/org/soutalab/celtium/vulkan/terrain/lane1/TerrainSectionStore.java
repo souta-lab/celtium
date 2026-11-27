@@ -286,6 +286,69 @@ public final class TerrainSectionStore {
         return cachedDescriptors;
     }
 
+    // TEMP G1 PROBE17: host-side geometry sanity of one resident section, read back from
+    // the slab spaces exactly as uploaded.
+    public synchronized String probeSection(int sectionX, int sectionY, int sectionZ) {
+        Resident resident = sections.get(sectionKey(sectionX, sectionY, sectionZ));
+        if (resident == null) {
+            return "probe(" + sectionX + "," + sectionY + "," + sectionZ + ")=absent";
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("probe(").append(sectionX).append(',').append(sectionY).append(',')
+                .append(sectionZ).append(") axisOff=").append(resident.desc.axisSlabOffset())
+                .append(" genOff=").append(resident.desc.generalSlabOffset());
+        if (resident.axisBytes > 0L) {
+            java.lang.foreign.MemorySegment seg =
+                    axisSpace.segment(resident.desc.axisSlabOffset(), resident.axisBytes);
+            int count = (int) (resident.axisBytes / PackedAxisQuad.BYTE_SIZE);
+            int maxE = 0;
+            int big = 0;
+            int maxC = 0;
+            for (int i = 0; i < count; i++) {
+                PackedAxisQuad q = PackedAxisQuad.readFrom(seg, (long) i * PackedAxisQuad.BYTE_SIZE);
+                int e = Math.max(q.extentU(), q.extentV());
+                if (e > maxE) {
+                    maxE = e;
+                }
+                if (e > 18) {
+                    big++;
+                }
+                int c = Math.max(q.minX(), Math.max(q.minY(), q.minZ()));
+                if (c > maxC) {
+                    maxC = c;
+                }
+            }
+            out.append(" axisN=").append(count).append(" maxExt=").append(maxE)
+                    .append(" big=").append(big).append(" maxCorner=").append(maxC);
+        }
+        if (resident.generalBytes > 0L) {
+            java.lang.foreign.MemorySegment seg =
+                    generalSpace.segment(resident.desc.generalSlabOffset(), resident.generalBytes);
+            int count = (int) (resident.generalBytes / org.soutalab.celtium.core.geometry.GeneralQuad.BYTE_SIZE);
+            float maxAbs = 0.0f;
+            int wild = 0;
+            for (int i = 0; i < count; i++) {
+                org.soutalab.celtium.core.geometry.GeneralQuad q =
+                        org.soutalab.celtium.core.geometry.GeneralQuad.readFrom(seg,
+                                (long) i * org.soutalab.celtium.core.geometry.GeneralQuad.BYTE_SIZE);
+                for (int c = 0; c < 4; c++) {
+                    float[] vs = {q.cornerX(c), q.cornerY(c), q.cornerZ(c)};
+                    for (float v : vs) {
+                        if (Float.isNaN(v) || Math.abs(v) > maxAbs) {
+                            maxAbs = Math.abs(v);
+                        }
+                        if (Float.isNaN(v) || Math.abs(v) > 34.0f) {
+                            wild++;
+                        }
+                    }
+                }
+            }
+            out.append(" genN=").append(count).append(" maxAbsPos=").append(maxAbs)
+                    .append(" wildPos=").append(wild);
+        }
+        return out.toString();
+    }
+
     /** The residency generation: unchanged while no section was uploaded or removed. */
     public synchronized long generation() {
         return generation;
