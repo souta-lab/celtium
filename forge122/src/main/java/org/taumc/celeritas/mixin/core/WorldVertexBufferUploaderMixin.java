@@ -51,6 +51,8 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** How many batches the compacted layout has been taken from, bounded like the other first-arrival reports. */
     private static int celtium$compactedBatches;
     private static int celtium$compactedDumps;
+    /** Bounded K6 diversion lines (S3-a): the first few one-copy diversions print their class and reasons. */
+    private static int celtium$k6Dumps;
     /** Refusals by "format reason": the family-specific prints did not cover every format. */
     private static final java.util.LinkedHashMap<String, Integer> celtium$refusalsByFormat =
             new java.util.LinkedHashMap<String, Integer>();
@@ -428,6 +430,44 @@ public abstract class WorldVertexBufferUploaderMixin {
                             + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(formatId)
                             + " from=" + stride + " to=" + compactedStride + " vertices=" + vertices
                             + " callers=[" + celtium$drawCallers() + "]");
+                }
+            }
+            // K6 (S3-a): the zero-copy read above is only sound while the accessor's view is
+            // the buffer the vertices were actually written into. A mod that breaks
+            // BufferBuilder by reflection (a swapped or shadowed backing buffer, a reset
+            // field) invalidates that view without changing any signature, so the shape is
+            // probed once per class and per offer, and a broken shape diverts this batch
+            // through the same one-copy scratch the repack uses. A batch the repack already
+            // copied is a copy by construction and skips the probe.
+            if (celtium$repack == null) {
+                boolean celtium$shadow = org.soutalab.celtium.vulkan.lane2.BufferBuilderIntegrityProbe
+                        .hasShadowStorage(buffer.getClass(), BufferBuilder.class);
+                int celtium$probeReasons = org.soutalab.celtium.vulkan.lane2.BufferBuilderIntegrityProbe
+                        .inspectReasons(celtium$shadow, data, vertices, stride,
+                                format != null, celtium$drawMode(buffer));
+                org.soutalab.celtium.vulkan.lane2.BufferBuilderIntegrityProbe.CopyPath celtium$copyPath =
+                        org.soutalab.celtium.vulkan.lane2.BufferBuilderIntegrityProbe.decide(
+                                celtium$shadow, data, vertices, stride,
+                                format != null, celtium$drawMode(buffer));
+                if (celtium$copyPath
+                        == org.soutalab.celtium.vulkan.lane2.BufferBuilderIntegrityProbe.CopyPath.ONE_COPY_SIMD) {
+                    int copyBytes = Math.multiplyExact(vertices, stride);
+                    if (celtium$compactScratch == null || celtium$compactScratch.capacity() < copyBytes) {
+                        if (celtium$compactScratch != null) {
+                            org.lwjgl.system.MemoryUtil.memFree(celtium$compactScratch);
+                        }
+                        celtium$compactScratch = org.lwjgl.system.MemoryUtil.memAlloc(
+                                Math.max(copyBytes, 16 * 1024));
+                    }
+                    long celtium$copyTo = org.lwjgl.system.MemoryUtil.memAddress(celtium$compactScratch);
+                    org.lwjgl.system.MemoryUtil.memCopy(address, celtium$copyTo, copyBytes);
+                    submitAddress = celtium$copyTo;
+                    if (celtium$k6Dumps < 4) {
+                        celtium$k6Dumps++;
+                        System.out.println("[Celtium] CELTIUM_K6 path=ONE_COPY_SIMD class="
+                                + buffer.getClass().getName() + " reasons=" + celtium$probeReasons
+                                + " vertices=" + vertices + " stride=" + stride);
+                    }
                 }
             }
             int mode = celtium$drawMode(buffer);
