@@ -192,6 +192,55 @@ class CeltiumPackCompilerTest {
         }
     }
 
+    /**
+     * Complementary's sky programs compare the pack-declared renderStage uniform
+     * against Iris's MC_RENDER_STAGE_* preprocessor macros under #ifdef IS_IRIS.
+     * The compiler's default environment defines must carry the macros with the
+     * WorldRenderingPhase ordinal values (SUN=4, MOON=5); before they were added
+     * the real ComplementaryReimagined r5.9.3 pack failed with
+     * 'MC_RENDER_STAGE_SUN' : undeclared identifier.
+     */
+    @Test
+    void compilesRenderStageComparisonsWithTheStandardDefines(@TempDir Path tempDir) throws IOException {
+        Path shaders = tempDir.resolve("shaders");
+        Files.createDirectories(shaders);
+        Files.writeString(shaders.resolve("gbuffers_skytextured.vsh"), """
+                #version 120
+                varying vec2 texcoord;
+                void main() {
+                    texcoord = gl_MultiTexCoord0.xy;
+                    gl_Position = ftransform();
+                }
+                """, StandardCharsets.UTF_8);
+        Files.writeString(shaders.resolve("gbuffers_skytextured.fsh"), """
+                #version 120
+                uniform int renderStage;
+                varying vec2 texcoord;
+                void main() {
+                #ifdef IS_IRIS
+                    bool isSun = renderStage == MC_RENDER_STAGE_SUN;
+                    bool isMoon = renderStage == MC_RENDER_STAGE_MOON;
+                #else
+                    bool isSun = false;
+                    bool isMoon = false;
+                #endif
+                    gl_FragColor = vec4(isSun ? 1.0 : 0.0, isMoon ? 1.0 : 0.0, texcoord.x, 1.0);
+                }
+                """, StandardCharsets.UTF_8);
+        Files.writeString(shaders.resolve("final.vsh"), POST_VSH, StandardCharsets.UTF_8);
+        Files.writeString(shaders.resolve("final.fsh"), POST_FSH, StandardCharsets.UTF_8);
+
+        CeltiumPackCompiler compiler = new CeltiumPackCompiler();
+        try (CompiledShaderPack compiled = compiler.compile(
+                shaders, Map.of(), PackCompilerCapabilities.DEFAULT_VULKAN_13)) {
+            assertTrue(compiled.nonTerrainPrograms().programNames().contains("gbuffers_skytextured"));
+        }
+        assertTrue(CeltiumPackCompiler.defaultEnvironmentDefines(PackCompilerCapabilities.DEFAULT_VULKAN_13)
+                .stream().anyMatch(p -> p.getKey().equals("MC_RENDER_STAGE_SUN") && p.getValue().equals("4")));
+        assertTrue(CeltiumPackCompiler.defaultEnvironmentDefines(PackCompilerCapabilities.DEFAULT_VULKAN_13)
+                .stream().anyMatch(p -> p.getKey().equals("MC_RENDER_STAGE_MOON") && p.getValue().equals("5")));
+    }
+
     @Test
     void compilesShadowlessPackWithoutShadowPassOrShadowTargets(@TempDir Path tempDir) throws IOException {
         Path shaders = tempDir.resolve("shaders");

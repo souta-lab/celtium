@@ -338,6 +338,18 @@ public final class CeltiumPackCompiler {
         defines.add(new StringPair("MC_HAND_DEPTH", "0.125"));
         defines.add(new StringPair("IS_IRIS", ""));
         defines.add(new StringPair("CELTIUM_VULKAN", "130"));
+        // Iris's render-stage macros: the values are the WorldRenderingPhase
+        // ordinals, which is what the host feeds into the pack's renderStage
+        // uniform per draw (Complementary's sky programs compare against them).
+        String[] renderStages = {
+                "NONE", "SKY", "SUNSET", "CUSTOM_SKY", "SUN", "MOON", "STARS", "VOID",
+                "TERRAIN_SOLID", "TERRAIN_CUTOUT_MIPPED", "TERRAIN_CUTOUT", "ENTITIES",
+                "BLOCK_ENTITIES", "DESTROY", "OUTLINE", "DEBUG", "HAND_SOLID",
+                "TERRAIN_TRANSLUCENT", "TRIPWIRE", "PARTICLES", "CLOUDS", "RAIN_SNOW",
+                "WORLD_BORDER", "HAND_TRANSLUCENT"};
+        for (int i = 0; i < renderStages.length; i++) {
+            defines.add(new StringPair("MC_RENDER_STAGE_" + renderStages[i], String.valueOf(i)));
+        }
         return defines;
     }
 
