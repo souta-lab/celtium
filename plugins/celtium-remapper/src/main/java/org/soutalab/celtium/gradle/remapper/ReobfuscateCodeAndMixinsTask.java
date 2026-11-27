@@ -2,146 +2,233 @@ package org.soutalab.celtium.gradle.remapper;
 
 import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.extras.ClassAnalysisDescCompleter;
+import net.fabricmc.mappingio.tree.MappingTree;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 import net.fabricmc.tinyremapper.IMappingProvider;
 import net.fabricmc.tinyremapper.OutputConsumerPath;
 import net.fabricmc.tinyremapper.TinyRemapper;
 import net.fabricmc.tinyremapper.extension.mixin.MixinExtension;
+import org.gradle.api.DefaultTask;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.InputFile;
-import org.gradle.api.tasks.InputFiles;
-import org.gradle.api.tasks.Optional;
+import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
-import org.gradle.api.tasks.bundling.Jar;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
-public abstract class ReobfuscateCodeAndMixinsTask extends Jar {
+/**
+ * Reobfuscates one built jar from development names to the names the game ships with.
+ *
+ * <p>The jar the mod is developed against carries readable (deobfuscated) names, while the
+ * Minecraft jar in a real installation uses the obfuscated SRG names. This task rewrites
+ * the mod jar's own classes, and the mixin configuration inside it, from the first naming
+ * to the second, using the TSRG mapping file that the MCP toolchain produces.
+ *
+ * <p>Two properties of the output matter beyond the renaming itself:
+ *
+ * <ul>
+ *   <li>Field mappings in a TSRG v1 file carry no descriptors, so the mapping tree is
+ *       first completed from the deobfuscated Minecraft jar; without that step every
+ *       field would silently keep its development name.</li>
+ *   <li>The finished archive is rewritten into a deterministic byte form (fixed entry
+ *       timestamps, name order, no directory entries), so rebuilding the same sources
+ *       yields the same SHA-256 and an evidence record can name the jar it measured.</li>
+ * </ul>
+ *
+ * <p>The task declares all of its files, so Gradle's up-to-date checking applies as usual.
+ * The conversion itself sits in a static method that knows nothing about Gradle, which is
+ * what the unit tests exercise.
+ */
+public abstract class ReobfuscateCodeAndMixinsTask extends DefaultTask {
+
+    /** The namespace a TSRG file calls its readable side. */
+    private static final String DEVELOPMENT_NAMESPACE = "source";
+
+    /** The namespace a TSRG file calls its shipped side. */
+    private static final String SHIPPED_NAMESPACE = "target";
+
+    /** The jar written against development names. */
     @InputFile
-    public abstract RegularFileProperty getTsrgMappings();
+    public abstract RegularFileProperty getInputJar();
 
+    /** The TSRG mapping file that pairs the two namings. */
     @InputFile
-    public abstract RegularFileProperty getDeobfMinecraftJar();
+    public abstract RegularFileProperty getMappingsFile();
 
-    @Optional
-    @InputFiles
-    public abstract ConfigurableFileCollection getClasspath();
-
+    /** The deobfuscated Minecraft jar, mined for the member descriptors TSRG omits. */
     @InputFile
-    public abstract RegularFileProperty getInput();
+    public abstract RegularFileProperty getMinecraftJar();
 
-    private void remap(File inputJar, File outputJar) throws IOException {
-        // Load TSRG mappings
-        MemoryMappingTree mappingTree = new MemoryMappingTree();
-        Path mappingsPath = getTsrgMappings().getAsFile().get().toPath();
-        MappingReader.read(mappingsPath, mappingTree);
-        ClassAnalysisDescCompleter.process(getDeobfMinecraftJar().getAsFile().get().toPath(), mappingTree.getSrcNamespace(), mappingTree);
+    /** Jars the input's classes were compiled against; the remapper reads, never copies, them. */
+    @Classpath
+    public abstract ConfigurableFileCollection getRemapClasspath();
 
-        IMappingProvider mappings = TinyRemapperMappingsHelper.create(mappingTree, "source", "target");
-        TinyRemapper remapper = TinyRemapper.newRemapper()
-                .extension(new MixinExtension())
-                .withMappings(mappings)
-                .build();
-
-        // Delete the output jar, otherwise we will just update the changed entries and not remove deleted entries.
-        if (outputJar.exists()) {
-            if (!outputJar.delete()) {
-                getLogger().warn("Failed to delete jar {}", outputJar.getAbsolutePath());
-            }
-        }
-
-        // Create output consumer
-        try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(outputJar.toPath()).assumeArchive(true).build()) {
-            outputConsumer.addNonClassFiles(inputJar.toPath()); // optional: copy resources
-
-            // Run remap
-            remapper.readInputs(inputJar.toPath());
-            remapper.readClassPath(getClasspath().getFiles().stream().map(File::toPath).filter(Files::exists).toArray(Path[]::new));
-            remapper.apply(outputConsumer);
-            remapper.finish();
-        }
-    }
-
-    /**
-     * The timestamp every rewritten entry carries: 1980-01-01 00:00 local, the earliest instant a zip's DOS time can
-     * express. Set through {@link java.util.zip.ZipEntry#setTimeLocal} rather than {@code setTime}, because
-     * {@code setTime} converts through the default time zone and the same build would then hash differently on two
-     * machines.
-     */
-    private static final java.time.LocalDateTime FIXED_ENTRY_TIME = java.time.LocalDateTime.of(1980, 1, 1, 0, 0, 0);
-
-    /**
-     * Rewrites the archive tinyremapper produced so the same inputs always give the same bytes.
-     * <p>
-     * Why this exists. This task extends {@code Jar} but overrides {@code copy()}, so the reproducible-archive settings
-     * the build applies to every {@code AbstractArchiveTask} ({@code isPreserveFileTimestamps = false},
-     * {@code isReproducibleFileOrder = true}) never reach the file: {@link OutputConsumerPath} writes the zip itself,
-     * stamping each entry with the build's clock and in whatever order the remapper emitted them. The renderer jar
-     * reproduces byte for byte; the validation fixture did not, so every evidence record's fixture hash changed with
-     * the build and "this run used the jar that was tested" could not be checked from the hash. Measured before this:
-     * two consecutive {@code :forge122:validationRemapJar} runs of one tree produced two different sha256 values.
-     * <p>
-     * The rewrite keeps every entry's bytes and drops only what is not content: directory entries (a jar does not need
-     * them), the per-entry extra fields and the timestamps. Entries are written in name order with the manifest first,
-     * which is the order {@code JarInputStream} expects to find it in.
-     */
-    private void makeReproducible(File jar) throws IOException {
-        Path source = jar.toPath();
-        Path rewritten = source.resolveSibling(source.getFileName() + ".reproducible");
-        java.util.TreeMap<String, byte[]> entries = new java.util.TreeMap<String, byte[]>();
-        byte[] manifest = null;
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(jar)) {
-            java.util.Enumeration<? extends java.util.zip.ZipEntry> names = zip.entries();
-            while (names.hasMoreElements()) {
-                java.util.zip.ZipEntry entry = names.nextElement();
-                if (entry.isDirectory()) {
-                    continue;
-                }
-                byte[] bytes;
-                try (java.io.InputStream in = zip.getInputStream(entry)) {
-                    bytes = in.readAllBytes();
-                }
-                if ("META-INF/MANIFEST.MF".equalsIgnoreCase(entry.getName())) {
-                    manifest = bytes;
-                } else {
-                    entries.put(entry.getName(), bytes);
-                }
-            }
-        }
-        try (java.util.zip.ZipOutputStream out =
-                     new java.util.zip.ZipOutputStream(Files.newOutputStream(rewritten))) {
-            if (manifest != null) {
-                writeEntry(out, "META-INF/MANIFEST.MF", manifest);
-            }
-            for (java.util.Map.Entry<String, byte[]> entry : entries.entrySet()) {
-                writeEntry(out, entry.getKey(), entry.getValue());
-            }
-        }
-        Files.move(rewritten, source, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-    }
-
-    private static void writeEntry(java.util.zip.ZipOutputStream out, String name, byte[] bytes) throws IOException {
-        java.util.zip.ZipEntry entry = new java.util.zip.ZipEntry(name);
-        entry.setTimeLocal(FIXED_ENTRY_TIME);
-        out.putNextEntry(entry);
-        out.write(bytes);
-        out.closeEntry();
-    }
+    /** Where the reobfuscated jar is written. */
+    @OutputFile
+    public abstract RegularFileProperty getOutputJar();
 
     @TaskAction
-    @Override
-    public void copy() {
+    public void remap() {
+        List<Path> classpath = new ArrayList<>();
+        for (File entry : getRemapClasspath().getFiles()) {
+            if (entry.exists()) {
+                classpath.add(entry.toPath());
+            }
+        }
         try {
-            File output = getArchiveFile().get().getAsFile();
-            remap(getInput().getAsFile().get(), output);
-            makeReproducible(output);
+            remapAndNormalize(
+                    getInputJar().get().getAsFile().toPath(),
+                    getMappingsFile().get().getAsFile().toPath(),
+                    getMinecraftJar().get().getAsFile().toPath(),
+                    classpath,
+                    getOutputJar().get().getAsFile().toPath());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Runs the whole conversion: read the mappings, rename the jar's contents, then put
+     * the resulting archive into its deterministic form.
+     */
+    static void remapAndNormalize(Path inputJar, Path mappingsFile, Path minecraftJar,
+                                  List<Path> classpath, Path outputJar) throws IOException {
+        MemoryMappingTree tree = new MemoryMappingTree();
+        MappingReader.read(mappingsFile, tree);
+        // TSRG v1 records no field descriptors. Recover them from the Minecraft jar's own
+        // classes, or fields fall out of the mapping entirely.
+        ClassAnalysisDescCompleter.process(minecraftJar, DEVELOPMENT_NAMESPACE, tree);
+
+        TinyRemapper remapper = TinyRemapper.newRemapper()
+                .extension(new MixinExtension())
+                .withMappings(providerFor(tree))
+                .build();
+        try {
+            // The output consumer updates an existing archive in place; a stale file would
+            // keep entries that the input no longer has.
+            Files.deleteIfExists(outputJar);
+            try (OutputConsumerPath consumer =
+                         new OutputConsumerPath.Builder(outputJar).assumeArchive(true).build()) {
+                consumer.addNonClassFiles(inputJar);
+                remapper.readInputs(inputJar);
+                if (!classpath.isEmpty()) {
+                    remapper.readClassPath(classpath.toArray(new Path[0]));
+                }
+                remapper.apply(consumer);
+            }
+        } finally {
+            remapper.finish();
+        }
+        makeDeterministic(outputJar);
+    }
+
+    /**
+     * Feeds the mapping tree to tiny-remapper. Members are keyed by their development
+     * (name, descriptor) pair, because that is the form the input jar carries; a class
+     * without a shipped name keeps its development name.
+     */
+    private static IMappingProvider providerFor(MemoryMappingTree tree) {
+        return acceptor -> {
+            for (MappingTree.ClassMapping cls : tree.getClasses()) {
+                String fromClass = cls.getName(DEVELOPMENT_NAMESPACE);
+                String toClass = cls.getName(SHIPPED_NAMESPACE);
+                acceptor.acceptClass(fromClass, toClass != null ? toClass : fromClass);
+                for (MappingTree.FieldMapping field : cls.getFields()) {
+                    String fromDesc = field.getDesc(DEVELOPMENT_NAMESPACE);
+                    String toName = field.getName(SHIPPED_NAMESPACE);
+                    if (fromDesc == null || toName == null) {
+                        continue;
+                    }
+                    acceptor.acceptField(
+                            new IMappingProvider.Member(fromClass, field.getName(DEVELOPMENT_NAMESPACE), fromDesc),
+                            toName);
+                }
+                for (MappingTree.MethodMapping method : cls.getMethods()) {
+                    String fromDesc = method.getDesc(DEVELOPMENT_NAMESPACE);
+                    String toName = method.getName(SHIPPED_NAMESPACE);
+                    if (fromDesc == null || toName == null) {
+                        continue;
+                    }
+                    acceptor.acceptMethod(
+                            new IMappingProvider.Member(fromClass, method.getName(DEVELOPMENT_NAMESPACE), fromDesc),
+                            toName);
+                }
+            }
+        };
+    }
+
+    /**
+     * Rewrites an archive so that its bytes depend only on its contents.
+     *
+     * <p>The remapper stamps each entry with the wall clock and emits entries in its own
+     * working order, so two builds of the same sources hash differently. This pass keeps
+     * every entry's bytes untouched and drops everything that is not content: timestamps
+     * are pinned to the earliest instant a zip can express, directory entries and per-entry
+     * extra fields disappear, and the entries are laid out with the manifest first and the
+     * rest in name order. Compression is whatever {@link ZipOutputStream} does by default.
+     * The rewrite goes to a sibling file first and is then moved over the original, so a
+     * failure cannot leave a half-written archive behind.
+     */
+    private static void makeDeterministic(Path archive) throws IOException {
+        byte[] manifest = null;
+        Map<String, byte[]> entries = new TreeMap<>();
+        try (ZipFile zip = new ZipFile(archive.toFile())) {
+            Enumeration<? extends ZipEntry> names = zip.entries();
+            while (names.hasMoreElements()) {
+                ZipEntry entry = names.nextElement();
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                byte[] content;
+                try (InputStream in = zip.getInputStream(entry)) {
+                    content = in.readAllBytes();
+                }
+                if (entry.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                    manifest = content;
+                } else {
+                    // A repeated name overwrites, matching how a reader sees the archive:
+                    // the last entry with a given name is the one that takes effect.
+                    entries.put(entry.getName(), content);
+                }
+            }
+        }
+
+        Path rewritten = archive.resolveSibling(archive.getFileName() + ".reproducible");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(rewritten))) {
+            if (manifest != null) {
+                writeEntry(out, "META-INF/MANIFEST.MF", manifest);
+            }
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                writeEntry(out, entry.getKey(), entry.getValue());
+            }
+        }
+        Files.move(rewritten, archive, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static void writeEntry(ZipOutputStream out, String name, byte[] content) throws IOException {
+        ZipEntry entry = new ZipEntry(name);
+        // setTimeLocal, not setTime: setTime converts through the machine's default time
+        // zone, so the same build would stamp different bytes on differently zoned machines.
+        entry.setTimeLocal(LocalDateTime.of(1980, 1, 1, 0, 0, 0));
+        out.putNextEntry(entry);
+        out.write(content);
+        out.closeEntry();
     }
 }

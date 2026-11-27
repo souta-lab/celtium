@@ -1,7 +1,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.gtnewhorizons.retrofuturagradle.mcp.JSTTransformerTask
 import com.gtnewhorizons.retrofuturagradle.modutils.ModUtils
-import org.soutalab.celtium.gradle.remapper.ShadowHelper
 import org.soutalab.celtium.gradle.remapper.ReobfuscateCodeAndMixinsTask
 
 plugins {
@@ -214,27 +213,38 @@ tasks.named("reobfJar").configure {
 }
 
 tasks.register<ReobfuscateCodeAndMixinsTask>("celtiumRemapJar") {
-    tsrgMappings = mcpTasks.srgFile("mcp-srg.srg")
-    deobfMinecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
-    classpath = sourceSets.main.get().compileClasspath
-    archiveBaseName.set(base.archivesName)
-    archiveClassifier.set("reobf")
-    input = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    mappingsFile = mcpTasks.srgFile("mcp-srg.srg")
+    minecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
+    remapClasspath = sourceSets.main.get().compileClasspath
+    inputJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    // The name the Jar-based predecessor produced for this task: base name, project version, "reobf" classifier.
+    outputJar.set(layout.buildDirectory.file("libs/${base.archivesName.get()}-${project.version}-reobf.jar"))
     dependsOn(mcpTasks.taskGenerateForgeSrgMappings)
 }
 
-ShadowHelper.createShadowRemapJar(project, "celtiumRemapJar")
+// The stock shadowJar must not embed anything; the deliverable is shadowRemapJar below.
+tasks.named<ShadowJar>("shadowJar") {
+    configurations.set(listOf())
+}
 
-tasks.named<ShadowJar>("shadowRemapJar") {
+tasks.register<ShadowJar>("shadowRemapJar") {
+    archiveClassifier.set("")
+    // What gets embedded is modEmbedDependencies alone. (A retired helper used to point this at the "shadow"
+    // configuration first and this block then replaced it; only the replacement ever took effect.)
     configurations.set(listOf(modEmbedDependencies))
     // The embedded module jars are inputs in their own right. Without this the task reported UP-TO-DATE after a module
     // had been rebuilt, so a leg could run a jar whose embedded classes predate the change - measured: the packaged jar's
     // hash did not move across a shaderpack fix, and three separate rounds verified their fixes offline because of it.
     inputs.files(modEmbedDependencies)
-    exclude("module-info.class", "**/module-info.class")
+    from(zipTree(tasks.named<ReobfuscateCodeAndMixinsTask>("celtiumRemapJar").flatMap { it.outputJar }))
+    manifest.inheritFrom(tasks.named<Jar>("jar").get().manifest)
+    relocate("org.joml", "org.soutalab.celtium.impl.shadow.joml")
     relocate("org.anarres.cpp", "org.soutalab.celtium.impl.shadow.jcpp")
     relocate("org.antlr", "org.soutalab.celtium.impl.shadow.antlr")
     relocate("org.taumc.glsl", "org.soutalab.celtium.impl.shadow.glsl")
+    exclude("module-info.class", "**/module-info.class")
+    mergeServiceFiles()
+    from("COPYING", "COPYING.LESSER", "README.md")
 }
 
 tasks.named<JSTTransformerTask>("applyJST") {
@@ -379,12 +389,12 @@ val validationJar = tasks.register<Jar>("validationJar") {
     archiveClassifier.set("dev")
 }
 tasks.register<ReobfuscateCodeAndMixinsTask>("validationRemapJar") {
-    tsrgMappings = mcpTasks.srgFile("mcp-srg.srg")
-    deobfMinecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
-    classpath = validation.compileClasspath
-    archiveBaseName.set("celtium-validation-client")
-    archiveClassifier.set("")
-    input = validationJar.flatMap { it.archiveFile }
+    mappingsFile = mcpTasks.srgFile("mcp-srg.srg")
+    minecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
+    remapClasspath = validation.compileClasspath
+    inputJar = validationJar.flatMap { it.archiveFile }
+    // The name the Jar-based predecessor produced for this task: base name and project version, no classifier.
+    outputJar.set(layout.buildDirectory.file("libs/celtium-validation-client-${project.version}.jar"))
     dependsOn(mcpTasks.taskGenerateForgeSrgMappings)
 }
 

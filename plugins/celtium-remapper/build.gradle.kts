@@ -9,9 +9,15 @@ dependencies {
     // module-info in the LWJGL 3.4.1 jar on the remap classpath). The retired buildSrc used to carry this
     // version on the build classpath and silently upgraded the plugin's copy; now the plugin carries it.
     implementation("org.ow2.asm:asm:9.10.1")
-    implementation("com.gradleup.shadow:shadow-gradle-plugin:9.6.1")
     implementation("net.fabricmc:mapping-io:0.7.1")
     implementation("net.fabricmc:mapping-io-extras:0.7.1")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 repositories {
