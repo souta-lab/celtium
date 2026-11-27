@@ -1518,8 +1518,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private void celtium$lane1PrepareFrame(
             org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend,
             float[] projection, float[] modelView, double cameraX, double cameraY, double cameraZ) {
-        Matrix4f proj = new Matrix4f().set(java.nio.FloatBuffer.wrap(projection));
-        Matrix4f mv = new Matrix4f().set(java.nio.FloatBuffer.wrap(modelView));
+        // The shadow JOML's buffer read goes through Unsafe and needs a direct buffer; the
+        // driver's matrices arrive as heap float[], so they are set element-wise instead
+        // (column-major, the same order the array carries). FloatBuffer.wrap on a heap
+        // array segfaulted in MemUtilUnsafe the first time this seat was reached.
+        Matrix4f proj = new Matrix4f().set(
+                projection[0], projection[1], projection[2], projection[3],
+                projection[4], projection[5], projection[6], projection[7],
+                projection[8], projection[9], projection[10], projection[11],
+                projection[12], projection[13], projection[14], projection[15]);
+        Matrix4f mv = new Matrix4f().set(
+                modelView[0], modelView[1], modelView[2], modelView[3],
+                modelView[4], modelView[5], modelView[6], modelView[7],
+                modelView[8], modelView[9], modelView[10], modelView[11],
+                modelView[12], modelView[13], modelView[14], modelView[15]);
         Matrix4f full = new Matrix4f(vulkanProjection(proj)).mul(mv);
         float[][] rows = {
                 {full.m00(), full.m10(), full.m20(), full.m30()},
