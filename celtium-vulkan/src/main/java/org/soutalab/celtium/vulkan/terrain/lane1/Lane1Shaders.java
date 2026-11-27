@@ -272,8 +272,7 @@ public final class Lane1Shaders {
                 // The lightmap image's axes run (u = sky, v = block) as stored - measured
                 // at Gate G1 by displaying the bound image: brightness grows along U and
                 // peaks at (1, 0). fragLightMap carries (block, sky), so sample swapped.
-                // TEMP G1 BISECT12: left half samples .xy, right half .yx.
-                vec3 light = texture(lightMap, gl_FragCoord.x < 640.0 ? fragLightMap.xy : fragLightMap.yx).rgb;
+                vec3 light = texture(lightMap, fragLightMap.yx).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {

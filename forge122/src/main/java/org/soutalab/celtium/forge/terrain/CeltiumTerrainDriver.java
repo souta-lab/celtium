@@ -120,6 +120,36 @@ public final class CeltiumTerrainDriver {
             }
             lines.add(probe.toString());
         }
+        if (faceData != null && world != null && Minecraft.getMinecraft().player != null) {
+            // TEMP G1 PROBE2: fresh-snapshot light histogram for the player's section.
+            try {
+                net.minecraft.entity.player.EntityPlayer player = Minecraft.getMinecraft().player;
+                int sx = ((int) Math.floor(player.posX)) >> 4;
+                int sy = ((int) Math.floor(player.posY)) >> 4;
+                int sz = ((int) Math.floor(player.posZ)) >> 4;
+                WorldSectionSnapshot snap = new WorldSectionSnapshot();
+                ForgeSectionScanner.fill(snap, world, faceData, fluids, sx, sy, sz);
+                int sky15 = 0, skyMid = 0, sky0 = 0, blockPos = 0, nonAir = 0;
+                for (int y = 1; y <= WorldSectionSnapshot.INNER; y++) {
+                    for (int z = 1; z <= WorldSectionSnapshot.INNER; z++) {
+                        for (int x = 1; x <= WorldSectionSnapshot.INNER; x++) {
+                            int idx = WorldSectionSnapshot.index(x, y, z);
+                            if (snap.stateAt(idx) != 0) {
+                                nonAir++;
+                            }
+                            int sky = snap.skyLightAt(idx);
+                            if (sky >= 15) { sky15++; } else if (sky == 0) { sky0++; } else { skyMid++; }
+                            if (snap.blockLightAt(idx) > 0) { blockPos++; }
+                        }
+                    }
+                }
+                lines.add("lightProbe section=" + sx + "," + sy + "," + sz
+                        + " sky15=" + sky15 + " skyMid=" + skyMid + " sky0=" + sky0
+                        + " blockPos=" + blockPos + " nonAir=" + nonAir);
+            } catch (Throwable t) {
+                lines.add("lightProbe failed: " + t);
+            }
+        }
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
