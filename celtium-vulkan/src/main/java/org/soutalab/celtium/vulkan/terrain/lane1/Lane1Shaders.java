@@ -260,9 +260,6 @@ public final class Lane1Shaders {
             layout(location = 4) in vec3 fragDynamicLight;
             layout(location = 0) out vec4 outColor;
             void main() {
-                // TEMP G1 BISECT31: the sky channel exactly as the vertex delivered it.
-                outColor = vec4(vec3(fragLightMap.y), 1.0);
-                return;
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);

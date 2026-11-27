@@ -69,6 +69,12 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> dirty = new HashSet<>();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
     private final Set<Long> awaitingLight = new HashSet<>();
+    // TEMP G1 PROBE19 state.
+    static final java.util.concurrent.atomic.AtomicLongArray HIST =
+            new java.util.concurrent.atomic.AtomicLongArray(16);
+    static final java.util.concurrent.atomic.AtomicLongArray GHIST =
+            new java.util.concurrent.atomic.AtomicLongArray(16);
+
     // TEMP G1 PROBE15 state.
     static final java.util.Set<Long> RELIT = new java.util.HashSet<>();
 
@@ -136,6 +142,7 @@ public final class CeltiumTerrainDriver {
         }
         lines.add("drainLight axisSky15=" + DRAIN_SKY15.get() + " axisTotal=" + DRAIN_TOTAL.get()
                 + " axisDark=" + DRAIN_DARK.get());
+        lines.add("hist443 axis=" + HIST + " generalSky=" + GHIST);
         // TEMP G1 PROBE16: for the top faces of solid cells in section (-4,4,3), compare
         // the flat face-cell combined light against vanilla's AO corner blend (the mean
         // of getCombinedLight at the face cell and the three cells diagonally across
@@ -639,6 +646,19 @@ public final class CeltiumTerrainDriver {
                 }
             }
             long k = entry.getKey();
+            // TEMP G1 PROBE19: sky histogram of one blob section's axis output.
+            if (keyX(k) == -4 && keyY(k) == 4 && keyZ(k) == 3) {
+                for (int layer = 0; layer < 3; layer++) {
+                    for (org.soutalab.celtium.core.geometry.PackedAxisQuad q
+                            : buffers.axisLayerList(layer)) {
+                        HIST.incrementAndGet(q.skyLight());
+                    }
+                    for (org.soutalab.celtium.core.geometry.GeneralQuad q
+                            : buffers.generalLayerList(layer)) {
+                        GHIST.incrementAndGet((q.lightWord() & 0xFF) / 17);
+                    }
+                }
+            }
             try {
                 if (present.contains(k)) {
                     backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
