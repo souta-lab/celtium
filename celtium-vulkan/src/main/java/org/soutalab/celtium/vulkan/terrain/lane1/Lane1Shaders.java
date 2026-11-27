@@ -128,6 +128,7 @@ public final class Lane1Shaders {
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
+            layout(location = 6) out vec3 fragSectionDbg;
             const vec2 CORNERS[6] = vec2[](vec2(0,0), vec2(1,0), vec2(0,1), vec2(0,1), vec2(1,0), vec2(1,1));
             vec3 evaluateLights(vec3 worldPos) {
                 ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin.xyz)) / 16.0));
@@ -172,6 +173,7 @@ public final class Lane1Shaders {
                 fragColor = vec4(tint * shade, 1.0);
                 fragLightMap = vec2(float((q.z >> 20) & 15u), float((q.z >> 16) & 15u)) / 15.0;
                 fragWorldPos = worldPos;
+                fragSectionDbg = vec3(d.section);
                 // V2-5: the vertex stage evaluates the cluster's dynamic lights (findLSB walk).
                 fragDynamicLight = evaluateLights(worldPos + vec3(0.5));
             }
@@ -203,6 +205,7 @@ public final class Lane1Shaders {
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
+            layout(location = 6) out vec3 fragSectionDbg;
             const int CORNER_INDEX[6] = int[](0, 1, 2, 2, 1, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
@@ -234,6 +237,7 @@ public final class Lane1Shaders {
                 int lightWord = floatBitsToInt(generalWords[wordBase + 13u]);
                 fragLightMap = vec2(float((lightWord >> 8) & 255), float(lightWord & 255)) / 255.0;
                 fragWorldPos = worldPos;
+                fragSectionDbg = vec3(d.section);
                 fragDynamicLight = vec3(0.0);
             }
             """;
@@ -258,8 +262,15 @@ public final class Lane1Shaders {
             layout(location = 2) in vec2 fragLightMap;
             layout(location = 3) in vec3 fragWorldPos;
             layout(location = 4) in vec3 fragDynamicLight;
+            layout(location = 6) in vec3 fragSectionDbg;
             layout(location = 0) out vec4 outColor;
             void main() {
+                // TEMP G1 BISECT30: colour by section identity.
+                vec3 h = fract(sin(vec3(dot(fragSectionDbg, vec3(12.9898, 78.233, 37.719)),
+                        dot(fragSectionDbg, vec3(26.651, 14.317, 83.117)),
+                        dot(fragSectionDbg, vec3(49.317, 91.113, 5.731)))) * 43758.5453);
+                outColor = vec4(h * 0.85 + 0.15, 1.0);
+                return;
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
