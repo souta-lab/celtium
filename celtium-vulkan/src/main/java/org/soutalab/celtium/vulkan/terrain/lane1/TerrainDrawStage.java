@@ -172,8 +172,10 @@ public final class TerrainDrawStage implements PackTerrainDriver {
         if (groupStreams) {
             commands.addAll(generalCommands);
         }
-        lastCommands = List.copyOf(commands);
-        lastVisible = cachedVisible;
+        if (layer == 0 && !kind.isShadow()) {
+            lastCommands = List.copyOf(commands);
+            lastVisible = cachedVisible;
+        }
         cmd.beginRendering(targets);
         try {
             cmd.bindTerrainProgram(program);
