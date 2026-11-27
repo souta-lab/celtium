@@ -57,6 +57,7 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     // first version of this stage re-ran the full cull + a cloning range lookup for every
     // section on every layer (2,902 sections x 3 layers per frame at Gate G1).
     private FrustumPlanes cachedFrustum;
+    private CameraPose cachedPose;
     private boolean cachedShadow;
     private long cachedGeneration = -1L;
     private List<SectionDesc> cachedVisible = List.of();
@@ -91,15 +92,20 @@ public final class TerrainDrawStage implements PackTerrainDriver {
         int layer = layerOf(kind);
         TerrainSectionStore store = world.store();
         long generation = store.generation();
+        // The published frustum planes are camera-relative, so the cull test needs the view's
+        // pose to shift section AABBs by the camera origin (NEON-G1-DEPTH-RULING defect #1).
+        // The pose is part of the cache key: a reused FrustumPlanes instance must not pin a
+        // stale visible set after the camera moves.
+        CameraPose pose = kind.isShadow() ? world.shadowPose() : world.mainPose();
         if (cachedFrustum != frustum || cachedShadow != kind.isShadow()
-                || cachedGeneration != generation) {
+                || cachedGeneration != generation || !java.util.Objects.equals(pose, cachedPose)) {
             List<SectionDesc> descriptors = store.descriptors();
             List<SectionDesc> visible = new ArrayList<>();
             List<TerrainSectionStore.LayerRange[]> ranges = new ArrayList<>();
             List<Integer> slots = new ArrayList<>();
             for (int slot = 0; slot < descriptors.size(); slot++) {
                 SectionDesc desc = descriptors.get(slot);
-                if (!TerrainCullStage.sectionVisible(frustum, desc)) {
+                if (!TerrainCullStage.sectionVisible(frustum, pose, desc)) {
                     continue;
                 }
                 TerrainSectionStore.LayerRange[] layerRanges = store.layerRangesRef(
@@ -112,6 +118,7 @@ public final class TerrainDrawStage implements PackTerrainDriver {
                 slots.add(Integer.valueOf(slot));
             }
             cachedFrustum = frustum;
+            cachedPose = pose;
             cachedShadow = kind.isShadow();
             cachedGeneration = generation;
             cachedVisible = visible;

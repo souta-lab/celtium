@@ -1,5 +1,6 @@
 package org.soutalab.celtium.vulkan.terrain.lane1;
 
+import org.soutalab.celtium.core.frame.CameraPose;
 import org.soutalab.celtium.core.frame.FrustumPlanes;
 import org.soutalab.celtium.core.geometry.SectionDesc;
 
@@ -27,21 +28,37 @@ public final class TerrainCullStage {
     }
 
     /** Sections whose 16-cubed AABB is not fully outside any frustum plane, in descriptor order. */
-    public List<SectionDesc> visibleSections(FrustumPlanes frustum) {
+    public List<SectionDesc> visibleSections(FrustumPlanes frustum, CameraPose pose) {
         List<SectionDesc> visible = new ArrayList<>();
         for (SectionDesc desc : world.store().descriptors()) {
-            if (sectionVisible(frustum, desc)) {
+            if (sectionVisible(frustum, pose, desc)) {
                 visible.add(desc);
             }
         }
         return visible;
     }
 
-    /** Conservative AABB/frustum test: culled only when every corner is outside one plane. */
-    public static boolean sectionVisible(FrustumPlanes frustum, SectionDesc desc) {
-        double minX = desc.sectionX() * 16.0;
-        double minY = desc.sectionY() * 16.0;
-        double minZ = desc.sectionZ() * 16.0;
+    /**
+     * Origin-relative convenience form, kept for tests and diagnostics that build their frustum
+     * in world space. Production callers must use {@link #visibleSections(FrustumPlanes,
+     * CameraPose)}: the frustums the backend publishes are camera-relative.
+     */
+    public List<SectionDesc> visibleSections(FrustumPlanes frustum) {
+        return visibleSections(frustum, new CameraPose(0.0, 0.0, 0.0, 0.0f, 0.0f));
+    }
+
+    /**
+     * Conservative AABB/frustum test: culled only when every corner is outside one plane.
+     * The frustum planes the backend publishes are camera-relative (extracted from a
+     * translation-free view matrix), so the section's world AABB is first shifted by the
+     * camera origin in double precision; testing world coordinates against those planes
+     * directly pins the frustum apex at the world origin and culls the surface in front of
+     * a raised camera (NEON-G1-DEPTH-RULING-2026-11-28 defect #1).
+     */
+    public static boolean sectionVisible(FrustumPlanes frustum, CameraPose pose, SectionDesc desc) {
+        double minX = desc.sectionX() * 16.0 - pose.x();
+        double minY = desc.sectionY() * 16.0 - pose.y();
+        double minZ = desc.sectionZ() * 16.0 - pose.z();
         double maxX = minX + 16.0;
         double maxY = minY + 16.0;
         double maxZ = minZ + 16.0;
@@ -61,6 +78,14 @@ public final class TerrainCullStage {
             }
         }
         return true;
+    }
+
+    /**
+     * Origin-relative convenience form of {@link #sectionVisible(FrustumPlanes, CameraPose,
+     * SectionDesc)} for world-space test frustums. Production callers must pass the pose.
+     */
+    public static boolean sectionVisible(FrustumPlanes frustum, SectionDesc desc) {
+        return sectionVisible(frustum, new CameraPose(0.0, 0.0, 0.0, 0.0f, 0.0f), desc);
     }
 
     /**

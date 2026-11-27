@@ -1517,8 +1517,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
-     * Publishes one frame's Lane 1 view state: the combined matrix for the frustum planes (world
-     * space), the translation-free view-projection the vertex shader applies after subtracting the
+     * Publishes one frame's Lane 1 view state: the combined matrix for the frustum planes
+     * (camera-relative space), the translation-free view-projection the vertex shader applies after subtracting the
      * camera position itself, the dynamic lights gathered through the adopted service, and the
      * immediate path's fog state.
      */

@@ -155,7 +155,7 @@ public final class Lane1Shaders {
                 uint extentV = ((q.y >> 6) & 63u) + 1u;
                 uint textureIndex = q.y >> 12;
                 vec3 local = minCorner;
-                if (axis == 0u) { local.y += corner.x * float(extentU); local.z += corner.y * float(extentV); }
+                if (axis == 0u) { local.z += corner.x * float(extentU); local.y += corner.y * float(extentV); }
                 else if (axis == 1u) { local.x += corner.x * float(extentU); local.z += corner.y * float(extentV); }
                 else { local.x += corner.x * float(extentU); local.y += corner.y * float(extentV); }
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
@@ -203,7 +203,7 @@ public final class Lane1Shaders {
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
-            const int CORNER_INDEX[6] = int[](0, 1, 2, 2, 1, 3);
+            const int CORNER_INDEX[6] = int[](0, 1, 2, 0, 2, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
                 int corner = CORNER_INDEX[gl_VertexIndex % 6];
@@ -225,7 +225,8 @@ public final class Lane1Shaders {
                 fragCell = cell;
                 // Just inside the sprite's far edge, so the fragment's fract() keeps the edge
                 // column instead of wrapping to the sprite's first column.
-                fragLocalUv = vec2(float(corner & 1), float((corner >> 1) & 1)) * 0.99999;
+                const vec2 GEN_UV[4] = vec2[](vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0));
+                fragLocalUv = GEN_UV[corner] * 0.99999;
                 int flags = floatBitsToInt(generalWords[wordBase + 15u]);
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
