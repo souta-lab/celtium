@@ -91,10 +91,14 @@ public final class ForgeSectionScanner {
                     }
                     IBlockState state = storage.get(lx, ly, lz);
                     int id = Block.BLOCK_STATE_IDS.get(state);
-                    int blockLight = storage.getBlockLightArray() == null
-                            ? 0 : storage.getBlockLightArray().get(lx, ly, lz);
-                    int skyLight = storage.getSkyLightArray() == null
-                            ? 0 : storage.getSkyLightArray().get(lx, ly, lz);
+                    // The chunk's own light read: the same rule World.getCombinedLight
+                    // delegates to, without the per-cell chunk-map lookup.
+                    pos.setPos(wx, wy, wz);
+                    Chunk chunk = chunks[cx][cz];
+                    int blockLight = chunk == null ? 0
+                            : chunk.getLightFor(net.minecraft.world.EnumSkyBlock.BLOCK, pos);
+                    int skyLight = chunk == null ? 15
+                            : chunk.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, pos);
                     int tint = WorldSectionSnapshot.NO_TINT;
                     if (table.stateUsesTint(id)) {
                         pos.setPos(wx, wy, wz);
