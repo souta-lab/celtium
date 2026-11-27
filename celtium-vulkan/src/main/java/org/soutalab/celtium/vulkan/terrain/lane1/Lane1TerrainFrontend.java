@@ -85,7 +85,7 @@ public final class Lane1TerrainFrontend {
     /** DrawPush: mat4 (64) + vec4 cameraPos (64) + ivec4 gridOrigin (80) + lightCount/pads (96). */
     private static final int PUSH_BYTES = 112;
     /** FogBlock: vec4 fogColor (0) + vec3 camera (16) + start (28) + end (32) + density (36) + mode (40) + cutoff (44). */
-    private static final int FOG_BYTES = 48;
+    private static final int FOG_BYTES = 64;
     /** Texture-cell table capacity: one uvec2 (cellU, cellV) per sprite texture index. */
     private static final int MAX_TEXTURE_CELLS = 8192;
     private static final long TEXTURE_CELL_BYTES = (long) MAX_TEXTURE_CELLS * 8L;
@@ -310,6 +310,7 @@ public final class Lane1TerrainFrontend {
             fog.set(ValueLayout.JAVA_FLOAT, 36L, fogDensity);
             fog.set(ValueLayout.JAVA_INT, 40L, fogMode);
             fog.set(ValueLayout.JAVA_FLOAT, 44L, alphaCutoff(kind));
+            fog.set(ValueLayout.JAVA_FLOAT, 48L, atlasCellsAcross);
         }
     }
 

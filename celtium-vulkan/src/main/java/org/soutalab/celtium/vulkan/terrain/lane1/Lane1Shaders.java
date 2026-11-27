@@ -122,11 +122,12 @@ public final class Lane1Shaders {
                 int textureCellCount;
                 int pushPad2;
             } pc;
-            layout(location = 0) out vec2 fragUv;
+            layout(location = 0) out vec2 fragCell;
             layout(location = 1) out vec4 fragColor;
             layout(location = 2) out vec2 fragLightMap;
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
+            layout(location = 5) out vec2 fragLocalUv;
             const vec2 CORNERS[6] = vec2[](vec2(0,0), vec2(1,0), vec2(0,1), vec2(0,1), vec2(1,0), vec2(1,1));
             vec3 evaluateLights(vec3 worldPos) {
                 ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin.xyz)) / 16.0));
@@ -162,8 +163,8 @@ public final class Lane1Shaders {
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
-                fragUv = (vec2(cellU, cellV) + corner * vec2(float(extentU), float(extentV)))
-                        / max(pc.atlasCellsAcross, 1.0);
+                fragCell = vec2(cellU, cellV);
+                fragLocalUv = corner * vec2(float(extentU), float(extentV));
                 float shade = float((q.z >> 24) & 255u) / 255.0;
                 vec3 tint = ((q.w & (1u << 24)) != 0u)
                         ? vec3(float(q.w & 255u), float((q.w >> 8) & 255u), float((q.w >> 16) & 255u)) / 255.0
@@ -196,11 +197,12 @@ public final class Lane1Shaders {
                 int textureCellCount;
                 int pushPad2;
             } pc;
-            layout(location = 0) out vec2 fragUv;
+            layout(location = 0) out vec2 fragCell;
             layout(location = 1) out vec4 fragColor;
             layout(location = 2) out vec2 fragLightMap;
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
+            layout(location = 5) out vec2 fragLocalUv;
             const int CORNER_INDEX[6] = int[](0, 1, 2, 2, 1, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
@@ -220,8 +222,10 @@ public final class Lane1Shaders {
                 if (textureIndex > 0 && textureIndex < pc.textureCellCount) {
                     cell = vec2(textureCells[textureIndex]);
                 }
-                vec2 cornerUv = vec2(float(corner & 1), float((corner >> 1) & 1));
-                fragUv = (cell + cornerUv) / max(pc.atlasCellsAcross, 1.0);
+                fragCell = cell;
+                // Just inside the sprite's far edge, so the fragment's fract() keeps the edge
+                // column instead of wrapping to the sprite's first column.
+                fragLocalUv = vec2(float(corner & 1), float((corner >> 1) & 1)) * 0.99999;
                 int flags = floatBitsToInt(generalWords[wordBase + 15u]);
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
@@ -246,15 +250,20 @@ public final class Lane1Shaders {
                 float fogDensity;
                 int fogMode;
                 float alphaCutoff;
+                float atlasCellsAcross;
             } fog;
-            layout(location = 0) in vec2 fragUv;
+            layout(location = 0) in vec2 fragCell;
+            layout(location = 5) in vec2 fragLocalUv;
             layout(location = 1) in vec4 fragColor;
             layout(location = 2) in vec2 fragLightMap;
             layout(location = 3) in vec3 fragWorldPos;
             layout(location = 4) in vec3 fragDynamicLight;
             layout(location = 0) out vec4 outColor;
             void main() {
-                vec4 texel = texture(atlas, fragUv);
+                // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
+                // inside it (a greedy-merged face repeats its sprite once per block).
+                vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
+                vec4 texel = texture(atlas, uv);
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
