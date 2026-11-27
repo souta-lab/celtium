@@ -297,6 +297,10 @@ draws, and the outcome is recorded per mod rather than promised in advance.
 
 The startup refusal keys on a marker class only the mod's own jar carries. `-Dceltium.allowCompetitors=true` lifts the
 refusal at the user's own risk; the measured failures in the rows above are what it re-admits.
+Actinium has a second seat: its jar carries a class with the same name as Celtium's loading plugin, and in the load
+order where that class wins, the loader skips Celtium's coremod before the refusal can run — so the check runs again
+at mod construction, and that order is refused with the shadowing named. In that order the
+`-Dceltium.allowCompetitors=true` hatch no longer admits two renderers; it admits Actinium plus Celtium's unloaded shell.
 
 ## Not verified together
 

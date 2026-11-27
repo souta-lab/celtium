@@ -1,5 +1,15 @@
 package org.taumc.celeritas.core;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.taumc.celeritas.CeleritasVintage;
+
+import java.io.IOException;
+import java.net.URL;
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
+import java.util.Enumeration;
+
 /**
  * Mods that replace a part of the renderer Celtium owns, detected by a class only their jar carries, and refused at
  * coremod setup with a message that names them. The Phosphor entry is the one exception to the first sentence: it
@@ -15,8 +25,21 @@ package org.taumc.celeritas.core;
  * The OptiFine, Vintagium and Relictium entries (2026-11-17, item 311) rest on the rendering-mod survey of the same
  * date: each is a wholesale replacement of a path Celtium owns, so the conflict is structural rather than a leg
  * measurement, and each marker class was verified in the mod's own jar, as the entry comments record.
+ * <p>
+ * The check has a second seat. The first seat is the coremod's {@code injectData}, but the plugin class name itself
+ * can be shadowed: Actinium's jar carries a class with the same fully qualified name (a memberless existence marker),
+ * and when that jar is processed first the loader resolves the name to the marker, cannot instantiate it, logs one
+ * error line and silently continues without Celtium's coremod - no transformers, no mixins, no refusal. The mod
+ * lifecycle is independent of the coremod, so {@code CeleritasVintage.onConstruct} always runs; it re-runs this
+ * shared check there and adds {@link #checkPluginShadowing(ClassLoader)}, which detects that the plugin class name
+ * resolved outside Celtium's own jar.
  */
-final class CeltiumCompetitors {
+public final class CeltiumCompetitors {
+
+    private static final Logger LOGGER = LogManager.getLogger("Celtium");
+
+    private static final String PLUGIN_CLASS_NAME = "org.taumc.celeritas.core.CeleritasLoadingPlugin";
+    private static final String PLUGIN_CLASS_RESOURCE = "org/taumc/celeritas/core/CeleritasLoadingPlugin.class";
 
     private static final String[][] KNOWN = {
             // {class resource, mod name, what it replaces}
@@ -104,19 +127,104 @@ final class CeltiumCompetitors {
 
     private static final boolean ALLOW_COMPETITORS = Boolean.getBoolean("celtium.allowCompetitors");
 
-    static void check(ClassLoader loader) {
+    public static void check(ClassLoader loader) {
         if (ALLOW_COMPETITORS || loader == null) {
             return;
         }
+        StringBuilder found = collectKnown(loader);
+        if (found.length() > 0) {
+            throw new IllegalStateException("Celtium replaces Minecraft's renderer and cannot run with mods that"
+                    + " replace the same parts. Remove these mods from the instance:" + found);
+        }
+    }
+
+    private static StringBuilder collectKnown(ClassLoader loader) {
         StringBuilder found = new StringBuilder();
         for (String[] entry : KNOWN) {
             if (loader.getResource(entry[0]) != null) {
                 found.append("\n  - ").append(entry[1]).append(": replaces ").append(entry[2]);
             }
         }
+        return found;
+    }
+
+    /**
+     * The second seat's own detection: the loading plugin's class name resolved to a class outside Celtium's jar,
+     * so the coremod never ran and the first seat's check never happened. The main signal is the CodeSource
+     * mismatch between the resolved plugin class and the {@code @Mod} class, which in the shipped jar share one
+     * artifact; the plugin class is loaded without initializing it. A duplicate class name on the classpath
+     * (visible through {@code getResources}) corroborates the mismatch and is logged, but is never a refusal
+     * reason on its own, because it does not say which copy won. When a known competitor is present as well, the
+     * refusal keeps the first seat's header and lists the shadowing as one more line; on its own it uses a header
+     * that says what happened. The same {@code -Dceltium.allowCompetitors=true} flag skips this check.
+     */
+    public static void checkPluginShadowing(ClassLoader loader) {
+        if (ALLOW_COMPETITORS || loader == null) {
+            return;
+        }
+        Class<?> pluginClass;
+        try {
+            pluginClass = Class.forName(PLUGIN_CLASS_NAME, false, loader);
+        } catch (ClassNotFoundException | LinkageError e) {
+            return;
+        }
+        URL pluginSource = codeSourceLocation(pluginClass);
+        URL ownSource = codeSourceLocation(CeleritasVintage.class);
+        if (!sourcesDiffer(pluginSource, ownSource)) {
+            return;
+        }
+        int copies = 0;
+        try {
+            Enumeration<URL> all = loader.getResources(PLUGIN_CLASS_RESOURCE);
+            while (all.hasMoreElements()) {
+                all.nextElement();
+                copies++;
+            }
+        } catch (IOException ignored) {
+            // The CodeSource mismatch already decides; the copy count only corroborates it in the log.
+        }
+        LOGGER.error("Celtium's loading plugin class {} resolved to {}, which is not Celtium's own jar ({});"
+                + " {} classpath copies of the class exist. Celtium's coremod was skipped by the loader.",
+                PLUGIN_CLASS_NAME, pluginSource, ownSource, copies);
+        String shadowLine = "\n  - " + jarFileName(pluginSource) + " (another mod): ships a class with the same"
+                + " name as Celtium's loading plugin (org.taumc.celeritas.core.CeleritasLoadingPlugin), which"
+                + " prevents Celtium itself from loading";
+        StringBuilder found = collectKnown(loader);
         if (found.length() > 0) {
             throw new IllegalStateException("Celtium replaces Minecraft's renderer and cannot run with mods that"
-                    + " replace the same parts. Remove these mods from the instance:" + found);
+                    + " replace the same parts. Remove these mods from the instance:" + found + shadowLine);
         }
+        throw new IllegalStateException("Celtium cannot load: another mod ships a class with the same name as"
+                + " Celtium's loading plugin, so Celtium's own plugin was replaced before it could run."
+                + " Remove these mods from the instance:" + shadowLine);
+    }
+
+    private static URL codeSourceLocation(Class<?> type) {
+        ProtectionDomain domain = type.getProtectionDomain();
+        CodeSource source = domain == null ? null : domain.getCodeSource();
+        return source == null ? null : source.getLocation();
+    }
+
+    /** Whether two code source locations name different artifacts; an unknown location never differs. */
+    static boolean sourcesDiffer(URL first, URL second) {
+        return first != null && second != null && !first.toExternalForm().equals(second.toExternalForm());
+    }
+
+    /** The file name a code source location points at (the jar, or the last path segment of a classes directory). */
+    static String jarFileName(URL source) {
+        if (source == null) {
+            return "an unknown jar";
+        }
+        String form = source.toExternalForm();
+        int bang = form.indexOf("!/");
+        if (bang >= 0) {
+            form = form.substring(0, bang);
+        }
+        if (form.endsWith("/")) {
+            form = form.substring(0, form.length() - 1);
+        }
+        int slash = form.lastIndexOf('/');
+        String name = slash >= 0 ? form.substring(slash + 1) : form;
+        return name.isEmpty() ? form : name;
     }
 }

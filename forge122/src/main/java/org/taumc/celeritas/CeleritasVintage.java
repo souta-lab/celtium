@@ -22,6 +22,7 @@ import org.apache.logging.log4j.Logger;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.gui.SodiumGameOptions;
+import org.taumc.celeritas.core.CeltiumCompetitors;
 import org.taumc.celeritas.impl.command.TogglePassCommand;
 import org.soutalab.celtium.forge.CeltiumCommand;
 import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
@@ -35,6 +36,14 @@ public class CeleritasVintage {
 
     @EventHandler
     public void onConstruct(FMLConstructionEvent event) {
+        // The startup refusal's second seat: if another jar won the CeleritasLoadingPlugin class name, the
+        // loader skipped Celtium's coremod silently and the first seat (the plugin's injectData) never ran.
+        // Construction is reached regardless of the coremod, so the shadowing detection runs first - its
+        // refusal lists the known competitors and the shadowing together - and the shared check follows for
+        // the case the coremod ran but a competitor is only visible now.
+        ClassLoader loader = CeleritasVintage.class.getClassLoader();
+        CeltiumCompetitors.checkPluginShadowing(loader);
+        CeltiumCompetitors.check(loader);
         VERSION = Loader.instance().getIndexedModList().get(MODID).getVersion();
         MinecraftForge.EVENT_BUS.register(this);
     }
