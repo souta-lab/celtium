@@ -267,8 +267,6 @@ public final class Lane1Shaders {
             void main() {
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
-                // TEMP G1 BISECT23: show fragColor (tint x shade) alone.
-                outColor = vec4(fragColor.rgb, 1.0); return;
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
                 // The texture mirrors are stored row-flipped against the GL UV convention
                 // (measured at Gate G1: unflipped samples read the mirrored rows for both
@@ -283,6 +281,8 @@ public final class Lane1Shaders {
                 // centres - the raw light/15 coordinates land on the grid's dark edges
                 // (measured at Gate G1 by probing the bound image's corners).
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
+                // TEMP G1 BISECT24: show the sampled light alone.
+                outColor = vec4(light, 1.0); return;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
