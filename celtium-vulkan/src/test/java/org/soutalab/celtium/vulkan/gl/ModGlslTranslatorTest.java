@@ -1650,19 +1650,32 @@ class ModGlslTranslatorTest {
      */
     @Test
     void wrapsASwizzledModernFetchOnAShadowSampler() {
+        // The modern dialect, as the pack transform emits it: in a legacy (#version 120)
+        // source the word texture is a name the source chose (it is renamed away), not the
+        // built-in call, so the wrap is a modern-dialect behavior.
+        String vertex = """
+                #version 330 core
+                layout(location = 0) in vec2 position;
+                out vec2 uv;
+                void main() {
+                    gl_Position = vec4(position, 0.0, 1.0);
+                    uv = position * 0.5 + 0.5;
+                }
+                """;
         String fragment = """
-                #version 120
+                #version 330 core
                 uniform sampler2DShadow shadowtex0;
                 uniform sampler2D colortex0;
-                varying vec2 uv;
+                in vec2 uv;
+                out vec4 fragColor;
                 void main() {
                     float z = texture(shadowtex0, vec3(uv, 0.5)).z;
                     float bare = texture(shadowtex0, vec3(uv, 0.25));
                     vec3 rgb = texture(shadowtex0, vec3(uv, 0.75)).rgb;
-                    gl_FragColor = texture2D(colortex0, uv) * (z + bare) + vec4(rgb, 1.0);
+                    fragColor = texture(colortex0, uv) * (z + bare) + vec4(rgb, 1.0);
                 }
                 """;
-        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
         assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
         assertTrue(result.fragment().contains("vec4(vec3(texture(shadowtex0, vec3(uv, 0.5))), 1.0).z"),
                 () -> "swizzled fetch wrapped:\n" + result.fragment());
