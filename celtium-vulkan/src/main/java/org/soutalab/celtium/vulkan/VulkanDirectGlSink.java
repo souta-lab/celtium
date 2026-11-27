@@ -289,23 +289,24 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     }
 
     private void applyDynamicState(VkCommandBuffer cmd, MemoryStack stack, ActiveRenderTargets targets) {
-        VkViewport viewport = VkViewport.calloc(stack)
-                .x(this.extendedState.viewportX).y(this.extendedState.viewportY)
-                .width(this.extendedState.viewportWidth > 0
-                        ? this.extendedState.viewportWidth : targets.width())
-                .height(this.extendedState.viewportHeight > 0
-                        ? this.extendedState.viewportHeight : targets.height())
+        VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
+        viewport.get(0)
+                .x(this.extendedState.viewportX()).y(this.extendedState.viewportY())
+                .width(this.extendedState.viewportWidth() > 0
+                        ? this.extendedState.viewportWidth() : targets.width())
+                .height(this.extendedState.viewportHeight() > 0
+                        ? this.extendedState.viewportHeight() : targets.height())
                 .minDepth(0.0f).maxDepth(1.0f);
-        VK10.vkCmdSetViewport(cmd, 0, VkViewport.Buffer.create(viewport.address(), 1));
-        int scissorWidth = this.extendedState.scissorWidth > 0
-                ? this.extendedState.scissorWidth : targets.width();
-        int scissorHeight = this.extendedState.scissorHeight > 0
-                ? this.extendedState.scissorHeight : targets.height();
-        VkRect2D scissor = VkRect2D.calloc(stack);
-        scissor.offset().set(this.extendedState.scissorX, this.extendedState.scissorY);
-        scissor.extent().set(scissorWidth, scissorHeight);
-        VK10.vkCmdSetScissor(cmd, 0, VkRect2D.Buffer.create(scissor.address(), 1));
-        VK10.vkCmdSetLineWidth(cmd, Math.max(1.0f, this.extendedState.lineWidth));
+        VK10.vkCmdSetViewport(cmd, 0, viewport);
+        int scissorWidth = this.extendedState.scissorWidth() > 0
+                ? this.extendedState.scissorWidth() : targets.width();
+        int scissorHeight = this.extendedState.scissorHeight() > 0
+                ? this.extendedState.scissorHeight() : targets.height();
+        VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
+        scissor.get(0).offset().set(this.extendedState.scissorX(), this.extendedState.scissorY());
+        scissor.get(0).extent().set(scissorWidth, scissorHeight);
+        VK10.vkCmdSetScissor(cmd, 0, scissor);
+        VK10.vkCmdSetLineWidth(cmd, Math.max(1.0f, this.extendedState.lineWidth()));
     }
 
     // -- pipeline cache --------------------------------------------------------
@@ -322,7 +323,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         int depthFormat = targets.depthAttachment() == null
                 ? VK10.VK_FORMAT_UNDEFINED : targets.depthAttachment().format();
         long layoutHash = program.vertexLayoutHash ^ (vertices == null ? 0L : vertices.strideBytes());
-        PipelineKey key = new PipelineKey(state, this.extendedState.hash, layoutHash, colorFormat, depthFormat);
+        PipelineKey key = new PipelineKey(state, this.extendedState.hash(), layoutHash, colorFormat, depthFormat);
         Long cached = this.pipelineCache.get(key);
         if (cached != null) {
             return cached;
@@ -713,7 +714,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size()).memoryTypeIndex(type);
             LongBuffer memory = stack.longs(0);
-            check(VulkanContext.allocateMemory(this.device, allocInfo, null, memory),
+            check(VulkanContext.allocateMemory(this.device, allocInfo, memory,
+                            "direct-GL converter buffer"),
                     "vkAllocateMemory(converter buffer)");
             check(VK10.vkBindBufferMemory(this.device, buffer.get(0), memory.get(0), 0L),
                     "vkBindBufferMemory(converter)");
@@ -734,7 +736,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             VK10.vkDestroyBuffer(this.device, buffer, null);
         }
         if (memory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(this.device, memory, null);
+            VulkanContext.freeMemory(this.device, memory);
         }
     }
 
