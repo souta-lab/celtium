@@ -67,6 +67,8 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> present = new HashSet<>();
     /** Section keys waiting for a (re)build. */
     private final Set<Long> dirty = new HashSet<>();
+    /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
+    private final Set<Long> awaitingLight = new HashSet<>();
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -304,6 +306,7 @@ public final class CeltiumTerrainDriver {
         }
         ensureBuildSide();
         diffLoadedSections();
+        promoteAwaitingLight();
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
@@ -353,13 +356,19 @@ public final class CeltiumTerrainDriver {
         return 1024;
     }
 
+    private final Set<Long> populatedChunks = new HashSet<>();
+
     private void diffLoadedSections() {
         present.clear();
+        populatedChunks.clear();
         ChunkProviderClient provider = world.getChunkProvider();
         if (provider instanceof ChunkProviderClientAccessor accessor) {
             for (Chunk chunk : accessor.celeritas$getLoadedChunks().values()) {
                 if (chunk == null || chunk.isEmpty()) {
                     continue;
+                }
+                if (chunk.isLightPopulated()) {
+                    populatedChunks.add(net.minecraft.util.math.ChunkPos.asLong(chunk.x, chunk.z));
                 }
                 ExtendedBlockStorage[] storages = chunk.getBlockStorageArray();
                 for (int y = 0; y < storages.length; y++) {
@@ -395,6 +404,25 @@ public final class CeltiumTerrainDriver {
         }
     }
 
+    /** Rebuilds sections that were meshed before their chunk's light was populated. */
+    private void promoteAwaitingLight() {
+        if (awaitingLight.isEmpty()) {
+            return;
+        }
+        Iterator<Long> it = awaitingLight.iterator();
+        while (it.hasNext()) {
+            long k = it.next();
+            if (!present.contains(k)) {
+                it.remove();
+                continue;
+            }
+            if (populatedChunks.contains(net.minecraft.util.math.ChunkPos.asLong(keyX(k), keyZ(k)))) {
+                dirty.add(k);
+                it.remove();
+            }
+        }
+    }
+
     private void scheduleBuilds(double cameraX, double cameraY, double cameraZ) {
         frameCounter++;
         if (dirty.isEmpty()) {
@@ -420,6 +448,14 @@ public final class CeltiumTerrainDriver {
             int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
             WorldSectionSnapshot snapshot = new WorldSectionSnapshot();
             ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
+            if (!populatedChunks.contains(net.minecraft.util.math.ChunkPos.asLong(sx, sz))) {
+                // The chunk's light is not populated yet: this mesh will carry zero light.
+                // Queue a rebuild for when the light arrives (vanilla re-meshes on light
+                // updates; without this the section stays dark forever).
+                awaitingLight.add(k);
+            } else {
+                awaitingLight.remove(k);
+            }
             pending.put(k, scheduler.build(snapshot, faceData, MesherOptions.PACK_OFF));
         }
     }
