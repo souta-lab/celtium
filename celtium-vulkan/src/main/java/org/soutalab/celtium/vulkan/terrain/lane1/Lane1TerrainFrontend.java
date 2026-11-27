@@ -246,7 +246,7 @@ public final class Lane1TerrainFrontend {
     }
 
     public String diagnosticsSummary() {
-        return drawStage.diagnosticsSummary()
+        return store.surfaceLightReadback() + " " + drawStage.diagnosticsSummary()
                 + " sections=" + store.sectionCount()
                 + " axisUsed=" + store.axisUsedBytes()
                 + " generalUsed=" + store.generalUsedBytes()

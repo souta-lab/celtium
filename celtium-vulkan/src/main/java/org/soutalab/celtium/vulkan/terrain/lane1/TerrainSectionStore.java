@@ -206,6 +206,32 @@ public final class TerrainSectionStore {
         return resident.desc;
     }
 
+    // TEMP G1 PROBE7: read-back census of the surface band's axis light straight from the slab.
+    public synchronized String surfaceLightReadback() {
+        long total = 0L;
+        long sky15 = 0L;
+        long dark = 0L;
+        for (Resident resident : sections.values()) {
+            SectionDesc desc = resident.desc;
+            if (desc == null || desc.sectionY() != 4 || resident.axisBytes == 0L) {
+                continue;
+            }
+            MemorySegment segment = axisSpace.segment(desc.axisSlabOffset(), resident.axisBytes);
+            int quads = (int) (resident.axisBytes / 16L);
+            for (int i = 0; i < quads; i++) {
+                int w2 = segment.get(ValueLayout.JAVA_INT, (long) i * 16L + 8L);
+                total++;
+                if (((w2 >>> 16) & 0xF) == 15) {
+                    sky15++;
+                }
+                if (((w2 >>> 16) & 0xFF) == 0) {
+                    dark++;
+                }
+            }
+        }
+        return "readbackS4 total=" + total + " sky15=" + sky15 + " dark=" + dark;
+    }
+
     /** Removes a section; its ranges return timeline-deferred. Returns false when it was not resident. */
     public synchronized boolean remove(int sectionX, int sectionY, int sectionZ, long timelineValue) {
         generation++;
