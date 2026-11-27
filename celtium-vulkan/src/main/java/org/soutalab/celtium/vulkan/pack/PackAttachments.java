@@ -72,6 +72,8 @@ final class PackAttachments implements AutoCloseable {
         long view;
         int layout = VK_IMAGE_LAYOUT_UNDEFINED;
         TransientAttachmentSlab.Allocation allocation;
+        long requirementSize;
+        long requirementAlignment;
     }
 
     /** A plan target: one image, or two for ping-pong. */
@@ -146,6 +148,25 @@ final class PackAttachments implements AutoCloseable {
                 createImage(target, image);
             }
         }
+        // The slab grows only while nothing is live, so the whole set's footprint is
+        // claimed and released once up front: that single claim grows the slab to fit
+        // every image this resize will bind, and the per-image claims below then fit
+        // without further growth.
+        long footprint = 0L;
+        for (Target target : targets.values()) {
+            for (TargetImage image : target.images) {
+                footprint += image.requirementSize + image.requirementAlignment;
+            }
+        }
+        if (footprint > 0L) {
+            TransientAttachmentSlab.Allocation sizing = slab.acquire(footprint, 1L);
+            slab.release(sizing);
+        }
+        for (Target target : targets.values()) {
+            for (TargetImage image : target.images) {
+                bindImage(target, image);
+            }
+        }
     }
 
     private void createImage(Target target, TargetImage out) {
@@ -181,8 +202,18 @@ final class PackAttachments implements AutoCloseable {
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetImageMemoryRequirements(device, out.image, requirements);
-            out.allocation = slab.acquire(requirements.size(), requirements.alignment());
-            result = vkBindImageMemory(device, out.image, slab.memoryHandle(), out.allocation.offset());
+            out.requirementSize = requirements.size();
+            out.requirementAlignment = requirements.alignment();
+        }
+    }
+
+    private void bindImage(Target target, TargetImage out) {
+        org.lwjgl.vulkan.VkDevice device = context.device();
+        boolean depth = isDepth(target.spec);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer handle = stack.mallocLong(1);
+            out.allocation = slab.acquire(out.requirementSize, out.requirementAlignment);
+            int result = vkBindImageMemory(device, out.image, slab.memoryHandle(), out.allocation.offset());
             if (result != VK_SUCCESS) {
                 throw new IllegalStateException("vkBindImageMemory for pack target "
                         + target.spec.name() + " failed: " + result);
