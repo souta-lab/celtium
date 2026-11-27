@@ -143,6 +143,46 @@ public final class CeltiumTerrainDriver {
         lines.add("drainLight axisSky15=" + DRAIN_SKY15.get() + " axisTotal=" + DRAIN_TOTAL.get()
                 + " axisDark=" + DRAIN_DARK.get());
         lines.add("hist443 axis=" + HIST + " generalSky=" + GHIST);
+        // TEMP G1 PROBE22: snapshot census for section (8,3,0): for every inner column,
+        // the face-up sky light of the section's top layer (snapshot y=16), the raw sky
+        // stored at the face cell above it (y=17), and the world-API combined light at
+        // the same face position.
+        try {
+            if (world != null && faceData != null) {
+                WorldSectionSnapshot snap = new WorldSectionSnapshot();
+                ForgeSectionScanner.fill(snap, world, faceData, fluids, 8, 3, 0);
+                long faceDark = 0L;
+                long faceLit = 0L;
+                long rawDark = 0L;
+                long apiDark = 0L;
+                net.minecraft.util.math.BlockPos.MutableBlockPos mp2 =
+                        new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                for (int lz = 1; lz <= 16; lz++) {
+                    for (int lx = 1; lx <= 16; lx++) {
+                        int idx = WorldSectionSnapshot.index(lx, 16, lz);
+                        int face = snap.faceSkyLight(idx, 1);
+                        int raw = snap.skyLightAt(idx + WorldSectionSnapshot.offset(1));
+                        if (face == 0) {
+                            faceDark++;
+                        } else {
+                            faceLit++;
+                        }
+                        if (raw == 0) {
+                            rawDark++;
+                        }
+                        mp2.setPos(8 * 16 + lx - 1, 64, lz - 1);
+                        int api = (world.getCombinedLight(mp2, 0) >> 20) & 0xF;
+                        if (api == 0) {
+                            apiDark++;
+                        }
+                    }
+                }
+                lines.add("snap830 faceDark=" + faceDark + " faceLit=" + faceLit
+                        + " rawAboveDark=" + rawDark + " apiDark=" + apiDark);
+            }
+        } catch (Throwable t) {
+            lines.add("snap830 failed " + t);
+        }
         // TEMP G1 PROBE16: for the top faces of solid cells in section (-4,4,3), compare
         // the flat face-cell combined light against vanilla's AO corner blend (the mean
         // of getCombinedLight at the face cell and the three cells diagonally across
