@@ -118,6 +118,33 @@ public final class CeltiumLogLimiter extends PrintStream {
         }
     }
 
+    /**
+     * The suppression counts, readable mid-run on the verification line (drawpath audit X-1): the
+     * shutdown summary only reaches stderr at exit, so a leg reading the log while the game runs could
+     * not tell whether the lines it gates on were themselves cut by this limiter - the verification
+     * line's own tag included. The form is {@code logLimitSuppressed=N} plus, when N &gt; 0, the
+     * per-tag overruns in brackets; the accounting is the one {@link #printSummary()} reports.
+     */
+    public static String suppressionSummary() {
+        long suppressed = 0;
+        StringBuilder byTag = new StringBuilder();
+        for (Map.Entry<String, AtomicLong> entry : COUNTS.entrySet()) {
+            long over = entry.getValue().get() - LIMIT;
+            if (over > 0) {
+                suppressed += over;
+                if (byTag.length() > 0) {
+                    byTag.append(",");
+                }
+                byTag.append(entry.getKey()).append("=").append(over);
+            }
+        }
+        String summary = "logLimitSuppressed=" + suppressed;
+        if (suppressed > 0) {
+            summary += " logLimitSuppressedByTag=[" + byTag + "]";
+        }
+        return summary;
+    }
+
     private static void printSummary() {
         StringBuilder summary = new StringBuilder();
         int tags = 0;

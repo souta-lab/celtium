@@ -32,24 +32,24 @@ import java.util.concurrent.ConcurrentHashMap;
  * instead of silently absorbed.
  * <p>
  * Registration is deliberately trivial so later stages wire their own decision points without
- * touching this class: {@code FallbackPaths.register(FallbackPaths.SLAB_ALLOC)} once (or the
+ * touching this class: {@code FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE)} once (or the
  * one-shot statics {@link #attempt(String)}, {@link #fast(String)}, {@link #fallback(String)} at
  * the decision site - they resolve the same shared handle, so after the first call they cost one
  * map lookup and no allocation). Counts are cumulative for the process's life and are never
  * reset outside tests: a leg reads them from the diagnostics line at the end of its run.
+ * <p>
+ * Only decision points that are actually wired get a named constant here. The Stage 1 / Stage 3 /
+ * Stage 5 names (present.direct, slab.alloc, glsm.async) were declared in advance and never wired,
+ * so the reader-wiring pass (drawpath audit X-1) removed them: an unwired constant reads as a
+ * promise the summary cannot keep, and {@link #register(String)} accepts any name, so a stage that
+ * wires its point later declares its constant in the same change.
  */
 public final class FallbackPaths {
 
-    /** Stage 1: the frame renders into a borrowed swapchain image (fast) or is composed and blitted (fallback). */
-    public static final String PRESENT_DIRECT = "present.direct";
-    /** Stage 3: an allocation is served by a fixed slab pool (fast) or by a dedicated allocation (fallback). */
-    public static final String SLAB_ALLOC = "slab.alloc";
     /** Stage 4: a section is drawn by the new Tier-A terrain engine (fast) or by the legacy route (fallback). */
     public static final String TERRAIN_ENGINE = "terrain.engine";
     /** Stage 4 (R-55): a section offered to Tier-A stays off the legacy upload (fast) or is uploaded to the legacy arena anyway (fallback). */
     public static final String TERRAIN_UPLOAD = "terrain.upload";
-    /** Stage 5: GL state is captured deferred/async (fast) or forces a full synchronisation (fallback). */
-    public static final String GLSM_ASYNC = "glsm.async";
     /** Stage 2: a frame slot's completion is confirmed by one wait on the timeline semaphore (fast) or by a fence wait (fallback). */
     public static final String SYNC_TIMELINE = "sync.timeline";
     /** Stage 2: a frame ring slice reservation is served by the frame linear ring (fast) or the mesh promotes to buffers it owns (fallback). */
@@ -166,7 +166,7 @@ public final class FallbackPaths {
     /**
      * {@return the per-path census} in the diagnostics line's {@code key=value} grammar, shaped
      * like {@link VulkanContext#memoryAllocationSummary()}'s per-site census:
-     * {@code fallbackPaths=[present.direct:attempts=1494,fast=12,fallback=1482,fastRate=0.008 ...]},
+     * {@code fallbackPaths=[terrain.engine:attempts=1494,fast=12,fallback=1482,fastRate=0.008 ...]},
      * paths sorted by attempts descending so the busiest decision point reads first. {@code fastRate}
      * is the fast share of attempts with three decimals ({@code 0.000} when nothing was attempted),
      * printed because the rate - not the raw count - is what the guardrail watches.

@@ -2424,11 +2424,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * <p>
      * Sized from {@link VulkanImmediateFormats#COUNT}, not from the eight ids that existed when it was written: the
      * summary prints every id now, and an array that stops at 8 would have thrown on the first drop of a layout past
-     * it. It has no increment site today - the drops that happen are counted in
-     * {@code postAcceptDroppedGroups}, which is per-event rather than per-format - so this reads as an all-zero row
-     * and says that rather than looking like a measurement of "nothing was dropped by format".
+     * it. Incremented at the one post-accept drop boundary - the framebuffer-replacement drop in the ordering
+     * flush, beside the {@code postAcceptDroppedGroups} total it breaks down by format.
      */
-    final int[] postAcceptDroppedByFormat = new int[8];
+    final int[] postAcceptDroppedByFormat = new int[VulkanImmediateFormats.COUNT];
     final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     final int[] acceptedByFormat = new int[8];
@@ -2891,7 +2890,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** How many of the boundary drops reach the record; the rest are in the counters. */
     private static final int UNFLUSHED_TARGET_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.unflushedTargetLog", 8).intValue();
-    String lastUnflushedTargetFailure = "none";
 
 
     /**
@@ -3133,8 +3131,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * The frame is abandoned either way, so nothing that was already recorded into it survives; but a group whose
      * recording never reached the queue has not been drawn, and clearing it here is what erased every entity and
      * held-item batch of the window - measured as {@code id4 28 accepted / 0 drawn} and {@code id9 228 / 0} with no
-     * loss column in the per-format histogram to show it. Paired with {@link #windowFlushDroppedBatches}: a group is
-     * either drawn, or retained here, or counted as dropped there.
+     * loss column in the per-format histogram to show it. A group is either drawn, or retained here, or - at
+     * the one boundary that does drop, framebuffer replacement - counted in the post-accept drop counters.
      */
     String lastWindowFlushFailure = "none";
     /**
@@ -11277,7 +11275,6 @@ this.frameBufferOpen = false;
                         + " drawn=" + this.immediateStatistics.immediateGroupsDrawn() + " discarded=" + this.immediateStatistics.immediateGroupsDiscarded()
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
-                        + " deferredNextFrame=" + this.immediateStatistics.immediateDeferredNextFrame()
                         + " lastError=" + this.immediateLastFlushError);
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {
@@ -13779,6 +13776,7 @@ this.frameBufferOpen = false;
             int dropped = 0;
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
+                this.postAcceptDroppedByFormat[group.formatId] += group.batches;
             }
             this.immediateStatistics.addPostAcceptDroppedGroups(dropped);
             celtium$discardImmediateGroups();
