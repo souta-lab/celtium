@@ -270,8 +270,8 @@ public final class Lane1Shaders {
                 // TEMP G1 BISECT19: R = slot parity, G = sky, B = (slot/2) parity.
                 {
                     vec2 lm = clamp(fragLightMap, 0.0, 1.0);
-                    outColor = vec4(float(fragSection % 2), lm.y,
-                            float((fragSection / 2) % 2), 1.0);
+                    outColor = vec4(float(fragSection & 255) / 255.0, lm.y,
+                            float((fragSection >> 8) & 255) / 255.0, 1.0);
                     return;
                 }
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
