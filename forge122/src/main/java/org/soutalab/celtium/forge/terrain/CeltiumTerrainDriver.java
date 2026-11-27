@@ -480,6 +480,7 @@ public final class CeltiumTerrainDriver {
             if (buffers == null) {
                 continue;
             }
+            long k = entry.getKey();
             try {
                 if (present.contains(k)) {
                     backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
