@@ -5,6 +5,7 @@ import org.soutalab.celtium.core.frame.BlockEntitySink;
 import org.soutalab.celtium.core.frame.CameraPose;
 import org.soutalab.celtium.core.frame.FrustumPlanes;
 import org.soutalab.celtium.core.frame.VulkanCommandStream;
+import org.soutalab.celtium.core.geometry.GeneralQuad;
 import org.soutalab.celtium.core.geometry.SectionDesc;
 import org.soutalab.celtium.core.shader.PackTerrainDriver;
 import org.soutalab.celtium.core.shader.TerrainPassKind;
@@ -31,7 +32,7 @@ public final class TerrainDrawStage implements PackTerrainDriver {
 
     /**
      * One indirect draw: {@code vertexCount} vertices starting at quad {@code firstQuad} of a slab.
-     * {@code general} selects the stream - the 64 B general slab when true, the 16 B axis slab when
+     * {@code general} selects the stream - the 80 B general slab when true, the 16 B axis slab when
      * false; the two streams share the pass's fragment stage and differ in the vertex entry point.
      */
     public record DrawCommand(int vertexCount, int firstQuad, int sectionSlot, int layer, boolean general) {
@@ -94,7 +95,7 @@ public final class TerrainDrawStage implements PackTerrainDriver {
             }
             if (range.generalQuadCount() > 0) {
                 commands.add(new DrawCommand(range.generalQuadCount() * 6,
-                        (int) (desc.generalSlabOffset() / 64L) + range.generalQuadOffset(), slot, layer, true));
+                        (int) (desc.generalSlabOffset() / GeneralQuad.BYTE_SIZE) + range.generalQuadOffset(), slot, layer, true));
                 quads += range.generalQuadCount();
             }
         }

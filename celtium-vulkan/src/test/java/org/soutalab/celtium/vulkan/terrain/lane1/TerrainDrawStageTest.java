@@ -5,6 +5,7 @@ import org.soutalab.celtium.core.frame.ActiveRenderTargets;
 import org.soutalab.celtium.core.frame.CameraPose;
 import org.soutalab.celtium.core.frame.FrustumPlanes;
 import org.soutalab.celtium.core.frame.VulkanCommandStream;
+import org.soutalab.celtium.core.geometry.GeneralQuad;
 import org.soutalab.celtium.core.geometry.PackedAxisQuad;
 import org.soutalab.celtium.core.shader.AttachmentFormatKey;
 import org.soutalab.celtium.core.shader.BlendStateSpec;
@@ -132,6 +133,33 @@ class TerrainDrawStageTest {
         });
         assertEquals(1, gathered.get(), "only the in-frustum entity is gathered (G-7)");
         assertTrue(stage.diagnosticsSummary().contains("sections=2"));
+    }
+
+    @Test
+    void generalDrawStartsAtTheSectionsRecordIndex() {
+        TerrainSectionStore store = new TerrainSectionStore(new HostSlabSpace(1 << 20),
+                new HostSlabSpace(1 << 20), new HostSlabSpace(1 << 16));
+        GeneralQuad quad = new GeneralQuad(new float[12], 1, 0, 0, 0);
+        SectionGeometry fourGeneral = new SectionGeometry(List.of(), List.of(), List.of(),
+                List.of(quad, quad, quad, quad), List.of(), List.of(), new short[0]);
+        SectionGeometry oneGeneral = new SectionGeometry(List.of(), List.of(), List.of(),
+                List.of(quad), List.of(), List.of(), new short[0]);
+        store.upload(0, 0, 0, fourGeneral, 1L);
+        store.upload(1, 0, 0, oneGeneral, 1L);
+        TerrainWorld world = new TerrainWorld(store);
+        List<TerrainDrawStage.DrawCommand> drawn = new ArrayList<>();
+        TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world),
+                (cmd, kind, commands) -> drawn.addAll(commands));
+        stage.prepareMainView(new CameraPose(8, 70, 8, 0, 0), allInside(), 1L);
+        ActiveRenderTargets targets = new ActiveRenderTargets(List.of(), null, 64, 64);
+        stage.recordTerrainPass(new FakeStream(), TerrainPassKind.MAIN_SOLID, program(), targets);
+        List<TerrainDrawStage.DrawCommand> general = drawn.stream()
+                .filter(TerrainDrawStage.DrawCommand::general).toList();
+        assertEquals(2, general.size(), "one general draw per section");
+        TerrainDrawStage.DrawCommand second = general.stream()
+                .filter(command -> command.vertexCount() == 6).findFirst().orElseThrow();
+        assertEquals(4, second.firstQuad(),
+                "the second section's records start after the first section's four 80 B records");
     }
 
     @Test
