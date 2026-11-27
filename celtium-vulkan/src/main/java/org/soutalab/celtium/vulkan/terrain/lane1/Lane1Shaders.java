@@ -263,12 +263,12 @@ public final class Lane1Shaders {
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
+                uv.y = 1.0 - uv.y; // TEMP G1 BISECT4: V-flip test
                 vec4 texel = texture(atlas, uv);
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
-                // TEMP G1 BISECT3: show the bound atlas image itself, mapped to the screen.
-                outColor = vec4(texture(atlas, gl_FragCoord.xy / vec2(1280.0, 720.0)).rgb, 1.0); return;
+
                 if (fog.fogMode != 0) {
                     float dist = length(fragWorldPos - fog.fogCameraPos);
                     float factor;
