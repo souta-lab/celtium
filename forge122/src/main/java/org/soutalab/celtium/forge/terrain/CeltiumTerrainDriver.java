@@ -182,9 +182,9 @@ public final class CeltiumTerrainDriver {
                 try {
                     net.minecraft.world.World w = (net.minecraft.world.World) world;
                     StringBuilder raw = new StringBuilder("rawLight");
-                    for (int dx : new int[]{0, -8, 1}) {
+                    for (int dx : new int[]{0, -8, 1, -4}) {
                         net.minecraft.world.chunk.Chunk c =
-                                w.getChunk(sx + dx, dx == 1 ? -4 : sz);
+                                w.getChunk(sx + dx, dx == 1 ? -4 : dx == -4 ? 3 : sz);
                         raw.append(" chunk[").append(sx + dx).append(',').append(sz)
                                 .append("] populated=").append(c.isLightPopulated())
                                 .append(" empty=").append(c.isEmpty());
