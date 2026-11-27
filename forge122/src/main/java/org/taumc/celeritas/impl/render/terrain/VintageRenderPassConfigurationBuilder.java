@@ -38,10 +38,6 @@ public class VintageRenderPassConfigurationBuilder {
     private static TerrainRenderPass.TerrainRenderPassBuilder builderForRenderType(BlockRenderLayer chunkRenderType, ChunkVertexType vertexType) {
         var extraDefines = new HashMap<String, String>();
 
-        if (CeleritasVintage.options().quality.chunkFadeInDuration > 0) {
-            extraDefines.put("CHUNK_FADE_IN_DURATION_MS", String.valueOf(CeleritasVintage.options().quality.chunkFadeInDuration));
-        }
-
         return TerrainRenderPass.builder().extraDefines(extraDefines).pipelineState(MIPMAP_CONTROLLED_STATE).vertexType(vertexType).primitiveType(QuadPrimitiveType.TRIANGULATED);
     }
 
@@ -77,22 +73,8 @@ public class VintageRenderPassConfigurationBuilder {
         vanillaRenderStages.put(BlockRenderLayer.SOLID, solidPass);
         vanillaRenderStages.put(BlockRenderLayer.TRANSLUCENT, translucentPass);
 
-        if (CeleritasVintage.options().performance.useRenderPassConsolidation) {
-            cutoutMaterial = new Material(cutoutMippedPass, AlphaCutoffParameter.ONE_TENTH, false);
-            vanillaRenderStages.put(BlockRenderLayer.SOLID, cutoutMippedPass);
-        } else {
-            TerrainRenderPass cutoutPass;
-
-            cutoutPass = builderForRenderType(BlockRenderLayer.CUTOUT, vertexType)
-                    .name("cutout")
-                    .fragmentDiscard(true)
-                    .useReverseOrder(false)
-                    .build();
-
-            cutoutMaterial = new Material(cutoutPass, AlphaCutoffParameter.ONE_TENTH, false);
-            vanillaRenderStages.put(BlockRenderLayer.CUTOUT, cutoutPass);
-            vanillaRenderStages.put(BlockRenderLayer.CUTOUT_MIPPED, cutoutMippedPass);
-        }
+        cutoutMaterial = new Material(cutoutMippedPass, AlphaCutoffParameter.ONE_TENTH, false);
+        vanillaRenderStages.put(BlockRenderLayer.SOLID, cutoutMippedPass);
 
         // Now build the material map
         Map<BlockRenderLayer, Material> renderTypeToMaterialMap = new Reference2ReferenceOpenHashMap<>(4,

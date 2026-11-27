@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen;
+import org.soutalab.celtium.forge.ui.CeltiumVideoSettingsScreen;
 
 @Mixin(GuiOptions.class)
 public class MixinGuiOptions extends GuiScreen {
@@ -17,7 +17,7 @@ public class MixinGuiOptions extends GuiScreen {
     @Inject(method = "actionPerformed", at = @At("HEAD"), cancellable = true)
     private void open(GuiButton button, CallbackInfo ci) {
         if(button.enabled && button.id == 101) {
-            this.mc.displayGuiScreen(new CeleritasVideoOptionsScreen(this));
+            this.mc.displayGuiScreen(new CeltiumVideoSettingsScreen(this));
 
             ci.cancel();
         }

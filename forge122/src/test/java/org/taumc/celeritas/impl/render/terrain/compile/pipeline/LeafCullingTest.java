@@ -13,7 +13,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.WorldType;
 import net.minecraft.world.biome.Biome;
-import org.embeddedt.embeddium.impl.gui.SodiumGameOptions.LeafCullingMode;
+import org.soutalab.celtium.forge.ui.CeltiumConfig.LeafCullingMode;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 

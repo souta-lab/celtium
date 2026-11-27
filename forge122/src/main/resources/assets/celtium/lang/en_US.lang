@@ -1,0 +1,96 @@
+#PARSE_ESCAPES
+celtium.option_impact.low=Low
+celtium.option_impact.medium=Medium
+celtium.option_impact.high=High
+celtium.option_impact.extreme=Extreme
+celtium.option_impact.varies=Varies
+celtium.options.performance_impact_string=Performance Impact: %s
+
+celtium.options.pages.general=General
+celtium.options.pages.quality=Quality
+celtium.options.pages.performance=Performance
+celtium.options.pages.lighting_culling=Lighting & Culling
+celtium.options.pages.shaders=Shaders
+
+celtium.options.groups.rendering=Rendering
+celtium.options.groups.window=Window
+celtium.options.groups.indicators=Indicators
+celtium.options.groups.graphics=Graphics
+celtium.options.groups.details=Details
+celtium.options.groups.mipmaps=Mipmaps
+celtium.options.groups.sorting=Sorting
+celtium.options.groups.chunk_updates=Chunk Updates
+celtium.options.groups.rendering_culling=Rendering & Culling
+celtium.options.groups.cpu_saving=CPU & Power Saving
+celtium.options.groups.lighting=Dynamic Lighting
+celtium.options.groups.foliage_culling=Foliage Culling
+
+celtium.options.buttons.undo=Undo
+celtium.options.buttons.apply=Apply
+
+celtium.options.quality.default=Default
+
+celtium.options.view_distance.tooltip=The render distance controls how far away terrain will be rendered. Shorter distances mean less terrain is rendered, improving frame rates.
+celtium.options.brightness.tooltip=Controls the brightness (gamma) of the game.
+celtium.options.gui_scale.tooltip=Sets the maximum scale factor for the user interface. If 'Auto' is used then the largest scale factor will always be used.
+celtium.options.fullscreen.tooltip=If enabled, the game will display in full-screen mode (if supported).
+celtium.options.v_sync.tooltip=If enabled, the game's frame rate is synchronized to the monitor's refresh rate via the Vulkan swapchain without requiring a restart.
+celtium.options.fps_limit.tooltip=Limits the maximum number of frames per second. If VSync is enabled, this limit only applies when lower than the display refresh rate.
+celtium.options.view_bobbing.tooltip=If enabled, the player's view will sway and bob when moving around.
+celtium.options.attack_indicator.tooltip=Controls where the Attack Indicator is displayed on screen.
+
+celtium.options.graphics_quality.tooltip=The default graphics quality controls legacy options and mod compatibility. Options set to 'Default' inherit this setting.
+celtium.options.clouds_quality.tooltip=Controls the rendering quality of clouds in the sky.
+celtium.options.weather_quality.tooltip=Controls the quality of rain and snow effects.
+celtium.options.leaves_quality.name=Leaves
+celtium.options.leaves_quality.tooltip=Controls the rendering quality of leaves.
+celtium.options.particle_quality.tooltip=Controls the maximum number of particles rendered on screen at one time.
+celtium.options.smooth_lighting.tooltip=Controls whether blocks are smoothly lit and shaded.
+celtium.options.biome_blend.name=Biome Blend
+celtium.options.biome_blend.value=%s block(s)
+celtium.options.biome_blend.tooltip=Controls the range over which biomes are sampled for block colorization. Higher values increase chunk build time.
+celtium.options.entity_shadows.tooltip=If enabled, basic shadows are rendered beneath mobs and other entities.
+celtium.options.vignette.name=Vignette
+celtium.options.vignette.tooltip=If enabled, a subtle vignette effect is rendered around the edges of the screen.
+celtium.options.mipmap_levels.tooltip=Controls the number of mipmap levels used for block textures. Higher values reduce aliasing at a distance.
+celtium.options.translucent_face_sorting.name=Translucent Face Sorting
+celtium.options.translucent_face_sorting.tooltip=If enabled, translucent surfaces such as stained glass and water are depth-sorted for accurate blending.
+
+celtium.options.chunk_update_threads.name=Chunk Update Threads
+celtium.options.chunk_update_threads.value=%s threads
+celtium.options.chunk_update_threads.tooltip=Specifies the number of worker threads used for chunk building. Default chooses automatically based on available CPU cores.
+celtium.options.always_defer_chunk_updates.name=Always Defer Chunk Updates
+celtium.options.always_defer_chunk_updates.tooltip=If enabled, rendering never blocks waiting for chunk updates to finish, improving frame pacing at the cost of slight visual delay.
+celtium.options.use_block_face_culling.name=Block Face Culling
+celtium.options.use_block_face_culling.tooltip=If enabled, only block faces oriented toward the camera are submitted for rendering, reducing geometry bandwidth.
+celtium.options.use_fog_occlusion.name=Fog Occlusion
+celtium.options.use_fog_occlusion.tooltip=If enabled, chunks completely hidden by fog are skipped during rendering.
+celtium.options.use_entity_culling.name=Entity Culling
+celtium.options.use_entity_culling.tooltip=If enabled, entities outside visible chunks are skipped during rendering.
+celtium.options.animate_only_visible_textures.name=Animate Only Visible Textures
+celtium.options.animate_only_visible_textures.tooltip=If enabled, only animated textures currently visible in the scene are updated each tick.
+
+celtium.options.cpu_render_ahead_limit.name=CPU Render-Ahead Limit
+celtium.options.cpu_render_ahead_limit.value=%s frame(s)
+celtium.options.cpu_render_ahead_limit.tooltip=Specifies the maximum number of frames the CPU may queue ahead of the GPU.
+celtium.options.idle_frame_cap.name=Idle Frame Cap
+celtium.options.idle_frame_cap.tooltip=If enabled, the frame rate is capped while the window is unfocused or idle to save power and heat. Disabled by default.
+celtium.options.unfocused_frame_limit.name=Unfocused Frame Limit
+celtium.options.unfocused_frame_limit.tooltip=Frame rate cap applied while the game window does not have input focus (when Idle Frame Cap is enabled).
+celtium.options.idle_frame_limit.name=Idle Frame Limit
+celtium.options.idle_frame_limit.tooltip=Frame rate cap applied after the idle delay elapses without keyboard or mouse input (when Idle Frame Cap is enabled).
+celtium.options.idle_delay_seconds.name=Idle Delay
+celtium.options.idle_delay_seconds.value=%s second(s)
+celtium.options.idle_delay_seconds.tooltip=Seconds without keyboard or mouse input before the idle frame limit engages.
+
+celtium.options.dynamic_lights.name=Dynamic Lights
+celtium.options.dynamic_lights.tooltip=Enables Celtium's built-in GPU dynamic lighting for held torches, glowing items, and burning entities. Enabled by default.
+
+celtium.options.leaf_culling_mode.name=Leaf Culling
+celtium.options.leaf_culling_mode.tooltip=Culls leaf faces hidden inside a canopy and renders fully surrounded leaves as opaque, reducing dense foliage geometry. Solid requires all six sides to be blocked; Solid (Aggressive) requires the four horizontal sides; Hollow removes faces looking into two or more consecutive leaves; None disables leaf culling.\n\nChanging this rebuilds all chunks.
+celtium.options.leaf_culling_mode.none=None
+celtium.options.leaf_culling_mode.hollow=Hollow
+celtium.options.leaf_culling_mode.solid_aggressive=Solid (Aggressive)
+celtium.options.leaf_culling_mode.solid=Solid
+
+celtium.options.shaders.placeholder=Celtium's built-in Vulkan shader pack engine (BSL / Complementary) will connect to this tab in Stage S5-b. No external shader mod is required.

@@ -63,7 +63,7 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
      * so a GUI change applies at once and persists. For a fresh config the persisted field is itself
      * seeded from {@code -Dceleritas.useVintageFastBlockRenderer}, as this static originally was.
      */
-    public static boolean USE_NEW_BLOCK_RENDERER = CeleritasVintage.options().performance.useFastBlockRenderer;
+    public static boolean USE_NEW_BLOCK_RENDERER = Boolean.getBoolean("celeritas.useVintageFastBlockRenderer");
     private static final ProxyClassGenerator<WorldSlice, CeleritasBlockAccess> WORLD_SLICE_LOCAL_GENERATOR = new ProxyClassGenerator<>(WorldSlice.class, "WorldSliceLocal", CeleritasBlockAccess.class);
     private final RenderSection render;
     private final int buildTime;

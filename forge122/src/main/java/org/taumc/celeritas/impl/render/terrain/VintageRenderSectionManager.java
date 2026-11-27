@@ -91,12 +91,7 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         if (forced != null) {
             return AsyncOcclusionMode.valueOf(forced.trim().toUpperCase(java.util.Locale.ROOT));
         }
-        // The terrain search runs on the search thread unless the option says NONE. Core has no shadow pass, so the
-        // option's default ONLY_SHADOW meant "nothing async" here; the inline search was 28% of the client thread
-        // while moving (AMD flight leg), and taking it off moved flight p50 1.03-1.34 -> 0.74-0.89 ms, static Intel
-        // KPI neutral (0.983x vs control), validation 0 and the same frames.
-        AsyncOcclusionMode chosen = CeleritasVintage.options().performance.asyncOcclusionMode;
-        return chosen == AsyncOcclusionMode.NONE ? AsyncOcclusionMode.NONE : AsyncOcclusionMode.EVERYTHING;
+        return AsyncOcclusionMode.EVERYTHING;
     }
 
     @Override
@@ -106,12 +101,7 @@ public class VintageRenderSectionManager extends RenderSectionManager {
 
     @Override
     protected boolean useRasterOcclusionCulling() {
-        // The option is the only input this seam has: the graph, lattice and culler all take
-        // the flag from here, and the raster occluder is only created when it is set. Returning
-        // a constant false (the shape this override had since the feature landed) left the GUI
-        // toggle bound and saved but with no effect. The field defaults to false, so reading it
-        // changes nothing unless the user opted in.
-        return CeleritasVintage.options().performance.useRasterOcclusionCulling;
+        return false;
     }
 
     @Override

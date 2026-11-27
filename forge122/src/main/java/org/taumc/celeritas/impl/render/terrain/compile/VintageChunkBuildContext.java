@@ -62,7 +62,7 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
         this.lightDataCache = new LightDataCache(this.worldSlice);
         this.blockRenderer = new VintageBlockRenderer(this, lightDataCache);
         this.textureAtlas = (TextureMapExtension) Minecraft.getMinecraft().getTextureMapBlocks();
-        this.useRenderPassOptimization = CeleritasVintage.options().performance.useRenderPassOptimization;
+        this.useRenderPassOptimization = true;
     }
 
     public void setupTranslation(int x, int y, int z) {

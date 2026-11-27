@@ -237,7 +237,7 @@ public class MinecraftMixin {
             return;
         }
         Minecraft mc = (Minecraft) (Object) this;
-        org.embeddedt.embeddium.impl.gui.SodiumGameOptions.PerformanceSettings celtium$perf =
+        org.soutalab.celtium.forge.ui.CeltiumConfig.PerformanceSettings celtium$perf =
                 CeleritasVintage.options().performance;
         org.soutalab.celtium.vulkan.CeltiumFramePacing.setIdleCapConfig(
                 celtium$perf.useIdleFrameCap, celtium$perf.unfocusedFrameLimit,

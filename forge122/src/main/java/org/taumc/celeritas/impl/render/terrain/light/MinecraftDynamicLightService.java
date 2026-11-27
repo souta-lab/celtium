@@ -42,12 +42,17 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     public static final MinecraftDynamicLightService INSTANCE = new MinecraftDynamicLightService();
 
     /**
-     * Built-in dynamic light reimplementation is off by default: dynamic lighting belongs to mods such as
-     * Celeritas Dynamic Lights running over Celtium's generalised connection surface (Ledger II). The property key
-     * is preserved for compatibility and opt-in A/B testing ({@code -Dceltium.dynamicLights=true}).
+     * Optional system-property override for A/B fixture legs ({@code -Dceltium.dynamicLights=true|false}).
+     * When unset, defers to {@code CeleritasVintage.options().lighting.enableDynamicLights} (default ON).
      */
-    private static final boolean ENABLED =
-            Boolean.parseBoolean(System.getProperty("celtium.dynamicLights", "false"));
+    private static final String SYSTEM_OVERRIDE = System.getProperty("celtium.dynamicLights");
+
+    private static boolean isEnabled() {
+        if (SYSTEM_OVERRIDE != null) {
+            return Boolean.parseBoolean(SYSTEM_OVERRIDE);
+        }
+        return org.taumc.celeritas.CeleritasVintage.options().lighting.enableDynamicLights;
+    }
 
     private final DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
 
@@ -121,7 +126,7 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     @Override
     public int gatherLights(float[] out, double cameraX, double cameraY, double cameraZ) {
         gatherCalls++;
-        if (!ENABLED) {
+        if (!isEnabled()) {
             gatherDisabledReturns++;
             clearSnapshot();
             return 0;

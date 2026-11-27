@@ -1,6 +1,6 @@
 package org.taumc.celeritas.mixin;
 
-import org.embeddedt.embeddium.impl.gui.SodiumGameOptions;
+import org.soutalab.celtium.forge.ui.CeltiumConfig;
 import org.junit.jupiter.api.Test;
 
 import java.io.DataInputStream;
@@ -32,18 +32,18 @@ class LeavesQualityWiringTest {
 
     @Test
     void graphicsQualityResolvesAgainstVanillaMode() {
-        assertTrue(SodiumGameOptions.GraphicsQuality.DEFAULT.isFancy(true));
-        assertFalse(SodiumGameOptions.GraphicsQuality.DEFAULT.isFancy(false));
-        assertFalse(SodiumGameOptions.GraphicsQuality.FAST.isFancy(true));
-        assertFalse(SodiumGameOptions.GraphicsQuality.FAST.isFancy(false));
-        assertTrue(SodiumGameOptions.GraphicsQuality.FANCY.isFancy(true));
-        assertTrue(SodiumGameOptions.GraphicsQuality.FANCY.isFancy(false));
+        assertTrue(CeltiumConfig.GraphicsQuality.DEFAULT.isFancy(true));
+        assertFalse(CeltiumConfig.GraphicsQuality.DEFAULT.isFancy(false));
+        assertFalse(CeltiumConfig.GraphicsQuality.FAST.isFancy(true));
+        assertFalse(CeltiumConfig.GraphicsQuality.FAST.isFancy(false));
+        assertTrue(CeltiumConfig.GraphicsQuality.FANCY.isFancy(true));
+        assertTrue(CeltiumConfig.GraphicsQuality.FANCY.isFancy(false));
     }
 
     @Test
     void leavesQualityDefaultsToVanillaBehaviour() {
-        assertEquals(SodiumGameOptions.GraphicsQuality.DEFAULT,
-                new SodiumGameOptions().quality.leavesQuality);
+        assertEquals(CeltiumConfig.GraphicsQuality.DEFAULT,
+                new CeltiumConfig().quality.leavesQuality);
     }
 
     @Test
@@ -63,10 +63,10 @@ class LeavesQualityWiringTest {
     @Test
     void optionPagesBindLeavesQuality() throws Exception {
         Set<String> utf8 = constantPoolUtf8(readClassBytes(
-                "/org/taumc/celeritas/impl/gui/SodiumGameOptionPages.class"));
+                "/org/soutalab/celtium/forge/ui/CeltiumVideoSettingsPages.class"));
         assertTrue(utf8.contains("leavesQuality"),
-                "SodiumGameOptionPages must bind the leavesQuality field");
-        assertTrue(utf8.contains("sodium.options.leaves_quality.name"),
+                "CeltiumVideoSettingsPages must bind the leavesQuality field");
+        assertTrue(utf8.contains("celtium.options.leaves_quality.name"),
                 "the binding must use the leaves quality lang keys");
     }
 

@@ -1,6 +1,6 @@
 package org.taumc.celeritas.impl.render.terrain.compile.pipeline;
 
-import org.embeddedt.embeddium.impl.gui.SodiumGameOptions;
+import org.soutalab.celtium.forge.ui.CeltiumConfig;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -63,8 +63,8 @@ class LeafCullingContractTest {
 
     @Test
     void defaultModeIsSolidAndNoneExists() {
-        SodiumGameOptions.QualitySettings quality = new SodiumGameOptions.QualitySettings();
-        assertEquals(SodiumGameOptions.LeafCullingMode.SOLID, quality.leafCullingMode);
-        assertEquals(4, SodiumGameOptions.LeafCullingMode.values().length);
+        CeltiumConfig.QualitySettings quality = new CeltiumConfig.QualitySettings();
+        assertEquals(CeltiumConfig.LeafCullingMode.SOLID, quality.leafCullingMode);
+        assertEquals(4, CeltiumConfig.LeafCullingMode.values().length);
     }
 }

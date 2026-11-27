@@ -445,10 +445,6 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         if (FORCE_COMPACT_FORMAT) {
             return ChunkMeshFormats.COMPACT;
         }
-        if (!CeleritasVintage.options().performance.useCompactVertexFormat) {
-            return ChunkMeshFormats.VANILLA_LIKE;
-        }
-
         return ChunkMeshFormats.COMPACT;
     }
 }
