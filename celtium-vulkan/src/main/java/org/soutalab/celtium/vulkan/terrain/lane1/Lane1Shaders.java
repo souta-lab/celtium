@@ -263,9 +263,6 @@ public final class Lane1Shaders {
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
-                // The atlas mirror is stored row-flipped against the GL UV convention
-                // (measured at Gate G1), so V is flipped back here.
-                uv.y = 1.0 - uv.y;
                 vec4 texel = texture(atlas, uv);
                 if (texel.a < fog.alphaCutoff) discard;
                 // The lightmap is a 16x16 texel grid with u = block light, v = sky light
@@ -273,11 +270,6 @@ public final class Lane1Shaders {
                 // very sample path). fragLightMap carries (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges.
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
-                // TEMP G1 BISECT26: show the resolved atlas cell as colour.
-                {
-                    outColor = vec4(fragCell / 32.0, 0.0, 1.0);
-                    return;
-                }
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
