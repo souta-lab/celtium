@@ -22,6 +22,12 @@ class CompletedProcess:
 
     def __init__(self, *args, **kwargs):
         kwargs["stdout"].write(b'[Celtium] CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)" uuid=abcd matchedOpenGl=false\n')
+        # A completed run's console carries the verification line with its loss aggregate; the
+        # loss-counter gate reads it, so the fake process prints a clean one like a real run.
+        kwargs["stdout"].write(b'[Celtium] CELTIUM_VERIFY via=shutdown celtium/device[passes=1] gpuStalled=false '
+                               b'lossAggregate=[postAcceptDroppedGroups=0,orderingFlushFailures=0,orderingFlushDroppedBatches=0,'
+                               b'stalledGeometryDrops=0,stalledGeometryDroppedBatches=0,unflushedTargetGroupsDropped=0,'
+                               b'windowFlushFailures=0,staleGroupRefusals=0,total=0] logLimitSuppressed=0\n')
         kwargs["stdout"].write(CompletedProcess.console_extra)
 
     def wait(self, timeout=None):

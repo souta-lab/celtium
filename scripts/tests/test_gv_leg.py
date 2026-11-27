@@ -97,7 +97,13 @@ if scenario == 'wrong_gpu': name = 'AMD Radeon RX 6400' if 'UHD' in a.require_gp
 native_uuid = 'a' * 32
 reference = scenario.startswith('gl_reference')
 native = '[Celtium] CELTIUM_NATIVE_DEVICE name="' + name + '" uuid=' + native_uuid + ' matchedOpenGl=false\n'
-(game / 'validation-console.log').write_text('' if scenario == 'missing_device' or reference else native)
+# A completed native run's console carries the verification line with its loss aggregate; the
+# loss-counter gate in postcheck reads it, so the fake harness prints a clean one like a real run.
+verify = ('[Celtium] CELTIUM_VERIFY via=shutdown celtium/device[passes=1] gpuStalled=false '
+          'lossAggregate=[postAcceptDroppedGroups=0,orderingFlushFailures=0,orderingFlushDroppedBatches=0,'
+          'stalledGeometryDrops=0,stalledGeometryDroppedBatches=0,unflushedTargetGroupsDropped=0,'
+          'windowFlushFailures=0,staleGroupRefusals=0,total=0] logLimitSuppressed=0\n')
+(game / 'validation-console.log').write_text('' if scenario == 'missing_device' or reference else native + verify)
 (game / 'logs/latest.log').write_text('')
 status = 'UNCALIBRATED_PRESENTED_IMAGE' if scenario.startswith('uncalibrated') else 'PASSED'
 fixture = {'status': status, 'presentedImageVerdict': status, 'sceneGateCalibrated': True,
