@@ -265,6 +265,13 @@ class LandedFixGuardContractTest {
      * {@code FramebufferCacheRotationTest} pins the companion cache fix behaviourally; the target's
      * sites are device-bound, so they are pinned here by shape. The slice ends at the Pair class:
      * a pair's own {@code this.colorImage} is a different field and stays as it is.
+     * <p>
+     * The count below is four, not three, since the frame-image sampling bootstrap
+     * ({@code GllessFrameTarget.initializeFrameImageForSampling}) added its initial-transition
+     * barrier as a fourth site. It is counted with the others rather than exempted: the bootstrap
+     * is guarded to run only while no borrow is live, so the borrow-aware name it records against
+     * is the owned image there, and the discipline this guard exists for - no site naming the
+     * owned field behind a borrow - is exactly what its guard keeps.
      */
     @Test
     void theFrameLayoutBarriersAndClearActOnTheBorrowAwareImage() throws IOException {
@@ -272,9 +279,10 @@ class LandedFixGuardContractTest {
         int pair = target.indexOf("private final class Pair {");
         assertTrue(pair >= 0, "the Pair class bounds the frame target's own region");
         String frameRegion = target.substring(0, pair);
-        assertEquals(3, count(frameRegion, ".image(colorImage())"),
-                "the acquire/release, clear-to-transfer and transfer-to-attachment barriers all"
-                        + " name the borrow-aware colour image");
+        assertEquals(4, count(frameRegion, ".image(colorImage())"),
+                "the acquire/release, clear-to-transfer and transfer-to-attachment barriers and"
+                        + " the sampling bootstrap's initial transition all name the borrow-aware"
+                        + " colour image");
         assertEquals(0, count(frameRegion, ".image(this.colorImage)"),
                 "no frame-image barrier names the owned image field directly");
         assertTrue(frameRegion.contains("vkCmdClearColorImage(command, colorImage(),"),
