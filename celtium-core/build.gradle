@@ -1,0 +1,89 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'org.soutalab.celtium'
+version = '0.1.0-dev.1'
+
+repositories { mavenCentral() }
+
+// celtium-core is the pure contract module of the v0.4.0 final form (design V040-FINAL-PLAN section 2.1):
+// the geometry/vertex contracts, the three native interfaces between the shader-pack interpreter, the
+// terrain lane, the non-terrain lane and the direct-GL converter, and the shared harness/instrument
+// base. It depends on nothing but the JDK, so no org.embeddedt / org.taumc / com.gtnewhorizons type can
+// leak into the contract surface.
+//
+// The module's own sources are Java 25: the FFM MemorySegment/Arena surface is part of the contracts
+// (TerrainPackProgramSet.updateFrameUniforms writes the pack uniform block through a MemorySegment).
+// One deliberate exception: the harness source set stays at release 21, because :common (toolchain 21)
+// and :forge122 (release 21) read HarnessConfig from it and a 21 compiler cannot read release-25 class
+// files. The harness classes ship in their own consumable artifact (the harnessJar configuration
+// below) as well as in this module's jar, so the older modules keep reading exactly the class they
+// read when it lived in :common.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.named('compileJava') {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+tasks.named('compileTestJava') {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+tasks.named('compileHarnessJava') {
+    options.release = 21
+    options.encoding = 'UTF-8'
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+sourceSets {
+    harness {
+        java.srcDir 'src/harness/java'
+    }
+    test {
+        // The moved harness tests exercise the harness source set's classes.
+        compileClasspath += harness.output
+        runtimeClasspath += harness.output
+    }
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('jar') {
+    from(sourceSets.harness.output)
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// The harness classes alone, at release 21, for the modules on the older side of the Java 25
+// boundary: :common and :forge122 read HarnessConfig from it, and the mod jar embeds this artifact
+// the way it used to embed the class out of :common's modJar. The attributes mirror :common's modJar
+// so the RFG-side consumers resolve it under the same rules.
+configurations {
+    harnessJar {
+        canBeConsumed = true
+        canBeResolved = false
+        attributes {
+            attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
+            attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+        }
+    }
+}
+def harnessJarTask = tasks.register('harnessJar', Jar) {
+    from(sourceSets.harness.output)
+    archiveClassifier.set('harness')
+}
+artifacts {
+    harnessJar(harnessJarTask)
+}

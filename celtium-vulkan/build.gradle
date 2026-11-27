@@ -8,9 +8,11 @@ version = '0.1.0-dev.1'
 repositories { mavenCentral() }
 
 tasks.withType(JavaCompile).configureEach {
-    // Minimum runtime is Java 21 (user decision, 2026-10-09 14:11). Verified builds run on JDK 25, but nothing here may use
-    // a Java 22+ API, language feature or preview: the distinction between "built on 25" and "runs on 21" is kept explicit.
-    options.release = 21
+    // Java 25 since the v0.4.0 S1-a stage (design V040-FINAL-PLAN section 2.4): the FFM
+    // MemorySegment/Arena surface is part of how this module writes off-heap state, so the release-21
+    // ceiling the 2026-10-09 decision set is superseded for this module. :forge122 stays at release 21
+    // as the Mixin/ASM safety boundary; :celtium-core is release 25 as well.
+    options.release = 25
     options.encoding = 'UTF-8'
 }
 
@@ -45,6 +47,17 @@ if (coreProject != null) {
         compileOnly(project(path: ':common', configuration: 'modJar')) { transitive = false }
         // Real adapter-dispatch tests load its core API signatures, without initializing Minecraft or a GL context.
         testImplementation(project(path: ':common', configuration: 'modJar')) { transitive = false }
+    }
+}
+
+// The v0.4.0 contract module: the native interfaces and geometry contracts this backend implements
+// against, and - since the S1-a move - the home of HarnessConfig, which this module's classes read.
+// Like :common above, the classes are provided by the mod jar at runtime; nothing is bundled here.
+def celtiumCoreProject = findProject(':celtium-core')
+if (celtiumCoreProject != null) {
+    dependencies {
+        compileOnly(project(':celtium-core')) { transitive = false }
+        testImplementation(project(':celtium-core')) { transitive = false }
     }
 }
 

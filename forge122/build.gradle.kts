@@ -36,8 +36,8 @@ val modEmbedDependencies = configurations.create("modEmbedDependencies") {
     isCanBeConsumed = false
     attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
 }
-// The one :common artifact the validation client jar draws its harness reader from (see the
-// validationJar task): the same modJar the mod itself embeds, filtered there to the harness package.
+// The one :celtium-core artifact the validation client jar draws its harness reader from (see the
+// validationJar task): the same harnessJar the mod itself embeds, filtered there to the harness package.
 val validationHarnessEmbed = configurations.create("validationHarnessEmbed") {
     isCanBeResolved = true
     isCanBeConsumed = false
@@ -145,7 +145,16 @@ dependencies {
     modEmbedDependencies(project(":common", configuration = "modJar")) {
         isTransitive = false
     }
-    validationHarnessEmbed(project(":common", configuration = "modJar")) {
+    // HarnessConfig moved from :common to :celtium-core in the v0.4.0 S1-a stage. The harnessJar
+    // artifact carries it at release 21, which this module's 21 compiler can read; :celtium-core's
+    // own release-25 classes are not on this module's classpath.
+    implementation(project(":celtium-core", configuration = "harnessJar")) {
+        isTransitive = false
+    }
+    modEmbedDependencies(project(":celtium-core", configuration = "harnessJar")) {
+        isTransitive = false
+    }
+    validationHarnessEmbed(project(":celtium-core", configuration = "harnessJar")) {
         isTransitive = false
     }
     modEmbedDependencies("org.joml:joml:1.10.5")
@@ -308,9 +317,10 @@ tasks.named<JavaCompile>(validation.compileJavaTaskName) {
 }
 val validationJar = tasks.register<Jar>("validationJar") {
     from(validation.output)
-    // HarnessConfig (org.soutalab.celtium.harness, in :common) is the harness's one configuration
+    // HarnessConfig (org.soutalab.celtium.harness, in :celtium-core since the v0.4.0 S1-a move) is the
+    // harness's one configuration
     // reader, and ValidationClient's static init touches it before anything else. It normally reaches
-    // the game through the mod jar's embedded copy of :common, so a leg whose renderer slot holds a
+    // the game through the mod jar's embedded copy of the harnessJar, so a leg whose renderer slot holds a
     // different renderer (item 341's Celeritas reference arm) died with NoClassDefFoundError during
     // "Initializing game" - the fixture had silently become renderer-dependent. Ship the harness
     // package in this jar as well: the class is self-contained (JDK types only), and when both jars

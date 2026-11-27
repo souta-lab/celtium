@@ -21,6 +21,12 @@ repositories {
 }
 
 dependencies {
+    // HarnessConfig (org.soutalab.celtium.harness) moved to :celtium-core in the v0.4.0 S1-a stage;
+    // the chunk renderers here still read it. The harnessJar artifact carries the class at release 21,
+    // which this module's 21 toolchain can read - :celtium-core's own sources are release 25 and are
+    // not visible from here.
+    implementation project(path: ':celtium-core', configuration: 'harnessJar')
+
     def lwjglVersion = "3.3.1"
 
     // LWJGL 3 is used directly (MemoryUtil, the GL classes, MemoryStack): the LWJGL service layer and its
