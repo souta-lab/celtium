@@ -24,6 +24,8 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 | Celeritas Dynamic Lights | Targets retired Celeritas addon hooks — Celtium includes native GPU-shader Dynamic Lights (`-Dceltium.dynamicLights=true`) |
 | Celeritas Leaf Culling | Targets retired Celeritas internal hooks — leaf culling is built into Celtium natively (`leafCullingMode`, default `SOLID`) |
 | Celeritas Extra | Targets retired Celeritas internal GUI/renderer hooks — core optimization features (visible-only animated textures, idle frame cap) are built into Celtium natively |
+| Actinium | The terrain renderer, the GL/shader pipeline and shader pack support — Celtium provides all of these itself and cannot run together with Actinium |
+| Demonica | The shader pipeline — Celtium interprets shader packs itself now; the Celtium + Demonica combination is no longer supported |
 
 ## Unsupported
 

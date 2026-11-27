@@ -80,6 +80,23 @@ final class CeltiumCompetitors {
                     "Celeritas internal GUI/renderer hooks that Celtium no longer supports. Core features"
                             + " (visible-only animated textures, idle frame cap) are built into Celtium natively;"
                             + " remove this addon - see docs/mod-compatibility.md"},
+            // Whole-renderer coexistence refusals (2026-11-27): Celtium holds the whole rendering stack
+            // itself, so neither of these runs alongside it. Actinium is a competing whole-renderer
+            // overhaul: its GLSM forwards every GL call to a single backend while Celtium's engine owns
+            // the same surface, and it ships a second copy of the terrain renderer. Marker is its @Mod
+            // class, verified in the Actinium source tree (Actinium-Dev/Actinium, tip ce77eed9). The
+            // CeleritasLoadingPlugin class name exists in both jars and must not be used as a marker.
+            // Demonica is the Angelica fork whose shader hosting Celtium used to interoperate with; that
+            // combination was retired when Celtium took shader pack interpretation in-house. Marker is
+            // its @Mod class, verified in Demonica-0.9.1.jar.
+            {"com/dhj/actinium/Actinium.class", "Actinium (actinium)",
+                    "the terrain renderer, the GL/shader pipeline and shader pack support. Celtium now"
+                            + " provides all of these itself and cannot run together with Actinium;"
+                            + " remove Actinium - see docs/mod-compatibility.md"},
+            {"com/demonica/Demonica.class", "Demonica (demonica)",
+                    "the shader pipeline. Celtium now interprets shader packs itself, and the"
+                            + " Celtium + Demonica combination is no longer supported; remove Demonica"
+                            + " - see docs/mod-compatibility.md"},
     };
 
     private CeltiumCompetitors() {

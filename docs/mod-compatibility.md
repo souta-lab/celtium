@@ -292,6 +292,8 @@ draws, and the outcome is recorded per mod rather than promised in advance.
 | Celeritas Dynamic Lights (celeritasdynamiclights) | Refused at startup (`CeltiumCompetitors`): targets the retired Celeritas addon surface (Ledger I/II). Celtium includes its own GPU-shader Dynamic Lights (`-Dceltium.dynamicLights=true`, zero chunk remeshing); remove this addon |
 | Celeritas Leaf Culling (celeritasleafculling) | Refused at startup (`CeltiumCompetitors`): targets the retired Celeritas internal renderer surface (Ledger III-1). Leaf culling is already built into Celtium natively (`leafCullingMode`, default `SOLID`); remove this addon |
 | Celeritas Extra (celeritasextra) | Refused at startup (`CeltiumCompetitors`): targets retired Celeritas internal GUI/renderer hooks (Ledger I/III). Its main performance features (visible-only animated textures, idle/unfocused frame cap) are built into Celtium natively; remove this addon |
+| Actinium (actinium) | Refused at startup (`CeltiumCompetitors`): a competing whole-renderer overhaul — it replaces the terrain renderer, the GL/shader pipeline and shader pack support, all of which Celtium now provides itself; the two cannot run together, remove Actinium |
+| Demonica (demonica) | Refused at startup (`CeltiumCompetitors`): replaces the shader pipeline. Celtium now interprets shader packs itself, and the Celtium + Demonica combination is no longer supported; remove Demonica |
 
 The startup refusal keys on a marker class only the mod's own jar carries. `-Dceltium.allowCompetitors=true` lifts the
 refusal at the user's own risk; the measured failures in the rows above are what it re-admits.
