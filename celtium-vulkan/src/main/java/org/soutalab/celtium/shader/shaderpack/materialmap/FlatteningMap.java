@@ -20,6 +20,12 @@ public final class FlatteningMap {
     };
 
     static {
+        initMappings1();
+        initMappings2();
+        initMappings3();
+    }
+
+    private static void initMappings1() {
         rename("grass_block", "grass");
         rename("dirt_path", "grass_path");
         rename("note_block", "noteblock");
@@ -193,6 +199,9 @@ public final class FlatteningMap {
             meta(color + "_stained_hardened_clay", "stained_hardened_clay", i);
             rename(color + "_bed", "bed");
         }
+    }
+
+    private static void initMappings2() {
 
         metas("brown_mushroom_block", "brown_mushroom_block", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14);
         metas("red_mushroom_block", "red_mushroom_block", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14);
@@ -534,6 +543,9 @@ public final class FlatteningMap {
         trapdoorStates("dark_oak_trapdoor", "dark_oak_trapdoor");
         trapdoorStates("iron_trapdoor", "iron_trapdoor");
         fenceGateStates();
+    }
+
+    private static void initMappings3() {
     }
 
     private FlatteningMap() {
