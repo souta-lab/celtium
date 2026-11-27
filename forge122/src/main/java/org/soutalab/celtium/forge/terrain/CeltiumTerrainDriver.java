@@ -446,6 +446,32 @@ public final class CeltiumTerrainDriver {
                 } catch (Throwable t) {
                     lines.add("fwd830 failed " + t);
                 }
+                // TEMP G1 PROBE26: fresh-mesh (8,4,0) totals, to compare against the
+                // resident slab census (probe17 line) of the same section.
+                try {
+                    if (world != null && faceData != null) {
+                        WorldSectionSnapshot snap6 = new WorldSectionSnapshot();
+                        ForgeSectionScanner.fill(snap6, world, faceData, fluids, 8, 4, 0);
+                        MeshBuffers b6 = new MeshBuffers();
+                        new SectionMesher().mesh(snap6, faceData, MesherOptions.PACK_OFF, b6);
+                        long fSky0 = 0L;
+                        long fSky15 = 0L;
+                        for (int layer = 0; layer < 3; layer++) {
+                            for (int qi = 0; qi < b6.axisCount(layer); qi++) {
+                                int sky = b6.axisQuad(layer, qi).skyLight();
+                                if (sky == 0) {
+                                    fSky0++;
+                                } else if (sky == 15) {
+                                    fSky15++;
+                                }
+                            }
+                        }
+                        lines.add("fresh840 axisTotal=" + b6.axisTotal() + " generalTotal="
+                                + b6.generalTotal() + " axisSky0=" + fSky0 + " axisSky15=" + fSky15);
+                    }
+                } catch (Throwable t) {
+                    lines.add("fresh840 failed " + t);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
