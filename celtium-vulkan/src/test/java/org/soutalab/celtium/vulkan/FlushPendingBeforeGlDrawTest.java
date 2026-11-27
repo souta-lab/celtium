@@ -29,6 +29,7 @@ class FlushPendingBeforeGlDrawTest {
         setField(backend, "immediateStatistics", new ImmediateStatistics());
         setField(backend, "fontBatch", new FontBatch());
         setField(backend, "immediateGroups", new ArrayList<ImmediateGroup>());
+        setField(backend, "postAcceptDroppedByFormat", new int[VulkanImmediateFormats.COUNT]);
         return backend;
     }
 
@@ -55,6 +56,8 @@ class FlushPendingBeforeGlDrawTest {
         assertTrue(backend.immediateGroups.isEmpty(),
                 "queued immediate group must be processed rather than left stranded for menu frame boundary drop");
         assertEquals(3, backend.immediateStatistics.postAcceptDroppedGroups());
+        assertEquals(3, backend.postAcceptDroppedByFormat[VulkanImmediateFormats.ITEM],
+                "the replacement-boundary drop is also recorded per format");
     }
 
     @Test
