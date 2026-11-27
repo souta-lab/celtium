@@ -362,7 +362,7 @@ public final class Lane1TerrainFrontend {
         ShellStream shell = (ShellStream) stream;
         VkCommandBuffer cmd = shell.commandBuffer();
         int slot = shell.slot();
-        boolean useIndirect = context.multiDrawIndirectEnabled();
+        boolean useIndirect = false; // TEMP G1 BISECT22: direct draws only
         int index = 0;
         while (index < commands.size()) {
             boolean general = commands.get(index).general();

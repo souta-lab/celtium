@@ -265,18 +265,6 @@ public final class Lane1Shaders {
             layout(location = 6) flat in int fragSection;
             layout(location = 0) out vec4 outColor;
             void main() {
-                // TEMP G1 BISECT21: self-calibrating lightmap axis readout. Left half shows
-                // the raw (u, v) ramp, right half the lightmap sampled at the same coords.
-                {
-                    vec2 suv = gl_FragCoord.xy / vec2(1280.0, 720.0);
-                    if (suv.x < 0.5) {
-                        outColor = vec4(suv.x * 2.0, suv.y / 0.55, 0.0, 1.0);
-                    } else {
-                        vec2 tuv = vec2((suv.x - 0.5) * 2.0, suv.y / 0.55);
-                        outColor = vec4(texture(lightMap, tuv).rgb, 1.0);
-                    }
-                    return;
-                }
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
@@ -292,9 +280,7 @@ public final class Lane1Shaders {
                 // The lightmap is a 16x16 texel grid indexed (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges
                 // (measured at Gate G1 by probing the bound image's corners).
-                vec2 lightUv = (fragLightMap * 15.0 + 0.5) / 16.0;
-                lightUv.y = 1.0 - lightUv.y;
-                vec3 light = texture(lightMap, lightUv).rgb;
+                vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
