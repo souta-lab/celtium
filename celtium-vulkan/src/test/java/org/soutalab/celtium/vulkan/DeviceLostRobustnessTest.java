@@ -22,9 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * wait's result code, and the latch's state at the draw entry - so they are pinned here as a pure function and
  * as source contracts over the two call sites.
  * <p>
- * What these tests prove and what they do not: they prove which results settleGpu absorbs and that both call
- * sites consult the rule before their throw. They prove nothing about a lost device itself - that the reload
- * now completes and the session degrades is the reporting user's NVIDIA session, which is not runnable here.
+ * What these tests prove and what they do not: they prove which results settleGpu absorbs, that settleGpu
+ * consults its rule before its throw, and that the draw entry decides a refusal by the latch (a counted
+ * skip since DP-02, for live-backend refusals too). They prove nothing about a lost device itself - that
+ * the reload now completes and the session degrades is the reporting user's NVIDIA session, which is not
+ * runnable here.
  */
 class DeviceLostRobustnessTest {
 
@@ -66,20 +68,33 @@ class DeviceLostRobustnessTest {
     }
 
     /**
-     * The native draw entry: a refusal while the latch is up is a skipped draw, and the throw survives for
-     * refusals on a live backend, in that order.
+     * The native draw entry: a refusal while the latch is up is a counted, skipped draw - and since the
+     * drawpath audit's DP-02 disposition, so is a refusal on a live backend. The caller enumeration
+     * behind DP-02 showed the entry's one caller sits inside {@code VertexBuffer.drawArrays}, whose
+     * vanilla and Forge callers hold no catch, so the live-backend throw this test used to pin was the
+     * same propagation shape as the stall crash above it. The only throw that survives is the
+     * no-Vulkan-backend invariant, checked before any submission happens.
      */
     @Test
-    void theNativeDrawEntrySkipsWhileStalledAndThrowsOtherwise() throws IOException {
+    void theNativeDrawEntrySkipsWhileStalledAndOnLiveRefusals() throws IOException {
         String source = Files.readString(findRepoFile(
                 "forge122/src/main/java/org/taumc/celeritas/core/CeltiumNativeDraw.java"));
         int stallCheck = source.indexOf("celtium$isGpuStalled()");
-        int throwSite = source.indexOf("throw new IllegalStateException(\"native VertexBuffer draw refused:");
+        int refusedNote = source.indexOf("NativeDrawSkipCensus.noteRefusedSkip()");
         assertTrue(stallCheck >= 0, "the entry consults the backend's stall latch on a refusal");
-        assertTrue(throwSite > stallCheck, "the throw remains, after the stall check, for live-backend refusals");
-        String skipped = source.substring(stallCheck, throwSite);
+        assertTrue(refusedNote > stallCheck,
+                "a live-backend refusal is counted as a skip after the stall check, not thrown");
+        String skipped = source.substring(stallCheck, refusedNote);
+        assertTrue(skipped.contains("NativeDrawSkipCensus.noteStalledSkip()"),
+                "the stalled skip is counted in its own population");
         assertTrue(skipped.contains("return;"),
                 "the stalled branch returns: the draw is skipped and the frame continues degraded");
+        assertFalse(source.contains("native VertexBuffer draw refused"),
+                "no refusal throw remains: a refusal degrades to the counted skip (DP-02)");
+        int invariant = source.indexOf("native VertexBuffer draw without an active Vulkan backend");
+        int submit = source.indexOf("submitRetainedGeometry");
+        assertTrue(invariant >= 0 && invariant < submit,
+                "the no-backend invariant throw remains, ahead of the submission");
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
