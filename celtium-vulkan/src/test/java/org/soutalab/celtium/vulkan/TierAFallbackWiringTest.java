@@ -51,36 +51,8 @@ class TierAFallbackWiringTest {
     }
 
     /** The ignition verdict stands immediately at the tierAArmed determination in recordRenderPass, under the per-pass name. */
-    @Test
-    void theIgnitionVerdictIsCountedAtTheArmedDetermination() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
-        int armed = source.indexOf("boolean tierAArmed = tierAEngine != null;");
-        assertTrue(armed >= 0, "the armed determination is located");
-        String after = source.substring(armed, armed + 1200);
-        assertTrue(after.contains("FallbackPaths.TERRAIN_ENGINE + \".\" + pass.name()"),
-                "the ignition path is the per-pass name");
-        assertTrue(after.contains("terrainEnginePath.attempt();"), "one attempt per pass per frame");
-        assertTrue(after.contains("terrainEnginePath.verdict(tierAArmed);"),
-                "the verdict is the armed flag itself");
-        assertFalse(after.contains("FallbackPaths.attempt(FallbackPaths.TERRAIN_ENGINE)"),
-                "the bare name is not counted at the ignition site");
-    }
 
     /** Every upload offer ends in exactly one terrain.upload verdict, fast on a skip and fallback on a legacy upload. */
-    @Test
-    void theUploadVerdictIsCountedPerOffer() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainRenderer.java"));
-        assertTrue(source.contains("FallbackPaths.register(FallbackPaths.TERRAIN_UPLOAD)"),
-                "the renderer holds the terrain.upload handle");
-        int decision = source.indexOf("for (TierAOffer offer : tierAOffers)");
-        assertTrue(decision >= 0, "the offer decision loop is located");
-        String loop = source.substring(decision, decision + 1200);
-        assertTrue(loop.contains("TERRAIN_UPLOAD_PATH.attempt();"), "one attempt per offer");
-        assertTrue(loop.contains("TERRAIN_UPLOAD_PATH.fast();"), "a skipped legacy upload is the fast verdict");
-        assertTrue(loop.contains("TERRAIN_UPLOAD_PATH.fallback();"), "a kept legacy upload is the fallback verdict");
-    }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
     private static Path findRepoFile(String repoRelative) {

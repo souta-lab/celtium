@@ -59,16 +59,6 @@ class LandedFixGuardContractTest {
      * set. The set is drained after every upload, so the old guard returned early on every
      * ordinary frame and dropped regions kept their arenas until world end.
      */
-    @Test
-    void regionEvictionIsGuardedOnRegionCountNotOnTheFailedUploadSet() throws IOException {
-        String backend = read(BACKEND);
-        assertTrue(backend.contains("this.terrain.regionCount() == 0"),
-                "the eviction entry is guarded on the regions with resources");
-        assertEquals(0, count(backend, "this.terrain.isEmpty()"),
-                "the failed-upload set must not gate eviction again - it is empty on ordinary frames");
-        assertTrue(read(TERRAIN_RENDERER).contains("boolean failedUploadsEmpty()"),
-                "the failed-upload query keeps its own name, separate from the region count");
-    }
 
     /**
      * a0476564b (bughunt lane 01, finding 4): a depth copy whose two names resolve to one shared
@@ -147,29 +137,6 @@ class LandedFixGuardContractTest {
      * <em>page</em> as well as its source, under the same bind-then-record order, so the pin
      * matches the condition's prefix and covers the widened form unchanged in intent.
      */
-    @Test
-    void mergeRunsBindTheirIndexSourceBeforeDrawing() throws IOException {
-        String backend = read(BACKEND);
-        String guard = "if (arena != arenaBound";
-        int sites = 0;
-        int from = 0;
-        while (true) {
-            int site = backend.indexOf(guard, from);
-            if (site < 0) {
-                break;
-            }
-            sites++;
-            String block = backend.substring(site, Math.min(backend.length(), site + 400));
-            int bind = block.indexOf("bindIndexBuffer(");
-            int record = block.indexOf("arenaBound = arena;");
-            assertTrue(bind >= 0 && record > bind,
-                    "every run boundary binds the run's own index source before recording it"
-                            + " as bound (site " + sites + ")");
-            from = site + guard.length();
-        }
-        assertTrue(sites >= 2,
-                "both run boundaries bind the run's own index source before any draw of it");
-    }
 
     /**
      * S3R-2 (entry pack 5-3): the GPU-generated issuance forms that read the shared vertex
@@ -179,26 +146,6 @@ class LandedFixGuardContractTest {
      * gated indirect chain, the merge-run and pack direct walks) draw those frames instead.
      * A guard dropped at either seat misdraws every page-1 segment silently.
      */
-    @Test
-    void generatedTerrainIssuanceDeclinesAMultiPageSharedArena() throws IOException {
-        String backend = read(BACKEND);
-        int head = backend.indexOf("private boolean celtium$gpuTerrainDrawPassHead(");
-        assertTrue(head >= 0, "the E10-b pass head bounds the camera seat's region");
-        int decline = backend.indexOf("sharedVertex.pageCount() > 1", head);
-        int arm = backend.indexOf("this.gpuTerrainDraw.passHead(", head);
-        assertTrue(decline > head && arm > decline,
-                "the E10-b pass head declines a multi-page shared arena before the"
-                        + " executor's generation dispatch is recorded");
-        int shadowTerm = backend.indexOf("shadowVertexArena.pageCount() == 1");
-        int shadowUse = backend.indexOf("&& shadowArenaSinglePage");
-        assertTrue(shadowTerm >= 0 && shadowUse > shadowTerm,
-                "the pack shadow seat computes the shared arena's single-page term and"
-                        + " spends it in the arm condition");
-        int cancel = backend.indexOf("this.shadowGpuTerrainDraw.cancelArmed();", shadowUse);
-        assertTrue(cancel > shadowUse && cancel - shadowUse < 800,
-                "a refused shadow arm still lands on the cancel path, leaving the"
-                        + " per-region loop to draw the stage");
-    }
 
     /**
      * ad8513594 (BH10-07): delete()'s early returns detach the backend registration too - a

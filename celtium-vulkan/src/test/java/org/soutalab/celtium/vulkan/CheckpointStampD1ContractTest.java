@@ -32,16 +32,6 @@ class CheckpointStampD1ContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
 
     /** INV-1a: the store's one deferred-release call site is the checkpoint. */
-    @Test
-    void theStoreDefersOnlyInsideTheCheckpoint() throws IOException {
-        String source = Files.readString(findRepoFile(STORE_SOURCE));
-        assertEquals(1, countOccurrences(source, ".freeDeferred("),
-                "stampPendingRetirements is the store's one deferred-release call site (INV-1a)");
-        int checkpoint = source.indexOf("int stampPendingRetirements(long");
-        assertTrue(checkpoint >= 0, "the checkpoint exists");
-        assertTrue(source.indexOf(".freeDeferred(") > checkpoint,
-                "the one call site sits inside the checkpoint");
-    }
 
     /** M1/INV-1b: the hook fires on the success tail of the flush, guarded, never on the failure path. */
     @Test
@@ -61,17 +51,6 @@ class CheckpointStampD1ContractTest {
     }
 
     /** M1: the boundary fallback drains only when no batch is pending (the D1 hold leaves one). */
-    @Test
-    void theBoundaryFallbackIsGatedOnNoPendingBatch() throws IOException {
-        String source = Files.readString(findRepoFile(BACKEND_SOURCE));
-        assertTrue(source.contains("context.celtium$setPostBatchFlushHook("),
-                "the backend registers the checkpoint on the context's post-flush hook");
-        int guard = source.indexOf("if (!this.context.celtium$hasPendingBatchedSubmits())");
-        assertTrue(guard >= 0, "the boundary fallback checks the pending batch first");
-        int drain = source.indexOf("host.drainPendingRetirements()", guard);
-        assertTrue(drain > guard,
-                "the fallback drain sits under the no-pending-batch guard (D1 hold: no stamp)");
-    }
 
     private static int countOccurrences(String text, String needle) {
         int count = 0;

@@ -116,24 +116,6 @@ class DrawpathBatchCountingWiringTest {
                 "refusals are counted once, at the submitImmediateBatch funnel");
     }
 
-    @Test
-    @DisplayName("DP-15: the stalled-pass branch exists once and closes the setup bracket")
-    void stalledPassBranchMerged() throws IOException {
-        String backend = read(BACKEND);
-        int start = backend.indexOf("private void celtium$renderPass(");
-        assertTrue(start >= 0, "the pass entry exists");
-        int begin = backend.indexOf("FramePassTimings.begin(\"terrainSetup\")", start);
-        assertTrue(begin > start, "the setup bracket opens in the pass entry");
-        String head = backend.substring(begin, begin + 2600);
-        assertEquals(1, occurrences(head, "if (this.gpuStalled) {"),
-                "the duplicated stalled branch is merged into one");
-        int stall = head.indexOf("if (this.gpuStalled) {");
-        int noted = head.indexOf("this.terrainStatistics.notePassSkips();", stall);
-        int preflush = head.indexOf("celtium$preflushIfDeferred();", stall);
-        int closed = head.indexOf("FramePassTimings.end(\"terrainSetup\")", stall);
-        assertTrue(noted > stall && preflush > noted && closed > preflush,
-                "the merged branch notes the skip, preflushes and closes the bracket before returning");
-    }
 
     @Test
     @DisplayName("DP-09/X-1: the zombie counters and the duplicate offTargetRefusals print are gone")

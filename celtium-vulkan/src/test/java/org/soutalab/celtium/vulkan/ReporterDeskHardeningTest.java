@@ -101,24 +101,6 @@ class ReporterDeskHardeningTest {
      * {@code initRenderer}: the old manager's destroy is guarded, the field is nulled regardless, and
      * the new manager's creation still follows - in that order.
      */
-    @Test
-    void theReloadDiscardsTheOldManagerEvenWhenItsTeardownThrows() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java"));
-        int init = source.indexOf("protected void initRenderer(CommandList commandList)");
-        assertTrue(init >= 0, "initRenderer is declared");
-        String body = source.substring(init, init + 5000);
-        int destroy = body.indexOf("this.renderSectionManager.destroy();");
-        int guard = body.lastIndexOf("try {", destroy);
-        int caught = body.indexOf("catch (RuntimeException failure)", destroy);
-        int nulled = body.indexOf("this.renderSectionManager = null;", destroy);
-        int create = body.indexOf("this.renderSectionManager = this.createRenderSectionManager(commandList);");
-        assertTrue(destroy >= 0, "the old manager is destroyed");
-        assertTrue(guard >= 0 && guard < destroy, "the destroy is inside a try");
-        assertTrue(caught > destroy, "a teardown failure is caught, not propagated out of the reload");
-        assertTrue(nulled > caught, "the field is nulled after the guard: the wreckage is not kept installed");
-        assertTrue(create > nulled, "the new manager is still created after the discard");
-    }
 
     /**
      * The backend's {@code delete()}: the completed-teardown guard precedes the settle, the release

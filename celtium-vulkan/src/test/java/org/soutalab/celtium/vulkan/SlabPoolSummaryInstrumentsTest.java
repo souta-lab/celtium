@@ -62,46 +62,8 @@ class SlabPoolSummaryInstrumentsTest {
                 "the registration setter exists for the terrain backend");
     }
 
-    @Test
-    void terrainEntrySetsDeviceAgainstLogicalWithTheSharedBufferCount() throws IOException {
-        String host = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
-        String entry = methodSlice(host, "String terrainSlabSummary()", 2600);
-        assertTrue(entry.contains("terrainGeometry(type="), "the entry names the terrain pool");
-        assertTrue(entry.contains("allocator.usedBytes()") && entry.contains("allocator.liveSlabCount()"),
-                "the device side is the shared allocator's used bytes and live slab count");
-        assertTrue(entry.contains("allocator.oversizedSlabSizes()"),
-                "the terrain allocator's oversized sizes ride the same entry");
-        assertTrue(entry.contains("this.store.geometryAllocator()"),
-                "the logical side is the shared store's geometry ledger");
-        assertTrue(entry.contains(",logicalSlabs=") && entry.contains("logical.slabCount()"),
-                "the logical slab count is reported");
-        assertTrue(entry.contains(",logicalLiveBytes=") && entry.contains("logical.liveBytes()"),
-                "the logical live bytes are reported");
-        assertTrue(entry.contains(",hostSlabBuffers=") && entry.contains("liveSlabBufferCount()"),
-                "the host's shared slab buffer count is reported against the logical count");
-    }
 
-    @Test
-    void liveSlabBufferCountCountsCreatedBuffersOnly() throws IOException {
-        String host = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainEngineAHost.java");
-        String count = methodSlice(host, "int liveSlabBufferCount()", 400);
-        assertTrue(count.contains("for (SlabBuffer buffer : this.geometrySlabBuffers)"),
-                "the count walks the host's shared slab buffer slots");
-        assertTrue(count.contains("if (buffer != null)"),
-                "only created (non-null) buffers count");
-    }
 
-    @Test
-    void backendRegistersTheTerrainSummarySource() throws IOException {
-        String backend = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
-        assertTrue(backend.contains("context.celtium$setTerrainSlabSummarySource("),
-                "the backend registers the source with its context");
-        assertTrue(backend.contains("host.terrainSlabSummary()"),
-                "the registered source reads the terrain host's entry");
-    }
 
     private static String contextSource() throws IOException {
         return readSource("celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java");

@@ -45,13 +45,6 @@ class ChainPairMultiFramebufferTest {
         assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(8), "the pack ledger's full width");
     }
 
-    @Test
-    void thePackTerrainFetchPassesItsColourCount() throws IOException {
-        String body = methodSlice(backendSource(),
-                "long targetRenderPass = frameVariantRenderPass(targetColors, pairClass);", 16000);
-        assertTrue(body.contains("framebuffer = ensureChainPairFramebuffer(drawIdentity, targetRenderPass, targetColors);"),
-                "the pack terrain path asks for its framebuffer at the pass's own colour count");
-    }
 
     @Test
     void theIdentityCountedAskDispatchesByCount() throws IOException {

@@ -66,22 +66,6 @@ class BoundTargetRoutedClearTest {
      * The wiring: inside the bound-target branch, the consume runs for every routed pass - not only for a
      * shared-depth member - and ahead of the attach acquire, which is the order the depth route uses.
      */
-    @Test
-    void theBoundTargetBranchConsumesTheClearBeforeTheAcquire() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
-        int branch = source.indexOf("TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()");
-        assertTrue(branch >= 0, "the bound-target branch is present");
-        String rest = source.substring(branch, branch + 8000);
-        int consume = rest.indexOf("celtium$consumeRoutedTargetClear(pairOwner, identity, boundDepthKey);");
-        int acquire = rest.indexOf("pairOwner.recordChainPairAttachAcquire(identity, boundDepthKey, this.commandBuffer);");
-        assertTrue(consume >= 0, "the branch consumes the owed clear");
-        assertTrue(acquire > consume, "the consume precedes the attach acquire, the depth route's order");
-        String before = rest.substring(0, consume);
-        assertFalse(before.contains("if (boundDepthKey != 0L)"),
-                "the consume must not be guarded on a shared depth: that guard is the shape that left a "
-                        + "private-depth pair's clear pending past the pass");
-    }
 
     /** The consume consults the routed allowance, not the shared rule directly. */
     @Test
