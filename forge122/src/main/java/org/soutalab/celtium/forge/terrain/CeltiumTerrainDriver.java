@@ -86,6 +86,7 @@ public final class CeltiumTerrainDriver {
             new java.util.concurrent.atomic.AtomicLong();
     static final java.util.concurrent.atomic.AtomicLong DRAIN_G4_DARK =
             new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.Map<Long, Long> WORST_SECTIONS = new java.util.HashMap<>();
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -244,6 +245,14 @@ public final class CeltiumTerrainDriver {
                 + " g4Total=" + DRAIN_G4_TOTAL.get()
                 + " g4Sky15=" + DRAIN_G4_SKY15.get()
                 + " g4Dark=" + DRAIN_G4_DARK.get());
+        synchronized (WORST_SECTIONS) {
+            WORST_SECTIONS.entrySet().stream()
+                    .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+                    .limit(8)
+                    .forEach(e -> lines.add("worstSection key=" + e.getKey()
+                            + " x=" + keyX(e.getKey()) + " y=" + keyY(e.getKey())
+                            + " z=" + keyZ(e.getKey()) + " darkPermille=" + e.getValue()));
+        }
         lines.add("fillCensus total=" + ForgeSectionScanner.FILLS_TOTAL.get()
                 + " centerUnpopulated=" + ForgeSectionScanner.FILLS_CENTER_UNPOPULATED.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
@@ -363,10 +372,6 @@ public final class CeltiumTerrainDriver {
         ensureBuildSide();
         diffLoadedSections();
         promoteAwaitingLight();
-        // TEMP G1 PROBE8: one late full rebuild, long after world load settled.
-        if (frameCounter == 3000L) {
-            dirty.addAll(present);
-        }
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
@@ -552,6 +557,31 @@ public final class CeltiumTerrainDriver {
             {
                 long kk = entry.getKey();
                 boolean surface = keyY(kk) == 4;
+                if (surface) {
+                    int secTotal = 0;
+                    int secDark = 0;
+                    for (int layer = 0; layer < 3; layer++) {
+                        for (org.soutalab.celtium.core.geometry.PackedAxisQuad q
+                                : buffers.axisLayerList(layer)) {
+                            secTotal++;
+                            if (q.skyLight() == 0 && q.blockLight() == 0) {
+                                secDark++;
+                            }
+                        }
+                        for (org.soutalab.celtium.core.geometry.GeneralQuad gq
+                                : buffers.generalLayerList(layer)) {
+                            secTotal++;
+                            if ((gq.lightWord() & 0xFFFF) == 0) {
+                                secDark++;
+                            }
+                        }
+                    }
+                    if (secTotal > 0) {
+                        synchronized (WORST_SECTIONS) {
+                            WORST_SECTIONS.put(kk, secDark * 1000L / secTotal);
+                        }
+                    }
+                }
                 for (int layer = 0; layer < 3; layer++) {
                     for (org.soutalab.celtium.core.geometry.PackedAxisQuad q
                             : buffers.axisLayerList(layer)) {
