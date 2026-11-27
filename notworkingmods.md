@@ -2,7 +2,7 @@
 
 Known failures and refusals, with the reason. Verified mods are in [verifiedmods.md](verifiedmods.md).
 
-Last updated: 2026-11-21.
+Last updated: 2026-11-27.
 
 ## Refused at startup (competing renderers)
 
@@ -21,6 +21,9 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 | Vintagium | The terrain renderer |
 | Relictium | The terrain renderer |
 | Phosphor | The light-propagation internals of Chunk — it crashes at startup whenever Celtium is present; use Pulsar Lighting Engine instead |
+| Celeritas Dynamic Lights | Targets retired Celeritas addon hooks — Celtium includes native GPU-shader Dynamic Lights (`-Dceltium.dynamicLights=true`) |
+| Celeritas Leaf Culling | Targets retired Celeritas internal hooks — leaf culling is built into Celtium natively (`leafCullingMode`, default `SOLID`) |
+| Celeritas Extra | Targets retired Celeritas internal GUI/renderer hooks — core optimization features (visible-only animated textures, idle frame cap) are built into Celtium natively |
 
 ## Unsupported
 

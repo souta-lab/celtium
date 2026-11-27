@@ -41,6 +41,7 @@ jobs:
           python3 scripts/cpu-contract/bench_controls_check.py
           python3 scripts/check_agent_docs.py
           python3 scripts/check_patch_groups.py
+          python3 scripts/check_competitors.py
           bash -n scripts/gv-leg.sh
       - uses: actions/setup-java@v4
         with:

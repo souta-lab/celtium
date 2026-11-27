@@ -289,6 +289,9 @@ draws, and the outcome is recorded per mod rather than promised in advance.
 | Vintagium (vintagium) | Refused at startup (`CeltiumCompetitors`): Sodium's chunk engine ported to 1.12.2 — a second terrain renderer, which cannot coexist with Celtium's |
 | Relictium (relictium) | Refused at startup (`CeltiumCompetitors`): a fork of Vintagium; the same terrain-renderer replacement |
 | Phosphor (phosphorlighting) | Refused at startup (`CeltiumCompetitors`): its sliced `@ModifyVariable` search on `Chunk.setBlockState` finds no target whenever Celtium is present, and the launch aborts with an `InjectionError` (leg 439a, 2026-11-20). A diagnostic build with Celtium's only Chunk mixin removed entirely crashed identically (E1), so the trigger is Celtium's presence at config/plugin level, not a mixin sharing the Chunk target; the exact point is unconfirmed. Phosphor is unmaintained (upstream frozen since 2020); the recommended replacement is Pulsar Lighting Engine, as the README's Install section already directs. Its maintained successor fork Hesperus 0.2.9.3-SNAPSHOT also passed the same leg (439b, presented frame matching the Celtium-only control), so it coexists, but it is not the recommended target |
+| Celeritas Dynamic Lights (celeritasdynamiclights) | Refused at startup (`CeltiumCompetitors`): targets the retired Celeritas addon surface (Ledger I/II). Celtium includes its own GPU-shader Dynamic Lights (`-Dceltium.dynamicLights=true`, zero chunk remeshing); remove this addon |
+| Celeritas Leaf Culling (celeritasleafculling) | Refused at startup (`CeltiumCompetitors`): targets the retired Celeritas internal renderer surface (Ledger III-1). Leaf culling is already built into Celtium natively (`leafCullingMode`, default `SOLID`); remove this addon |
+| Celeritas Extra (celeritasextra) | Refused at startup (`CeltiumCompetitors`): targets retired Celeritas internal GUI/renderer hooks (Ledger I/III). Its main performance features (visible-only animated textures, idle/unfocused frame cap) are built into Celtium natively; remove this addon |
 
 The startup refusal keys on a marker class only the mod's own jar carries. `-Dceltium.allowCompetitors=true` lifts the
 refusal at the user's own risk; the measured failures in the rows above are what it re-admits.
@@ -335,63 +338,23 @@ the full accounting (license route, proving measurement) is in the absorption le
 
 ## Addon connection surface
 
-What an addon compiled against Celeritas can rely on when it runs on Celtium instead (item 378). The direction is
-deliberate: Celtium generalises the surface addons connect to rather than reimplementing any one addon's mechanisms —
-Dynamic Lights' brightness tables, falloff curves and item rules are not Celtium's to port, and they are not here.
-Three ledgers, in decreasing order of strength:
+**Celeritas addons are not supported (abolished 2026-11-27, decision D-87).** Celtium no longer maintains the external
+Celeritas addon connection surface (the former Ledger I / II / III contracts and `scripts/check_addon_surface.py`).
+The three existing Celeritas addons — **Celeritas Dynamic Lights**, **Celeritas Leaf Culling**, and **Celeritas Extra**
+— are explicitly refused at startup in `CeltiumCompetitors` so users see a clear message instead of a `MixinApplyError`.
 
-**Ledger I — public API (frozen).** The `org.taumc.celeritas.api` symbols an addon compiles against (texture atlas
-and sprite events, the render-stage API, the option-extension and model-override interfaces) are a compile-time
-contract: they do not change shape under an addon. Item 378 adds no symbols to this ledger; it only stops the
-runtime behaviour below from silently breaking what the API already promised.
+Their core features are integrated natively instead:
 
-**Ledger II — vanilla instruction points.** The points inside vanilla methods where addons inject. Celtium's fast
-paths sit *inside* vanilla's high-level queries, never in front of a vanilla method an addon targets: a HEAD cancel
-or a call-site wrap there makes the addon's own injection apply cleanly and then never run, which is the worst
-failure shape there is — nothing logs, nothing crashes, the feature is simply absent. The points and what Celtium
-keeps on each:
+- **Leaf Culling**: built into Celtium natively (`leafCullingMode`, default `SOLID`, with `NONE` / `HOLLOW` /
+  `SOLID_AGGRESSIVE` / `SOLID` modes).
+- **Dynamic Lights**: built into Celtium natively as a GPU-shader implementation (32-light uniform block at binding 3,
+  zero chunk remeshing; currently opt-in via `-Dceltium.dynamicLights=true`, with Tier-A host migration and default-on
+  enablement scheduled in the next integration stage — see "Built into Celtium" above).
+- **Celeritas Extra**: its main optimization features (visible-only animated textures, idle/unfocused frame cap, sign
+  and item optimizations) are already covered natively in Celtium.
 
-| ID | Point | What Celtium keeps |
-|---|---|---|
-| II-1 | `IBlockState.getPackedLightmapCoords` (T) | No mixin on the method. Terrain light reads it by plain call (`LightDataCache`), so an addon's RETURN-value edit on it applies to Celtium's terrain too |
-| II-2 | `Entity.getBrightnessForRender` (E) | No injection. The vanilla body runs as written; its light query is answered inside `World.getCombinedLight` (II-7) |
-| II-3 | `Particle.getBrightnessForRender` (P) | No injection. The vanilla body runs as written, including the `BlockPos` it allocates; its light query is answered inside `World.getCombinedLight` (II-7) |
-| II-4 | the `getCombinedLight` call inside the block-entity dispatcher's `render` (B) | The call is not wrapped, redirected or argument-edited. The dispatcher's own call runs as written and is answered inside `World.getCombinedLight` (II-7), so an addon's argument edit on the call applies |
-| II-5 | `ItemRenderer.setLightmap` (H) | Untouched. No Celtium mixin names this method |
-| II-6 | `RenderGlobal.markBlocksForUpdate` (s1) | Celtium's `@Overwrite` stays: the method itself exists with vanilla's signature, so addons calling it — or injecting on it — find it where vanilla put it |
-| II-7 | `World.getCombinedLight` return semantics | The one place Celtium's per-tick light cache answers: inside the method itself, wrapped around the vanilla body, never instead of it. The cache answers only calls with `lightValue == 0` on a client world on the client main thread; every other call, and every cache miss, takes the vanilla body unchanged. Injections on the method — at its head, on its returns, on its call sites in other methods — apply as written |
-
-Two rules keep the ledger from drifting. **R1:** an injection Celtium does land on a ledger point declares its
-`require` explicitly, so a renamed target is a deliberate decision rather than a default's silent no-op or startup
-crash. **R2:** Celtium never replaces an instruction point an addon targets; where a Celtium mechanism would have
-to sit on one, it descends to the inner query instead (the light cache's move from the entity/particle/dispatcher
-entry points into `getCombinedLight` itself is the worked example). Both rules are lint-pinned:
-`scripts/check_addon_surface.py` holds this table's machine-readable source and fails when the mixin tree, the
-table and the list disagree.
-
-The light cache's kill switch changed meaning with the move: `-Dceltium.entityLightCache=false` now disables the
-cache inside the funnel (every lookup takes the vanilla body), where before it stood the caller-side cancels down.
-The retired `-Dceltium.particleLightCache` switch went with the injection it governed.
-
-**Ledger III — internal classes (tracked, not a frozen contract).** Addons also mix into Celeritas' own internal
-classes (`VintageBlockRenderer`, video options UI) and shadow their fields or redirect their call sites. These are
-not promised as a stable public API, but `scripts/check_addon_surface.py` tracks the exact members and call sites
-real addons name so internal refactors fail loudly rather than silently breaking an addon:
-
-| ID | Internal class | Addon consumer & status |
-|---|---|---|
-| III-1 | `VintageBlockRenderer` | Celeritas Leaf Culling (`VintageBlockRendererMixin`) shadows `currentState`/`currentBlockAccess`/`renderQuadList` and `@Redirect`s `renderQuadList` in both `renderBlock` and `renderModel`. **Known gap (kept open):** `renderBlock` delegates to `renderModel` since the Demonica Tier B split (`9b3623db7`), so its `renderBlock` `@Redirect` (default `require = 1`) has no target and the addon in its current form fails to apply at startup. Leaf culling itself is built into celtium natively (option `leafCullingMode`, default `SOLID`), so III-1 is closed by the native implementation, not by restoring the connection surface |
-| III-2 | `CeleritasVideoOptionsController` | Celeritas Extra (`MixinOptionsController`) shadows pages/scroll/button/layout members and hooks `init`/`createTabFrame`/`applyChanges` — present |
-| III-3 | `CeleritasVideoOptionsScreen` | Celeritas Extra (`MixinOptionsScreen`) accesses `controller` and hooks `initGui`/`drawScreen`/`mouseClicked` — present |
-| III-4 | `ScrollableFrame` | Celeritas Extra (`MixinScrollableFrame`) accesses `horizontalScrollBar`/`verticalScrollBar`/`viewPortDimension` and hooks `mouseScrolled` — present |
-| III-5 | `TabFrame` | Celeritas Extra (`TabFrameAccess`) accesses `tabs` — present |
-| III-6 | `OptionImpl` | Celeritas Extra (`OptionBindingAccess`) accesses `binding` — present |
-| III-7 | `SliderControl` | Celeritas Extra (`MixinSliderScroll`) accesses `min`/`max`/`interval`/`Button` — present |
-| III-8 | `SearchTextFieldComponent` | Named absent gap (`SearchTextFieldComponent` / `SearchTextFieldModel` do not exist in Celtium); Celeritas Extra's `@Pseudo` `MixinNativeSearchComponent`/`MixinNativeSearchTerms` degrade to its own search bar |
-
-Whether a given addon actually *works* on this surface is a measurement, not a consequence of the ledger: the
-acceptance legs (Dynamic Lights 1.2.11 visibly lighting on the fixture, and a second addon loading on the same
-surface) belong to the fixture protocol under "What is measured, and how", and are not claimed here.
+This abolition applies **only** to the Celeritas addon surface; normal Forge/Minecraft content mods (TESR, baked models,
+standard rendering entry points) remain supported as documented above.
 
 ## What is measured, and how
 

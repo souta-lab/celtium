@@ -62,6 +62,24 @@ final class CeltiumCompetitors {
                     "the light-propagation internals of Chunk, and it crashes at startup whenever Celtium is"
                             + " present. Phosphor is unmaintained; use Pulsar Lighting Engine instead"
                             + " - see docs/mod-compatibility.md"},
+            // External Celeritas addons (2026-11-27, decision D-87): Celtium abolished the Celeritas addon
+            // connection surface (Ledger I/II/III) and provides Leaf Culling and GPU-shader Dynamic Lights
+            // natively. Refusing these jars at startup prevents opaque MixinApplyError crashes and points users
+            // at the native equivalents. Marker classes verified against Karnatour/CeleritasDynamicLights
+            // (1.2.11), celeritasleafculling-1.0.2.jar (sha256 cc384657...), and
+            // celeritasextra-0.11.3-beta.jar (sha256 83c5c39f...).
+            {"toni/sodiumdynamiclights/SodiumDynamicLights.class", "Celeritas Dynamic Lights (celeritasdynamiclights)",
+                    "Celeritas addon hooks that Celtium no longer supports. Celtium includes native GPU-shader"
+                            + " Dynamic Lights (enable with -Dceltium.dynamicLights=true); remove this addon"
+                            + " - see docs/mod-compatibility.md"},
+            {"toni/sodiumleafculling/CeleritasLeafCulling.class", "Celeritas Leaf Culling (celeritasleafculling)",
+                    "Celeritas addon hooks that Celtium no longer supports. Leaf culling is already built into"
+                            + " Celtium natively (leafCullingMode, default SOLID); remove this addon"
+                            + " - see docs/mod-compatibility.md"},
+            {"com/sumirelabs/celeritasextra/CeleritasExtraMod.class", "Celeritas Extra (celeritasextra)",
+                    "Celeritas internal GUI/renderer hooks that Celtium no longer supports. Core features"
+                            + " (visible-only animated textures, idle frame cap) are built into Celtium natively;"
+                            + " remove this addon - see docs/mod-compatibility.md"},
     };
 
     private CeltiumCompetitors() {
