@@ -811,4 +811,95 @@ class LegacyImmediateCaptureTest {
         assertArrayEquals(new float[] {0.0f, 0.0f}, uv, "no coordinate is written into the pair");
         assertTrue(capture.end(sink));
     }
+
+    /**
+     * A vertex with {@code w} of zero abandons the run mid-collection. {@code end} then has nothing to offer
+     * and returns without consulting a sink, so the abandonment record is the only trace the run leaves: this
+     * pins that the record exists, names its reason, and reaches the summary.
+     */
+    @Test
+    void aVertexWithWZeroAbandonsTheRunAndNamesTheAbandonment() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        assertTrue(capture.begin(GL11.GL_QUADS, true, false, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        capture.vertex3f(1.0f, 0.0f, 0.0f);
+        capture.vertex4f(1.0f, 1.0f, 0.0f, 0.0f);
+        assertFalse(capture.active(), "the run is abandoned, not left open");
+        assertFalse(capture.end(sink), "an abandoned run offers nothing");
+        assertTrue(sink.runs.isEmpty(), "and the sink is never consulted");
+        assertEquals(1, capture.abandonedRuns(), "the abandonment is counted");
+        assertTrue(capture.lastAbandonment().contains("w=0"),
+                "with its reason named: " + capture.lastAbandonment());
+        assertTrue(capture.summary().contains("abandoned=1"),
+                "and the summary carries it: " + capture.summary());
+    }
+
+    /** A {@code w} of zero outside a run is a refusal but not an abandonment: there was no run to abandon. */
+    @Test
+    void aVertexWithWZeroOutsideARunIsNotAnAbandonment() {
+        LegacyImmediateCapture capture = capture();
+        capture.vertex4f(1.0f, 1.0f, 0.0f, 0.0f);
+        assertEquals(0, capture.abandonedRuns());
+        assertEquals(1, capture.refusals(), "the refusal itself is still counted");
+    }
+
+    /**
+     * A run longer than the initial capacity is collected whole: the vertex bound used to refuse and drop
+     * the entire run, and this pins that the run now grows instead - every vertex, in order, with the bytes
+     * of the last one where the stride says they belong.
+     */
+    @Test
+    void aRunLargerThanTheInitialCapacityIsCollectedWhole() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        int vertices = LegacyImmediateCapture.MAX_VERTICES + 2;
+        assertEquals(0, vertices % 3, "a whole number of triangles, so nothing is cut as trailing");
+        assertTrue(capture.begin(GL11.GL_TRIANGLES, false, false, GATE));
+        for (int i = 0; i < vertices; i++) {
+            capture.vertex3f((float) i, 0.0f, 0.0f);
+        }
+        assertTrue(capture.end(sink), "the run reaches the sink instead of being refused at the old bound");
+        assertEquals(vertices, capture.submittedVertices(), "every vertex was collected");
+        assertEquals(0, capture.refusals(), "growth is not a refusal");
+        long last = capture.address() + (long) (vertices - 1) * LegacyImmediateCapture.STRIDE_POSITION_COLOR;
+        assertEquals((float) (vertices - 1), MemoryUtil.memGetFloat(last),
+                "the last vertex survived every growth with its bytes intact");
+        capture.free();
+    }
+
+    /**
+     * The list record's own reason reaches the capture: {@code end} counts the refusal, and a reason the sink
+     * handed over through {@code noteListRecordRefusal} is the one {@code lastRefusal} reports - not the
+     * generic fallback, and not counted twice.
+     */
+    @Test
+    void aListRecordRefusalReasonReachesTheCapture() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        LegacyImmediateCapture.CompiledRunSink noting = (format, stride, count, drawMode, address, attributes) -> {
+            capture.noteListRecordRefusal("the test's own reason");
+            return false;
+        };
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertFalse(capture.end(sink, noting), "the record refused the run");
+        assertEquals(1, capture.listRefusals(), "counted once, by end");
+        assertEquals("the test's own reason", capture.lastRefusal(),
+                "the sink's reason is the one the capture reports");
+    }
+
+    /** Without a noted reason, a refused list record still names the generic one. */
+    @Test
+    void aListRecordRefusalWithoutANotedReasonKeepsTheGenericOne() {
+        LegacyImmediateCapture capture = capture();
+        Recorder sink = new Recorder();
+        CompiledRecorder compiled = new CompiledRecorder();
+        compiled.refuse = true;
+        assertTrue(capture.begin(GL11.GL_QUADS, false, true, GATE));
+        capture.vertex3f(0.0f, 0.0f, 0.0f);
+        assertFalse(capture.end(sink, compiled));
+        assertEquals(1, capture.listRefusals());
+        assertEquals("the display-list record refused it", capture.lastRefusal());
+    }
 }

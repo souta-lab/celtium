@@ -26,9 +26,10 @@ import org.lwjgl.system.MemoryUtil;
  * projects by it, so a vertex with {@code w != 1} is stored as {@code x/w, y/w, z/w}. A {@code w} of zero has no
  * finite position; the run is refused by name rather than drawn with an invented one.</li>
  * <li><b>Refusals are counted by reason, never silently dropped.</b> A second {@code glBegin} before {@code glEnd}, a
- * layout the renderer has no draw for (the gate), more than {@link #MAX_VERTICES} vertices in one run, and a sink that
- * will not take the run all leave the run undrawn and land in a named counter. Under GL-less a refusal draws nothing,
- * so the count is the only way the loss is visible.</li>
+ * layout the renderer has no draw for (the gate), and a sink that will not take the run all leave the run undrawn
+ * and land in a named counter. A run abandoned mid-collection (a vertex whose {@code w} is zero) is counted as an
+ * abandonment, with its reason kept. Under GL-less a refusal draws nothing, so the count is the only way the
+ * loss is visible.</li>
  * <li><b>Geometry inside a display-list compile is recorded, not refused.</b> {@code glBegin} is legal inside
  * {@code glNewList}/{@code glEndList}, and a mod that draws this way compiles its geometry into the list and replays it
  * with {@code glCallList} - GregTech's tool rotation marker is exactly that ({@code ToolEventHandlers}, measured from
@@ -117,9 +118,10 @@ public final class LegacyImmediateCapture {
     public static final int STRIDE_POSITION_TEX_COLOR = 24;
 
     /**
-     * The most vertices one run may hold. This is a guard, not a limit anyone reaches: the measured sessions' largest
-     * {@code glBegin} run is four vertices, and the bound exists so a mod that never calls {@code glEnd} cannot grow the
-     * buffer without limit.
+     * The vertex count the initial buffer holds, in the wider layout. This used to be the most vertices one run
+     * may hold - a guard whose refusal dropped the whole run - and is now only the first capacity: a longer run
+     * grows the buffer geometrically instead of being refused, so the constant names where growth starts, not
+     * where collection stops.
      */
     public static final int MAX_VERTICES = 65536;
 
@@ -138,7 +140,7 @@ public final class LegacyImmediateCapture {
     /** {@code GL_COMPILE_AND_EXECUTE}: record and run, so a recorded colour does become the caller's. */
     private static final int GL_COMPILE_AND_EXECUTE = 0x1301;
 
-    /** Room for {@link #MAX_VERTICES} textured vertices before the first growth; a run larger than this grows once. */
+    /** Room for {@link #MAX_VERTICES} textured vertices before the first growth; a larger run grows geometrically. */
     private static final int INITIAL_BYTES = MAX_VERTICES * STRIDE_POSITION_TEX_COLOR;
 
     private ByteBuffer buffer;
@@ -241,8 +243,10 @@ public final class LegacyImmediateCapture {
     private long rectRefusals;
     private long otherTexUnitCoords;
     private long trailingVertices;
+    private long abandonedRuns;
     private int lastOtherTexUnit = -1;
     private String lastRefusal = "";
+    private String lastAbandonment = "";
 
     /** {@return whether a run is currently being collected}. */
     public boolean active() {
@@ -362,6 +366,9 @@ public final class LegacyImmediateCapture {
             this.lastRefusal = "a vertex with w=0 has no finite position";
             this.refusals++;
             if (this.active) {
+                // The run is abandoned, not merely refused: end() will find nothing open and return at once,
+                // so without this record the run left no trace in any census the caller reads.
+                noteAbandonment(this.lastRefusal);
                 this.active = false;
                 this.count = 0;
             }
@@ -755,6 +762,31 @@ public final class LegacyImmediateCapture {
     }
 
     /**
+     * Records that the open run was abandoned mid-collection, with the reason.
+     * <p>
+     * An abandonment is not a refusal {@link #end} can report: the run is already closed when the caller
+     * reaches {@code glEnd}, so {@code end} returns without consulting a sink, and a caller watching only
+     * refusal deltas sees nothing at all. The caller therefore watches {@link #abandonedRuns()} across
+     * {@code end} and names {@link #lastAbandonment()} itself.
+     */
+    public void noteAbandonment(String reason) {
+        this.abandonedRuns++;
+        this.lastAbandonment = reason == null ? "" : reason;
+    }
+
+    /**
+     * Hands the capture the reason a display-list record refused the run, from the sink that decided it.
+     * <p>
+     * The count stays with {@link #end}: it increments {@code listRefusals} when the record answers false,
+     * and a second increment here would count one refusal twice. What the sink alone knows is <em>why</em> -
+     * the byte bound, the failed copy - and {@code end} keeps a reason recorded here instead of falling back
+     * to its generic one, which is how the reason reaches the caller's refusal line.
+     */
+    public void noteListRecordRefusal(String reason) {
+        this.lastRefusal = reason == null ? "" : reason;
+    }
+
+    /**
      * The attribute provenance of the run that just closed, as {@link CompiledLegacyRun} flags.
      *
      * <p>An attribute is left to the state at {@code glCallList} when the list never set it (so the caller's current
@@ -816,6 +848,7 @@ public final class LegacyImmediateCapture {
                 + " sinkRefusals=" + this.sinkRefusals + " rectRefusals=" + this.rectRefusals
                 + " otherTexUnits=" + this.otherTexUnitCoords
                 + " trailingVertices=" + this.trailingVertices
+                + " abandoned=" + this.abandonedRuns
                 + " refusals=" + this.refusals;
     }
 
@@ -841,6 +874,16 @@ public final class LegacyImmediateCapture {
 
     public long listRefusals() {
         return this.listRefusals;
+    }
+
+    /** {@return how many runs were abandoned mid-collection, each with its reason at {@link #lastAbandonment()}}. */
+    public long abandonedRuns() {
+        return this.abandonedRuns;
+    }
+
+    /** {@return the reason the last abandoned run was abandoned}. */
+    public String lastAbandonment() {
+        return this.lastAbandonment;
     }
 
     /** {@return how many runs were filed with a display-list compile rather than drawn}. */
@@ -875,13 +918,6 @@ public final class LegacyImmediateCapture {
 
     private void vertex(float x, float y, float z) {
         if (!this.active) {
-            return;
-        }
-        if (this.count >= MAX_VERTICES) {
-            this.refusals++;
-            this.lastRefusal = "more than " + MAX_VERTICES + " vertices in one glBegin";
-            this.active = false;
-            this.count = 0;
             return;
         }
         int width = this.stride;
@@ -923,12 +959,15 @@ public final class LegacyImmediateCapture {
     /**
      * Grows the vertex buffer, keeping what the open run has already written.
      * <p>
-     * The initial capacity holds {@link #MAX_VERTICES} of the wider layout, so with the vertex bound in place this only
-     * runs if one of the two constants changes; {@code nmemRealloc} keeps the guarantee honest rather than relying on
-     * that arithmetic staying true.
+     * Growth is geometric - at least double the current capacity - so a run of any length costs a logarithmic
+     * number of reallocations rather than one per vertex past the initial capacity; {@code nmemRealloc} keeps
+     * the already-written vertices in place.
      */
     private void grow(int needed) {
         int bytes = Math.max(needed, INITIAL_BYTES);
+        if (this.buffer != null) {
+            bytes = Math.max(bytes, this.capacityBytes * 2);
+        }
         if (this.buffer == null) {
             this.buffer = MemoryUtil.memAlloc(bytes);
         } else {

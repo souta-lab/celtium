@@ -160,8 +160,8 @@ static String drawArraySummary(long clientPointerAccepted, long ownedClientBuffe
 // The indexed decoder kept no census at all while the unindexed one did, and that asymmetry is how a whole
 // route stayed invisible: Demonica's GLSM streaming renderer draws every GUI batch it reroutes through here,
 // its layouts were refused for want of the VAO half of the layout decision, and no counter anywhere moved.
-// The counters below separate arrivals, draws handed to the backend, and refusals with their reasons - read
-// them together, like the glDrawArrays ones; none of them alone is evidence.
+// The counters below separate arrivals, draws handed to the backend, empty draws, and refusals with their
+// reasons - read them together, like the glDrawArrays ones; none of them alone is evidence.
 
 /**
  * Holds the indexed-draw census state, in its own class initializer for the same reason as
@@ -172,6 +172,8 @@ static final class DrawElementCensus {
     static final java.util.concurrent.atomic.AtomicLong CALLS = new java.util.concurrent.atomic.AtomicLong();
     /** Draws assembled and handed to the immediate path. */
     static final java.util.concurrent.atomic.AtomicLong DRAWN = new java.util.concurrent.atomic.AtomicLong();
+    /** Draws with no indices at all: legitimate, and nothing is dropped because there was nothing to draw. */
+    static final java.util.concurrent.atomic.AtomicLong EMPTY = new java.util.concurrent.atomic.AtomicLong();
     /** Draws this decoder would not serve; each one names its reason below. */
     static final java.util.concurrent.atomic.AtomicLong REFUSED = new java.util.concurrent.atomic.AtomicLong();
     /** Refusals by reason, bounded by the number of distinct reasons this decoder can produce. */
@@ -217,6 +219,7 @@ static String drawElementSummary() {
     }
     return "glDrawElementsCalls=" + DrawElementCensus.CALLS.get()
             + " drawn=" + DrawElementCensus.DRAWN.get()
+            + " empty=" + DrawElementCensus.EMPTY.get()
             + " refused=" + DrawElementCensus.REFUSED.get()
             + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
 }

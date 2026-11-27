@@ -1317,6 +1317,29 @@ public final class CeltiumGllessHint {
         return UNROUTED_COUNTS;
     }
 
+    /** Counts per surface-noop native id; sized to the transformer's tracking bound, like the unrouted counts. */
+    private static final int[] SURFACE_NOOP_COUNTS = new int[4096];
+
+    /** {@return the per-id call counts of natives the transformer's no-op set answered}, for the surface report. */
+    public static int[] surfaceNoopCounts() {
+        return SURFACE_NOOP_COUNTS;
+    }
+
+    /**
+     * Notes one call to a native the transformer's no-op set answered with a plain return.
+     * <p>
+     * A separate census from {@link #noteUnrouted}: a no-op-set answer is a route decision, not a missing
+     * route, and folding the two together would make the unrouted line read as if these calls had no answer
+     * at all. What the set costs - which state a mod set and the renderer never read - is this count's
+     * question, and until it existed the set's calls were counted nowhere by default.
+     */
+    public static void noteSurfaceNoop(int id) {
+        if (id < 0 || id >= SURFACE_NOOP_COUNTS.length) {
+            return;
+        }
+        SURFACE_NOOP_COUNTS[id]++;
+    }
+
     /**
      * Notes one call to a native the transformer's zero-writer answered, so the renderer's silent answers are counted
      * per name rather than inferred from a picture that is missing something.
@@ -1448,12 +1471,66 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * Instanced draws this hint would not forward, by entry point and kind: {@code count} for an instance
+     * count other than 0 or 1, {@code baseInstance} for a base instance the uninstanced forward cannot
+     * honour. Counted here because the surface report aggregates from this class, as it does for the
+     * unrouted census.
+     */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> UNSUPPORTED_INSTANCED =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    private static final java.util.Set<String> UNSUPPORTED_INSTANCED_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Notes one instanced draw that was not forwarded whole, with one log line per (name, kind). */
+    public static void noteUnsupportedInstanced(String name, String kind) {
+        String key = name + "/" + kind;
+        java.util.concurrent.atomic.AtomicLong counter = UNSUPPORTED_INSTANCED.get(key);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = UNSUPPORTED_INSTANCED.putIfAbsent(key, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+        if (UNSUPPORTED_INSTANCED_LOGGED.add(key)) {
+            System.out.println("[Celtium] CELTIUM_UNSUPPORTED_INSTANCED " + name + " kind=" + kind
+                    + " (per-instance attributes are not carried; the call is not drawn)");
+        }
+    }
+
+    /** {@return the unsupported-instanced counts as one line body, or empty when none arrived}. */
+    public static String unsupportedInstancedSummary() {
+        if (UNSUPPORTED_INSTANCED.isEmpty()) {
+            return "";
+        }
+        StringBuilder line = new StringBuilder();
+        long total = 0L;
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
+                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(
+                        UNSUPPORTED_INSTANCED).entrySet()) {
+            if (line.length() > 0) {
+                line.append(' ');
+            }
+            line.append(entry.getKey()).append('=').append(entry.getValue().get());
+            total += entry.getValue().get();
+        }
+        return "dropped=" + total + " [" + line + "]";
+    }
+
+    /**
      * Instanced draws. Instancing needs per-instance attributes this renderer does not carry, but instanceCount 1 is
      * simply the uninstanced call - the shape some mods emit per object - so that case forwards instead of vanishing.
+     * Any other count is dropped and counted by name: the drop used to be silent, so a mod instancing its draws
+     * lost the geometry with no line anywhere naming the entry point that lost it. instanceCount 0 is GL's
+     * empty draw and is not counted - nothing was asked for. A non-zero baseInstance on a forwarded draw is
+     * counted as a narrowing under its own kind: the draw happens, the base instance does not.
      */
     public static void glDrawArraysInstanced(int mode, int first, int count, int instanceCount) {
         if (instanceCount == 1) {
             glDrawArrays(mode, first, count);
+        } else if (instanceCount != 0) {
+            noteUnsupportedInstanced("glDrawArraysInstanced", "count");
         }
     }
 
@@ -1468,6 +1545,8 @@ public final class CeltiumGllessHint {
     public static void glDrawElementsInstanced(int mode, int count, int type, long indices, int instanceCount) {
         if (instanceCount == 1) {
             glDrawElements(mode, count, type, indices);
+        } else if (instanceCount != 0) {
+            noteUnsupportedInstanced("glDrawElementsInstanced", "count");
         }
     }
 
@@ -1475,6 +1554,11 @@ public final class CeltiumGllessHint {
             int baseInstance) {
         if (instanceCount == 1) {
             glDrawArrays(mode, first, count);
+            if (baseInstance != 0) {
+                noteUnsupportedInstanced("glDrawArraysInstancedBaseInstance", "baseInstance");
+            }
+        } else if (instanceCount != 0) {
+            noteUnsupportedInstanced("glDrawArraysInstancedBaseInstance", "count");
         }
     }
 
@@ -1482,6 +1566,8 @@ public final class CeltiumGllessHint {
             int instanceCount, int baseVertex) {
         if (instanceCount == 1) {
             glDrawElementsBaseVertex(mode, count, type, indices, baseVertex);
+        } else if (instanceCount != 0) {
+            noteUnsupportedInstanced("glDrawElementsInstancedBaseVertex", "count");
         }
     }
 
@@ -1489,6 +1575,11 @@ public final class CeltiumGllessHint {
             int instanceCount, int baseVertex, int baseInstance) {
         if (instanceCount == 1) {
             glDrawElementsBaseVertex(mode, count, type, indices, baseVertex);
+            if (baseInstance != 0) {
+                noteUnsupportedInstanced("glDrawElementsInstancedBaseVertexBaseInstance", "baseInstance");
+            }
+        } else if (instanceCount != 0) {
+            noteUnsupportedInstanced("glDrawElementsInstancedBaseVertexBaseInstance", "count");
         }
     }
 
