@@ -418,11 +418,6 @@ public final class Lane1TerrainFrontend {
             while (end < commands.size() && commands.get(end).general() == general) {
                 end++;
             }
-            if (general) {
-                // TEMP G1 BISECT34: skip the general stream entirely.
-                index = end;
-                continue;
-            }
             shell.bindTerrainProgram(general
                     ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
             int count = end - index;

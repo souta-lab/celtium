@@ -319,6 +319,66 @@ public final class CeltiumTerrainDriver {
                 } catch (Throwable t) {
                     lines.add("srv830 failed " + t);
                 }
+                // TEMP G1 PROBE25: face-data classification census over section (8,3,0)'s
+                // snapshot states, plus a direct mesher run on the same snapshot.
+                try {
+                    if (world != null && faceData != null) {
+                        WorldSectionSnapshot snap4 = new WorldSectionSnapshot();
+                        ForgeSectionScanner.fill(snap4, world, faceData, fluids, 8, 3, 0);
+                        java.util.Map<String, long[]> census = new java.util.TreeMap<>();
+                        int[] states4 = snap4.states();
+                        for (int i = 0; i < states4.length; i++) {
+                            int st = states4[i];
+                            if (st == BlockFaceData.AIR || faceData.isAir(st)) {
+                                continue;
+                            }
+                            net.minecraft.block.state.IBlockState bs =
+                                    net.minecraft.block.Block.getStateById(st);
+                            String name = bs == null ? "null" : bs.getBlock().getRegistryName().toString();
+                            long[] c = census.computeIfAbsent(name, k -> new long[4]);
+                            c[0]++;
+                            if (faceData.isFullCube(st)) {
+                                c[1]++;
+                            }
+                            if (faceData.isLeaves(st)) {
+                                c[2]++;
+                            }
+                            if (faceData.generalQuadCount(st) > 0) {
+                                c[3]++;
+                            }
+                        }
+                        StringBuilder cb = new StringBuilder("census830");
+                        census.forEach((k, v) -> cb.append(" ").append(k)
+                                .append(" n=").append(v[0]).append(" full=").append(v[1])
+                                .append(" leaf=").append(v[2]).append(" gen=").append(v[3]));
+                        lines.add(cb.toString());
+                        MeshBuffers buffers = new MeshBuffers();
+                        new SectionMesher().mesh(snap4, faceData, MesherOptions.PACK_OFF, buffers);
+                        StringBuilder mb = new StringBuilder("mesh830 axisTotal=")
+                                .append(buffers.axisTotal()).append(" generalTotal=")
+                                .append(buffers.generalTotal());
+                        for (int layer = 0; layer < 3; layer++) {
+                            mb.append(" L").append(layer).append("a=").append(buffers.axisCount(layer))
+                                    .append("g=").append(buffers.generalCount(layer));
+                        }
+                        long axSky0 = 0L;
+                        long axSky15 = 0L;
+                        for (int layer = 0; layer < 3; layer++) {
+                            for (int qi = 0; qi < buffers.axisCount(layer); qi++) {
+                                int sky = buffers.axisQuad(layer, qi).skyLight();
+                                if (sky == 0) {
+                                    axSky0++;
+                                } else if (sky == 15) {
+                                    axSky15++;
+                                }
+                            }
+                        }
+                        mb.append(" axisSky0=").append(axSky0).append(" axisSky15=").append(axSky15);
+                        lines.add(mb.toString());
+                    }
+                } catch (Throwable t) {
+                    lines.add("census830 failed " + t);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
