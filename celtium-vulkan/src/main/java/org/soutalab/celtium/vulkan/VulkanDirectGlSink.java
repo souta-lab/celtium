@@ -64,7 +64,10 @@ import org.lwjgl.vulkan.VkPipelineRenderingCreateInfo;
 import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
 import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
+import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
+import org.lwjgl.vulkan.VkDependencyInfo;
 import org.lwjgl.vulkan.VkRect2D;
+import org.lwjgl.vulkan.VkStencilOpState;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
@@ -282,7 +285,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             barrier.subresourceRange().aspectMask(VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
                     .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
         }
-        org.lwjgl.vulkan.VkDependencyInfo dependency = org.lwjgl.vulkan.VkDependencyInfo.calloc(stack)
+        VkDependencyInfo dependency = VkDependencyInfo.calloc(stack)
                 .sType$Default().pImageMemoryBarriers(barriers);
         VK13.vkCmdPipelineBarrier2(cmd, dependency);
         BackendCallCounters.noteBarrier();
@@ -381,13 +384,13 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                     .depthBiasSlopeFactor(ext.polygonOffsetFactor());
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo
                     .calloc(stack).sType$Default().rasterizationSamples(VK10.VK_SAMPLE_COUNT_1_BIT);
-            org.lwjgl.vulkan.VkStencilOpState stencilFront = org.lwjgl.vulkan.VkStencilOpState
+            VkStencilOpState stencilFront = VkStencilOpState
                     .calloc(stack)
                     .failOp(ext.stencilFail()).passOp(ext.stencilPass())
                     .depthFailOp(ext.stencilDepthFail()).compareOp(ext.stencilFunc())
                     .compareMask(ext.stencilFuncMask()).writeMask(ext.stencilWriteMask())
                     .reference(ext.stencilRef());
-            org.lwjgl.vulkan.VkStencilOpState stencilBack = org.lwjgl.vulkan.VkStencilOpState
+            VkStencilOpState stencilBack = VkStencilOpState
                     .calloc(stack)
                     .failOp(ext.stencilFail()).passOp(ext.stencilPass())
                     .depthFailOp(ext.stencilDepthFail()).compareOp(ext.stencilFunc())
@@ -898,16 +901,20 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             ProgramRec rec = new ProgramRec();
             rec.vertexModule = createShaderModule(bundle.vertexWords());
             ensurePipelineLayout();
+            VkDevice device = VulkanDirectGlSink.this.device;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkPipelineShaderStageCreateInfo stage = VkPipelineShaderStageCreateInfo.calloc(stack)
                         .sType$Default().stage(VK10.VK_SHADER_STAGE_COMPUTE_BIT)
                         .module(rec.vertexModule).pName(stack.UTF8("main"));
-                org.lwjgl.vulkan.VkComputePipelineCreateInfo.Buffer createInfo =
-                        org.lwjgl.vulkan.VkComputePipelineCreateInfo.calloc(1, stack);
+                VkComputePipelineCreateInfo.Buffer createInfo =
+                        VkComputePipelineCreateInfo.calloc(1, stack);
                 createInfo.get(0).sType$Default().stage(stage).layout(
                         VulkanDirectGlSink.this.pipelineLayout);
-                PointerBuffer pipelines = stack.callocPointer(1);
-                int result = VK10.vkCreateComputePipelines(VulkanDirectGlSink.this.device,
+                // Pipeline handles are 64-bit: the LWJGL binding takes a LongBuffer here.
+                // (A PointerBuffer argument is a plain type error, but JDK 25's javac
+                // reports it as an internal TransTypes NPE instead of an error.)
+                java.nio.LongBuffer pipelines = stack.callocLong(1);
+                int result = VK10.vkCreateComputePipelines(device,
                         VK_NULL_HANDLE, createInfo, null, pipelines);
                 if (result == VK_SUCCESS) {
                     rec.computePipeline = pipelines.get(0);
