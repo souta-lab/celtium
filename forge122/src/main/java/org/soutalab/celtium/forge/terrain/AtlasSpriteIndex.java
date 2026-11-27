@@ -45,11 +45,6 @@ public final class AtlasSpriteIndex {
         return index;
     }
 
-    /** The number of table entries a {@link #cellTable()} snapshot carries (index 0 included). */
-    public synchronized int size() {
-        return nextIndex + 1;
-    }
-
     /**
      * A snapshot of the index-to-cell table, packed {@code cellU | (cellV << 8)} per index, for the
      * backend's texture-cell buffer. Entry 0 (the unknown sprite) is cell 0.
