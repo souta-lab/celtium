@@ -92,7 +92,7 @@ class Lane2WiringContractTest {
         int offer = uploader.indexOf("backend.submitImmediateBatch(");
         assertTrue(probe >= 0, "the K6 probe decision must be consulted on the offer path");
         assertTrue(offer > probe, "the probe must run before the batch is offered");
-        assertTrue(uploader.contains("BufferBuilderIntegrityProbe.hasShadowStorage("),
+        assertTrue(uploader.contains(".hasShadowStorage(buffer.getClass(), BufferBuilder.class)"),
                 "the per-class shadow-storage scan must feed the decision");
         assertTrue(uploader.contains("CELTIUM_K6 path=ONE_COPY_SIMD"),
                 "a diversion must leave a bounded CELTIUM_K6 evidence line");
