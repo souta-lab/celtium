@@ -34,13 +34,22 @@ class EntityPatcher {
         final StringBuilder assignments = new StringBuilder();
         for (int i = 0; i < ID_NAMES.length; i++) {
             final String name = ID_NAMES[i];
-            if (!transformer.containsCall(name)) continue;
             final GLSLParser.Typeless_declarationContext global = topLevelDeclarator(transformer, name);
+            if (!transformer.containsCall(name)) {
+                // Declared but unused in this stage: a uniform declaration must still be
+                // removed. The lowering translator builds ONE uniform block shared by both
+                // stages from every surviving uniform declaration, so leaving this one in
+                // (BSL's gbuffers_entities vertex stage declares entityId without reading it)
+                // redeclares the name inside the stage that did localize it - a redefinition
+                // error, and the localized assignment becomes a write to a uniform.
+                if (global != null && isUniform(global)) {
+                    removeUniformDeclaration(transformer, global, name);
+                }
+                continue;
+            }
             if (global != null) {
                 if (!isUniform(global)) continue;
-                final String removed = "iris_removed_" + name;
-                ((CommonToken) global.IDENTIFIER().getSymbol()).setText(removed);
-                transformer.removeVariable(removed);
+                removeUniformDeclaration(transformer, global, name);
             }
             transformer.injectVariable("int " + name + ";");
             assignments.append(name).append(" = ").append(info).append(ID_COMPONENTS[i]).append("; ");
@@ -142,6 +151,17 @@ class EntityPatcher {
             }
             default -> {}
         }
+    }
+
+    /** Renames a top-level uniform declarator and removes it (the rename comes first because
+     * {@code removeVariable} deletes the last declaration with a given name, which can be a
+     * pack local inside a function). */
+    private static void removeUniformDeclaration(Transformer transformer,
+                                                 GLSLParser.Typeless_declarationContext global,
+                                                 String name) {
+        final String removed = "iris_removed_" + name;
+        ((CommonToken) global.IDENTIFIER().getSymbol()).setText(removed);
+        transformer.removeVariable(removed);
     }
 
     private static GLSLParser.Typeless_declarationContext topLevelDeclarator(Transformer transformer, String name) {
