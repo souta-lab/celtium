@@ -123,7 +123,18 @@ public final class WorldSectionSnapshot {
             return skyLightAt(faceIndex);
         }
         int max = 0;
+        int fx = faceIndex % SIZE;
+        int fz = (faceIndex / SIZE) % SIZE;
+        int fy = faceIndex / (SIZE * SIZE);
         for (int dir = 0; dir < 6; dir++) {
+            int nx = fx + TerrainDirs.DX[dir];
+            int ny = fy + TerrainDirs.DY[dir];
+            int nz = fz + TerrainDirs.DZ[dir];
+            if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) {
+                // One cell past the apron: the slice does not reach it; skip rather
+                // than wrap the flat index onto an unrelated cell (or off the array).
+                continue;
+            }
             int value = skyLightAt(faceIndex + offset(dir));
             if (value > max) {
                 max = value;
@@ -138,7 +149,16 @@ public final class WorldSectionSnapshot {
             return blockLightAt(faceIndex);
         }
         int max = 0;
+        int fx = faceIndex % SIZE;
+        int fz = (faceIndex / SIZE) % SIZE;
+        int fy = faceIndex / (SIZE * SIZE);
         for (int dir = 0; dir < 6; dir++) {
+            int nx = fx + TerrainDirs.DX[dir];
+            int ny = fy + TerrainDirs.DY[dir];
+            int nz = fz + TerrainDirs.DZ[dir];
+            if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) {
+                continue;
+            }
             int value = blockLightAt(faceIndex + offset(dir));
             if (value > max) {
                 max = value;
