@@ -23,7 +23,11 @@ public record CompiledShaderPack(
         NonTerrainProgramCatalog nonTerrainPrograms,
         BlockRenderingSettings blockSettings,
         ShaderFrameState frameState,
-        ShaderPack sourcePack) implements AutoCloseable {
+        ShaderPack sourcePack,
+        java.util.Map<String, java.util.List<NamedDescriptorBinding>> namedBindings,
+        java.util.Map<String, int[]> computeModules,
+        java.util.Map<String, org.soutalab.celtium.shader.shaderpack.IndirectPointer> computeIndirectPointers)
+        implements AutoCloseable {
 
     public CompiledShaderPack {
         Objects.requireNonNull(executionPlan, "executionPlan");
@@ -32,6 +36,15 @@ public record CompiledShaderPack(
         Objects.requireNonNull(blockSettings, "blockSettings");
         Objects.requireNonNull(frameState, "frameState");
         Objects.requireNonNull(sourcePack, "sourcePack");
+        namedBindings = namedBindings == null ? java.util.Map.of() : java.util.Map.copyOf(namedBindings);
+        computeModules = computeModules == null ? java.util.Map.of() : java.util.Map.copyOf(computeModules);
+        computeIndirectPointers = computeIndirectPointers == null
+                ? java.util.Map.of() : java.util.Map.copyOf(computeIndirectPointers);
+    }
+
+    /** The named descriptor bindings of one program (terrain kind key, program name or pass name). */
+    public java.util.List<NamedDescriptorBinding> namedBindingsFor(String programKey) {
+        return namedBindings.getOrDefault(programKey, java.util.List.of());
     }
 
     @Override

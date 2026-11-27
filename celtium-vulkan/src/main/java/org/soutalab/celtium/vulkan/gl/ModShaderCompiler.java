@@ -88,12 +88,28 @@ public final class ModShaderCompiler {
     }
 
     /**
+     * Compiles a compute stage. The disk cache's key space is the graphics pair (vertex /
+     * fragment), so compute compiles always run shaderc; pack compute sources are few and
+     * small, and the deadline/concurrency discipline of the graphics route applies unchanged.
+     */
+    public static byte[] compileCompute(String source) {
+        return compileWithShaderc(source, org.lwjgl.util.shaderc.Shaderc.shaderc_compute_shader);
+    }
+
+    /**
      * {@return the SPIR-V words of one stage}; throws with shaderc's message when the stage does not compile, and
      * throws when the stage does not compile <em>in time</em> - the caller ({@code ModProgramRegistry}) already
      * turns any {@code RuntimeException} from here into a refused program, so a stuck compile now fails the one
      * program instead of the whole frame loop.
      */
     private static byte[] compileWithShaderc(String source, boolean vertex) {
+        return compileWithShaderc(source, vertex
+                ? org.lwjgl.util.shaderc.Shaderc.shaderc_vertex_shader
+                : org.lwjgl.util.shaderc.Shaderc.shaderc_fragment_shader);
+    }
+
+    private static byte[] compileWithShaderc(String source, int shaderKind) {
+        boolean vertex = shaderKind == org.lwjgl.util.shaderc.Shaderc.shaderc_vertex_shader;
         if (!available()) {
             throw new IllegalStateException("shaderc unavailable: " + unavailableReason());
         }
@@ -108,7 +124,7 @@ public final class ModShaderCompiler {
             Throwable[] thrown = new Throwable[1];
             Thread worker = new Thread(null, () -> {
                 try {
-                    out[0] = Holder.compile(source, vertex);
+                    out[0] = Holder.compile(source, shaderKind);
                 } catch (Throwable failure) {
                     thrown[0] = failure;
                 }
@@ -166,7 +182,7 @@ public final class ModShaderCompiler {
             org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
         }
 
-        static byte[] compile(String source, boolean vertex) {
+        static byte[] compile(String source, int shaderKind) {
             long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
             if (compiler == 0L) {
                 throw new IllegalStateException("shaderc_compiler_initialize returned null");
@@ -196,8 +212,7 @@ public final class ModShaderCompiler {
                 fileNameBytes = org.lwjgl.system.MemoryUtil.memUTF8("celtium-mod-program", true);
                 entryPointBytes = org.lwjgl.system.MemoryUtil.memUTF8("main", true);
                 result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, sourceBytes,
-                        vertex ? org.lwjgl.util.shaderc.Shaderc.shaderc_vertex_shader
-                                : org.lwjgl.util.shaderc.Shaderc.shaderc_fragment_shader,
+                        shaderKind,
                         fileNameBytes, entryPointBytes, options);
                 if (result == 0L) {
                     throw new IllegalStateException("shaderc_compile_into_spv returned null");

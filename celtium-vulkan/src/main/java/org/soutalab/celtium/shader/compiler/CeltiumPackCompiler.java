@@ -188,6 +188,14 @@ public final class CeltiumPackCompiler {
                 || programSet.getShadowWater().isPresent();
         List<RenderTargetSpec> renderTargets = buildRenderTargets(directives, hasShadow);
 
+        // Execution-side tables the core contracts do not carry: descriptor binding names
+        // (needed to resolve a binding to a render target), compute modules and the compute
+        // indirect pointers from shaders.properties.
+        Map<String, List<NamedDescriptorBinding>> namedBindings = new LinkedHashMap<>();
+        Map<String, int[]> computeModules = new LinkedHashMap<>();
+        Map<String, org.soutalab.celtium.shader.shaderpack.IndirectPointer> computeIndirectPointers =
+                new LinkedHashMap<>();
+
         // 2. Terrain 6-stage program set (Interface 1)
         Map<TerrainPassKind, TerrainStageProgram> terrainPrograms = new EnumMap<>(TerrainPassKind.class);
         boolean reqMcEntity = false;
@@ -228,6 +236,7 @@ public final class CeltiumPackCompiler {
 
             PackSpirvCompiler.CompiledProgram compiled = spirvCompiler.compileGraphics(
                     src.getName(), patchedVsh, patchedFsh, patchedGsh);
+            namedBindings.put("terrain:" + kind.name(), compiled.namedBindings());
 
             boolean isShadowKind = isShadowPass(kind);
             AttachmentFormatKey formats = buildAttachmentFormats(directives, src.getDirectives(), isShadowKind);
@@ -279,6 +288,7 @@ public final class CeltiumPackCompiler {
             }
             PackSpirvCompiler.CompiledProgram compiled = spirvCompiler.compileGraphics(
                     id.getSourceName(), patchedVsh, patchedFsh, patchedGsh);
+            namedBindings.put(id.getSourceName(), compiled.namedBindings());
 
             boolean isShadow = id.getSourceName().startsWith("shadow");
             AttachmentFormatKey formats = buildAttachmentFormats(directives, src.getDirectives(), isShadow);
@@ -292,7 +302,8 @@ public final class CeltiumPackCompiler {
         NonTerrainProgramCatalog nonTerrainCatalog = new NonTerrainProgramCatalog(nonTerrainSpecs);
 
         // 4. Ordered pass graph (PackExecutionPlan)
-        List<OrderedPass> passes = buildOrderedPasses(programSet, directives, terrainProgramSet.hasShadowPass(), caps);
+        List<OrderedPass> passes = buildOrderedPasses(programSet, directives, terrainProgramSet.hasShadowPass(), caps,
+                namedBindings, computeModules, computeIndirectPointers);
         PackExecutionPlan executionPlan = new PackExecutionPlan(renderTargets, uniformPacker.layout(), passes);
 
         ShaderLogger.LOGGER.info(
@@ -310,7 +321,10 @@ public final class CeltiumPackCompiler {
                 nonTerrainCatalog,
                 blockSettings,
                 frameState,
-                pack);
+                pack,
+                namedBindings,
+                computeModules,
+                computeIndirectPointers);
     }
 
     public static List<StringPair> defaultEnvironmentDefines(PackCompilerCapabilities caps) {
@@ -394,15 +408,20 @@ public final class CeltiumPackCompiler {
             ProgramSet programSet,
             PackDirectives directives,
             boolean hasShadowPass,
-            PackCompilerCapabilities caps) {
+            PackCompilerCapabilities caps,
+            Map<String, List<NamedDescriptorBinding>> namedBindings,
+            Map<String, int[]> computeModules,
+            Map<String, org.soutalab.celtium.shader.shaderpack.IndirectPointer> computeIndirectPointers) {
         List<OrderedPass> passes = new ArrayList<>();
 
         // Begin compute passes
-        addComputePasses(passes, programSet.getBeginCompute(), true, directives);
+        addComputePasses(passes, programSet.getBeginCompute(), true, directives,
+                namedBindings, computeModules, computeIndirectPointers);
 
         // Shadow stage
         if (hasShadowPass) {
-            addComputePasses(passes, new ComputeSource[][]{programSet.getShadowCompute()}, false, directives);
+            addComputePasses(passes, new ComputeSource[][]{programSet.getShadowCompute()}, false, directives,
+                    namedBindings, computeModules, computeIndirectPointers);
             List<TerrainPassKind> shadowKinds = List.of(
                     TerrainPassKind.SHADOW_SOLID,
                     TerrainPassKind.SHADOW_CUTOUT,
@@ -417,13 +436,15 @@ public final class CeltiumPackCompiler {
 
         // Prepare passes
         for (ProgramSource src : programSet.getPrepare()) {
-            compileFullscreenPass(src, directives, caps).ifPresent(spirv ->
-                    passes.add(new OrderedPass.PreparePass(
-                            src.getName(),
-                            spirv,
-                            List.of("colortex0"),
-                            drawBufferNames(src.getDirectives()),
-                            BARRIER_COLOR_TO_FRAGMENT_SAMPLE)));
+            compileFullscreenPass(src, directives, caps).ifPresent(compiled -> {
+                namedBindings.put(src.getName(), compiled.namedBindings());
+                passes.add(new OrderedPass.PreparePass(
+                        src.getName(),
+                        compiled.spirv(),
+                        List.of("colortex0"),
+                        drawBufferNames(src.getDirectives()),
+                        BARRIER_COLOR_TO_FRAGMENT_SAMPLE));
+            });
         }
 
         // GBuffer stage
@@ -440,23 +461,26 @@ public final class CeltiumPackCompiler {
 
         // Deferred passes
         for (ProgramSource src : programSet.getDeferred()) {
-            compileFullscreenPass(src, directives, caps).ifPresent(spirv ->
-                    passes.add(new OrderedPass.DeferredPass(
-                            src.getName(),
-                            spirv,
-                            List.of("colortex0", "depthtex0"),
-                            drawBufferNames(src.getDirectives()),
-                            BARRIER_COLOR_TO_FRAGMENT_SAMPLE)));
+            compileFullscreenPass(src, directives, caps).ifPresent(compiled -> {
+                namedBindings.put(src.getName(), compiled.namedBindings());
+                passes.add(new OrderedPass.DeferredPass(
+                        src.getName(),
+                        compiled.spirv(),
+                        List.of("colortex0", "depthtex0"),
+                        drawBufferNames(src.getDirectives()),
+                        BARRIER_COLOR_TO_FRAGMENT_SAMPLE));
+            });
         }
 
         // Composite passes
         for (ProgramSource src : programSet.getComposite()) {
-            compileFullscreenPass(src, directives, caps).ifPresent(spirv -> {
+            compileFullscreenPass(src, directives, caps).ifPresent(compiled -> {
+                namedBindings.put(src.getName(), compiled.namedBindings());
                 List<String> outputs = drawBufferNames(src.getDirectives());
                 boolean flip = !outputs.isEmpty();
                 passes.add(new OrderedPass.CompositePass(
                         src.getName(),
-                        spirv,
+                        compiled.spirv(),
                         List.of("colortex0", "depthtex0", "depthtex1"),
                         outputs,
                         BARRIER_COLOR_TO_FRAGMENT_SAMPLE,
@@ -466,12 +490,14 @@ public final class CeltiumPackCompiler {
 
         // Final pass -> Swapchain directly (P5)
         programSet.getCompositeFinal().ifPresent(src ->
-                compileFullscreenPass(src, directives, caps).ifPresent(spirv ->
-                        passes.add(new OrderedPass.FinalPass(
-                                src.getName(),
-                                spirv,
-                                List.of("colortex0"),
-                                BARRIER_COLOR_TO_FRAGMENT_SAMPLE))));
+                compileFullscreenPass(src, directives, caps).ifPresent(compiled -> {
+                    namedBindings.put(src.getName(), compiled.namedBindings());
+                    passes.add(new OrderedPass.FinalPass(
+                            src.getName(),
+                            compiled.spirv(),
+                            List.of("colortex0"),
+                            BARRIER_COLOR_TO_FRAGMENT_SAMPLE));
+                }));
 
         return passes;
     }
@@ -480,7 +506,10 @@ public final class CeltiumPackCompiler {
             List<OrderedPass> passes,
             ComputeSource[][] groups,
             boolean isBegin,
-            PackDirectives directives) {
+            PackDirectives directives,
+            Map<String, List<NamedDescriptorBinding>> namedBindings,
+            Map<String, int[]> computeModules,
+            Map<String, org.soutalab.celtium.shader.shaderpack.IndirectPointer> computeIndirectPointers) {
         if (groups == null) {
             return;
         }
@@ -501,17 +530,26 @@ public final class CeltiumPackCompiler {
                 PackSpirvCompiler.CompiledProgram compiled = patched != null
                         ? spirvCompiler.compileCompute(cs.getName(), patched)
                         : null;
+                if (compiled != null) {
+                    // The graphics-shaped pass program stays null; the executor takes the
+                    // compute module and bindings from these side tables.
+                    computeModules.put(cs.getName(), PackSpirvCompiler.computeWords(compiled));
+                    namedBindings.put(cs.getName(), compiled.namedBindings());
+                }
+                if (cs.getIndirectPointer() != null) {
+                    computeIndirectPointers.put(cs.getName(), cs.getIndirectPointer());
+                }
                 if (isBegin) {
                     passes.add(new OrderedPass.BeginComputePass(
                             cs.getName(),
-                            compiled != null ? compiled.spirv() : null,
+                            null,
                             List.of(),
                             List.of(),
                             BarrierSpec.NONE));
                 } else {
                     passes.add(new OrderedPass.ShadowComputePass(
                             cs.getName(),
-                            compiled != null ? compiled.spirv() : null,
+                            null,
                             List.of("shadowtex0"),
                             List.of("shadowcolor0"),
                             BarrierSpec.NONE));
@@ -520,7 +558,7 @@ public final class CeltiumPackCompiler {
         }
     }
 
-    private Optional<org.soutalab.celtium.core.shader.SpirvModuleBundle> compileFullscreenPass(
+    private Optional<PackSpirvCompiler.CompiledProgram> compileFullscreenPass(
             ProgramSource src,
             PackDirectives directives,
             PackCompilerCapabilities caps) {
@@ -544,7 +582,7 @@ public final class CeltiumPackCompiler {
         if (patchedVsh == null || patchedFsh == null) {
             return Optional.empty();
         }
-        return Optional.of(spirvCompiler.compileGraphics(src.getName(), patchedVsh, patchedFsh, patchedGsh).spirv());
+        return Optional.of(spirvCompiler.compileGraphics(src.getName(), patchedVsh, patchedFsh, patchedGsh));
     }
 
     private static List<String> drawBufferNames(ProgramDirectives directives) {

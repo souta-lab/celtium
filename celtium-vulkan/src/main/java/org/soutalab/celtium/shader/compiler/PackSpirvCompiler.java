@@ -23,10 +23,16 @@ import java.util.Objects;
  */
 public interface PackSpirvCompiler {
 
-    record CompiledProgram(SpirvModuleBundle spirv, DescriptorBindingPlan bindings) {
+    record CompiledProgram(SpirvModuleBundle spirv, DescriptorBindingPlan bindings,
+                           java.util.List<NamedDescriptorBinding> namedBindings) {
         public CompiledProgram {
             Objects.requireNonNull(spirv, "spirv");
             Objects.requireNonNull(bindings, "bindings");
+            namedBindings = namedBindings == null ? java.util.List.of() : java.util.List.copyOf(namedBindings);
+        }
+
+        public CompiledProgram(SpirvModuleBundle spirv, DescriptorBindingPlan bindings) {
+            this(spirv, bindings, java.util.List.of());
         }
     }
 
@@ -65,7 +71,87 @@ public interface PackSpirvCompiler {
 
             SpirvModuleBundle bundle = SpirvModuleBundle.of(vertWords, fragWords);
             DescriptorBindingPlan plan = buildDescriptorPlan(lowered, geometryGlsl != null);
-            return new CompiledProgram(bundle, plan);
+            return new CompiledProgram(bundle, plan, namedBindings(lowered));
+        }
+
+        @Override
+        public CompiledProgram compileCompute(String programName, String computeGlsl) {
+            byte[] bytes = ModShaderCompiler.compileCompute(computeGlsl);
+            int[] words = bytesToWords(bytes);
+            if (words.length == 0 || words[0] != SpirvModuleBundle.SPIRV_MAGIC) {
+                throw new IllegalStateException("compute compile of '" + programName
+                        + "' did not produce SPIR-V");
+            }
+            // The graphics-shaped bundle cannot carry a compute module; the caller
+            // (CeltiumPackCompiler) takes the module words from computeWords() instead.
+            return new CompiledProgram(
+                    new SpirvModuleBundle(words, words, null),
+                    DescriptorBindingPlan.empty(),
+                    scanComputeNamedBindings(computeGlsl));
+        }
+
+        /** The compute module words of a program returned by {@link #compileCompute}. */
+        static int[] computeWords(CompiledProgram compiled) {
+            return compiled.spirv().vertexWords();
+        }
+
+        private static java.util.List<NamedDescriptorBinding> namedBindings(
+                ModGlslTranslator.Result lowered) {
+            java.util.List<NamedDescriptorBinding> named = new ArrayList<>();
+            for (ModGlslTranslator.SamplerBinding sampler : lowered.samplers()) {
+                named.add(new NamedDescriptorBinding(
+                        sampler.name(), sampler.binding(),
+                        DescriptorBindingPlan.Kind.COMBINED_IMAGE_SAMPLER));
+            }
+            for (ModGlslTranslator.ImageBinding image : lowered.images()) {
+                named.add(new NamedDescriptorBinding(
+                        image.name(), image.binding(),
+                        DescriptorBindingPlan.Kind.STORAGE_IMAGE));
+            }
+            return named;
+        }
+
+        /**
+         * Compute sources reach shaderc without the graphics lowering, so their descriptor
+         * bindings are assigned in declaration order by the same rule the graphics route uses:
+         * combined samplers first, then storage images, then storage buffers, each numbered
+         * from 0 in source order. Only plain {@code uniform} declarations are scanned.
+         */
+        private static java.util.List<NamedDescriptorBinding> scanComputeNamedBindings(String glsl) {
+            java.util.List<NamedDescriptorBinding> samplers = new ArrayList<>();
+            java.util.List<NamedDescriptorBinding> images = new ArrayList<>();
+            java.util.List<NamedDescriptorBinding> buffers = new ArrayList<>();
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                    "uniform\\s+(\\w+)\\s+(\\w+)\\s*;").matcher(glsl);
+            while (matcher.find()) {
+                String type = matcher.group(1);
+                String name = matcher.group(2);
+                if (type.startsWith("sampler") || type.startsWith("texture")) {
+                    samplers.add(new NamedDescriptorBinding(name, samplers.size(),
+                            DescriptorBindingPlan.Kind.COMBINED_IMAGE_SAMPLER));
+                } else if (type.startsWith("image")) {
+                    images.add(new NamedDescriptorBinding(name, images.size(),
+                            DescriptorBindingPlan.Kind.STORAGE_IMAGE));
+                }
+            }
+            java.util.regex.Matcher bufferMatcher = java.util.regex.Pattern.compile(
+                    "buffer\\s+\\w+\\s*\\{[^}]*\\}\\s*(\\w+)\\s*;").matcher(glsl);
+            while (bufferMatcher.find()) {
+                buffers.add(new NamedDescriptorBinding(bufferMatcher.group(1), buffers.size(),
+                        DescriptorBindingPlan.Kind.STORAGE_BUFFER));
+            }
+            java.util.List<NamedDescriptorBinding> all = new ArrayList<>();
+            int binding = 0;
+            for (NamedDescriptorBinding b : samplers) {
+                all.add(new NamedDescriptorBinding(b.name(), binding++, b.kind()));
+            }
+            for (NamedDescriptorBinding b : images) {
+                all.add(new NamedDescriptorBinding(b.name(), binding++, b.kind()));
+            }
+            for (NamedDescriptorBinding b : buffers) {
+                all.add(new NamedDescriptorBinding(b.name(), binding++, b.kind()));
+            }
+            return all;
         }
 
         private static int[] bytesToWords(byte[] bytes) {
