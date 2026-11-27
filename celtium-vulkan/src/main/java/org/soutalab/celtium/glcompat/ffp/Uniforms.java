@@ -1,0 +1,596 @@
+package org.soutalab.celtium.glcompat.ffp;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.GLStateManager;
+import org.soutalab.celtium.glcompat.states.ClipPlaneState;
+import org.soutalab.celtium.glcompat.states.Color4;
+import org.soutalab.celtium.glcompat.states.FogState;
+import org.soutalab.celtium.glcompat.states.LightState;
+import org.soutalab.celtium.glcompat.states.LineState;
+import org.soutalab.celtium.glcompat.states.MaterialState;
+import org.soutalab.celtium.glcompat.states.TexGenState;
+import org.soutalab.celtium.glcompat.texture.TextureInfoCache;
+import org.soutalab.celtium.glcompat.hooks.GLSMConfig;
+import org.joml.Matrix3f;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
+
+import java.nio.FloatBuffer;
+
+import static org.soutalab.celtium.glcompat.gtnh.bytebuf.MemoryUtilities.memAllocFloat;
+import static org.soutalab.celtium.glcompat.gtnh.bytebuf.MemoryUtilities.memFree;
+import static org.soutalab.celtium.glcompat.backend.DirectGlExecutor.EXECUTOR;
+
+/**
+ * Uploads GLSM cached state to the active FFP program's uniforms.
+ *
+ * Follows Mesa's prog_statevars.c patterns:
+ * - Pre-computed derived state (light products, scene color) when material is static
+ * - Raw light/material values when color material is active
+ * - Optimized fog params (pre-divided for single MAD in shader)
+ */
+public class Uniforms {
+    // Reusable temp buffers for uniform upload
+    private final FloatBuffer mat4Buf = memAllocFloat(16);
+    private final FloatBuffer mat3Buf = memAllocFloat(9);
+    private final FloatBuffer vec4Buf = memAllocFloat(4);
+    private final FloatBuffer vec3Buf = memAllocFloat(3);
+    private final FloatBuffer clipPlaneBuf = memAllocFloat(32); // 8 planes * vec4
+
+    // Derived matrices (computed on CPU)
+    private final Matrix4f mvpMatrix = new Matrix4f();
+    private final Matrix3f normalMatrix = new Matrix3f();
+
+    // Temp vectors for light product and normal scale computation
+    private final Vector4f tempVec4 = new Vector4f();
+    private final Vector3f tempVec3 = new Vector3f();
+
+    // Pre-computed constants for fog params (Mesa STATE_FOG_PARAMS_OPTIMIZED)
+    private static final double LN2 = Math.log(2.0);
+    private static final double SQRT_LN2 = Math.sqrt(LN2);
+
+    /**
+     * Upload all relevant uniforms to the given FFP program based on current GLSM state.
+     * Uses generation counters to skip categories that haven't changed since last upload.
+     */
+
+    /**
+     * Uploads the atlas gutter the supersampling snippet keeps its samples inside. The value belongs to the
+     * texture bound to unit 0, so it is re-read for every draw that supersamples instead of being cached across
+     * programs.
+     */
+    private void uploadAtlasGutter(Program program) {
+        if (program.locAtlasGutter == -1 || program.getFragmentKey().textureSupersamplingSamples() <= 1) return;
+        final int texture = GLStateManager.getTextures().getTextureUnitBindings(0).getBinding();
+        EXECUTOR.uniform1f(program.locAtlasGutter,
+            TextureInfoCache.INSTANCE.getInfo(texture).getAtlasGutter());
+    }
+
+    public void upload(Program program) {
+        final ProgramUniformState uploaded = program.getUniformState();
+        if (program.getVertexKey().instancing() == Instancing.WEATHER && uploaded.needsWeatherParamsUpload(WeatherParams.generation)) {
+            uploadWeatherParams(program);
+            uploaded.markWeatherParamsUploaded(WeatherParams.generation);
+        }
+        uploadAtlasGutter(program);
+
+        final int mvGen = GLStateManager.getMvGeneration();
+        final int projGen = GLStateManager.getProjGeneration();
+        final int texMatGen = GLStateManager.getTexMatrixGeneration();
+        final boolean mvChanged = uploaded.needsModelViewUpload(mvGen);
+        final boolean projChanged = uploaded.needsProjectionUpload(projGen);
+        final boolean texMatChanged = uploaded.needsTextureMatrixUpload(texMatGen);
+        if (mvChanged || projChanged || texMatChanged) {
+            uploadMatrices(program, mvChanged, projChanged, texMatChanged);
+            if (mvChanged) uploaded.markModelViewUploaded(mvGen);
+            if (projChanged) uploaded.markProjectionUploaded(projGen);
+            if (texMatChanged) uploaded.markTextureMatrixUploaded(texMatGen);
+        }
+
+        if (program.getVertexKey().lightingEnabled()) {
+            final int litGen = GLStateManager.getLightingGeneration();
+            if (uploaded.needsLightingUpload(litGen)) {
+                uploadLighting(program);
+                uploaded.markLightingUploaded(litGen);
+            }
+        }
+
+        // Current color/normal/texcoord — skip if generation unchanged
+        if (!program.getVertexKey().hasVertexColor()) {
+            final int colorGen = GLStateManager.getColorGeneration();
+            if (uploaded.needsColorUpload(colorGen)) {
+                uploadCurrentColor(program);
+                uploaded.markColorUploaded(colorGen);
+            }
+        }
+
+        if (!program.getVertexKey().hasVertexNormal() && program.getVertexKey().lightingEnabled()) {
+            final int normalGen = ShaderManager.getNormalGeneration();
+            if (uploaded.needsNormalUpload(normalGen)) {
+                uploadCurrentNormal(program);
+                uploaded.markNormalUploaded(normalGen);
+            }
+        }
+
+        // Current texcoord uploads: unit 0 only when the vertex format lacks a texcoord
+        // attribute; units 2/3 unless their varying is sourced from unit 0's attribute.
+        final VertexKey vk0 = program.getVertexKey();
+        final boolean needsCurrentTexCoord0 = !vk0.hasVertexTexCoord() && vk0.unitTexCoordEnabled(0);
+        final boolean needsCurrentTexCoord2 = vk0.unitTexCoordEnabled(2) && !vk0.unit23UvFromUnit0() && !vk0.hasUnitVertexTexCoord(2);
+        final boolean needsCurrentTexCoord3 = vk0.unitTexCoordEnabled(3) && !vk0.unit23UvFromUnit0() && !vk0.hasUnitVertexTexCoord(3);
+        if (needsCurrentTexCoord0 || needsCurrentTexCoord2 || needsCurrentTexCoord3) {
+            final int texGen = ShaderManager.getTexCoordGeneration();
+            if (uploaded.needsTexCoordUpload(texGen)) {
+                uploadCurrentTexCoords(program, needsCurrentTexCoord0, needsCurrentTexCoord2, needsCurrentTexCoord3);
+                uploaded.markTexCoordUploaded(texGen);
+            }
+        }
+
+        if (program.getVertexKey().lightmapEnabled() && !program.getVertexKey().hasVertexLightmap()) {
+            final float lightmapX = GLSMConfig.getLastBrightnessX();
+            final float lightmapY = GLSMConfig.getLastBrightnessY();
+            if (uploaded.needsLightmapUpload(lightmapX, lightmapY)) {
+                uploadCurrentLightmapCoord(program);
+                uploaded.markLightmapUploaded(lightmapX, lightmapY);
+            }
+        }
+
+        if (program.getVertexKey().texGenEnabled()) {
+            final int tgGen = GLStateManager.getTexGenGeneration();
+            if (uploaded.needsTexGenUpload(tgGen)) {
+                uploadTexGen(program);
+                uploaded.markTexGenUploaded(tgGen);
+            }
+        }
+
+        if (program.getVertexKey().clipPlanesEnabled()) {
+            final int cpGen = GLStateManager.getClipPlaneGeneration();
+            if (uploaded.needsClipPlaneUpload(cpGen)) {
+                uploadClipPlanes(program);
+                uploaded.markClipPlaneUploaded(cpGen);
+            }
+        }
+
+        final int fragGen = GLStateManager.getFragmentGeneration();
+        if (uploaded.needsFragmentUpload(fragGen)) {
+            uploadFragmentUniforms(program);
+            uploaded.markFragmentUploaded(fragGen);
+        }
+
+        // Line emulation uniforms (wide lines and/or stipple)
+        if (program.getVertexKey().lineQuads() || program.getVertexKey().lineStipple()) {
+            uploadLineUniforms(program, uploaded);
+        }
+    }
+
+    private void uploadWeatherParams(Program program) {
+        EXECUTOR.uniform4f(program.locWeatherParams0, WeatherParams.translateX, WeatherParams.translateY,
+            WeatherParams.translateZ, WeatherParams.invRadius);
+        EXECUTOR.uniform4f(program.locWeatherParams1, WeatherParams.cameraFracX, WeatherParams.cameraFracZ,
+            WeatherParams.partialTicks, WeatherParams.age);
+        EXECUTOR.uniform4f(program.locWeatherParams2, WeatherParams.vanillaTick, WeatherParams.providerTick,
+            WeatherParams.rainStrength, WeatherParams.providerAge);
+        EXECUTOR.uniform4f(program.locWeatherParams3, WeatherParams.providerInvRadius, 0.0F, 0.0F, 0.0F);
+    }
+
+    private void uploadMatrices(Program program, boolean mvChanged, boolean projChanged, boolean texMatChanged) {
+        final Matrix4f mv = GLStateManager.getModelViewMatrix();
+        final Matrix4f proj = GLStateManager.getProjectionMatrix();
+
+        // ModelView + derived (normal matrix, normal scale)
+        if (mvChanged) {
+            if (program.locModelViewMatrix != -1) {
+                mv.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locModelViewMatrix, false, mat4Buf);
+            }
+
+            // Normal matrix = inverse transpose of upper-left 3x3 of ModelView
+            if (program.locNormalMatrix != -1 || program.locNormalScale != -1) {
+                mv.normal(normalMatrix);
+            }
+            if (program.locNormalMatrix != -1) {
+                normalMatrix.get(mat3Buf);
+                EXECUTOR.uniformMatrix3(program.locNormalMatrix, false, mat3Buf);
+            }
+
+            // Normal scale (for GL_RESCALE_NORMAL without GL_NORMALIZE)
+            if (program.locNormalScale != -1) {
+                EXECUTOR.uniform1f(program.locNormalScale, rescaleFactor(normalMatrix, tempVec3));
+            }
+        }
+
+        // Projection
+        if (projChanged) {
+            if (program.locProjectionMatrix != -1) {
+                proj.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locProjectionMatrix, false, mat4Buf);
+            }
+        }
+
+        // MVP = Projection * ModelView — needs recompute if either input changed
+        if ((mvChanged || projChanged) && program.locMVPMatrix != -1) {
+            proj.mul(mv, mvpMatrix);
+            mvpMatrix.get(mat4Buf);
+            EXECUTOR.uniformMatrix4(program.locMVPMatrix, false, mat4Buf);
+        }
+
+        // Texture matrices
+        if (texMatChanged) {
+            // Texture matrix unit 0
+            if (program.locTextureMatrix0 != -1) {
+                final Matrix4f texMat = GLStateManager.getTextures().getTextureUnitMatrix(0);
+                texMat.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locTextureMatrix0, false, mat4Buf);
+            }
+
+            // Texture matrix unit 1 (lightmap)
+            if (program.locLightmapTextureMatrix != -1) {
+                final Matrix4f lmTexMat = GLStateManager.getTextures().getTextureUnitMatrix(1);
+                lmTexMat.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locLightmapTextureMatrix, false, mat4Buf);
+            }
+
+            // Texture matrix units 2/3
+            if (program.locTextureMatrix2 != -1) {
+                final Matrix4f texMat = GLStateManager.getTextures().getTextureUnitMatrix(2);
+                texMat.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locTextureMatrix2, false, mat4Buf);
+            }
+            if (program.locTextureMatrix3 != -1) {
+                final Matrix4f texMat = GLStateManager.getTextures().getTextureUnitMatrix(3);
+                texMat.get(mat4Buf);
+                EXECUTOR.uniformMatrix4(program.locTextureMatrix3, false, mat4Buf);
+            }
+        }
+    }
+
+    /**
+     * Reciprocal length of the modelview bottom row, which is the scale GL applies to normals for
+     * GL_RESCALE_NORMAL. A degenerate matrix keeps the factor at 1 instead of dividing by zero.
+     */
+    static float rescaleFactor(Matrix3f normalMatrix, Vector3f scratch) {
+        final float f = normalMatrix.getColumn(2, scratch).lengthSquared();
+        return f > 1.0e-12f ? 1.0f / (float) Math.sqrt(f) : 1.0f;
+    }
+
+    private void uploadLighting(Program program) {
+        final VertexKey vk = program.getVertexKey();
+
+        if (vk.colorMaterialEnabled()) {
+            uploadLightingColorMaterial(program, vk);
+        } else {
+            uploadLightingPreComputed(program, vk);
+        }
+    }
+
+    /**
+     * Color material active: upload raw light and material values.
+     * The shader multiplies them with vertex color at runtime.
+     */
+    private void uploadLightingColorMaterial(Program program, VertexKey vk) {
+        final MaterialState mat = GLStateManager.getFrontMaterial();
+
+        uploadVec4(program.locLightModelAmbient, GLStateManager.getLightModel().ambient);
+        uploadVec4(program.locMaterialEmission, mat.emission);
+        uploadVec4(program.locMaterialAmbient, mat.ambient);
+        uploadVec4(program.locMaterialDiffuse, mat.diffuse);
+        uploadVec4(program.locMaterialSpecular, mat.specular);
+        if (program.locMaterialShininess != -1) {
+            EXECUTOR.uniform1f(program.locMaterialShininess, mat.shininess);
+        }
+
+        if (vk.lightEnabled(0)) {
+            final LightState light0 = GLStateManager.getLightDataStates()[0];
+            uploadVec4(program.locLight0Ambient, light0.ambient);
+            uploadVec4(program.locLight0Diffuse, light0.diffuse);
+            uploadVec4(program.locLight0Specular, light0.specular);
+            uploadVec4(program.locLight0Position, light0.position);
+        }
+        if (vk.lightEnabled(1)) {
+            final LightState light1 = GLStateManager.getLightDataStates()[1];
+            uploadVec4(program.locLight1Ambient, light1.ambient);
+            uploadVec4(program.locLight1Diffuse, light1.diffuse);
+            uploadVec4(program.locLight1Specular, light1.specular);
+            uploadVec4(program.locLight1Position, light1.position);
+        }
+    }
+
+    /**
+     * No color material: upload pre-computed light products and scene color.
+     * Fewer shader multiplies since material is static.
+     */
+    private void uploadLightingPreComputed(Program program, VertexKey vk) {
+        final MaterialState mat = GLStateManager.getFrontMaterial();
+
+        // Scene color = emission + ambient * lightModel.ambient
+        // Alpha = material.diffuse.a
+        if (program.locSceneColor != -1) {
+            tempVec4.set(
+                mat.emission.x + mat.ambient.x * GLStateManager.getLightModel().ambient.x,
+                mat.emission.y + mat.ambient.y * GLStateManager.getLightModel().ambient.y,
+                mat.emission.z + mat.ambient.z * GLStateManager.getLightModel().ambient.z,
+                mat.diffuse.w  // alpha from diffuse
+            );
+            uploadVec4(program.locSceneColor, tempVec4);
+        }
+
+        if (program.locMaterialShininess != -1) {
+            EXECUTOR.uniform1f(program.locMaterialShininess, mat.shininess);
+        }
+
+        // Per-light products
+        if (vk.lightEnabled(0)) {
+            final LightState light0 = GLStateManager.getLightDataStates()[0];
+            uploadVec4(program.locLight0Position, light0.position);
+            uploadLightProduct(program.locLightProd0Ambient, light0.ambient, mat.ambient);
+            uploadLightProduct(program.locLightProd0Diffuse, light0.diffuse, mat.diffuse);
+            uploadLightProduct(program.locLightProd0Specular, light0.specular, mat.specular);
+        }
+        if (vk.lightEnabled(1)) {
+            final LightState light1 = GLStateManager.getLightDataStates()[1];
+            uploadVec4(program.locLight1Position, light1.position);
+            uploadLightProduct(program.locLightProd1Ambient, light1.ambient, mat.ambient);
+            uploadLightProduct(program.locLightProd1Diffuse, light1.diffuse, mat.diffuse);
+            uploadLightProduct(program.locLightProd1Specular, light1.specular, mat.specular);
+        }
+    }
+
+    /**
+     * Upload pre-multiplied light product: light.X * material.X (RGB only).
+     */
+    private void uploadLightProduct(int loc, Vector4f lightVal, Vector4f materialVal) {
+        if (loc == -1) return;
+        vec3Buf.clear();
+        vec3Buf.put(lightVal.x * materialVal.x);
+        vec3Buf.put(lightVal.y * materialVal.y);
+        vec3Buf.put(lightVal.z * materialVal.z);
+        vec3Buf.flip();
+        EXECUTOR.uniform3(loc, vec3Buf);
+    }
+
+    private void uploadCurrentColor(Program program) {
+        if (program.locCurrentColor == -1) return;
+        // Upload the current color from GLSM
+        final Color4 color = sanitizeUniformColor(GLStateManager.getColor());
+        vec4Buf.clear();
+        vec4Buf.put(color.getRed());
+        vec4Buf.put(color.getGreen());
+        vec4Buf.put(color.getBlue());
+        vec4Buf.put(color.getAlpha());
+        vec4Buf.flip();
+        EXECUTOR.uniform4(program.locCurrentColor, vec4Buf);
+    }
+
+    /**
+     * Normalizes the GLSM current color for FFP uniform upload.
+     *
+     * <p>{@link GLStateManager#clearCurrentColor()} marks the cached color with a
+     * (-1,-1,-1,-1) sentinel so the next real {@code glColor*} call bypasses the cache.
+     * That sentinel must never reach a shader uniform: a negative alpha clamps to 0 in
+     * GLSL, making every vertex-color-less draw (e.g. JourneyMap map tiles/grids)
+     * fully transparent. Per GL semantics the current color defaults to opaque white,
+     * so the sentinel is normalized back to (1,1,1,1) here.</p>
+     */
+    static Color4 sanitizeUniformColor(Color4 color) {
+        if (color.getRed() < 0.0F || color.getGreen() < 0.0F || color.getBlue() < 0.0F || color.getAlpha() < 0.0F) {
+            return new Color4(1.0F, 1.0F, 1.0F, 1.0F);
+        }
+        return color;
+    }
+
+    private void uploadCurrentTexCoords(Program program, boolean unit0, boolean unit2, boolean unit3) {
+        if (unit0 && program.locCurrentTexCoord != -1) {
+            uploadVec4(program.locCurrentTexCoord, ShaderManager.getCurrentTexCoord(0));
+        }
+        if (unit2 && program.locCurrentTexCoord2 != -1) {
+            uploadVec4(program.locCurrentTexCoord2, ShaderManager.getCurrentTexCoord(2));
+        }
+        if (unit3 && program.locCurrentTexCoord3 != -1) {
+            uploadVec4(program.locCurrentTexCoord3, ShaderManager.getCurrentTexCoord(3));
+        }
+    }
+
+    private void uploadCurrentLightmapCoord(Program program) {
+        if (program.locCurrentLightmapCoord == -1) return;
+        EXECUTOR.uniform2f(program.locCurrentLightmapCoord,
+            GLSMConfig.getLastBrightnessX(), GLSMConfig.getLastBrightnessY());
+    }
+
+    private void uploadCurrentNormal(Program program) {
+        if (program.locCurrentNormal == -1) return;
+        // Upload current normal from FFPShaderManager's tracked normal
+        final var normal = ShaderManager.getCurrentNormal();
+        vec3Buf.clear();
+        vec3Buf.put(normal.x);
+        vec3Buf.put(normal.y);
+        vec3Buf.put(normal.z);
+        vec3Buf.flip();
+        EXECUTOR.uniform3(program.locCurrentNormal, vec3Buf);
+    }
+
+    private void uploadTexGen(Program program) {
+        final VertexKey vk = program.getVertexKey();
+        final TexGenState tg = GLStateManager.getTextures().getTexGenState(0);
+
+        if (vk.texGenModeS() == VertexKey.TG_OBJ_LINEAR) {
+            uploadPlane(program.locTexGenObjPlaneS, tg.getObjectPlane(org.lwjgl.opengl.GL11.GL_S));
+        } else if (vk.texGenModeS() == VertexKey.TG_EYE_LINEAR) {
+            uploadPlane(program.locTexGenEyePlaneS, tg.getEyePlane(org.lwjgl.opengl.GL11.GL_S));
+        }
+
+        if (vk.texGenModeT() == VertexKey.TG_OBJ_LINEAR) {
+            uploadPlane(program.locTexGenObjPlaneT, tg.getObjectPlane(org.lwjgl.opengl.GL11.GL_T));
+        } else if (vk.texGenModeT() == VertexKey.TG_EYE_LINEAR) {
+            uploadPlane(program.locTexGenEyePlaneT, tg.getEyePlane(org.lwjgl.opengl.GL11.GL_T));
+        }
+
+        if (vk.texGenModeR() == VertexKey.TG_OBJ_LINEAR) {
+            uploadPlane(program.locTexGenObjPlaneR, tg.getObjectPlane(org.lwjgl.opengl.GL11.GL_R));
+        } else if (vk.texGenModeR() == VertexKey.TG_EYE_LINEAR) {
+            uploadPlane(program.locTexGenEyePlaneR, tg.getEyePlane(org.lwjgl.opengl.GL11.GL_R));
+        }
+
+        if (vk.texGenModeQ() == VertexKey.TG_OBJ_LINEAR) {
+            uploadPlane(program.locTexGenObjPlaneQ, tg.getObjectPlane(org.lwjgl.opengl.GL11.GL_Q));
+        } else if (vk.texGenModeQ() == VertexKey.TG_EYE_LINEAR) {
+            uploadPlane(program.locTexGenEyePlaneQ, tg.getEyePlane(org.lwjgl.opengl.GL11.GL_Q));
+        }
+    }
+
+    private void uploadPlane(int loc, float[] plane) {
+        if (loc == -1) return;
+        vec4Buf.clear();
+        vec4Buf.put(plane[0]);
+        vec4Buf.put(plane[1]);
+        vec4Buf.put(plane[2]);
+        vec4Buf.put(plane[3]);
+        vec4Buf.flip();
+        EXECUTOR.uniform4(loc, vec4Buf);
+    }
+
+    private void uploadClipPlanes(Program program) {
+        if (program.locClipPlanes == -1) return;
+        final ClipPlaneState cps = GLStateManager.getClipPlaneState();
+        clipPlaneBuf.clear();
+        cps.putEffectivePlanes(GLStateManager.ctx().clipPlaneEnabledMask, clipPlaneBuf);
+        clipPlaneBuf.flip();
+        EXECUTOR.uniform4(program.locClipPlanes, clipPlaneBuf);
+    }
+
+    private void uploadFragmentUniforms(Program program) {
+        final FragmentKey fk = program.getFragmentKey();
+
+        // Alpha test reference
+        if (fk.alphaTestEnabled() && program.locAlphaRef != -1) {
+            EXECUTOR.uniform1f(program.locAlphaRef, GLStateManager.getAlphaState().getReference());
+        }
+
+        // Per-unit tex env color
+        for (int i = 0; i < 4; i++) {
+            if (program.locTexEnvColor[i] != -1) {
+                final var envState = GLStateManager.getTextures().getTexEnvState(i);
+                vec4Buf.clear();
+                vec4Buf.put(envState.envColorR);
+                vec4Buf.put(envState.envColorG);
+                vec4Buf.put(envState.envColorB);
+                vec4Buf.put(envState.envColorA);
+                vec4Buf.flip();
+                EXECUTOR.uniform4(program.locTexEnvColor[i], vec4Buf);
+            }
+        }
+
+        // Damage overlay color
+        if (fk.overlayEnabled() && program.locOverlayColor != -1) {
+            EXECUTOR.uniform4f(program.locOverlayColor,
+                GLStateManager.getOverlayR(), GLStateManager.getOverlayG(),
+                GLStateManager.getOverlayB(), GLStateManager.getOverlayA());
+        }
+
+        // Secondary color for GL_COLOR_SUM
+        if (fk.colorSum() && program.locSecondaryColor != -1) {
+            final var secondary = GLStateManager.getSecondaryColor();
+            EXECUTOR.uniform3f(program.locSecondaryColor,
+                secondary.getRed(), secondary.getGreen(), secondary.getBlue());
+        }
+
+        // Fog
+        if (fk.fogMode() != FragmentKey.FOG_NONE) {
+            uploadFog(program);
+        }
+    }
+
+    /**
+     * Upload optimized fog params (following Mesa's STATE_FOG_PARAMS_OPTIMIZED):
+     */
+    private void uploadFog(Program program) {
+        final FogState fog = GLStateManager.getFogState();
+
+        if (program.locFogParams != -1) {
+            final float start = fog.getStart();
+            final float end = fog.getEnd();
+            final float density = fog.getDensity();
+            final float range = end - start;
+
+            vec4Buf.clear();
+            vec4Buf.put(range != 0.0f ? -1.0f / range : 0.0f);     // [0]: -1/(end-start)
+            vec4Buf.put(range != 0.0f ? end / range : 1.0f);         // [1]: end/(end-start)
+            vec4Buf.put((float)(density / LN2));        // [2]: density/ln(2)
+            vec4Buf.put((float)(density / SQRT_LN2));  // [3]: density/sqrt(ln(2))
+            vec4Buf.flip();
+            EXECUTOR.uniform4(program.locFogParams, vec4Buf);
+        }
+
+        if (program.locFogColor != -1) {
+            vec4Buf.clear();
+            vec4Buf.put((float) fog.getFogColor().x);
+            vec4Buf.put((float) fog.getFogColor().y);
+            vec4Buf.put((float) fog.getFogColor().z);
+            vec4Buf.put(fog.getFogAlpha());
+            vec4Buf.flip();
+            EXECUTOR.uniform4(program.locFogColor, vec4Buf);
+        }
+    }
+
+    /**
+     * Upload line emulation state: wide-line width + viewport, and stipple pattern.
+     * Wide lines use u_LineWidth + u_ViewportSize (vec2); stipple emulation uses
+     * u_Viewport (vec4, full rect) to compute gl_FragCoord-free screen position.
+     */
+    private void uploadLineUniforms(Program program, ProgramUniformState uploaded) {
+        if (program.locLineWidth != -1) {
+            final float lineWidth = GLStateManager.getLineState().getWidth();
+            if (uploaded.needsLineWidthUpload(lineWidth)) {
+                EXECUTOR.uniform1f(program.locLineWidth, lineWidth);
+                uploaded.markLineWidthUploaded(lineWidth);
+            }
+        }
+
+        final var viewport = GLStateManager.getViewportState();
+        if (uploaded.needsViewportUpload(viewport.x, viewport.y, viewport.width, viewport.height)) {
+            if (program.locViewportSize != -1) {
+                EXECUTOR.uniform2f(program.locViewportSize, viewport.width, viewport.height);
+            }
+            if (program.locViewport != -1) {
+                EXECUTOR.uniform4f(program.locViewport, viewport.x, viewport.y, viewport.width, viewport.height);
+            }
+            uploaded.markViewportUploaded(viewport.x, viewport.y, viewport.width, viewport.height);
+        }
+
+        if (program.locLineStipple != -1) {
+            final LineState line = GLStateManager.getLineState();
+            final int stipplePacked = (line.getStipplePattern() & 0xFFFF) | (Math.max(line.getStippleFactor(), 1) << 16);
+            if (uploaded.needsLineStippleUpload(stipplePacked)) {
+                EXECUTOR.uniform1i(program.locLineStipple, stipplePacked);
+                uploaded.markLineStippleUploaded(stipplePacked);
+            }
+        }
+    }
+
+    private void uploadVec4(int loc, Vector4f v) {
+        if (loc == -1) return;
+        vec4Buf.clear();
+        vec4Buf.put(v.x);
+        vec4Buf.put(v.y);
+        vec4Buf.put(v.z);
+        vec4Buf.put(v.w);
+        vec4Buf.flip();
+        EXECUTOR.uniform4(loc, vec4Buf);
+    }
+
+    public void destroy() {
+        memFree(mat4Buf);
+        memFree(mat3Buf);
+        memFree(vec4Buf);
+        memFree(vec3Buf);
+        memFree(clipPlaneBuf);
+    }
+}

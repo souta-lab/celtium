@@ -1,0 +1,96 @@
+package org.soutalab.celtium.glcompat.gtnh.client.renderer.cel.model.quad;
+/*
+ * Minimal subset carried into celtium from GTNHLib (LGPL-3.0),
+ * GTNewHorizons/GTNHLib, as vendored by Actinium-Dev/Actinium @ ce77eed9.
+ * Only the types the converted GLSM front references are carried; the library
+ * as a whole is NOT imported. See THIRD_PARTY_NOTICES.md.
+ */
+
+
+import org.soutalab.celtium.glcompat.gtnh.client.renderer.cel.model.quad.properties.ModelQuadFacing;
+import org.soutalab.celtium.glcompat.gtnh.client.renderer.cel.model.quad.properties.ModelQuadFlags;
+
+/**
+ * Provides a mutable view to a model quad.
+ */
+public interface ModelQuadViewMutable extends ModelQuadView {
+
+    /**
+     * Sets the x-position of the vertex at index {@param idx} to the value {@param x}
+     */
+    void setX(int idx, float x);
+
+    /**
+     * Sets the y-position of the vertex at index {@param idx} to the value {@param y}
+     */
+    void setY(int idx, float y);
+
+    /**
+     * Sets the z-position of the vertex at index {@param idx} to the value {@param z}
+     */
+    void setZ(int idx, float z);
+
+    /**
+     * Sets the integer-encoded color of the vertex at index {@param idx} to the value {@param color}
+     */
+    void setColor(int idx, int color);
+
+    /**
+     * Sets the texture x-coordinate of the vertex at index {@param idx} to the value {@param u}
+     */
+    void setTexU(int idx, float u);
+
+    /**
+     * Sets the texture y-coordinate of the vertex at index {@param idx} to the value {@param v}
+     */
+    void setTexV(int idx, float v);
+
+    /**
+     * Sets the light map texture coordinate of the vertex at index {@param idx} to the value {@param light}
+     */
+    void setLight(int idx, int light);
+
+    /**
+     * Sets the bit-flag field which contains the {@link ModelQuadFlags} for this quad
+     */
+    void setFlags(int flags);
+
+    /**
+     * Sets the sprite used by this quad
+     */
+    void setSprite(Object sprite);
+
+    /**
+     * Sets the color index used by this quad
+     */
+    void setColorIndex(int index);
+
+    /**
+     * Sets if this quad is non-opaque (by default, they are opaque)
+     */
+    void setTransparent();
+
+    /**
+     * See {@link ModelQuadView#hasDirectionalShading()} for what this value does
+     */
+    boolean setDirectionalShading(boolean dirShading);
+
+    /**
+     * See {@link ModelQuadView#getEmissiveness()} for what this value does.
+     */
+    int setEmissiveness(int emissiveness);
+
+    /**
+     * Sets the face used by this quad for lighting effects
+     */
+    void setLightFace(ModelQuadFacing face);
+
+    void setHasAmbientOcclusion(boolean hasAmbientOcclusion);
+
+    /**
+     * Sets the packed normal vector embedded in the vertex data.
+     */
+    void setForgeNormal(int idx, int normal);
+
+    void setShaderBlockId(int shaderBlockId);
+}

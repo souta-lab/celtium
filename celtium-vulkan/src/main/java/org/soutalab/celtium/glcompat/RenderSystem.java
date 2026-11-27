@@ -1,0 +1,877 @@
+package org.soutalab.celtium.glcompat;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.backend.DirectGlExecutor;
+import org.soutalab.celtium.glcompat.dsa.DSAARB;
+import org.soutalab.celtium.glcompat.dsa.DSAAccess;
+import org.soutalab.celtium.glcompat.dsa.DSACore;
+import org.soutalab.celtium.glcompat.dsa.DSAEXT;
+import org.soutalab.celtium.glcompat.dsa.DSAUnsupported;
+import org.soutalab.celtium.glcompat.ffp.ShaderManager;
+import org.soutalab.celtium.glcompat.hooks.GpuCommandPhase;
+import org.soutalab.celtium.glcompat.hooks.GpuCommandType;
+import org.soutalab.celtium.glcompat.texture.TextureInfoCache;
+import org.soutalab.celtium.glcompat.gtnh.lwjgl2.GLExtension;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix4f;
+import org.joml.Vector3i;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.ARBShaderImageLoadStore;
+import org.lwjgl.opengl.ARBShaderStorageBufferObject;
+import org.lwjgl.opengl.EXTShaderImageLoadStore;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL32;
+import org.lwjgl.opengl.GL42;
+import org.lwjgl.opengl.GL43;
+
+import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.soutalab.celtium.glcompat.backend.DirectGlExecutor.EXECUTOR;
+import static org.soutalab.celtium.glcompat.gtnh.lwjgl2.LWJGLServiceProvider.LWJGL;
+
+/**
+ * This class is responsible for abstracting calls to OpenGL and asserting that calls are run on the render thread.
+ */
+public class RenderSystem {
+    /** Bind-based fallback until {@link #initRenderer()} detects a DSA flavour, so pre-init callers never see null. */
+    private static DSAAccess dsaState = new DSAUnsupported();
+    private static boolean supportsCompute;
+    private static boolean supportsImageLoadStore;
+    private static boolean supportsSSBO;
+    private static boolean supportsBufferStorage;
+    private static boolean supportsClearTexture;
+    private static boolean supportsStencilTexturing;
+    private static boolean supportsTextureStorage;
+    private static boolean supportsTesselation;
+    private static boolean supportsSamplerObjects;
+    private static boolean supportsProgramBinary;
+    private static int maxImageUnits;
+    private static int maxSSBOBindings;
+    private static int maxGlslVersion;
+    private static boolean supportsGpuShader4;
+
+    private static volatile boolean isGLES;
+    private static volatile int glesVersion;
+    private static volatile boolean glesDetected;
+    private static volatile int headlessClipDistanceLimitForTesting;
+
+    private static volatile boolean isLTW;
+    private static volatile boolean ltwDetected;
+
+    private static volatile Boolean snormFormatsForTesting;
+    private static volatile Boolean packedFloatRenderableForTesting;
+
+    // Sampler object state tracking (null if unsupported)
+    private static int[] samplers;
+
+    private static final Pattern SEMVER_PATTERN = Pattern.compile("(?<major>\\d+)\\.(?<minor>\\d+)\\.*(?<bugfix>\\d*)(.*)");
+
+    private RenderSystem() {}
+
+    private static boolean rendererInitialized;
+
+    public static void initRenderer() {
+        if (rendererInitialized) return;
+        rendererInitialized = true;
+
+        final boolean wasDetected = glesDetected;
+        if (isGLES() && !wasDetected) {
+            GLStateManager.LOGGER.info("OpenGL ES {}.{} detected", glesVersion / 100, (glesVersion / 10) % 10);
+        }
+
+        boolean dsaEnabled = false;
+        if (!isGLES) {
+            try {
+                if (GLStateManager.capabilities.OpenGL45) {
+                    dsaState = (Runtime.version().feature() > 8 && GLStateManager.capabilities.GL_EXT_direct_state_access) ? new DSAEXT() : new DSACore();
+                    dsaEnabled = true;
+                    GLStateManager.LOGGER.info("OpenGL 4.5 detected, enabling DSA.");
+                }
+
+            } catch (NoSuchFieldError ignored) {
+            }
+            try {
+                // The emulated capability view has no GL_ARB_direct_state_access, so probe
+                // the extension string instead of the capability flag Angelica uses.
+                if (!dsaEnabled && hasExtension("GL_ARB_direct_state_access")) {
+                    dsaState = new DSAARB();
+                    dsaEnabled = true;
+                    GLStateManager.LOGGER.info("ARB_direct_state_access detected, enabling DSA.");
+                }
+            } catch (NoSuchFieldError ignored) {
+            }
+        }
+        if (!dsaEnabled) {
+            dsaState = new DSAUnsupported();
+            GLStateManager.LOGGER.info("{}", isGLES ? "GLES context, using DSAUnsupported (bind-based) fallback." : "No DSA support detected, falling back to legacy OpenGL.");
+        }
+
+        DirectGlExecutor.EXECUTOR.init();
+
+        supportsCompute = supportsCompute();
+        supportsTesselation = GLStateManager.capabilities.GL_ARB_tessellation_shader || GLStateManager.capabilities.OpenGL40;
+
+        supportsImageLoadStore = GLStateManager.capabilities.OpenGL42
+                || GLStateManager.capabilities.GL_ARB_shader_image_load_store
+                || GLStateManager.capabilities.GL_EXT_shader_image_load_store;
+        supportsSSBO = GLStateManager.capabilities.OpenGL43 || GLStateManager.capabilities.GL_ARB_shader_storage_buffer_object;
+        supportsBufferStorage = !isGLES && (GLStateManager.capabilities.OpenGL44 || GLStateManager.capabilities.GL_ARB_buffer_storage);
+        supportsClearTexture = GLStateManager.capabilities.OpenGL44 || GLStateManager.capabilities.GL_ARB_clear_texture;
+        supportsStencilTexturing = GLStateManager.capabilities.OpenGL43 || GLStateManager.capabilities.GL_ARB_stencil_texturing;
+        supportsTextureStorage = isGLES ? glesVersion >= 300
+            : GLStateManager.capabilities.OpenGL42 || GLStateManager.capabilities.GL_ARB_texture_storage;
+        hasClipCullDistance();
+
+        if (supportsImageLoadStore) {
+            if (GLStateManager.capabilities.OpenGL42) {
+                maxImageUnits = EXECUTOR.getInteger(GL42.GL_MAX_IMAGE_UNITS);
+            } else if (GLStateManager.capabilities.GL_ARB_shader_image_load_store) {
+                maxImageUnits = EXECUTOR.getInteger(ARBShaderImageLoadStore.GL_MAX_IMAGE_UNITS);
+            } else {
+                maxImageUnits = EXECUTOR.getInteger(EXTShaderImageLoadStore.GL_MAX_IMAGE_UNITS_EXT);
+            }
+        } else {
+            maxImageUnits = 0;
+        }
+
+        if (supportsSSBO) {
+            if (GLStateManager.capabilities.OpenGL43) {
+                maxSSBOBindings = EXECUTOR.getInteger(GL43.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS);
+            } else {
+                maxSSBOBindings = EXECUTOR.getInteger(ARBShaderStorageBufferObject.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS);
+            }
+        } else {
+            maxSSBOBindings = 0;
+        }
+
+        supportsSamplerObjects = GLStateManager.capabilities.OpenGL33 || GLStateManager.capabilities.GL_ARB_sampler_objects;
+        if (supportsSamplerObjects) {
+            samplers = new int[EXECUTOR.getInteger(GL20.GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS)];
+        }
+
+        supportsProgramBinary = EXECUTOR.supportsProgramBinary();
+
+        maxGlslVersion = Integer.parseInt(parseGlVersionString(EXECUTOR.getString(GL20.GL_SHADING_LANGUAGE_VERSION)));
+        supportsGpuShader4 = GLStateManager.capabilities.GL_EXT_gpu_shader4;
+
+        GLStateManager.LOGGER.info("Max GLSL version: {}, GPU Shader4: {}", maxGlslVersion, supportsGpuShader4);
+        GLStateManager.LOGGER.info("Image Load/Store: {}, Max Image Units: {}", supportsImageLoadStore, maxImageUnits);
+        GLStateManager.LOGGER.info("SSBO: {}, Max SSBO Bindings: {}", supportsSSBO, maxSSBOBindings);
+        GLStateManager.LOGGER.info("Buffer Storage: {}, Clear Texture: {}, Sampler Objects: {}", supportsBufferStorage, supportsClearTexture, supportsSamplerObjects);
+        GLStateManager.LOGGER.info("Program Binary: {}", supportsProgramBinary);
+
+        if (isGLES) {
+            GLStateManager.LOGGER.info("GL ES context detected, enabling shader transformer.");
+            ShaderManager.getInstance().enable();
+        } else if (GLStateManager.capabilities.OpenGL32) {
+            final int profileMask = EXECUTOR.getInteger(GL32.GL_CONTEXT_PROFILE_MASK);
+            if ((profileMask & GL32.GL_CONTEXT_CORE_PROFILE_BIT) != 0) {
+                GLStateManager.LOGGER.info("GL 3.3 core profile detected, enabling FFP shader emulation.");
+                ShaderManager.getInstance().enable();
+            }
+        }
+
+        if (!ShaderManager.getInstance().isEnabled()) {
+            GLStateManager.LOGGER.info("Enabling FFP shader emulation for streaming tessellator rendering.");
+            ShaderManager.getInstance().enable();
+        }
+    }
+
+    public static void generateMipmaps(int texture, int mipmapTarget) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.GENERATE_MIPMAP, GpuCommandPhase.BEGIN, texture, mipmapTarget);
+        dsaState.generateMipmaps(texture, mipmapTarget);
+        GLStateManager.recordGpuCommand(GpuCommandType.GENERATE_MIPMAP, GpuCommandPhase.END, texture, mipmapTarget);
+        GLStateManager.gpuCheckpoint(GpuCommandType.GENERATE_MIPMAP);
+    }
+
+    public static void bindAttributeLocation(int program, int index, CharSequence name) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.bindAttribLocation(program, index, name);
+    }
+
+    public static void texImage2D(int texture, int target, int level, int internalformat, int width, int height, int border, int format, int type, @Nullable ByteBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        final GLStateManager.GLESTexImageRemap remap = GLStateManager.remapTexImageForGLES(internalformat, format, type);
+        internalformat = remap.internalFormat();
+        format = remap.format();
+        type = remap.type();
+        GLSMTextures.glBindTexture(target, texture);
+        GLStateManager.suspendPixelUnpackBuffer();
+        EXECUTOR.texImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+        GLStateManager.restorePixelUnpackBuffer();
+        if (target == GL11.GL_TEXTURE_2D && level == 0) {
+            TextureInfoCache.INSTANCE.onTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+        }
+    }
+
+    public static void uniformMatrix4fv(int location, boolean transpose, FloatBuffer matrix) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniformMatrix4(location, transpose, matrix);
+    }
+
+    public static void copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height, int border) {
+        GLSMTextures.glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border);
+    }
+
+    public static void uniform1f(int location, float v0) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform1f(location, v0);
+    }
+
+    public static void uniform1i(int location, int v0) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform1i(location, v0);
+    }
+
+    public static void uniform2f(int location, float v0, float v1) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform2f(location, v0, v1);
+    }
+
+    public static void uniform2i(int location, int v0, int v1) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform2i(location, v0, v1);
+    }
+
+    public static void uniform3f(int location, float v0, float v1, float v2) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform3f(location, v0, v1, v2);
+    }
+
+    public static void uniform3i(int location, int v0, int v1, int v2) {EXECUTOR.uniform3i(location, v0, v1, v2);}
+
+    public static void uniform4f(int location, float v0, float v1, float v2, float v3) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform4f(location, v0, v1, v2, v3);
+    }
+
+    public static void uniform4i(int location, int v0, int v1, int v2, int v3) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.uniform4i(location, v0, v1, v2, v3);
+    }
+
+    public static int getAttribLocation(int programId, String name) {
+        GLStateManager.rejectExitCapture();
+        return EXECUTOR.getAttribLocation(programId, name);
+    }
+
+    public static int getUniformLocation(int programId, String name) {
+        GLStateManager.rejectExitCapture();
+        return EXECUTOR.getUniformLocation(programId, name);
+    }
+
+    public static void texParameteriv(int texture, int target, int pname, IntBuffer params) {
+        GLStateManager.rejectExitCapture();
+        dsaState.texParameteriv(texture, target, pname, params);
+    }
+
+    public static void copyTexSubImage2D(int destTexture, int target, int i, int i1, int i2, int i3, int i4, int width, int height) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.COPY_TEX_SUB_IMAGE_2D, GpuCommandPhase.BEGIN, destTexture, packDimensions(width, height));
+        dsaState.copyTexSubImage2D(destTexture, target, i, i1, i2, i3, i4, width, height);
+        GLStateManager.recordGpuCommand(GpuCommandType.COPY_TEX_SUB_IMAGE_2D, GpuCommandPhase.END, destTexture, packDimensions(width, height));
+        GLStateManager.gpuCheckpoint(GpuCommandType.COPY_TEX_SUB_IMAGE_2D);
+    }
+
+    public static void texParameteri(int texture, int target, int pname, int param) {
+        GLStateManager.rejectExitCapture();
+        dsaState.texParameteri(texture, target, pname, param);
+    }
+
+    public static void texParameterf(int texture, int target, int pname, float param) {
+        GLStateManager.rejectExitCapture();
+        dsaState.texParameterf(texture, target, pname, param);
+    }
+
+    public static void textureImage2D(int texture, int target, int level, int internalformat, int width, int height, int border, int format, int type, ByteBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        dsaState.textureImage2D(texture, target, level, internalformat, width, height, border, format, type, pixels);
+    }
+
+    public static void textureImage2D(int texture, int target, int level, int internalformat, int width, int height, int border, int format, int type, IntBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        dsaState.textureImage2D(texture, target, level, internalformat, width, height, border, format, type, pixels);
+    }
+
+    public static void textureSubImage2D(int texture, int target, int level, int xoffset, int yoffset, int width, int height, int format, int type, ByteBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        dsaState.textureSubImage2D(texture, target, level, xoffset, yoffset, width, height, format, type, pixels);
+    }
+
+    public static void textureSubImage2D(int texture, int target, int level, int xoffset, int yoffset, int width, int height, int format, int type, IntBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        dsaState.textureSubImage2D(texture, target, level, xoffset, yoffset, width, height, format, type, pixels);
+    }
+
+    public static void texImage1D(int texture, int target, int level, int internalformat, int width, int border, int format, int type, ByteBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.glBindTexture(target, texture);
+        GLStateManager.suspendPixelUnpackBuffer();
+        try {
+            EXECUTOR.texImage1D(target, level, internalformat, width, border, format, type, pixels);
+        } finally {
+            GLStateManager.restorePixelUnpackBuffer();
+        }
+    }
+
+    public static void texImage3D(int texture, int target, int level, int internalformat, int width, int height, int depth, int border, int format, int type, ByteBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_IMAGE_3D, GpuCommandPhase.BEGIN, texture, packDimensions(width, height));
+        GLStateManager.glBindTexture(target, texture);
+        GLStateManager.suspendPixelUnpackBuffer();
+        try {
+            EXECUTOR.texImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
+        } finally {
+            GLStateManager.restorePixelUnpackBuffer();
+        }
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_IMAGE_3D, GpuCommandPhase.END, texture, packDimensions(width, height));
+        GLStateManager.gpuCheckpoint(GpuCommandType.TEX_IMAGE_3D);
+    }
+
+    public static String getProgramInfoLog(int program) {
+        GLStateManager.rejectExitCapture();
+        return EXECUTOR.getProgramInfoLog(program, EXECUTOR.getProgrami(program, GL20.GL_INFO_LOG_LENGTH));
+    }
+
+    public static String getShaderInfoLog(int shader) {
+        GLStateManager.rejectExitCapture();
+        return EXECUTOR.getShaderInfoLog(shader, EXECUTOR.getShaderi(shader, GL20.GL_INFO_LOG_LENGTH));
+    }
+
+    public static void drawBuffers(int framebuffer, IntBuffer buffers) {
+        GLStateManager.rejectExitCapture();
+        dsaState.drawBuffers(framebuffer, buffers);
+    }
+
+    public static void readBuffer(int framebuffer, int buffer) {
+        GLStateManager.rejectExitCapture();
+        dsaState.readBuffer(framebuffer, buffer);
+    }
+
+    public static String getActiveUniform(int program, int index, int maxLength, IntBuffer sizeType) {
+        GLStateManager.rejectExitCapture();
+        return EXECUTOR.getActiveUniform(program, index, maxLength, sizeType);
+    }
+
+    public static void readPixels(int x, int y, int width, int height, int format, int type, FloatBuffer pixels) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.readPixels(x, y, width, height, format, type, pixels);
+    }
+
+    public static void bufferData(int target, FloatBuffer data, int usage) {
+        EXECUTOR.bufferData(target, data, usage);
+    }
+
+    public static int bufferStorage(int target, FloatBuffer data, int usage) {
+        GLStateManager.rejectExitCapture();
+        return dsaState.bufferStorage(target, data, usage);
+    }
+
+    public static void vertexAttrib4f(int index, float v0, float v1, float v2, float v3) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.vertexAttrib4f(index, v0, v1, v2, v3);
+    }
+
+    public static void detachShader(int program, int shader) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.detachShader(program, shader);
+    }
+
+    public static void framebufferTexture2D(int fb, int fbtarget, int attachment, int target, int texture, int levels) {
+        GLStateManager.rejectExitCapture();
+        dsaState.framebufferTexture2D(fb, fbtarget, attachment, target, texture, levels);
+    }
+
+    public static int getTexParameteri(int texture, int target, int pname) {
+        GLStateManager.rejectExitCapture();
+        return dsaState.getTexParameteri(texture, target, pname);
+    }
+
+    public static int getTexLevelParameteri(int texture, int level, int pname) {
+        GLStateManager.rejectExitCapture();
+        return dsaState.getTexLevelParameteri(texture, level, pname);
+    }
+
+    public static void bindImageTexture(int unit, int texture, int level, boolean layered, int layer, int access, int format) {
+        EXECUTOR.bindImageTexture(unit, texture, level, layered, layer, access, format);
+    }
+
+    public static int getMaxImageUnits() {
+        return maxImageUnits;
+    }
+
+    public static boolean supportsImageLoadStore() {
+        return supportsImageLoadStore;
+    }
+
+    public static boolean isClipDistanceEmulated() {
+        return !hasClipCullDistance();
+    }
+
+    public static boolean hasClipCullDistance() {
+        if (!EXECUTOR.hasContextOnThread()) {
+            return headlessClipDistanceLimitForTesting >= GLStateManager.MAX_CLIP_PLANES;
+        }
+        final GLContextState context = GLStateManager.ctx();
+        int limit = context.nativeClipDistanceLimit;
+        if (limit < 0) {
+            final String version = EXECUTOR.getString(GL11.GL_VERSION);
+            if (version == null) return false;
+            final boolean gles = version.startsWith("OpenGL ES ");
+            final boolean mobileGlues = version.contains("MobileGlues") || hasExtension("GL_MG_mobileglues");
+            final boolean available = resolveClipCullDistanceSupport(hasExtension("GL_EXT_clip_cull_distance"), gles, mobileGlues);
+            limit = available ? EXECUTOR.getInteger(GL30.GL_MAX_CLIP_DISTANCES) : 0;
+            context.nativeClipDistanceLimit = limit;
+            if (limit < GLStateManager.MAX_CLIP_PLANES) {
+                GLStateManager.LOGGER.info("Emulating clip distances (native clip distances: {}, required: {})", limit, GLStateManager.MAX_CLIP_PLANES);
+            }
+        }
+        return limit >= GLStateManager.MAX_CLIP_PLANES;
+    }
+
+    /**
+     * gl_ClipDistance is core in desktop GLSL 130+, but on ES — including translation layers like
+     * MobileGlues that report a desktop GL version — it requires GL_EXT_clip_cull_distance.
+     */
+    static boolean resolveClipCullDistanceSupport(boolean frontendHasExtension, boolean isGLES, boolean isMobileGlues) {
+        return frontendHasExtension || (!isGLES && !isMobileGlues);
+    }
+
+    private static boolean hasExtension(String name) {
+        final int count = GLSMQueries.glGetInteger(GL30.GL_NUM_EXTENSIONS);
+        for (int i = 0; i < count; i++) {
+            if (name.equals(GLSMQueries.glGetStringi(GL11.GL_EXTENSIONS, i))) return true;
+        }
+        return false;
+    }
+
+    public static boolean isGLES() {
+        if (!glesDetected) detectGLES();
+        return isGLES;
+    }
+
+    private static synchronized void detectGLES() {
+        if (glesDetected) return;
+        try {
+            final String v = EXECUTOR.getString(GL11.GL_VERSION);
+            if (v != null && v.startsWith("OpenGL ES ")) {
+                isGLES = true;
+                glesVersion = Integer.parseInt(parseGlVersionString(v));
+            }
+            glesDetected = true;
+        } catch (Throwable t) {
+            // No GL context on this thread yet (splash); retry on next call.
+            GLStateManager.LOGGER.debug("GLES detection deferred (no GL context yet): {}", t.toString());
+        }
+    }
+
+    public static boolean isLTW() {
+        if (!ltwDetected) detectLTW();
+        return isLTW;
+    }
+
+    private static synchronized void detectLTW() {
+        if (ltwDetected) return;
+        // Ported strip: Angelica holds this flag in its config.SystemProperties class, which
+        // Actinium does not carry; the property is read inline here instead.
+        if (Boolean.getBoolean("angelica.disableLtwWorkaround")) {
+            ltwDetected = true;
+            return;
+        }
+        try {
+            final String v = EXECUTOR.getString(GL11.GL_VERSION);
+            if (v == null) return;
+            isLTW = LTWWorkaround.isLtwVersionString(v);
+            ltwDetected = true;
+        } catch (Throwable t) {
+            // No GL context on this thread yet; retry on next call.
+            GLStateManager.LOGGER.debug("LTW detection deferred (no GL context yet): {}", t.toString());
+        }
+    }
+
+    public static boolean supportsSSBO() {
+        return supportsSSBO;
+    }
+
+    public static boolean supportsBufferStorage() {
+        return supportsBufferStorage;
+    }
+
+    public static boolean supportsClearTexture() {
+        return supportsClearTexture;
+    }
+
+    /** Whether {@code GL_DEPTH_STENCIL_TEXTURE_MODE} exists, so a rescued stencil texture keeps its default mode. */
+    public static boolean supportsStencilTexturing() {
+        return supportsStencilTexturing;
+    }
+
+    /** Whether immutable storage is in use, in which case a released texture keeps its immutable levels. */
+    public static boolean supportsTextureStorage() {
+        return supportsTextureStorage;
+    }
+
+    public static int getMaxSSBOBindings() {
+        return maxSSBOBindings;
+    }
+
+    public static void getProgramiv(int program, int value, IntBuffer storage) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.getProgramiv(program, value, storage);
+    }
+
+    public static void dispatchCompute(int workX, int workY, int workZ) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.DISPATCH_COMPUTE, workX, workY << 16 | workZ & 0xFFFF);
+        EXECUTOR.dispatchCompute(workX, workY, workZ);
+    }
+
+    public static void dispatchCompute(Vector3i workGroups) {
+        dispatchCompute(workGroups.x, workGroups.y, workGroups.z);
+    }
+
+    public static void dispatchComputeIndirect(long offset) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.DISPATCH_COMPUTE_INDIRECT, (int) (offset >>> 32), (int) offset);
+        EXECUTOR.dispatchComputeIndirect(offset);
+    }
+
+    public static void bindBuffer(int target, int buffer) {
+        GLSMBuffers.glBindBuffer(target, buffer);
+    }
+
+    public static void memoryBarrier(int barriers) {
+        GLStateManager.rejectExitCapture();
+        if (supportsCompute) {
+            EXECUTOR.memoryBarrier(barriers);
+        }
+    }
+
+    public static boolean supportsBufferBlending() {
+        return GLStateManager.capabilities.GL_ARB_draw_buffers_blend || GLStateManager.capabilities.OpenGL40;
+    }
+
+    public static void disableBufferBlend(int buffer) {
+        EXECUTOR.disablei(GL11.GL_BLEND, buffer);
+        GLStateManager.getBlendMode().setUnknownState();
+    }
+
+    public static void enableBufferBlend(int buffer) {
+        EXECUTOR.enablei(GL11.GL_BLEND, buffer);
+        GLStateManager.getBlendMode().setUnknownState();
+    }
+
+    public static void blendFuncSeparatei(int buffer, int srcRGB, int dstRGB, int srcAlpha, int dstAlpha) {
+        EXECUTOR.blendFuncSeparatei(buffer, srcRGB, dstRGB, srcAlpha, dstAlpha);
+    }
+
+    public static void bindTextureToUnit(int unit, int texture) {
+        if (unit == 0) GLStateManager.recordExitTextureBind(GL11.GL_TEXTURE_2D, 0);
+        else if (GLSMTextures.getBoundTextureForServerState(unit) != texture) GLStateManager.beforeUncapturedStateChange();
+        dsaState.bindTextureToUnit(unit, texture);
+    }
+
+    public static void bindTextureToUnit(int target, int unit, int texture) {
+        if (unit == 0) GLStateManager.recordExitTextureBind(target, 0);
+        else if (GLSMTextures.getBoundTextureForServerState(unit) != texture) GLStateManager.beforeUncapturedStateChange();
+        dsaState.bindTextureToUnit(target, unit, texture);
+    }
+
+    public static final FloatBuffer PROJECTION_MATRIX_BUFFER = BufferUtils.createFloatBuffer(16);
+
+    public static void setupProjectionMatrix(Matrix4f matrix) {
+        GLSMMatrices.glMatrixMode(GL11.GL_PROJECTION);
+        GLSMMatrices.glPushMatrix();
+        matrix.get(0, PROJECTION_MATRIX_BUFFER);
+        GLSMMatrices.glLoadMatrix(PROJECTION_MATRIX_BUFFER);
+        GLSMMatrices.glMatrixMode(GL11.GL_MODELVIEW);
+    }
+
+    public static void restoreProjectionMatrix() {
+        GLSMMatrices.glMatrixMode(GL11.GL_PROJECTION);
+        GLSMMatrices.glPopMatrix();
+        GLSMMatrices.glMatrixMode(GL11.GL_MODELVIEW);
+    }
+
+    public static void blitFramebuffer(int source, int dest, int offsetX, int offsetY, int width, int height, int offsetX2, int offsetY2, int width2,
+            int height2, int bufferChoice, int filter) {
+        GLStateManager.recordGpuCommand(GpuCommandType.BLIT_FRAMEBUFFER, GpuCommandPhase.BEGIN, source, dest);
+        dsaState.blitFramebuffer(source, dest, offsetX, offsetY, width, height, offsetX2, offsetY2, width2, height2, bufferChoice, filter);
+        GLStateManager.recordGpuCommand(GpuCommandType.BLIT_FRAMEBUFFER, GpuCommandPhase.END, source, dest);
+        GLStateManager.gpuCheckpoint(GpuCommandType.BLIT_FRAMEBUFFER);
+    }
+
+    public static int createFramebuffer() {
+        GLStateManager.rejectExitCapture();
+        return dsaState.createFramebuffer();
+    }
+
+    public static int createTexture(int target) {
+        GLStateManager.rejectExitCapture();
+        return dsaState.createTexture(target);
+    }
+
+    /**
+     * {@return whether the context can run compute shaders} The tracked capability view is authoritative once the state
+     * manager has initialised; before that, the driver answers, so a query made during startup still describes the
+     * context instead of reporting no support. Compute shaders are core in GL 4.3, and {@code ARB_compute_shader}
+     * exposes them on a 4.2 context.
+     */
+    public static boolean supportsCompute() {
+        final GlCapabilities capabilities = GLStateManager.capabilities;
+        if (capabilities != null) {
+            return capabilities.GL_ARB_compute_shader;
+        }
+        return LWJGL.isOpenGLVersionSupported(4, 3) || LWJGL.isExtensionSupported(GLExtension.ARB_compute_shader);
+    }
+
+    public static int createBuffers() {
+        return EXECUTOR.genBuffers();
+    }
+
+    public static void bindBufferBase(int target, int index, int buffer) {
+        GLStateManager.glBindBufferBase(target, index, buffer);
+    }
+
+    public static int getIndexedBufferBinding(int target, int index) {
+        return GLStateManager.getIndexedBufferBinding(target, index);
+    }
+
+    public static void bufferStorage(int target, long size, int flags) {
+        GLStateManager.rejectExitCapture();
+        EXECUTOR.bufferStorage(target, size, flags);
+    }
+
+    public static void clearBufferSubData(int target, int internalFormat, long offset, long size, int format, int type, int[] data) {
+        final ByteBuffer buf = BufferUtils.createByteBuffer(data.length * 4);
+        buf.asIntBuffer().put(data);
+        EXECUTOR.clearBufferSubData(target, internalFormat, offset, size, format, type, buf);
+    }
+
+    public static void deleteBuffers(int buffer) {
+        GLStateManager.glDeleteBuffers(buffer);
+    }
+
+    public static long getVRAM() {
+        return 4294967296L;
+    }
+
+    public static void clearTexImage(int texture, int target, int level, int format, int type) {
+        GLStateManager.rejectExitCapture();
+        GLStateManager.recordGpuCommand(GpuCommandType.CLEAR_TEX_IMAGE, GpuCommandPhase.BEGIN, texture, level);
+        EXECUTOR.clearTexImage(texture, level, format, type);
+        GLStateManager.recordGpuCommand(GpuCommandType.CLEAR_TEX_IMAGE, GpuCommandPhase.END, texture, level);
+        GLStateManager.gpuCheckpoint(GpuCommandType.CLEAR_TEX_IMAGE);
+    }
+
+    public static void textureStorage1D(int texture, int target, int levels, int internalFormat, int width) {
+        dsaState.textureStorage1D(texture, target, levels, internalFormat, width);
+    }
+
+    public static void textureStorage2D(int texture, int target, int levels, int internalFormat, int width, int height) {
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_STORAGE_2D, GpuCommandPhase.BEGIN, texture, packDimensions(width, height));
+        dsaState.textureStorage2D(texture, target, levels, internalFormat, width, height);
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_STORAGE_2D, GpuCommandPhase.END, texture, packDimensions(width, height));
+        GLStateManager.gpuCheckpoint(GpuCommandType.TEX_STORAGE_2D);
+    }
+
+    public static void textureStorage3D(int texture, int target, int levels, int internalFormat, int width, int height, int depth) {
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_STORAGE_3D, GpuCommandPhase.BEGIN, texture, packDimensions(width, height));
+        dsaState.textureStorage3D(texture, target, levels, internalFormat, width, height, depth);
+        GLStateManager.recordGpuCommand(GpuCommandType.TEX_STORAGE_3D, GpuCommandPhase.END, texture, packDimensions(width, height));
+        GLStateManager.gpuCheckpoint(GpuCommandType.TEX_STORAGE_3D);
+    }
+
+    private static int packDimensions(int width, int height) {
+        return (width & 0xFFFF) << 16 | height & 0xFFFF;
+    }
+
+    public static int getMaxGlslVersion() {
+        return maxGlslVersion;
+    }
+
+    /**
+     * Supplies a deterministic GLSL capability for headless shader transformation tests.
+     * This method only changes the cached version value and does not initialize OpenGL.
+     */
+    public static void initializeGlslCapabilityForTesting(int maximumGlslVersion) {
+        if (maximumGlslVersion < 0) {
+            throw new IllegalArgumentException("maximumGlslVersion must not be negative");
+        }
+        maxGlslVersion = maximumGlslVersion;
+    }
+
+    /** Supplies a deterministic clip-distance capability for headless shader transformation tests. */
+    public static void initializeClipCullDistanceSupportForTesting(boolean supported) {
+        initializeClipDistanceLimitForTesting(supported ? GLStateManager.MAX_CLIP_PLANES : 0);
+    }
+
+    /** Overrides the current context's native clip-distance limit for integration tests. */
+    public static void initializeClipDistanceLimitForTesting(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("Clip distance limit must not be negative");
+        if (EXECUTOR.hasContextOnThread()) {
+            GLStateManager.ctx().nativeClipDistanceLimit = limit;
+        } else {
+            headlessClipDistanceLimitForTesting = limit;
+        }
+    }
+
+    /** Restores capability detection for the current context. */
+    public static void resetClipDistanceLimitForTesting() {
+        if (EXECUTOR.hasContextOnThread()) {
+            GLStateManager.ctx().nativeClipDistanceLimit = -1;
+        } else {
+            headlessClipDistanceLimitForTesting = 0;
+        }
+    }
+
+    /**
+     * Supplies the immutable-storage capability the deferred texture release path reads. Driver-integration tests set it
+     * from the live context so the release path takes the same branch production does.
+     */
+    public static void initializeTextureStorageSupportForTesting(boolean supported) {
+        supportsTextureStorage = supported;
+    }
+
+    public static boolean supportsGpuShader4() {
+        return supportsGpuShader4;
+    }
+
+    public static boolean supportsSnormFormats() {
+        if (isGLES()) return false;
+        final Boolean forTesting = snormFormatsForTesting;
+        return forTesting != null ? forTesting : GLStateManager.capabilities.OpenGL31;
+    }
+
+    public static boolean supportsPackedFloatRenderable() {
+        final Boolean forTesting = packedFloatRenderableForTesting;
+        return forTesting != null ? forTesting : GLStateManager.capabilities.OpenGL30 && maxGlslVersion >= 130;
+    }
+
+    /**
+     * Supplies the two capability answers that the render-target format fallback reads. The SDL integration harness runs
+     * without the LWJGL2 capability facade behind {@link GLStateManager#capabilities}, so driver-integration tests pass
+     * the live context's answers instead.
+     */
+    public static void initializeFormatFallbackSupportForTesting(boolean snormFormats, boolean packedFloatRenderable) {
+        snormFormatsForTesting = snormFormats;
+        packedFloatRenderableForTesting = packedFloatRenderable;
+    }
+
+    public static boolean supportsTesselation() {
+        return supportsTesselation;
+    }
+
+    public static boolean supportsSamplerObjects() {
+        return supportsSamplerObjects;
+    }
+
+    public static boolean supportsProgramBinary() {
+        return supportsProgramBinary;
+    }
+
+    public static int genSampler() {
+        if (!supportsSamplerObjects) return 0;
+        return EXECUTOR.genSamplers();
+    }
+
+    public static void destroySampler(int sampler) {
+        if (!supportsSamplerObjects || sampler == 0) return;
+        EXECUTOR.deleteSamplers(sampler);
+    }
+
+    public static void samplerParameteri(int sampler, int pname, int param) {
+        if (!supportsSamplerObjects || sampler == 0) return;
+        EXECUTOR.samplerParameteri(sampler, pname, param);
+    }
+
+    public static void bindSamplerToUnit(int unit, int sampler) {
+        if (!supportsSamplerObjects) return;
+        if (samplers[unit] == sampler) return;
+        bindSamplerNow(unit, sampler);
+    }
+
+    /**
+     * Binds a sampler on the driver and records it in the shared mirror. Every sampler entry point
+     * funnels through here, so the mirror stays correct whichever path took it.
+     */
+    static void bindSamplerNow(int unit, int sampler) {
+        EXECUTOR.bindSampler(unit, sampler);
+        if (samplers != null && unit >= 0 && unit < samplers.length) {
+            samplers[unit] = sampler;
+        }
+    }
+
+    public static void unbindAllSamplers() {
+        // The mirror only exists when sampler objects were supported at init, so it is the reliable
+        // gate here; the capability flag can be reset by a later context init.
+        if (samplers == null || !hasBoundSamplers()) return;
+        GLStateManager.beforeUncapturedStateChange();
+        for (int i = 0; i < samplers.length; i++) {
+            if (samplers[i] != 0) {
+                bindSamplerNow(i, 0);
+            }
+        }
+    }
+
+    private static boolean hasBoundSamplers() {
+        for (int sampler : samplers) {
+            if (sampler != 0) return true;
+        }
+        return false;
+    }
+
+    /** Parse a GL version string (e.g. "4.6.0 NVIDIA ...") into concatenated digits "460". Strips
+     *  "OpenGL ES " / "OpenGL ES GLSL ES " prefixes so ES contexts parse too. */
+    public static String parseGlVersionString(String info) {
+        Objects.requireNonNull(info);
+        String stripped = info;
+        if (stripped.startsWith("OpenGL ES GLSL ES ")) {
+            stripped = stripped.substring("OpenGL ES GLSL ES ".length());
+        } else if (stripped.startsWith("OpenGL ES ")) {
+            stripped = stripped.substring("OpenGL ES ".length());
+        }
+        final Matcher matcher = SEMVER_PATTERN.matcher(stripped);
+        if (!matcher.matches()) {
+            throw new IllegalStateException("Could not parse GL version from \"" + info + "\"");
+        }
+        final String major = matcher.group("major");
+        final String minor = matcher.group("minor");
+        String bugfix = matcher.group("bugfix");
+        if (bugfix == null || bugfix.isEmpty()) bugfix = "0";
+        return major + minor + bugfix;
+    }
+
+    /** Lowest core profile version Actinium can run on, packed as {@code major * 10 + minor}. */
+    public static final int MIN_CORE_VERSION = 33;
+
+    /**
+     * Returns the highest version still worth probing after the driver answered {@code actual} to a
+     * {@code requested} core profile. The scan runs downwards, so a driver that reports less than it was
+     * asked for is never asked for more than it admits to again. Values below {@link #MIN_CORE_VERSION}
+     * cannot satisfy the 3.3 requirement, so a rejected request above the floor stops at the floor
+     * instead of stepping through versions that are guaranteed to fail. {@code actual} is {@code -1} when
+     * the driver's version string was unparsable, which carries no information and only steps down once.
+     */
+    public static int probeCapAfterRejection(int requested, int actual) {
+        if (actual >= MIN_CORE_VERSION && actual < requested) return actual;
+        if (actual >= 0 && actual < MIN_CORE_VERSION && requested > MIN_CORE_VERSION) return MIN_CORE_VERSION;
+        return requested - 1;
+    }
+}

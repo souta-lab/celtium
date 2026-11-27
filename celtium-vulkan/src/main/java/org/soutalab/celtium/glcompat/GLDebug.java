@@ -1,0 +1,725 @@
+/*
+ * Copyright LWJGL. All rights reserved. Modified by IMS for use in Iris (net.coderbot.iris.gl).
+ * License terms: https://www.lwjgl.org/license
+ */
+
+package org.soutalab.celtium.glcompat;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.backend.DirectGlExecutor;
+import org.soutalab.celtium.glcompat.backend.GLDebugMessageListener;
+import org.soutalab.celtium.glcompat.hooks.GLSMInitConfig;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.lwjgl.opengl.EXTBlendColor;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL43;
+
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public final class GLDebug {
+    private static final Logger LOGGER = LogManager.getLogger("GLSM/GLDebug");
+
+    /**
+     * Per-message cap on driver debug output. A defect that fires on every draw produces thousands of
+     * messages per second, and each one carries a stack trace; without a cap the log grows faster than
+     * it can be read and the game stalls on log I/O.
+     */
+    private static final int MESSAGE_LOG_LIMIT = 8;
+    private static final Map<Long, AtomicInteger> MESSAGE_COUNTS = new ConcurrentHashMap<>();
+
+    /**
+     * Installs the driver debug callback requested by the startup configuration.
+     *
+     * @return 1 for a debug context or 2 for a callback forced on a non-debug context
+     * @throws IllegalStateException when no callback implementation can be installed
+     */
+    public static int setupDebugMessageCallback() {
+        if (Thread.currentThread() != GLStateManager.getMainThread()) {
+            String message = "OpenGL debug callback installation must run on the GLSM main thread";
+            LOGGER.error(message);
+            throw new IllegalStateException(message);
+        }
+
+        int result;
+        try {
+            result = setupDebugMessageCallbackImpl();
+        } catch (RuntimeException e) {
+            String message = "Failed to install the OpenGL debug callback using "
+                + DirectGlExecutor.EXECUTOR.getName();
+            LOGGER.error(message, e);
+            throw new IllegalStateException(message, e);
+        }
+
+        requireInstalledCallback(result, DirectGlExecutor.EXECUTOR.getName());
+        if (result == 1) {
+            LOGGER.info("OpenGL debug callback installed on a debug context");
+        } else if (result == 2) {
+            LOGGER.warn("OpenGL debug callback installed, but the context has no debug flag");
+        }
+        return result;
+    }
+
+    static void requireInstalledCallback(int result, String backendName) {
+        if (result == 3) {
+            LOGGER.info("OpenGL debug output is not applicable on {}; the backend's own debug channel is used instead", backendName);
+            return;
+        }
+        if (result != 1 && result != 2) {
+            String message = "OpenGL debug output was explicitly enabled, but " + backendName
+                + " could not install a debug callback (result=" + result + ")";
+            LOGGER.error(message);
+            throw new IllegalStateException(message);
+        }
+    }
+
+    public static Throwable filterStackTrace(Throwable throwable, int offset) {
+        final StackTraceElement[] elems = throwable.getStackTrace();
+        final StackTraceElement[] filtered = new StackTraceElement[elems.length];
+        int j = 0;
+        for (int i = offset; i < elems.length; i++) {
+            String className = elems[i].getClassName();
+            if (className == null) {
+                className = "";
+            }
+            filtered[j++] = elems[i];
+        }
+        final StackTraceElement[] newElems = new StackTraceElement[j];
+        System.arraycopy(filtered, 0, newElems, 0, j);
+        throwable.setStackTrace(newElems);
+        return throwable;
+    }
+
+    private static String buildStackTrace() {
+        final StackTraceElement[] elems = filterStackTrace(new Throwable(), 4).getStackTrace();
+        final StringBuilder sb = new StringBuilder();
+        for (StackTraceElement elem : elems) {
+            sb.append("\n\t").append(elem.toString());
+        }
+        return sb.toString();
+    }
+
+    private static void logDebugMessage(int id, String source, String type, String severity, String message) {
+        final long key = ((long) source.hashCode() << 32) | (id & 0xFFFFFFFFL);
+        final int count = MESSAGE_COUNTS.computeIfAbsent(key, ignored -> new AtomicInteger()).incrementAndGet();
+        if (count > MESSAGE_LOG_LIMIT) {
+            if (count == MESSAGE_LOG_LIMIT + 1) {
+                GLStateManager.LOGGER.error("[GL] {} {} (0x{}) from {} repeats more than {} times; further messages of this kind are suppressed",
+                    severity, type, id, source, MESSAGE_LOG_LIMIT);
+            }
+            return;
+        }
+
+        final String fullMessage = String.format("[GL] %s %s (0x%X) from %s: %s%s", severity, type, id, source, message, buildStackTrace());
+
+        if ("HIGH".equals(severity)) {
+            GLStateManager.LOGGER.error(fullMessage);
+        } else if ("MEDIUM".equals(severity)) {
+            GLStateManager.LOGGER.warn(fullMessage);
+        } else {
+            GLStateManager.LOGGER.info(fullMessage);
+        }
+    }
+
+    private static int setupDebugMessageCallbackImpl() {
+        return DirectGlExecutor.EXECUTOR.setupDebugOutput(
+            (source, type, id, severity, message) ->
+                logDebugMessage(id, getDebugSource(source), getDebugType(type), getDebugSeverity(severity), message)
+        );
+    }
+
+    public static int disableDebugMessages() {
+        return DirectGlExecutor.EXECUTOR.disableDebugOutput();
+    }
+
+    private static String getDebugSource(int source) {
+        return switch (source) {
+            case GL43.GL_DEBUG_SOURCE_API -> "API";
+            case GL43.GL_DEBUG_SOURCE_WINDOW_SYSTEM -> "WINDOW SYSTEM";
+            case GL43.GL_DEBUG_SOURCE_SHADER_COMPILER -> "SHADER COMPILER";
+            case GL43.GL_DEBUG_SOURCE_THIRD_PARTY -> "THIRD PARTY";
+            case GL43.GL_DEBUG_SOURCE_APPLICATION -> "APPLICATION";
+            case GL43.GL_DEBUG_SOURCE_OTHER -> "OTHER";
+            default -> String.format("Unknown [0x%X]", source);
+        };
+    }
+
+    private static String getDebugType(int type) {
+        return switch (type) {
+            case GL43.GL_DEBUG_TYPE_ERROR -> "ERROR";
+            case GL43.GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR -> "DEPRECATED BEHAVIOR";
+            case GL43.GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR -> "UNDEFINED BEHAVIOR";
+            case GL43.GL_DEBUG_TYPE_PORTABILITY -> "PORTABILITY";
+            case GL43.GL_DEBUG_TYPE_PERFORMANCE -> "PERFORMANCE";
+            case GL43.GL_DEBUG_TYPE_OTHER -> "OTHER";
+            case GL43.GL_DEBUG_TYPE_MARKER -> "MARKER";
+            default -> String.format("Unknown [0x%X]", type);
+        };
+    }
+
+    private static String getDebugSeverity(int severity) {
+        return switch (severity) {
+            case GL43.GL_DEBUG_SEVERITY_NOTIFICATION -> "NOTIFICATION";
+            case GL43.GL_DEBUG_SEVERITY_HIGH -> "HIGH";
+            case GL43.GL_DEBUG_SEVERITY_MEDIUM -> "MEDIUM";
+            case GL43.GL_DEBUG_SEVERITY_LOW -> "LOW";
+            default -> String.format("Unknown [0x%X]", severity);
+        };
+    }
+
+    public static String getMatrixModeName(int mode) {
+        return switch (mode) {
+            case GL11.GL_MODELVIEW -> "MODELVIEW";
+            case GL11.GL_PROJECTION -> "PROJECTION";
+            case GL11.GL_TEXTURE -> "TEXTURE";
+            case GL11.GL_COLOR -> "COLOR";
+            default -> String.format("0x%X", mode);
+        };
+    }
+
+    public static String getCapabilityName(int cap) {
+        return switch (cap) {
+            case GL11.GL_ALPHA_TEST -> "ALPHA_TEST";
+            case GL11.GL_BLEND -> "BLEND";
+            case GL11.GL_COLOR_MATERIAL -> "COLOR_MATERIAL";
+            case GL11.GL_CULL_FACE -> "CULL_FACE";
+            case GL11.GL_DEPTH_TEST -> "DEPTH_TEST";
+            case GL11.GL_FOG -> "FOG";
+            case GL11.GL_LIGHTING -> "LIGHTING";
+            case GL11.GL_LINE_SMOOTH -> "LINE_SMOOTH";
+            case GL11.GL_NORMALIZE -> "NORMALIZE";
+            case GL11.GL_POINT_SMOOTH -> "POINT_SMOOTH";
+            case GL11.GL_POLYGON_OFFSET_FILL -> "POLYGON_OFFSET_FILL";
+            case GL11.GL_POLYGON_OFFSET_LINE -> "POLYGON_OFFSET_LINE";
+            case GL11.GL_POLYGON_SMOOTH -> "POLYGON_SMOOTH";
+            case GL12.GL_RESCALE_NORMAL -> "RESCALE_NORMAL";
+            case GL11.GL_SCISSOR_TEST -> "SCISSOR_TEST";
+            case GL11.GL_STENCIL_TEST -> "STENCIL_TEST";
+            case GL11.GL_TEXTURE_1D -> "TEXTURE_1D";
+            case GL11.GL_TEXTURE_2D -> "TEXTURE_2D";
+            case GL11.GL_LIGHT0 -> "LIGHT0";
+            case GL11.GL_LIGHT1 -> "LIGHT1";
+            case GL11.GL_LIGHT2 -> "LIGHT2";
+            case GL11.GL_LIGHT3 -> "LIGHT3";
+            case GL11.GL_LIGHT4 -> "LIGHT4";
+            case GL11.GL_LIGHT5 -> "LIGHT5";
+            case GL11.GL_LIGHT6 -> "LIGHT6";
+            case GL11.GL_LIGHT7 -> "LIGHT7";
+            default -> String.format("0x%X", cap);
+        };
+    }
+
+    public static String getComparisonFuncName(int func) {
+        return switch (func) {
+            case GL11.GL_NEVER -> "NEVER";
+            case GL11.GL_LESS -> "LESS";
+            case GL11.GL_EQUAL -> "EQUAL";
+            case GL11.GL_LEQUAL -> "LEQUAL";
+            case GL11.GL_GREATER -> "GREATER";
+            case GL11.GL_NOTEQUAL -> "NOTEQUAL";
+            case GL11.GL_GEQUAL -> "GEQUAL";
+            case GL11.GL_ALWAYS -> "ALWAYS";
+            default -> String.format("0x%X", func);
+        };
+    }
+
+    public static String getBlendFactorName(int factor) {
+        return switch (factor) {
+            case GL11.GL_ZERO -> "ZERO";
+            case GL11.GL_ONE -> "ONE";
+            case GL11.GL_SRC_COLOR -> "SRC_COLOR";
+            case GL11.GL_ONE_MINUS_SRC_COLOR -> "ONE_MINUS_SRC_COLOR";
+            case GL11.GL_DST_COLOR -> "DST_COLOR";
+            case GL11.GL_ONE_MINUS_DST_COLOR -> "ONE_MINUS_DST_COLOR";
+            case GL11.GL_SRC_ALPHA -> "SRC_ALPHA";
+            case GL11.GL_ONE_MINUS_SRC_ALPHA -> "ONE_MINUS_SRC_ALPHA";
+            case GL11.GL_DST_ALPHA -> "DST_ALPHA";
+            case GL11.GL_ONE_MINUS_DST_ALPHA -> "ONE_MINUS_DST_ALPHA";
+            case EXTBlendColor.GL_CONSTANT_COLOR_EXT -> "CONSTANT_COLOR";
+            case EXTBlendColor.GL_ONE_MINUS_CONSTANT_COLOR_EXT -> "ONE_MINUS_CONSTANT_COLOR";
+            case EXTBlendColor.GL_CONSTANT_ALPHA_EXT -> "CONSTANT_ALPHA";
+            case EXTBlendColor.GL_ONE_MINUS_CONSTANT_ALPHA_EXT -> "ONE_MINUS_CONSTANT_ALPHA";
+            case GL11.GL_SRC_ALPHA_SATURATE -> "SRC_ALPHA_SATURATE";
+            default -> String.format("0x%X", factor);
+        };
+    }
+
+    public static String getShadeModelName(int mode) {
+        return switch (mode) {
+            case GL11.GL_FLAT -> "FLAT";
+            case GL11.GL_SMOOTH -> "SMOOTH";
+            default -> String.format("0x%X", mode);
+        };
+    }
+
+    public static String getTextureTargetName(int target) {
+        return switch (target) {
+            case GL11.GL_TEXTURE_1D -> "TEXTURE_1D";
+            case GL11.GL_TEXTURE_2D -> "TEXTURE_2D";
+            case GL12.GL_TEXTURE_3D -> "TEXTURE_3D";
+            case GL13.GL_TEXTURE_CUBE_MAP -> "TEXTURE_CUBE_MAP";
+            default -> String.format("0x%X", target);
+        };
+    }
+
+    public static String getTexturePnameName(int pname) {
+        return switch (pname) {
+            case GL11.GL_TEXTURE_MIN_FILTER -> "TEXTURE_MIN_FILTER";
+            case GL11.GL_TEXTURE_MAG_FILTER -> "TEXTURE_MAG_FILTER";
+            case GL11.GL_TEXTURE_WRAP_S -> "TEXTURE_WRAP_S";
+            case GL11.GL_TEXTURE_WRAP_T -> "TEXTURE_WRAP_T";
+            case GL12.GL_TEXTURE_WRAP_R -> "TEXTURE_WRAP_R";
+            case GL12.GL_TEXTURE_MIN_LOD -> "TEXTURE_MIN_LOD";
+            case GL12.GL_TEXTURE_MAX_LOD -> "TEXTURE_MAX_LOD";
+            case GL12.GL_TEXTURE_BASE_LEVEL -> "TEXTURE_BASE_LEVEL";
+            case GL12.GL_TEXTURE_MAX_LEVEL -> "TEXTURE_MAX_LEVEL";
+            case GL11.GL_TEXTURE_BORDER_COLOR -> "TEXTURE_BORDER_COLOR";
+            case GL11.GL_TEXTURE_PRIORITY -> "TEXTURE_PRIORITY";
+            case GL14.GL_TEXTURE_LOD_BIAS -> "TEXTURE_LOD_BIAS";
+            case GL14.GL_GENERATE_MIPMAP -> "GENERATE_MIPMAP";
+            default -> String.format("0x%X", pname);
+        };
+    }
+
+    public static String getTextureFormatName(int format) {
+        return switch (format) {
+            case GL11.GL_RED -> "RED";
+            case GL11.GL_GREEN -> "GREEN";
+            case GL11.GL_BLUE -> "BLUE";
+            case GL11.GL_ALPHA -> "ALPHA";
+            case GL11.GL_RGB -> "RGB";
+            case GL11.GL_RGBA -> "RGBA";
+            case GL11.GL_LUMINANCE -> "LUMINANCE";
+            case GL11.GL_LUMINANCE_ALPHA -> "LUMINANCE_ALPHA";
+            case GL12.GL_BGR -> "BGR";
+            case GL12.GL_BGRA -> "BGRA";
+            case GL11.GL_DEPTH_COMPONENT -> "DEPTH_COMPONENT";
+            case GL11.GL_STENCIL_INDEX -> "STENCIL_INDEX";
+            case GL30.GL_DEPTH_STENCIL -> "DEPTH_STENCIL";
+            // Internal formats
+            case GL11.GL_RGB8 -> "RGB8";
+            case GL11.GL_RGBA8 -> "RGBA8";
+            case GL11.GL_ALPHA8 -> "ALPHA8";
+            case GL11.GL_LUMINANCE8 -> "LUMINANCE8";
+            case GL11.GL_LUMINANCE8_ALPHA8 -> "LUMINANCE8_ALPHA8";
+            default -> String.format("0x%X", format);
+        };
+    }
+
+    public static String getDataTypeName(int type) {
+        return switch (type) {
+            case GL11.GL_UNSIGNED_BYTE -> "UNSIGNED_BYTE";
+            case GL11.GL_BYTE -> "BYTE";
+            case GL11.GL_UNSIGNED_SHORT -> "UNSIGNED_SHORT";
+            case GL11.GL_SHORT -> "SHORT";
+            case GL11.GL_UNSIGNED_INT -> "UNSIGNED_INT";
+            case GL11.GL_INT -> "INT";
+            case GL11.GL_FLOAT -> "FLOAT";
+            case GL11.GL_DOUBLE -> "DOUBLE";
+            case GL12.GL_UNSIGNED_BYTE_3_3_2 -> "UNSIGNED_BYTE_3_3_2";
+            case GL12.GL_UNSIGNED_SHORT_4_4_4_4 -> "UNSIGNED_SHORT_4_4_4_4";
+            case GL12.GL_UNSIGNED_SHORT_5_5_5_1 -> "UNSIGNED_SHORT_5_5_5_1";
+            case GL12.GL_UNSIGNED_INT_8_8_8_8 -> "UNSIGNED_INT_8_8_8_8";
+            case GL12.GL_UNSIGNED_INT_10_10_10_2 -> "UNSIGNED_INT_10_10_10_2";
+            default -> String.format("0x%X", type);
+        };
+    }
+
+    public static String getLightName(int light) {
+        return switch (light) {
+            case GL11.GL_LIGHT0 -> "LIGHT0";
+            case GL11.GL_LIGHT1 -> "LIGHT1";
+            case GL11.GL_LIGHT2 -> "LIGHT2";
+            case GL11.GL_LIGHT3 -> "LIGHT3";
+            case GL11.GL_LIGHT4 -> "LIGHT4";
+            case GL11.GL_LIGHT5 -> "LIGHT5";
+            case GL11.GL_LIGHT6 -> "LIGHT6";
+            case GL11.GL_LIGHT7 -> "LIGHT7";
+            default -> String.format("0x%X", light);
+        };
+    }
+
+    public static String getLightPnameName(int pname) {
+        return switch (pname) {
+            case GL11.GL_AMBIENT -> "AMBIENT";
+            case GL11.GL_DIFFUSE -> "DIFFUSE";
+            case GL11.GL_SPECULAR -> "SPECULAR";
+            case GL11.GL_POSITION -> "POSITION";
+            case GL11.GL_SPOT_DIRECTION -> "SPOT_DIRECTION";
+            case GL11.GL_SPOT_EXPONENT -> "SPOT_EXPONENT";
+            case GL11.GL_SPOT_CUTOFF -> "SPOT_CUTOFF";
+            case GL11.GL_CONSTANT_ATTENUATION -> "CONSTANT_ATTENUATION";
+            case GL11.GL_LINEAR_ATTENUATION -> "LINEAR_ATTENUATION";
+            case GL11.GL_QUADRATIC_ATTENUATION -> "QUADRATIC_ATTENUATION";
+            default -> String.format("0x%X", pname);
+        };
+    }
+
+    public static String getMaterialPnameName(int pname) {
+        return switch (pname) {
+            case GL11.GL_AMBIENT -> "AMBIENT";
+            case GL11.GL_DIFFUSE -> "DIFFUSE";
+            case GL11.GL_SPECULAR -> "SPECULAR";
+            case GL11.GL_EMISSION -> "EMISSION";
+            case GL11.GL_SHININESS -> "SHININESS";
+            case GL11.GL_AMBIENT_AND_DIFFUSE -> "AMBIENT_AND_DIFFUSE";
+            case GL11.GL_COLOR_INDEXES -> "COLOR_INDEXES";
+            default -> String.format("0x%X", pname);
+        };
+    }
+
+    public static String getFaceName(int face) {
+        return switch (face) {
+            case GL11.GL_FRONT -> "FRONT";
+            case GL11.GL_BACK -> "BACK";
+            case GL11.GL_FRONT_AND_BACK -> "FRONT_AND_BACK";
+            default -> String.format("0x%X", face);
+        };
+    }
+
+    public static String getColorMaterialModeName(int mode) {
+        return switch (mode) {
+            case GL11.GL_AMBIENT -> "AMBIENT";
+            case GL11.GL_DIFFUSE -> "DIFFUSE";
+            case GL11.GL_SPECULAR -> "SPECULAR";
+            case GL11.GL_EMISSION -> "EMISSION";
+            case GL11.GL_AMBIENT_AND_DIFFUSE -> "AMBIENT_AND_DIFFUSE";
+            default -> String.format("0x%X", mode);
+        };
+    }
+
+    public static String getFogPnameName(int pname) {
+        return switch (pname) {
+            case GL11.GL_FOG_MODE -> "FOG_MODE";
+            case GL11.GL_FOG_DENSITY -> "FOG_DENSITY";
+            case GL11.GL_FOG_START -> "FOG_START";
+            case GL11.GL_FOG_END -> "FOG_END";
+            case GL11.GL_FOG_INDEX -> "FOG_INDEX";
+            case GL11.GL_FOG_COLOR -> "FOG_COLOR";
+            default -> String.format("0x%X", pname);
+        };
+    }
+
+    public static String getLightModelPnameName(int pname) {
+        return switch (pname) {
+            case GL11.GL_LIGHT_MODEL_AMBIENT -> "LIGHT_MODEL_AMBIENT";
+            case GL11.GL_LIGHT_MODEL_LOCAL_VIEWER -> "LIGHT_MODEL_LOCAL_VIEWER";
+            case GL11.GL_LIGHT_MODEL_TWO_SIDE -> "LIGHT_MODEL_TWO_SIDE";
+            case GL12.GL_LIGHT_MODEL_COLOR_CONTROL -> "LIGHT_MODEL_COLOR_CONTROL";
+            default -> String.format("0x%X", pname);
+        };
+    }
+
+    public static String getClearMaskString(int mask) {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        if ((mask & GL11.GL_COLOR_BUFFER_BIT) != 0) {
+            sb.append("COLOR");
+            first = false;
+        }
+        if ((mask & GL11.GL_DEPTH_BUFFER_BIT) != 0) {
+            if (!first) sb.append("|");
+            sb.append("DEPTH");
+            first = false;
+        }
+        if ((mask & GL11.GL_STENCIL_BUFFER_BIT) != 0) {
+            if (!first) sb.append("|");
+            sb.append("STENCIL");
+            first = false;
+        }
+        if ((mask & GL11.GL_ACCUM_BUFFER_BIT) != 0) {
+            if (!first) sb.append("|");
+            sb.append("ACCUM");
+        }
+        return sb.toString();
+    }
+
+    public static String getCullFaceName(int mode) {
+        return switch (mode) {
+            case GL11.GL_FRONT -> "FRONT";
+            case GL11.GL_BACK -> "BACK";
+            case GL11.GL_FRONT_AND_BACK -> "FRONT_AND_BACK";
+            default -> String.format("0x%X", mode);
+        };
+    }
+
+    public static String getLogicOpName(int opcode) {
+        return switch (opcode) {
+            case GL11.GL_CLEAR -> "CLEAR";
+            case GL11.GL_AND -> "AND";
+            case GL11.GL_AND_REVERSE -> "AND_REVERSE";
+            case GL11.GL_COPY -> "COPY";
+            case GL11.GL_AND_INVERTED -> "AND_INVERTED";
+            case GL11.GL_NOOP -> "NOOP";
+            case GL11.GL_XOR -> "XOR";
+            case GL11.GL_OR -> "OR";
+            case GL11.GL_NOR -> "NOR";
+            case GL11.GL_EQUIV -> "EQUIV";
+            case GL11.GL_INVERT -> "INVERT";
+            case GL11.GL_OR_REVERSE -> "OR_REVERSE";
+            case GL11.GL_COPY_INVERTED -> "COPY_INVERTED";
+            case GL11.GL_OR_INVERTED -> "OR_INVERTED";
+            case GL11.GL_NAND -> "NAND";
+            case GL11.GL_SET -> "SET";
+            default -> String.format("0x%X", opcode);
+        };
+    }
+
+    public static String getFramebufferStatusName(int status) {
+        return switch (status) {
+            case GL30.GL_FRAMEBUFFER_COMPLETE -> "COMPLETE";
+            case GL30.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT -> "INCOMPLETE_ATTACHMENT";
+            case GL30.GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT -> "INCOMPLETE_MISSING_ATTACHMENT";
+            case GL30.GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER -> "INCOMPLETE_DRAW_BUFFER";
+            case GL30.GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER -> "INCOMPLETE_READ_BUFFER";
+            case GL30.GL_FRAMEBUFFER_UNSUPPORTED -> "UNSUPPORTED";
+            case GL30.GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE -> "INCOMPLETE_MULTISAMPLE";
+            case 0 -> "NO_FRAMEBUFFER_BOUND";
+            default -> String.format("UNKNOWN(0x%X)", status);
+        };
+    }
+
+    public static String getInternalFormatName(int format) {
+        return switch (format) {
+            // Basic
+            case GL11.GL_RGBA -> "RGBA";
+            case GL11.GL_RGB -> "RGB";
+            // 8-bit normalized
+            case GL30.GL_R8 -> "R8";
+            case GL30.GL_RG8 -> "RG8";
+            case GL11.GL_RGB8 -> "RGB8";
+            case GL11.GL_RGBA8 -> "RGBA8";
+            // 8-bit signed normalized
+            case 0x8F94 -> "R8_SNORM";
+            case 0x8F95 -> "RG8_SNORM";
+            case 0x8F96 -> "RGB8_SNORM";
+            case 0x8F97 -> "RGBA8_SNORM";
+            // 16-bit normalized
+            case GL30.GL_R16 -> "R16";
+            case GL30.GL_RG16 -> "RG16";
+            case GL11.GL_RGB16 -> "RGB16";
+            case GL11.GL_RGBA16 -> "RGBA16";
+            // 16-bit float
+            case GL30.GL_R16F -> "R16F";
+            case GL30.GL_RG16F -> "RG16F";
+            case GL30.GL_RGB16F -> "RGB16F";
+            case GL30.GL_RGBA16F -> "RGBA16F";
+            // 32-bit float
+            case GL30.GL_R32F -> "R32F";
+            case GL30.GL_RG32F -> "RG32F";
+            case GL30.GL_RGB32F -> "RGB32F";
+            case GL30.GL_RGBA32F -> "RGBA32F";
+            // Packed
+            case GL30.GL_R11F_G11F_B10F -> "R11F_G11F_B10F";
+            case GL11.GL_RGB10_A2 -> "RGB10_A2";
+            default -> String.format("0x%X", format);
+        };
+    }
+
+    private static DebugState debugState;
+
+    private interface DebugState {
+
+        void nameObject(int id, int object, String name);
+
+        void pushGroup(String name);
+
+        void popGroup();
+
+        void debugMessage(String name);
+
+        String getObjectLabel(int glProgram, int program);
+    }
+
+    private static class KHRDebugState implements DebugState {
+
+        private static final int ID = 0;
+        private int depth = 0;
+        private static final int maxDepth = DirectGlExecutor.EXECUTOR.getInteger(GL43.GL_MAX_DEBUG_GROUP_STACK_DEPTH);
+        private final String[] groupStack = new String[maxDepth + 1];
+
+        @Override
+        public void nameObject(int id, int object, String name) {
+            DirectGlExecutor.EXECUTOR.objectLabel(id, object, name);
+        }
+
+        @Override
+        public void pushGroup(String name) {
+            if (depth + 1 > maxDepth) {
+                final StringBuilder sb = new StringBuilder();
+                sb.append("Debug group stack overflow (maxDepth=").append(maxDepth).append("), current stack:\n");
+                for (int i = 0; i < depth; i++) {
+                    sb.append("  [").append(i).append("] ").append(groupStack[i]).append('\n');
+                }
+                sb.append("  -> ").append(name).append(" (rejected)");
+                throw new RuntimeException(sb.toString());
+            }
+            groupStack[depth] = name;
+            DirectGlExecutor.EXECUTOR.pushDebugGroup(GL43.GL_DEBUG_SOURCE_APPLICATION, ID, name);
+            depth++;
+        }
+
+        @Override
+        public void popGroup() {
+            if (depth - 1 < 0) {
+                throw new RuntimeException("Stack underflow");
+            }
+            DirectGlExecutor.EXECUTOR.popDebugGroup();
+            depth--;
+            groupStack[depth] = null;
+        }
+
+        @Override
+        public void debugMessage(String message) {
+            DirectGlExecutor.EXECUTOR.debugMessageInsert(
+                    GL43.GL_DEBUG_SOURCE_APPLICATION,
+                    GL43.GL_DEBUG_TYPE_MARKER,
+                    ID,
+                    GL43.GL_DEBUG_SEVERITY_NOTIFICATION,
+                    message);
+        }
+
+        @Override
+        public String getObjectLabel(int glProgram, int program) {
+            if (program == 0) return "";
+
+            return DirectGlExecutor.EXECUTOR.getObjectLabel(glProgram, program);
+        }
+    }
+
+    private static class UnsupportedDebugState implements DebugState {
+
+        @Override
+        public void nameObject(int id, int object, String name) {
+        }
+
+        @Override
+        public void pushGroup(String name) {
+        }
+
+        @Override
+        public void popGroup() {
+        }
+
+        @Override
+        public void debugMessage(String name) {
+
+        }
+
+        @Override
+        public String getObjectLabel(int glProgram, int program) {
+            return "";
+        }
+    }
+
+    public static void initDebugState() {
+        final GLSMInitConfig cfg = GLStateManager.getInitConfig();
+        final boolean userRequested = cfg != null && (cfg.isLwjglDebug() || CaptureGate.enabledAtStartup());
+        if (userRequested && DirectGlExecutor.EXECUTOR.supportsDebugOutput()) {
+            debugState = new KHRDebugState();
+        } else {
+            debugState = new UnsupportedDebugState();
+        }
+    }
+
+    public static void nameObject(int id, int object, String name) {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            debugState.nameObject(id, object, name);
+        }
+    }
+
+    /**
+     * Overload that lets you gate the String concat behind the debugState
+     */
+    public static void pushGroup(String prefix, int value) {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            debugState.pushGroup(prefix + value);
+        }
+    }
+
+    public static boolean isActive() {
+        return debugState instanceof KHRDebugState && CaptureGate.markersThisFrame && Thread.currentThread() == GLStateManager.getMainThread();
+    }
+
+    public static void pushGroup(String group) {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            debugState.pushGroup(group);
+        }
+    }
+
+    public static void popGroup() {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            debugState.popGroup();
+        }
+    }
+
+    public static void debugMessage(String message) {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            debugState.debugMessage(message);
+        }
+    }
+
+    public static String getObjectLabel(int glProgram, int program) {
+        if (debugState != null && Thread.currentThread() == GLStateManager.getMainThread()) {
+            return debugState.getObjectLabel(glProgram, program);
+        }
+        return "";
+    }
+
+    private static MethodHandle khrCallbackInvoke;
+    private static boolean khrCallbackInvokeResolved;
+
+    /**
+     * Adapts an LWJGL {@code KHRDebugCallback} to the backend listener interface; returns null for
+     * a null callback so the backend unregisters instead of installing an empty listener.
+     *
+     * <p>Reflection is required here because the callback's delivery entry point is not statically
+     * reachable: the runtime {@code org.lwjgl.opengl.KHRDebugCallback} shape depends on the LWJGL
+     * shim in use (an {@code invoke(int,int,int,int,int,long,long)} SAM on lwjgl3-style runtimes,
+     * while lwjglx ships a final Handler-based class whose handler getter is package-private), so no
+     * normal entry point exists across runtimes. Classes without the expected {@code invoke} method
+     * get a warning and no delivery.
+     */
+    static GLDebugMessageListener adaptDebugCallback(Object callback) {
+        if (callback == null) return null;
+        final MethodHandle invoke = resolveKhrCallbackInvoke(callback.getClass());
+        if (invoke == null) return null;
+        return (source, type, id, severity, length, message, userParam) -> {
+            try {
+                invoke.invoke(callback, source, type, id, severity, length, message, userParam);
+            } catch (Throwable t) {
+                GLStateManager.LOGGER.warn("Debug message callback threw", t);
+            }
+        };
+    }
+
+    private static synchronized MethodHandle resolveKhrCallbackInvoke(Class<?> callbackClass) {
+        if (!khrCallbackInvokeResolved) {
+            khrCallbackInvokeResolved = true;
+            try {
+                khrCallbackInvoke = MethodHandles.publicLookup().findVirtual(callbackClass, "invoke", MethodType.methodType(void.class, int.class, int.class, int.class, int.class, int.class, long.class, long.class));
+            } catch (ReflectiveOperationException e) {
+                GLStateManager.LOGGER.warn("{} has no public invoke(int,int,int,int,int,long,long); debug messages registered through it will not be delivered.", callbackClass.getName());
+            }
+        }
+        return khrCallbackInvoke;
+    }
+
+}

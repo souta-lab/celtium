@@ -1,0 +1,172 @@
+package org.soutalab.celtium.glcompat.ffp;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.gtnh.client.renderer.vertex.VertexFormatElement;
+
+import java.util.ArrayList;
+
+/**
+ * GLSL fragments shared by the instanced fixed-function vertex shaders.
+ *
+ * <p>The template layout, used by batched tile entity renderers, the cube layout, used by instanced
+ * block models, and the particle layout, used by the batched particle runs, are generated here. The
+ * weather layout belongs to its own batch and is added together with the attribute definitions it
+ * points at.</p>
+ */
+public final class InstancedGlslHelpers {
+
+    private InstancedGlslHelpers() {}
+
+    public static String mat4FromRows(String row0, String row1, String row2) {
+        return "mat4("
+            + "vec4(" + row0 + ".x, " + row1 + ".x, " + row2 + ".x, 0.0), "
+            + "vec4(" + row0 + ".y, " + row1 + ".y, " + row2 + ".y, 0.0), "
+            + "vec4(" + row0 + ".z, " + row1 + ".z, " + row2 + ".z, 0.0), "
+            + "vec4(" + row0 + ".w, " + row1 + ".w, " + row2 + ".w, 1.0))";
+    }
+
+    public static String mat3FromRows(String row0, String row1, String row2) {
+        return "mat3("
+            + "normalize(vec3(" + row0 + ".x, " + row1 + ".x, " + row2 + ".x)), "
+            + "normalize(vec3(" + row0 + ".y, " + row1 + ".y, " + row2 + ".y)), "
+            + "normalize(vec3(" + row0 + ".z, " + row1 + ".z, " + row2 + ".z)))";
+    }
+
+    public static String particlePos(String centerHalf, String offset) {
+        return "vec4(" + centerHalf + ".xyz + " + offset + " * " + centerHalf + ".w, 1.0)";
+    }
+
+    public static String particleUv(String uv, String corner) {
+        return "vec4("
+            + "mix(" + uv + ".x, " + uv + ".z, " + corner + ".x), "
+            + "mix(" + uv + ".y, " + uv + ".w, " + corner + ".y), "
+            + "0.0, 1.0)";
+    }
+
+    // Vanilla 1.12.2 reverses the V bounds, subtracts scroll, and narrows alpha to an unsigned byte.
+    // Its SHORT lightmap attribute stores block light first and sky light second.
+    // The camera's centre column has zero width, matching the vanilla tessellator's degenerate quad.
+    private static final String WEATHER_PROLOGUE = """
+        vec2 {p}wColumn = {span}.xy;
+        float {p}wBottom = {span}.z;
+        float {p}wTop = {span}.w;
+        float {p}wLightV = floor({params}.x / 65536.0);
+        vec2 {p}wLightmap = vec2({params}.x - {p}wLightV * 65536.0, {p}wLightV);
+        bool {p}wProvider = {params}.w > 0.5;
+        vec3 {p}wTranslate = {p}WeatherParams0.xyz;
+        float {p}wInvRadius = {p}wProvider ? {p}WeatherParams3.x : {p}WeatherParams0.w;
+        vec2 {p}wCameraFrac = {p}WeatherParams1.xy;
+        float {p}wPartialTicks = {p}WeatherParams1.z;
+        float {p}wAge = {p}wProvider ? {p}WeatherParams2.w : {p}WeatherParams1.w;
+        float {p}wTick = {p}wProvider ? {p}WeatherParams2.y : {p}WeatherParams2.x;
+        float {p}wStrength = {p}wProvider ? 1.0 : {p}WeatherParams2.z;
+
+        float {p}wColumnLength = length({p}wColumn);
+        vec2 {p}wHalfWidth = vec2(0.0);
+        if ({p}wColumnLength > 0.0) {
+            {p}wHalfWidth = vec2(-{p}wColumn.y, {p}wColumn.x) * (0.5 / {p}wColumnLength);
+        }
+        vec2 {p}wCornerXZ = {p}wColumn + vec2(0.5) + ({corner}.x * 2.0 - 1.0) * {p}wHalfWidth;
+        float {p}wCornerY = mix({p}wBottom, {p}wTop, {corner}.y);
+        {vertex} = vec4(vec3({p}wCornerXZ.x, {p}wCornerY, {p}wCornerXZ.y) + {p}wTranslate, 1.0);
+
+        float {p}wDistance = length({p}wColumn + vec2(0.5) - {p}wCameraFrac) * {p}wInvRadius;
+        float {p}wFade = 1.0 - {p}wDistance * {p}wDistance;
+        float {p}wScroll = (mod({p}wTick + {params}.y, {layer}.x) + {p}wPartialTicks) / {layer}.x * {params}.z;
+        vec2 {p}wDrift = vec2({jitter}.x + {p}wAge * {layer}.y * {jitter}.y, {jitter}.z + {p}wAge * {layer}.z * {jitter}.w);
+        float {p}wAlpha = {p}wFade * {layer}.w + 0.5;
+
+        float {p}wTextureY = {p}wCornerY;
+        if (!{p}wProvider) {
+            {p}wTextureY = mix({p}wTop, {p}wBottom, {corner}.y);
+            {p}wScroll = -{p}wScroll;
+        }
+        {tex0} = vec4({corner}.x + {p}wDrift.x, {p}wTextureY * 0.25 + {p}wScroll + {p}wDrift.y, 0.0, 1.0);
+        {tex1} = vec4({p}wLightmap, 0.0, 1.0);
+        vec3 {p}wRgb = floor(clamp({colorAttr}.rgb, 0.0, 1.0) * 255.0);
+        float {p}wOpacity = {p}wAlpha * {colorAttr}.a * {p}wStrength;
+        float {p}wAlphaByte = {p}wProvider
+            ? floor(clamp({p}wOpacity, 0.0, 1.0) * 255.0)
+            : mod(trunc({p}wOpacity * 255.0), 256.0);
+        {color} = vec4({p}wRgb, {p}wAlphaByte) / 255.0;""";
+
+    public static String weatherPrologue(String uniformPrefix, String attribPrefix, String corner,
+        String vertex, String color, String tex0, String tex1, String sep) {
+        return WEATHER_PROLOGUE
+            .replace("{p}", uniformPrefix)
+            .replace("{span}", attribPrefix + "InstColumnSpan")
+            .replace("{jitter}", attribPrefix + "InstJitter")
+            .replace("{params}", attribPrefix + "InstWeatherParams")
+            .replace("{layer}", attribPrefix + "InstWeatherLayer")
+            .replace("{colorAttr}", attribPrefix + "InstWeatherColor")
+            .replace("{corner}", corner)
+            .replace("{vertex}", vertex)
+            .replace("{color}", color)
+            .replace("{tex0}", tex0)
+            .replace("{tex1}", tex1)
+            .replace("\n", sep);
+    }
+
+    public static String cubePrelude(String prefix, String mid, String delta, String normal, String tex, String sep) {
+        return "float " + prefix + "cubeMirror = " + tex + ".z < 0.0 ? 1.0 : 0.0;" + sep
+            + "vec2 " + prefix + "cubeMidU = " + mid + ".xy - " + prefix + "cubeMirror * " + normal + ".x;" + sep
+            + "vec2 " + prefix + "cubeU = " + prefix + "cubeMidU + (1.0 - 2.0 * " + prefix + "cubeMirror) * " + delta + ".xy;" + sep
+            + "vec2 " + prefix + "cubeV = " + mid + ".zw + " + delta + ".zw;";
+    }
+
+    public static String cubeUv(String tex, String lightScale, String uA, String uZ, String vA, String vZ) {
+        return "vec4("
+            + tex + ".x + " + uA + " * abs(" + tex + ".z) + " + uZ + " * " + lightScale + ".z, "
+            + tex + ".y + " + vA + " * " + tex + ".w + " + vZ + " * " + lightScale + ".w, "
+            + "0.0, 1.0)";
+    }
+
+    public static String[] attributeDecls(String prefix, Instancing kind) {
+        final ArrayList<String> decls = new ArrayList<>(9);
+        switch (kind) {
+            case NONE -> {}
+            case TEMPLATE -> addHead(decls, prefix, "vec2", "InstLightmap");
+            case CUBE -> {
+                decls.add(decl(VertexFormatElement.Usage.PRIMARY_UV.getAttributeLocation(), "vec4", prefix + "CubeMid"));
+                decls.add(decl(VertexFormatElement.Usage.SECONDARY_UV.getAttributeLocation(), "vec4", prefix + "CubeDelta"));
+                addHead(decls, prefix, "vec4", "InstLightmapScale");
+                decls.add(decl(CubeInstancedAttribs.LOC_CUBE_TEX, "vec4", prefix + "CubeTex"));
+            }
+            case PARTICLE -> {
+                decls.add(decl(ParticleInstancedAttribs.LOC_CENTER_HALF, "vec4", prefix + "InstCenterHalf"));
+                decls.add(decl(ParticleInstancedAttribs.LOC_UV, "vec4", prefix + "InstUv"));
+                decls.add(decl(ParticleInstancedAttribs.LOC_COLOR, "vec4", prefix + "InstColor"));
+                decls.add(decl(ParticleInstancedAttribs.LOC_LIGHTMAP, "vec2", prefix + "InstLightmap"));
+            }
+            case WEATHER -> {
+                decls.add(decl(WeatherInstancedAttribs.LOC_COLUMN_SPAN, "vec4", prefix + "InstColumnSpan"));
+                decls.add(decl(WeatherInstancedAttribs.LOC_JITTER, "vec4", prefix + "InstJitter"));
+                decls.add(decl(WeatherInstancedAttribs.LOC_PARAMS, "vec4", prefix + "InstWeatherParams"));
+                decls.add(decl(WeatherInstancedAttribs.LOC_COLOR, "vec4", prefix + "InstWeatherColor"));
+                decls.add(decl(WeatherInstancedAttribs.LOC_LAYER, "vec4", prefix + "InstWeatherLayer"));
+            }
+        }
+        return decls.toArray(String[]::new);
+    }
+
+    private static void addHead(ArrayList<String> decls, String prefix, String lightmapType, String lightmapName) {
+        decls.add(decl(InstancedAttribs.LOC_ROW0, "vec4", prefix + "InstRow0"));
+        decls.add(decl(InstancedAttribs.LOC_ROW1, "vec4", prefix + "InstRow1"));
+        decls.add(decl(InstancedAttribs.LOC_ROW2, "vec4", prefix + "InstRow2"));
+        decls.add(decl(InstancedAttribs.LOC_COLOR, "vec4", prefix + "InstColor"));
+        decls.add(decl(InstancedAttribs.LOC_OVERLAY, "vec4", prefix + "InstOverlay"));
+        decls.add(decl(InstancedAttribs.LOC_LIGHTMAP, lightmapType, prefix + lightmapName));
+    }
+
+    private static String decl(int loc, String type, String name) {
+        return "layout(location = " + loc + ") in " + type + " " + name + ";";
+    }
+}

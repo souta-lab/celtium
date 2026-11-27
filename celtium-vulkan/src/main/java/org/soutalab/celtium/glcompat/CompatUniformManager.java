@@ -1,0 +1,483 @@
+package org.soutalab.celtium.glcompat;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.stacks.FogStateStack;
+import org.soutalab.celtium.glcompat.stacks.LightStateStack;
+import org.soutalab.celtium.glcompat.states.ClipPlaneState;
+import org.soutalab.celtium.glcompat.states.LightModelState;
+import org.soutalab.celtium.glcompat.states.LightState;
+import org.soutalab.celtium.glcompat.states.MaterialState;
+
+import static org.soutalab.celtium.glcompat.backend.DirectGlExecutor.EXECUTOR;
+import org.joml.Matrix3f;
+import org.joml.Matrix4f;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL20;
+
+import java.nio.FloatBuffer;
+
+/**
+ * Per-program compat uniform location cache and upload manager.
+ *
+ * <p>Manages {@code actinium_*} uniforms injected by {@link CompatShaderTransformer} and {@code iris_*} matrix uniforms used by Iris/celeritas shader
+ * programs.
+ */
+public class CompatUniformManager {
+
+    // Uniform location indices within the cached array (package-private for tests)
+    static final int LOC_MODELVIEW = 0;
+    static final int LOC_MODELVIEW_INVERSE = 1;
+    static final int LOC_PROJECTION = 2;
+    static final int LOC_PROJECTION_INVERSE = 3;
+    static final int LOC_NORMAL = 4;
+    static final int LOC_LIGHTMAP_TEXTURE_MATRIX = 5;
+    static final int LOC_FOG_DENSITY = 6;
+    static final int LOC_FOG_START = 7;
+    static final int LOC_FOG_END = 8;
+    static final int LOC_FOG_COLOR = 9;
+    static final int LOC_IRIS_MODELVIEW = 10;
+    static final int LOC_IRIS_PROJECTION = 11;
+    static final int LOC_IRIS_NORMAL = 12;
+    static final int LOC_IRIS_LIGHTMAP_TEXTURE_MATRIX = 13;
+    static final int LOC_IRIS_TEXTURE_MATRIX = 14;
+    static final int LOC_ALPHA_TEST_REF = 15;
+    static final int LOC_SCENE_COLOR = 16;
+    static final int LOC_CLIP_PLANES = 17;
+    static final int LOC_CLIP_PLANES_ENABLED = 18;
+    static final int LOC_IRIS_COLOR_MODULATOR = 19;
+
+    // Light source fields: 12 per light × 2 lights = 24 locations
+    static final int LIGHT_FIELDS = 12;
+    static final int LF_AMBIENT = 0, LF_DIFFUSE = 1, LF_SPECULAR = 2, LF_POSITION = 3;
+    static final int LF_HALF_VECTOR = 4, LF_SPOT_DIRECTION = 5, LF_SPOT_EXPONENT = 6;
+    static final int LF_SPOT_CUTOFF = 7, LF_SPOT_COS_CUTOFF = 8;
+    static final int LF_CONSTANT_ATTEN = 9, LF_LINEAR_ATTEN = 10, LF_QUADRATIC_ATTEN = 11;
+    static final int LOC_LIGHT_BASE = 20;
+
+    // Material fields: 5 locations
+    static final int MF_EMISSION = 0, MF_AMBIENT = 1, MF_DIFFUSE = 2, MF_SPECULAR = 3, MF_SHININESS = 4;
+    static final int MAT_FIELDS = 5;
+    static final int LOC_MAT_BASE = LOC_LIGHT_BASE + 2 * LIGHT_FIELDS; // 43
+
+    static final int LOC_CLIP_PLANE_MASK = LOC_MAT_BASE + MAT_FIELDS;
+    static final int LOC_COUNT = LOC_CLIP_PLANE_MASK + 1;
+
+    private static final String[] LIGHT_FIELD_NAMES = {
+        "ambient", "diffuse", "specular", "position", "halfVector",
+        "spotDirection", "spotExponent", "spotCutoff", "spotCosCutoff",
+        "constantAttenuation", "linearAttenuation", "quadraticAttenuation",
+    };
+    private static final String[] MAT_FIELD_NAMES = {
+        "emission", "ambient", "diffuse", "specular", "shininess",
+    };
+
+    private static final String[] UNIFORM_NAMES;
+
+    static {
+        UNIFORM_NAMES = new String[LOC_COUNT];
+        UNIFORM_NAMES[LOC_MODELVIEW] = "actinium_ModelViewMatrix";
+        UNIFORM_NAMES[LOC_MODELVIEW_INVERSE] = "actinium_ModelViewMatrixInverse";
+        UNIFORM_NAMES[LOC_PROJECTION] = "actinium_ProjectionMatrix";
+        UNIFORM_NAMES[LOC_PROJECTION_INVERSE] = "actinium_ProjectionMatrixInverse";
+        UNIFORM_NAMES[LOC_NORMAL] = "actinium_NormalMatrix";
+        UNIFORM_NAMES[LOC_LIGHTMAP_TEXTURE_MATRIX] = "actinium_LightmapTextureMatrix";
+        UNIFORM_NAMES[LOC_FOG_DENSITY] = "actinium_FogDensity";
+        UNIFORM_NAMES[LOC_FOG_START] = "actinium_FogStart";
+        UNIFORM_NAMES[LOC_FOG_END] = "actinium_FogEnd";
+        UNIFORM_NAMES[LOC_FOG_COLOR] = "actinium_FogColor";
+        UNIFORM_NAMES[LOC_IRIS_MODELVIEW] = "iris_ModelViewMatrix";
+        UNIFORM_NAMES[LOC_IRIS_PROJECTION] = "iris_ProjectionMatrix";
+        UNIFORM_NAMES[LOC_IRIS_NORMAL] = "iris_NormalMatrix";
+        UNIFORM_NAMES[LOC_IRIS_LIGHTMAP_TEXTURE_MATRIX] = "iris_LightmapTextureMatrix";
+        UNIFORM_NAMES[LOC_IRIS_TEXTURE_MATRIX] = "iris_TextureMatrix";
+        UNIFORM_NAMES[LOC_ALPHA_TEST_REF] = "actinium_currentAlphaTest";
+        UNIFORM_NAMES[LOC_SCENE_COLOR] = "actinium_SceneColor";
+        UNIFORM_NAMES[LOC_CLIP_PLANES] = "actinium_ClipPlane[0]";
+        UNIFORM_NAMES[LOC_CLIP_PLANES_ENABLED] = "actinium_ClipPlanesEnabled";
+        UNIFORM_NAMES[LOC_CLIP_PLANE_MASK] = "actinium_ClipPlaneMask";
+        UNIFORM_NAMES[LOC_IRIS_COLOR_MODULATOR] = "iris_ColorModulator";
+        for (int li = 0; li < 2; li++) {
+            for (int fi = 0; fi < LIGHT_FIELDS; fi++) {
+                UNIFORM_NAMES[LOC_LIGHT_BASE + li * LIGHT_FIELDS + fi] = "actinium_LightSource[" + li + "]." + LIGHT_FIELD_NAMES[fi];
+            }
+        }
+        for (int fi = 0; fi < MAT_FIELDS; fi++) {
+            UNIFORM_NAMES[LOC_MAT_BASE + fi] = "actinium_FrontMaterial." + MAT_FIELD_NAMES[fi];
+        }
+    }
+
+    /** Per-program compat uniform locations and upload generations. */
+    private static final CompatProgramUniformStates programStates = new CompatProgramUniformStates();
+
+    /** Upload scratch state is thread-local because a shared drawable can be current on another thread. */
+    private static final ThreadLocal<UploadBuffers> UPLOAD_BUFFERS = ThreadLocal.withInitial(UploadBuffers::new);
+
+    private static final float LIGHTMAP_SCALE = 1.0f / 256.0f;
+    private CompatUniformManager() {}
+
+    public static long beforeLinkProgram(int program) {
+        return programStates.invalidate(program);
+    }
+
+    public static void onLinkProgram(int program, long linkEpoch) {
+        if (EXECUTOR.getProgrami(program, GL20.GL_LINK_STATUS) != GL11.GL_TRUE) {
+            GLStateManager.LOGGER.warn("CompatUniformManager: not caching uniforms for unsuccessfully linked program {}", program);
+            return;
+        }
+
+        int[] locs = new int[LOC_COUNT];
+        for (int i = 0; i < LOC_COUNT; i++) {
+            locs[i] = EXECUTOR.getUniformLocation(program, UNIFORM_NAMES[i]);
+        }
+
+        if (programStates.storeLinkedProgram(program, linkEpoch, locs)) {
+            GLStateManager.LOGGER.debug("CompatUniformManager: program {} has compat uniforms", program);
+        }
+    }
+
+    public static void onUseProgram(int program) {
+        if (program == 0) return;
+        if (!GLStateManager.isCachingEnabled()) {
+            // SharedDrawable does not keep GLStateManager's source cache current.
+            return;
+        }
+
+        CompatProgramUniformState state = programStates.get(program);
+        if (state == null || !state.isValid()) return;
+
+        int[] locs = state.getLocations();
+        // Uniform values are program-local, so each category is tracked per linked program on the cache-owning context.
+        final int mvGen = GLStateManager.getMvGeneration();
+        final int projGen = GLStateManager.getProjGeneration();
+        final int texMatGen = GLStateManager.getTexMatrixGeneration();
+        final boolean mvChanged = state.needsModelViewUpload(mvGen);
+        final boolean projChanged = state.needsProjectionUpload(projGen);
+        final boolean texMatChanged = state.needsTextureMatrixUpload(texMatGen);
+        if (mvChanged || projChanged || texMatChanged) {
+            if (!state.isValid()) return;
+            uploadMatrices(locs, mvChanged, projChanged, texMatChanged);
+            if (mvChanged) state.markModelViewUploaded(mvGen);
+            if (projChanged) state.markProjectionUploaded(projGen);
+            if (texMatChanged) state.markTextureMatrixUploaded(texMatGen);
+        }
+
+        final int fragGen = GLStateManager.getFragmentGeneration();
+        final boolean fragmentChanged = state.needsFragmentUpload(fragGen);
+        if (fragmentChanged) {
+            if (!state.isValid()) return;
+            uploadFragmentUniforms(locs);
+            state.markFragmentUploaded(fragGen);
+        }
+
+        final int colorGen = GLStateManager.getColorGeneration();
+        final boolean colorChanged = state.needsColorUpload(colorGen);
+        if (colorChanged) {
+            if (!state.isValid()) return;
+            uploadColorModulator(locs);
+            state.markColorUploaded(colorGen);
+        }
+
+        final int litGen = GLStateManager.getLightingGeneration();
+        final boolean lightingChanged = state.needsLightingUpload(litGen);
+        if (lightingChanged) {
+            if (!state.isValid()) return;
+            if (locs[LOC_SCENE_COLOR] != -1) uploadSceneColor(locs);
+            uploadLightSources(locs);
+            uploadMaterial(locs);
+            state.markLightingUploaded(litGen);
+        }
+
+        final boolean hasClipPlaneUniforms = locs[LOC_CLIP_PLANES] != -1 || locs[LOC_CLIP_PLANES_ENABLED] != -1
+            || locs[LOC_CLIP_PLANE_MASK] != -1;
+        if (hasClipPlaneUniforms) {
+            final int cpGen = GLStateManager.getClipPlaneGeneration();
+            final boolean clipPlaneChanged = state.needsClipPlaneUpload(cpGen);
+            if (clipPlaneChanged) {
+                if (!state.isValid()) return;
+                uploadClipPlanes(locs);
+                state.markClipPlaneUploaded(cpGen);
+            }
+        }
+    }
+
+    public static void refreshCurrentProgramMatrices() {
+        if (!GLStateManager.isCachingEnabled()) {
+            // Matrix state belongs to the cache-owning context during the splash screen.
+            return;
+        }
+
+        final int program = GLStateManager.getActiveProgram();
+        if (program == 0) {
+            return;
+        }
+
+        CompatProgramUniformState state = programStates.get(program);
+        if (state == null || !state.isValid()) {
+            return;
+        }
+
+        int[] locs = state.getLocations();
+        if (!state.isValid()) {
+            return;
+        }
+        uploadMatrices(locs, true, true, true);
+        state.markModelViewUploaded(GLStateManager.getMvGeneration());
+        state.markProjectionUploaded(GLStateManager.getProjGeneration());
+        state.markTextureMatrixUploaded(GLStateManager.getTexMatrixGeneration());
+    }
+
+    private static void uploadMatrices(int[] locs, boolean mvChanged, boolean projChanged, boolean texMatChanged) {
+        final Matrix4f mv = GLStateManager.getModelViewMatrix();
+        final Matrix4f proj = GLStateManager.getProjectionMatrix();
+        final UploadBuffers buffers = UPLOAD_BUFFERS.get();
+
+        if (mvChanged) {
+            // ModelView
+            if (locs[LOC_MODELVIEW] != -1 || locs[LOC_IRIS_MODELVIEW] != -1) {
+                mv.get(buffers.mat4Buf);
+                if (locs[LOC_MODELVIEW] != -1) {
+                    EXECUTOR.uniformMatrix4(locs[LOC_MODELVIEW], false, buffers.mat4Buf);
+                }
+                if (locs[LOC_IRIS_MODELVIEW] != -1) {
+                    EXECUTOR.uniformMatrix4(locs[LOC_IRIS_MODELVIEW], false, buffers.mat4Buf);
+                }
+            }
+
+            // ModelView Inverse
+            if (locs[LOC_MODELVIEW_INVERSE] != -1) {
+                mv.invert(buffers.scratchMatrix);
+                buffers.scratchMatrix.get(buffers.mat4Buf);
+                EXECUTOR.uniformMatrix4(locs[LOC_MODELVIEW_INVERSE], false, buffers.mat4Buf);
+            }
+
+            // Normal Matrix (inverse-transpose of upper-left 3x3 of ModelView)
+            if (locs[LOC_NORMAL] != -1 || locs[LOC_IRIS_NORMAL] != -1) {
+                mv.normal(buffers.normalMatrix);
+                buffers.normalMatrix.get(buffers.mat3Buf);
+                if (locs[LOC_NORMAL] != -1) {
+                    EXECUTOR.uniformMatrix3(locs[LOC_NORMAL], false, buffers.mat3Buf);
+                }
+                if (locs[LOC_IRIS_NORMAL] != -1) {
+                    EXECUTOR.uniformMatrix3(locs[LOC_IRIS_NORMAL], false, buffers.mat3Buf);
+                }
+            }
+        }
+
+        if (projChanged) {
+            // Projection
+            if (locs[LOC_PROJECTION] != -1 || locs[LOC_IRIS_PROJECTION] != -1) {
+                proj.get(buffers.mat4Buf);
+                if (locs[LOC_PROJECTION] != -1) {
+                    EXECUTOR.uniformMatrix4(locs[LOC_PROJECTION], false, buffers.mat4Buf);
+                }
+                if (locs[LOC_IRIS_PROJECTION] != -1) {
+                    EXECUTOR.uniformMatrix4(locs[LOC_IRIS_PROJECTION], false, buffers.mat4Buf);
+                }
+            }
+
+            // Projection Inverse
+            if (locs[LOC_PROJECTION_INVERSE] != -1) {
+                proj.invert(buffers.scratchMatrix);
+                buffers.scratchMatrix.get(buffers.mat4Buf);
+                EXECUTOR.uniformMatrix4(locs[LOC_PROJECTION_INVERSE], false, buffers.mat4Buf);
+            }
+        }
+
+        if (texMatChanged) {
+            // Iris lightmap texture matrix (constant)
+            if (locs[LOC_IRIS_LIGHTMAP_TEXTURE_MATRIX] != -1) {
+                EXECUTOR.uniformMatrix4(locs[LOC_IRIS_LIGHTMAP_TEXTURE_MATRIX], false, buffers.lightmapMatrixBuf);
+            }
+
+            // actinium_LightmapTextureMatrix — actual GLSM texture unit 1 matrix (set by enableLightmap())
+            if (locs[LOC_LIGHTMAP_TEXTURE_MATRIX] != -1) {
+                GLStateManager.getTextures().getTextureUnitMatrix(1).get(buffers.mat4Buf);
+                EXECUTOR.uniformMatrix4(locs[LOC_LIGHTMAP_TEXTURE_MATRIX], false, buffers.mat4Buf);
+            }
+
+            // iris_TextureMatrix — texture unit 0 matrix (animated by glints, etc.)
+            if (locs[LOC_IRIS_TEXTURE_MATRIX] != -1) {
+                GLStateManager.getTextures().getTextureUnitMatrix(0).get(buffers.mat4Buf);
+                EXECUTOR.uniformMatrix4(locs[LOC_IRIS_TEXTURE_MATRIX], false, buffers.mat4Buf);
+            }
+        }
+    }
+
+    private static void uploadFragmentUniforms(int[] locs) {
+        // Fog uniforms
+        FogStateStack fog = GLStateManager.getFogState();
+        FloatBuffer vec4Buf = UPLOAD_BUFFERS.get().vec4Buf;
+        if (locs[LOC_FOG_DENSITY] != -1) {
+            EXECUTOR.uniform1f(locs[LOC_FOG_DENSITY], Math.max(0.0f, fog.getDensity()));
+        }
+        if (locs[LOC_FOG_START] != -1) {
+            EXECUTOR.uniform1f(locs[LOC_FOG_START], fog.getStart());
+        }
+        if (locs[LOC_FOG_END] != -1) {
+            EXECUTOR.uniform1f(locs[LOC_FOG_END], fog.getEnd());
+        }
+        if (locs[LOC_FOG_COLOR] != -1) {
+            vec4Buf.clear();
+            vec4Buf.put((float) fog.getFogColor().x).put((float) fog.getFogColor().y).put((float) fog.getFogColor().z).put(fog.getFogAlpha());
+            vec4Buf.flip();
+            EXECUTOR.uniform4(locs[LOC_FOG_COLOR], vec4Buf);
+        }
+
+        // Alpha test reference — core profile replacement for GL_ALPHA_TEST
+        // Return -1.0f for ALWAYS or disabled so `alpha <= ref` never discards.
+        if (locs[LOC_ALPHA_TEST_REF] != -1) {
+            final float ref;
+            if (!GLStateManager.getAlphaTest().isEnabled() || GLStateManager.getAlphaState().getFunction() == GL11.GL_ALWAYS) {
+                ref = -1.0f;
+            } else {
+                ref = GLStateManager.getAlphaState().getReference();
+            }
+            EXECUTOR.uniform1f(locs[LOC_ALPHA_TEST_REF], ref);
+        }
+
+    }
+
+    private static void uploadColorModulator(int[] locs) {
+        if (locs[LOC_IRIS_COLOR_MODULATOR] == -1) {
+            return;
+        }
+
+        final var color = GLStateManager.getColor();
+        FloatBuffer vec4Buf = UPLOAD_BUFFERS.get().vec4Buf;
+        vec4Buf.clear();
+        vec4Buf.put(color.getRed()).put(color.getGreen()).put(color.getBlue()).put(color.getAlpha());
+        vec4Buf.flip();
+        EXECUTOR.uniform4(locs[LOC_IRIS_COLOR_MODULATOR], vec4Buf);
+    }
+
+    /**
+     * Scene color = emission + ambient * lightModel.ambient, alpha = diffuse.a Same computation as {@code Uniforms.uploadLightingPreComputed()}.
+     */
+    private static void uploadSceneColor(int[] locs) {
+        final MaterialState mat = GLStateManager.getFrontMaterial();
+        final LightModelState lm = GLStateManager.getLightModel();
+        FloatBuffer vec4Buf = UPLOAD_BUFFERS.get().vec4Buf;
+        vec4Buf.clear();
+        vec4Buf.put(mat.emission.x + mat.ambient.x * lm.ambient.x)
+               .put(mat.emission.y + mat.ambient.y * lm.ambient.y)
+               .put(mat.emission.z + mat.ambient.z * lm.ambient.z)
+               .put(mat.diffuse.w);
+        vec4Buf.flip();
+        EXECUTOR.uniform4(locs[LOC_SCENE_COLOR], vec4Buf);
+    }
+
+    private static void uploadLightSources(int[] locs) {
+        if (!hasUniformLocation(locs, LOC_LIGHT_BASE, 2 * LIGHT_FIELDS)) return;
+        final LightStateStack[] lights = GLStateManager.getLightDataStates();
+        for (int li = 0; li < 2; li++) {
+            final int base = LOC_LIGHT_BASE + li * LIGHT_FIELDS;
+            final LightState light = lights[li];
+
+            if (locs[base + LF_AMBIENT] != -1)
+                EXECUTOR.uniform4f(locs[base + LF_AMBIENT], light.ambient.x, light.ambient.y, light.ambient.z, light.ambient.w);
+            if (locs[base + LF_DIFFUSE] != -1)
+                EXECUTOR.uniform4f(locs[base + LF_DIFFUSE], light.diffuse.x, light.diffuse.y, light.diffuse.z, light.diffuse.w);
+            if (locs[base + LF_SPECULAR] != -1)
+                EXECUTOR.uniform4f(locs[base + LF_SPECULAR], light.specular.x, light.specular.y, light.specular.z, light.specular.w);
+            if (locs[base + LF_POSITION] != -1)
+                EXECUTOR.uniform4f(locs[base + LF_POSITION], light.position.x, light.position.y, light.position.z, light.position.w);
+            if (locs[base + LF_HALF_VECTOR] != -1) {
+                // halfVector = normalize(normalize(position.xyz) + eye), eye=(0,0,1) for infinite viewer
+                float hx, hy, hz;
+                if (light.position.w == 0.0f) {
+                    final float len = (float) Math.sqrt(light.position.x * light.position.x
+                            + light.position.y * light.position.y
+                            + light.position.z * light.position.z);
+                    if (len > 0) {
+                        hx = light.position.x / len;
+                        hy = light.position.y / len;
+                        hz = light.position.z / len + 1.0f;
+                    } else {
+                        hx = 0; hy = 0; hz = 1;
+                    }
+                } else {
+                    hx = 0; hy = 0; hz = 1;
+                }
+                final float hlen = (float) Math.sqrt(hx * hx + hy * hy + hz * hz);
+                if (hlen > 0) { hx /= hlen; hy /= hlen; hz /= hlen; }
+                EXECUTOR.uniform4f(locs[base + LF_HALF_VECTOR], hx, hy, hz, 0.0f);
+            }
+            if (locs[base + LF_SPOT_DIRECTION] != -1) EXECUTOR.uniform3f(locs[base + LF_SPOT_DIRECTION], light.spotDirection.x, light.spotDirection.y, light.spotDirection.z);
+            if (locs[base + LF_SPOT_EXPONENT] != -1) EXECUTOR.uniform1f(locs[base + LF_SPOT_EXPONENT], light.spotExponent);
+            if (locs[base + LF_SPOT_CUTOFF] != -1) EXECUTOR.uniform1f(locs[base + LF_SPOT_CUTOFF], light.spotCutoff);
+            if (locs[base + LF_SPOT_COS_CUTOFF] != -1) EXECUTOR.uniform1f(locs[base + LF_SPOT_COS_CUTOFF], light.spotCosCutoff);
+            if (locs[base + LF_CONSTANT_ATTEN] != -1) EXECUTOR.uniform1f(locs[base + LF_CONSTANT_ATTEN], light.constantAttenuation);
+            if (locs[base + LF_LINEAR_ATTEN] != -1) EXECUTOR.uniform1f(locs[base + LF_LINEAR_ATTEN], light.linearAttenuation);
+            if (locs[base + LF_QUADRATIC_ATTEN] != -1) EXECUTOR.uniform1f(locs[base + LF_QUADRATIC_ATTEN], light.quadraticAttenuation);
+        }
+    }
+
+    private static void uploadMaterial(int[] locs) {
+        if (!hasUniformLocation(locs, LOC_MAT_BASE, MAT_FIELDS)) return;
+        final MaterialState mat = GLStateManager.getFrontMaterial();
+        if (locs[LOC_MAT_BASE + MF_EMISSION] != -1)
+            EXECUTOR.uniform4f(locs[LOC_MAT_BASE + MF_EMISSION], mat.emission.x, mat.emission.y, mat.emission.z, mat.emission.w);
+        if (locs[LOC_MAT_BASE + MF_AMBIENT] != -1)
+            EXECUTOR.uniform4f(locs[LOC_MAT_BASE + MF_AMBIENT], mat.ambient.x, mat.ambient.y, mat.ambient.z, mat.ambient.w);
+        if (locs[LOC_MAT_BASE + MF_DIFFUSE] != -1)
+            EXECUTOR.uniform4f(locs[LOC_MAT_BASE + MF_DIFFUSE], mat.diffuse.x, mat.diffuse.y, mat.diffuse.z, mat.diffuse.w);
+        if (locs[LOC_MAT_BASE + MF_SPECULAR] != -1)
+            EXECUTOR.uniform4f(locs[LOC_MAT_BASE + MF_SPECULAR], mat.specular.x, mat.specular.y, mat.specular.z, mat.specular.w);
+        if (locs[LOC_MAT_BASE + MF_SHININESS] != -1)
+            EXECUTOR.uniform1f(locs[LOC_MAT_BASE + MF_SHININESS], mat.shininess);
+    }
+
+    static boolean hasUniformLocation(int[] locations, int offset, int count) {
+        for (int index = offset; index < offset + count; index++) {
+            if (locations[index] != -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void uploadClipPlanes(int[] locs) {
+        if (locs[LOC_CLIP_PLANE_MASK] != -1) {
+            EXECUTOR.uniform1i(locs[LOC_CLIP_PLANE_MASK], GLStateManager.ctx().clipPlaneEnabledMask);
+        }
+        if (locs[LOC_CLIP_PLANES_ENABLED] != -1) {
+            EXECUTOR.uniform1i(locs[LOC_CLIP_PLANES_ENABLED], GLStateManager.anyClipPlaneEnabled() ? 1 : 0);
+        }
+        if (locs[LOC_CLIP_PLANES] != -1) {
+            final ClipPlaneState cps = GLStateManager.getClipPlaneState();
+            FloatBuffer clipPlaneBuf = UPLOAD_BUFFERS.get().clipPlaneBuf;
+            clipPlaneBuf.clear();
+            cps.putEffectivePlanes(GLStateManager.ctx().clipPlaneEnabledMask, clipPlaneBuf);
+            clipPlaneBuf.flip();
+            EXECUTOR.uniform4(locs[LOC_CLIP_PLANES], clipPlaneBuf);
+        }
+    }
+
+    public static void onDeleteProgram(int program) {
+        programStates.invalidate(program);
+    }
+
+    /** Upload scratch buffers local to one GL-owning thread. */
+    private static final class UploadBuffers {
+        private final FloatBuffer mat4Buf = BufferUtils.createFloatBuffer(16);
+        private final FloatBuffer mat3Buf = BufferUtils.createFloatBuffer(9);
+        private final FloatBuffer vec4Buf = BufferUtils.createFloatBuffer(4);
+        private final FloatBuffer clipPlaneBuf = BufferUtils.createFloatBuffer(32);
+        private final FloatBuffer lightmapMatrixBuf = BufferUtils.createFloatBuffer(16);
+        private final Matrix3f normalMatrix = new Matrix3f();
+        private final Matrix4f scratchMatrix = new Matrix4f();
+
+        private UploadBuffers() {
+            new Matrix4f().scale(LIGHTMAP_SCALE).translate(8.0f, 8.0f, 8.0f).get(lightmapMatrixBuf);
+        }
+    }
+}

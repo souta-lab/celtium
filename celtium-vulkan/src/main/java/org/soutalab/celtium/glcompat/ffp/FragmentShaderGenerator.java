@@ -1,0 +1,428 @@
+package org.soutalab.celtium.glcompat.ffp;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.CoverageDiscard;
+import org.soutalab.celtium.glcompat.DepthPeel;
+import org.lwjgl.opengl.GL11;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Generates GLSL 330 core fragment shaders for FFP emulation.
+ * Supports per-unit texenv chain including GL_COMBINE mode.
+ * Follows Mesa's ff_fragment_shader.c and st_nir_lower_fog.c.
+ */
+public final class FragmentShaderGenerator {
+
+    /** Atlas supersampling snippet, loaded once; it is assembled with the sample count as a define. */
+    private static final String SUPERSAMPLING_SOURCE = loadSupersamplingSource();
+
+    private FragmentShaderGenerator() {}
+
+    public static String generate(FragmentKey key) {
+        final StringBuilder sb = new StringBuilder(2048);
+        sb.append("#version 330 core\n\n");
+
+        emitInputs(sb, key);
+        emitUniforms(sb, key);
+        sb.append("out vec4 fragColor;\n\n");
+
+        if (key.textureEnabled() || key.lightmapEnabled()) {
+            sb.append("vec2 projectTexCoord(vec4 coord) {\n");
+            sb.append("  float q = abs(coord.q) > 1.0e-6 ? coord.q : 1.0;\n");
+            sb.append("  return coord.st / q;\n");
+            sb.append("}\n\n");
+        }
+
+        sb.append("void main() {\n");
+        if (key.clipDiscard()) {
+            sb.append(ClipDistanceGlsl.FS_DISCARD);
+        }
+        emitLineStipple(sb, key);
+        emitTextureSampling(sb, key);
+        emitTexEnvChain(sb, key);
+        emitSpecularAdd(sb, key);
+        emitAlphaTest(sb, key);
+        emitFog(sb, key);
+        if (key.depthPeel()) sb.append("  peelTest();\n");
+        if (key.coverageDiscard()) sb.append("  coverageTest(color);\n");
+        sb.append("  fragColor = color;\n");
+        sb.append("}\n");
+
+        return sb.toString();
+    }
+
+    private static String loadSupersamplingSource() {
+        try (InputStream stream = FragmentShaderGenerator.class
+            .getResourceAsStream("/assets/actinium/shaders/texture_supersampling.glsl")) {
+            if (stream == null) {
+                throw new IllegalStateException("Missing /assets/actinium/shaders/texture_supersampling.glsl");
+            }
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException failure) {
+            throw new UncheckedIOException("Could not read the texture supersampling shader source", failure);
+        }
+    }
+
+    private static void emitInputs(StringBuilder sb, FragmentKey key) {
+        sb.append("// Inputs from vertex shader\n");
+        sb.append("in vec4 v_Color;\n");
+        if (key.clipDiscard()) {
+            sb.append(ClipDistanceGlsl.FS_IN_DIST0).append('\n').append(ClipDistanceGlsl.FS_IN_DIST1).append('\n');
+        }
+        if (key.overlayInstanced()) {
+            sb.append("in vec4 v_Overlay;\n");
+        }
+        if (key.separateSpecular()) {
+            sb.append("in vec3 v_SpecularColor;\n");
+        }
+        // Per-unit texcoord inputs. Each enabled unit sources from its own varying.
+        for (int i = 0; i < key.nrEnabledUnits(); i++) {
+            if (key.unitEnabled(i)) {
+                sb.append("in vec4 v_TexCoord").append(i).append(";\n");
+            }
+        }
+        if (key.fogMode() != FragmentKey.FOG_NONE) {
+            sb.append("in float v_FogCoord;\n");
+        }
+        if (key.lineStipple()) {
+            sb.append("flat in vec2 v_LineStart;\n");
+        }
+        sb.append('\n');
+    }
+
+    private static void emitLineStipple(StringBuilder sb, FragmentKey key) {
+        if (!key.lineStipple()) return;
+        // u_LineStipple packs the repeat factor in the high 16 bits and the pattern in the low 16.
+        sb.append("  vec2 stippleDelta = abs(gl_FragCoord.xy - v_LineStart);\n");
+        sb.append("  int stippleBit = int(floor(max(stippleDelta.x, stippleDelta.y) / float(u_LineStipple >> 16))) & 15;\n");
+        sb.append("  if (((u_LineStipple >> stippleBit) & 1) == 0) discard;\n\n");
+    }
+
+    private static void emitUniforms(StringBuilder sb, FragmentKey key) {
+        // Samplers for each enabled unit
+        for (int i = 0; i < key.nrEnabledUnits(); i++) {
+            if (key.unitEnabled(i)) {
+                sb.append("uniform sampler2D u_Sampler").append(i).append(";\n");
+            }
+        }
+        if (key.lineStipple()) {
+            sb.append("uniform int u_LineStipple;\n");
+        }
+        if (key.alphaTestEnabled()) {
+            sb.append("uniform float u_AlphaRef;\n");
+        }
+        // Per-unit texEnvColor uniforms
+        for (int i = 0; i < key.nrEnabledUnits(); i++) {
+            if (key.unitEnabled(i) && key.unitNeedsEnvColor(i)) {
+                sb.append("uniform vec4 u_TexEnvColor").append(i).append(";\n");
+            }
+        }
+        if (key.overlayEnabled()) {
+            sb.append("uniform vec4 u_OverlayColor;\n");
+        }
+        if (key.colorSum()) {
+            sb.append("uniform vec3 u_SecondaryColor;\n");
+        }
+        if (key.fogMode() != FragmentKey.FOG_NONE) {
+            sb.append("uniform vec4 u_FogParams;\n");
+            sb.append("uniform vec4 u_FogColor;\n");
+        }
+        if (key.depthPeel()) sb.append(DepthPeel.GLSL);
+        if (key.coverageDiscard()) sb.append(CoverageDiscard.GLSL);
+        sb.append('\n');
+    }
+
+    private static void emitTextureSampling(StringBuilder sb, FragmentKey key) {
+        for (int i = 0; i < key.nrEnabledUnits(); i++) {
+            if (!key.unitEnabled(i)) continue;
+            sb.append("  vec4 tex").append(i).append("Color = texture(u_Sampler").append(i).append(", projectTexCoord(v_TexCoord").append(i).append("));\n");
+        }
+    }
+
+    private static void emitTexEnvChain(StringBuilder sb, FragmentKey key) {
+        if (!key.textureEnabled()) {
+            sb.append("  // No texture -- vertex color only\n");
+            sb.append("  vec4 color = v_Color;\n");
+            emitOverlay(sb, key);
+            return;
+        }
+
+        // Process units in order; "previous" starts as vertex color.
+        boolean firstUnit = true;
+        boolean overlayInjected = false;
+        for (int i = 0; i < key.nrEnabledUnits(); i++) {
+            if (!key.unitEnabled(i)) continue;
+
+            // The damage overlay applies over the base texture (unit 0) result, before any
+            // later units (lightmap) modulate it — matching the fixed-function overlay pass.
+            if (!firstUnit && !overlayInjected) {
+                emitOverlay(sb, key);
+                overlayInjected = true;
+            }
+
+            final String texVar = textureVariable(i);
+            final String envColorVar = "u_TexEnvColor" + i;
+            final String prevVar = firstUnit ? "v_Color" : "color";
+            final String assign = firstUnit ? "  vec4 color = " : "  color = ";
+
+            if (key.unitMode(i) == FragmentKey.TEX_ENV_COMBINE) {
+                emitCombineUnit(sb, key, i, texVar, envColorVar, prevVar, assign);
+            } else {
+                emitSimpleUnit(sb, key, i, texVar, envColorVar, prevVar, assign);
+            }
+            firstUnit = false;
+        }
+
+        if (!overlayInjected) emitOverlay(sb, key);
+    }
+
+    /**
+     * Emit the modern-style damage overlay mix.
+     */
+    private static void emitOverlay(StringBuilder sb, FragmentKey key) {
+        if (key.overlayInstanced()) {
+            sb.append("  color.rgb = mix(color.rgb, v_Overlay.rgb, v_Overlay.a);\n");
+            return;
+        }
+        if (!key.overlayEnabled()) return;
+        sb.append("  color.rgb = mix(color.rgb, u_OverlayColor.rgb, u_OverlayColor.a);\n");
+    }
+
+    private static void emitSimpleUnit(StringBuilder sb, FragmentKey key, int unit, String texVar, String envColorVar, String prevVar, String assign) {
+        switch (key.unitMode(unit)) {
+            case FragmentKey.TEX_ENV_REPLACE -> {
+                sb.append("  // Unit ").append(unit).append(" (REPLACE)\n");
+                sb.append(assign).append(texVar).append(";\n");
+            }
+            case FragmentKey.TEX_ENV_ADD -> {
+                sb.append("  // Unit ").append(unit).append(" (ADD)\n");
+                sb.append(assign).append("vec4(clamp(").append(prevVar).append(".rgb + ").append(texVar).append(".rgb, 0.0, 1.0), ")
+                    .append(prevVar).append(".a * ").append(texVar).append(".a);\n");
+            }
+            case FragmentKey.TEX_ENV_DECAL -> {
+                sb.append("  // Unit ").append(unit).append(" (DECAL)\n");
+                sb.append(assign).append("vec4(mix(").append(prevVar).append(".rgb, ").append(texVar).append(".rgb, ").append(texVar).append(".a), ")
+                    .append(prevVar).append(".a);\n");
+            }
+            case FragmentKey.TEX_ENV_BLEND -> {
+                sb.append("  // Unit ").append(unit).append(" (BLEND)\n");
+                sb.append(assign).append("vec4(").append(prevVar).append(".rgb * (vec3(1.0) - ").append(texVar).append(".rgb) + ")
+                    .append(envColorVar).append(".rgb * ").append(texVar).append(".rgb, ")
+                    .append(prevVar).append(".a * ").append(texVar).append(".a);\n");
+            }
+            default -> { // MODULATE
+                sb.append("  // Unit ").append(unit).append(" (MODULATE)\n");
+                sb.append(assign).append(prevVar).append(" * ").append(texVar).append(";\n");
+            }
+        }
+    }
+
+    /** Emit a GL_COMBINE texenv unit */
+    private static void emitCombineUnit(StringBuilder sb, FragmentKey key, int unit, String texVar, String envColorVar, String prevVar, String assign) {
+        sb.append("  // Unit ").append(unit).append(" (COMBINE)\n");
+
+        final String rgbResult = "combRgb" + unit;
+        final String alphaResult = "combAlpha" + unit;
+
+        if (key.unitCombineRgb(unit) == FragmentKey.COMBINE_DOT3_RGBA) {
+            sb.append("  vec3 ").append(rgbResult).append(";\n");
+            sb.append("  {\n");
+            emitCombineChannel(sb, key, unit, texVar, envColorVar, prevVar, true);
+            sb.append("  }\n");
+            sb.append(assign).append("vec4(").append(rgbResult).append(", ").append(rgbResult).append(".x);\n");
+        } else {
+            sb.append("  vec3 ").append(rgbResult).append(";\n");
+            sb.append("  float ").append(alphaResult).append(";\n");
+            sb.append("  {\n");
+            emitCombineChannel(sb, key, unit, texVar, envColorVar, prevVar, true);
+            emitCombineChannel(sb, key, unit, texVar, envColorVar, prevVar, false);
+            sb.append("  }\n");
+            sb.append(assign).append("vec4(").append(rgbResult).append(", ").append(alphaResult).append(");\n");
+        }
+    }
+
+    /**
+     * Emit one channel (RGB or Alpha) of a GL_COMBINE unit.
+     */
+    private static void emitCombineChannel(StringBuilder sb, FragmentKey key, int unit, String texVar, String envColorVar, String prevVar, boolean isRgb) {
+        final String suffix = isRgb ? "Rgb" : "Alpha";
+        final String type = isRgb ? "vec3" : "float";
+        final int combineFunc = isRgb ? key.unitCombineRgb(unit) : key.unitCombineAlpha(unit);
+        final int scaleShift = isRgb ? key.unitScaleShiftRgb(unit) : key.unitScaleShiftAlpha(unit);
+
+        // Guard: DOT3 is invalid for alpha channel — fallback to REPLACE
+        final int effectiveFunc;
+        if (!isRgb && (combineFunc == FragmentKey.COMBINE_DOT3_RGB || combineFunc == FragmentKey.COMBINE_DOT3_RGBA)) {
+            effectiveFunc = FragmentKey.COMBINE_REPLACE;
+        } else {
+            effectiveFunc = combineFunc;
+        }
+
+        final int numArgs = combineNumArgs(effectiveFunc);
+
+        for (int a = 0; a < numArgs; a++) {
+            final int source = isRgb ? key.unitSourceRgb(unit, a) : key.unitSourceAlpha(unit, a);
+            final int operand = isRgb ? key.unitOperandRgb(unit, a) : key.unitOperandAlpha(unit, a);
+            final String argName = "arg" + suffix + a + "_" + unit;
+            final String sourceExpr = resolveSource(key, source, texVar, envColorVar, prevVar);
+            final String operandExpr = applyOperand(sourceExpr, operand, isRgb);
+            sb.append("    ").append(type).append(" ").append(argName).append(" = ").append(operandExpr).append(";\n");
+        }
+
+        final String resultName = "comb" + suffix + unit;
+        final String a0 = "arg" + suffix + "0_" + unit;
+        final String a1 = "arg" + suffix + "1_" + unit;
+        final String a2 = "arg" + suffix + "2_" + unit;
+
+        sb.append("    ").append(resultName).append(" = ");
+        switch (effectiveFunc) {
+            case FragmentKey.COMBINE_REPLACE -> sb.append(a0);
+            case FragmentKey.COMBINE_MODULATE -> sb.append(a0).append(" * ").append(a1);
+            case FragmentKey.COMBINE_ADD -> sb.append(a0).append(" + ").append(a1);
+            case FragmentKey.COMBINE_ADD_SIGNED ->
+                sb.append(a0).append(" + ").append(a1).append(" - ").append(isRgb ? "vec3(0.5)" : "0.5");
+            case FragmentKey.COMBINE_SUBTRACT -> sb.append(a0).append(" - ").append(a1);
+            case FragmentKey.COMBINE_INTERPOLATE ->
+                sb.append("mix(").append(a1).append(", ").append(a0).append(", ").append(a2).append(")");
+            case FragmentKey.COMBINE_DOT3_RGB, FragmentKey.COMBINE_DOT3_RGBA ->
+                sb.append("vec3(4.0 * dot(").append(a0).append(" - vec3(0.5), ").append(a1).append(" - vec3(0.5)))");
+            default -> sb.append(a0); // fallback to REPLACE
+        }
+        sb.append(";\n");
+
+        if (scaleShift > 0) {
+            final String scaleFactor = scaleShift == 1 ? "2.0" : "4.0";
+            sb.append("    ").append(resultName).append(" *= ").append(scaleFactor).append(";\n");
+        }
+
+        sb.append("    ").append(resultName).append(" = clamp(").append(resultName).append(", ")
+            .append(isRgb ? "vec3(0.0), vec3(1.0)" : "0.0, 1.0").append(");\n");
+    }
+
+    private static String resolveSource(FragmentKey key, int source, String texVar, String envColorVar, String prevVar) {
+        return switch (source) {
+            case FragmentKey.SRC_TEXTURE -> texVar;
+            case FragmentKey.SRC_CONSTANT -> envColorVar;
+            case FragmentKey.SRC_PRIMARY_COLOR -> "v_Color";
+            case FragmentKey.SRC_PREVIOUS -> prevVar;
+            case FragmentKey.SRC_TEXTURE0 -> enabledTextureVariable(key, 0, prevVar);
+            case FragmentKey.SRC_TEXTURE1 -> enabledTextureVariable(key, 1, prevVar);
+            case FragmentKey.SRC_TEXTURE2 -> enabledTextureVariable(key, 2, prevVar);
+            case FragmentKey.SRC_TEXTURE3 -> enabledTextureVariable(key, 3, prevVar);
+            default -> prevVar;
+        };
+    }
+
+    private static String textureVariable(int unit) {
+        return "tex" + unit + "Color";
+    }
+
+    private static String enabledTextureVariable(FragmentKey key, int unit, String fallback) {
+        if (unit < key.nrEnabledUnits() && key.unitEnabled(unit)) {
+            return textureVariable(unit);
+        }
+
+        return fallback;
+    }
+
+    private static String applyOperand(String sourceExpr, int operand, boolean isRgb) {
+        if (isRgb) {
+            return switch (operand) {
+                case FragmentKey.OP_SRC_COLOR -> sourceExpr + ".rgb";
+                case FragmentKey.OP_ONE_MINUS_SRC_COLOR -> "(vec3(1.0) - " + sourceExpr + ".rgb)";
+                case FragmentKey.OP_SRC_ALPHA -> "vec3(" + sourceExpr + ".a)";
+                case FragmentKey.OP_ONE_MINUS_SRC_ALPHA -> "vec3(1.0 - " + sourceExpr + ".a)";
+                default -> sourceExpr + ".rgb";
+            };
+        } else {
+            return switch (operand) {
+                case FragmentKey.OP_SRC_ALPHA -> sourceExpr + ".a";
+                case FragmentKey.OP_ONE_MINUS_SRC_ALPHA -> "(1.0 - " + sourceExpr + ".a)";
+                // Per GL spec, alpha channel operands are SRC_ALPHA or ONE_MINUS_SRC_ALPHA only, but handle color operands gracefully
+                case FragmentKey.OP_SRC_COLOR -> sourceExpr + ".a";
+                case FragmentKey.OP_ONE_MINUS_SRC_COLOR -> "(1.0 - " + sourceExpr + ".a)";
+                default -> sourceExpr + ".a";
+            };
+        }
+    }
+
+    private static int combineNumArgs(int func) {
+        return FragmentKey.combineNumArgs(func);
+    }
+
+    private static void emitSpecularAdd(StringBuilder sb, FragmentKey key) {
+        if (key.separateSpecular()) {
+            sb.append("  // Add separate specular\n");
+            sb.append("  color.rgb += v_SpecularColor;\n");
+        }
+        if (key.colorSum()) {
+            sb.append("  // Color sum - GL_COLOR_SUM with the current secondary color\n");
+            sb.append("  color.rgb += u_SecondaryColor;\n");
+        }
+    }
+
+    private static void emitAlphaTest(StringBuilder sb, FragmentKey key) {
+        if (!key.alphaTestEnabled()) return;
+
+        sb.append("  // Alpha test\n");
+        final int func = FragmentKey.decodeAlphaFunc(key.alphaTestFunc());
+
+
+        sb.append("  float qa = round(color.a * 255.0);\n");
+        switch (func) {
+            case GL11.GL_NEVER ->
+                sb.append("  discard;\n");
+            case GL11.GL_LESS ->
+                sb.append("  if (qa >= u_AlphaRef * 255.0) discard;\n");
+            case GL11.GL_EQUAL -> {
+                sb.append("  float qr = round(u_AlphaRef * 255.0);\n");
+                sb.append("  if (qa != qr) discard;\n");
+            }
+            case GL11.GL_LEQUAL ->
+                sb.append("  if (qa > u_AlphaRef * 255.0) discard;\n");
+            case GL11.GL_GREATER ->
+                sb.append("  if (qa <= u_AlphaRef * 255.0) discard;\n");
+            case GL11.GL_NOTEQUAL -> {
+                sb.append("  float qr = round(u_AlphaRef * 255.0);\n");
+                sb.append("  if (qa == qr) discard;\n");
+            }
+            case GL11.GL_GEQUAL ->
+                sb.append("  if (qa < u_AlphaRef * 255.0) discard;\n");
+            case GL11.GL_ALWAYS -> {}
+        }
+    }
+
+    private static void emitFog(StringBuilder sb, FragmentKey key) {
+        final int fogMode = key.fogMode();
+        if (fogMode == FragmentKey.FOG_NONE) return;
+
+        sb.append("  // Fog\n");
+        sb.append("  float f;\n");
+
+        switch (fogMode) {
+            case FragmentKey.FOG_LINEAR ->
+                sb.append("  f = v_FogCoord * u_FogParams.x + u_FogParams.y;\n");
+            case FragmentKey.FOG_EXP ->
+                sb.append("  f = exp2(-(v_FogCoord * u_FogParams.z));\n");
+            case FragmentKey.FOG_EXP2 -> {
+                sb.append("  float fogTmp = v_FogCoord * u_FogParams.w;\n");
+                sb.append("  f = exp2(-(fogTmp * fogTmp));\n");
+            }
+        }
+
+        sb.append("  f = clamp(f, 0.0, 1.0);\n");
+        sb.append("  color.rgb = mix(u_FogColor.rgb, color.rgb, f);\n");
+    }
+}

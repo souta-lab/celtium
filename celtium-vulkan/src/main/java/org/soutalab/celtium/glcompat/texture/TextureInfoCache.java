@@ -1,0 +1,185 @@
+package org.soutalab.celtium.glcompat.texture;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.GLStateManager;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import org.jetbrains.annotations.Nullable;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL21;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL31;
+import org.lwjgl.opengl.GL32;
+import org.lwjgl.opengl.GL40;
+
+import java.nio.Buffer;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class TextureInfoCache {
+    /**
+     * Adapted from Iris for use in GLSM.
+     *
+     * This cache stores server-side texture state (parameters, dimensions) that is shared across GL contexts.
+     * Locking is only used during splash when multiple contexts exist.
+     */
+
+    public static final TextureInfoCache INSTANCE = new TextureInfoCache();
+
+    private final Int2ObjectMap<TextureInfo> cache = new Int2ObjectOpenHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
+    private int deleteCount;
+
+    private TextureInfoCache() {
+    }
+
+    /** Proxy targets query allocation limits without changing a texture object's storage. */
+    public static boolean isProxyTarget(int target) {
+        return switch (target) {
+            case GL11.GL_PROXY_TEXTURE_1D, GL11.GL_PROXY_TEXTURE_2D, GL12.GL_PROXY_TEXTURE_3D,
+                 GL13.GL_PROXY_TEXTURE_CUBE_MAP, GL30.GL_PROXY_TEXTURE_1D_ARRAY,
+                 GL30.GL_PROXY_TEXTURE_2D_ARRAY, GL31.GL_PROXY_TEXTURE_RECTANGLE,
+                 GL32.GL_PROXY_TEXTURE_2D_MULTISAMPLE, GL32.GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY,
+                 GL40.GL_PROXY_TEXTURE_CUBE_MAP_ARRAY -> true;
+            default -> false;
+        };
+    }
+
+    /** Deletions so far; an exit capture that outlived a texture deletion can no longer be applied. */
+    public int deleteCount() {
+        return deleteCount;
+    }
+
+    /** Reports a texture write that bypassed the tracked upload entry points, so copies of it are no longer trusted. */
+    public void onWrittenOutsideUploads(int texture) {
+        if (texture <= 0) return;
+        final TextureInfo info = getInfo(texture);
+        if (info == null || info.writtenOutsideUploads) return;
+        info.writtenOutsideUploads = true;
+        info.changeStamp++;
+    }
+
+    public TextureInfo getInfo(int id) {
+        if (id < 0) return null;
+
+        if (GLStateManager.isSplashComplete()) {
+            return cache.computeIfAbsent(id, TextureInfo::new);
+        }
+
+        lock.lock();
+        try {
+            return cache.computeIfAbsent(id, TextureInfo::new);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Nullable
+    public TextureInfo peekInfo(int id) {
+        if (id < 0) return null;
+
+        if (GLStateManager.isSplashComplete()) {
+            return cache.get(id);
+        }
+
+        lock.lock();
+        try {
+            return cache.get(id);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void onTexImage2D(int target, int level, int internalformat, int width, int height, int border, int format, int type, @Nullable Buffer pixels) {
+        if (isTrackedTarget(target) && level == 0) {
+            final TextureInfo info = getInfo(GLStateManager.getBoundTextureForServerState());
+            if (info == null) return;
+            info.setTarget(target);
+            info.internalFormat = internalformat;
+            info.resolvedInternalFormat = isGenericCompressedInternalFormat(internalformat) ? -1 : internalformat;
+            info.width = width;
+            info.height = height;
+            info.bumpUploadGeneration();
+        }
+    }
+
+    public void onTexImage2D(int target, int level, int internalformat, int width, int height, int border, int format, int type, long pixels_buffer_offset) {
+        if (isTrackedTarget(target) && level == 0) {
+            final TextureInfo info = getInfo(GLStateManager.getBoundTextureForServerState());
+            if (info == null) return;
+            info.setTarget(target);
+            info.internalFormat = internalformat;
+            info.resolvedInternalFormat = isGenericCompressedInternalFormat(internalformat) ? -1 : internalformat;
+            info.width = width;
+            info.height = height;
+            info.bumpUploadGeneration();
+        }
+    }
+
+    public void onTexStorage2D(int target, int internalformat, int width, int height) {
+        if (!isTrackedTarget(target)) return;
+        final TextureInfo info = getInfo(GLStateManager.getBoundTextureForServerState());
+        if (info == null) return;
+        info.setTarget(target);
+        info.internalFormat = internalformat;
+        info.resolvedInternalFormat = isGenericCompressedInternalFormat(internalformat) ? -1 : internalformat;
+        info.width = width;
+        info.height = height;
+        info.bumpUploadGeneration();
+    }
+
+    public void onTexSubImage2D(int target, int level) {
+        if (!isTrackedTarget(target) || level != 0) return;
+        final TextureInfo info = getInfo(GLStateManager.getBoundTextureForServerState());
+        if (info == null) return;
+        info.bumpUploadGeneration();
+    }
+
+    public static boolean isGenericCompressedInternalFormat(int internalFormat) {
+        return switch (internalFormat) {
+            case GL30.GL_COMPRESSED_RED,
+                 GL30.GL_COMPRESSED_RG,
+                 GL13.GL_COMPRESSED_RGB,
+                 GL13.GL_COMPRESSED_RGBA,
+                 GL21.GL_COMPRESSED_SRGB,
+                 GL21.GL_COMPRESSED_SRGB_ALPHA -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isTrackedTarget(int target) {
+        return target == GL11.GL_TEXTURE_2D
+            || target == GL11.GL_TEXTURE_1D
+            || target == GL12.GL_TEXTURE_3D
+            || target == GL13.GL_TEXTURE_CUBE_MAP
+            || target == GL30.GL_TEXTURE_2D_ARRAY
+            || target == GL30.GL_TEXTURE_1D_ARRAY;
+    }
+
+    public void onDeleteTexture(int id) {
+        if (id < 0) return;
+        deleteCount++;
+
+        if (GLStateManager.isSplashComplete()) {
+            cache.remove(id);
+            return;
+        }
+
+        // During splash: lock for thread safety
+        lock.lock();
+        try {
+            cache.remove(id);
+        } finally {
+            lock.unlock();
+        }
+    }
+}

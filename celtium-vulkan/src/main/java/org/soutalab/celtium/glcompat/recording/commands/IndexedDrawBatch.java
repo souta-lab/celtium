@@ -1,0 +1,80 @@
+package org.soutalab.celtium.glcompat.recording.commands;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.GLContextState;
+import org.soutalab.celtium.glcompat.GLSMBuffers;
+import org.soutalab.celtium.glcompat.GLSMVertexInput;
+import org.soutalab.celtium.glcompat.GLStateManager;
+import org.lwjgl.opengl.GL15;
+
+/**
+ * Shared GPU triple (VAO + VBO + EBO) backing every baked indexed draw of one
+ * attrib-layout group in a compiled display list. Owned by the list; freed on delete.
+ *
+ * <p>The VAO is created on first {@link #bind()} in whichever context replays the list
+ * rather than at compile time: a list compiled during the splash screen belongs to that
+ * context, and a vertex array name from another context is not usable here.
+ */
+public final class IndexedDrawBatch {
+    private final AttribLayoutKey layout;
+    private int sharedVBO;
+    private int sharedEBO;
+    private int vao;
+    private GLContextState vaoCtx;
+    private boolean deleted;
+
+    public IndexedDrawBatch(AttribLayoutKey layout, int sharedVBO, int sharedEBO) {
+        this.layout = layout;
+        this.sharedVBO = sharedVBO;
+        this.sharedEBO = sharedEBO;
+    }
+
+    public int getSharedVBO() { return sharedVBO; }
+    public int getSharedEBO() { return sharedEBO; }
+
+    public void bind() {
+        final GLContextState glCtx = GLStateManager.ctx();
+        if (vaoCtx == glCtx) {
+            GLSMVertexInput.glBindVertexArray(vao);
+            return;
+        }
+        final int prevVBO = GLStateManager.getBoundVBO();
+        final int v = GLSMVertexInput.glGenVertexArrays();
+        GLSMVertexInput.glBindVertexArray(v);
+        GLSMBuffers.glBindBuffer(GL15.GL_ARRAY_BUFFER, sharedVBO);
+        final int stride = layout.stride();
+        for (int i = 0; i < layout.locations.length; i++) {
+            final int loc = layout.locations[i];
+            GLSMVertexInput.glVertexAttribPointer(loc, layout.sizes[i], layout.types[i], layout.normalized[i], stride, layout.offset(i));
+            GLSMVertexInput.glEnableVertexAttribArray(loc);
+        }
+        glCtx.vaos.setFormatVertexFlags(glCtx.vaos.currentClientArrayVertexFlags());
+        GLSMBuffers.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, sharedEBO);
+        GLSMBuffers.glBindBuffer(GL15.GL_ARRAY_BUFFER, prevVBO);
+        vao = v;
+        vaoCtx = glCtx;
+    }
+
+    public void delete() {
+        if (deleted) return;
+        deleted = true;
+        if (vaoCtx == GLStateManager.ctx()) GLSMVertexInput.glDeleteVertexArrays(vao);
+        if (sharedVBO != 0) GLSMBuffers.glDeleteBuffers(sharedVBO);
+        if (sharedEBO != 0) GLSMBuffers.glDeleteBuffers(sharedEBO);
+        vao = sharedVBO = sharedEBO = 0;
+        vaoCtx = null;
+    }
+
+    @Override
+    public String toString() {
+        return "IndexedDrawBatch(vao=" + vao + ", vbo=" + sharedVBO + ", ebo=" + sharedEBO + ")";
+    }
+}

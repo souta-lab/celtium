@@ -1,0 +1,486 @@
+package org.soutalab.celtium.glcompat.debug;
+/*
+ * Converted natively into celtium from Actinium's GLSM (Angelica lineage).
+ * Original: com.gtnewhorizons.angelica.glsm, Actinium-Dev/Actinium @ ce77eed9.
+ * License: LGPL-3.0 (with Mesa MIT pockets where the original file notes them).
+ * See THIRD_PARTY_NOTICES.md. The supplier backend SPI (RenderBackend /
+ * BackendManager) was NOT carried over; execution bottoms out on celtium's
+ * own DirectGlVulkanSink through DirectGlExecutor.
+ */
+
+
+import org.soutalab.celtium.glcompat.profiling.DebugCounters;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+public final class GLSMPerfDebug {
+    private static final Logger LOGGER = LogManager.getLogger("GLSMPerfDebug");
+    private static final long REPORT_INTERVAL_NS = 1_000_000_000L;
+    private static final int SAMPLE_MASK = 255;
+    private static final int MAX_BUFFERBUILDER_SOURCE_LINES = 12;
+    private static final int MAX_CLIENT_ARRAY_STACK_LINES = 12;
+    private static final String ENABLED_OVERRIDE = System.getProperty("actinium.glsmPerfDebug");
+    private static volatile boolean enabled = resolveEnabled(ENABLED_OVERRIDE, false);
+
+    public enum Stage {
+        STREAM_DRAW("stream.draw"),
+        STREAM_DRAW_DIRECT("stream.drawDirect"),
+        STREAM_UPLOAD_AND_DRAW("stream.uploadAndDraw"),
+        STREAM_PERSISTENT_UPLOAD("stream.persistentUpload"),
+        STREAM_ORPHAN_UPLOAD("stream.orphanUpload"),
+        STREAM_FENCE_CREATE("stream.fenceCreate", true),
+        STREAM_FENCE_POLL("stream.fencePoll", true),
+        STREAM_FENCE_POLL_TESSELLATOR("stream.fencePoll.tessellator", true),
+        STREAM_FENCE_POLL_BUFFER_BUILDER("stream.fencePoll.bufferBuilder", true),
+        STREAM_FENCE_POLL_ENTITY_INSTANCES("stream.fencePoll.entityInstances", true),
+        STREAM_FENCE_WAIT("stream.fenceWait", true),
+        STREAM_SHADER_PREDRAW("stream.shaderPreDraw"),
+        STREAM_DRAW_CALL("stream.drawCall"),
+        FFP_PREDRAW("ffp.preDraw"),
+        FFP_UNIFORMS("ffp.uniforms"),
+        GL_PREPARE_CLIENT_ARRAYS("gl.prepareClientArrays"),
+        GL_CLIENT_ARRAY_UPLOAD("gl.clientArrayUpload"),
+        QUAD_ARRAYS("quad.arrays"),
+        QUAD_ELEMENTS("quad.elements"),
+        QUAD_SCRATCH_UPLOAD_DRAW("quad.scratchUploadDraw"),
+        BUFFERBUILDER_STREAM_DRAW("bufferbuilder.streamDraw"),
+        BUFFERBUILDER_PERSISTENT_UPLOAD("bufferbuilder.persistentUpload"),
+        BUFFERBUILDER_ORPHAN_UPLOAD("bufferbuilder.orphanUpload"),
+        BUFFERBUILDER_DRAW_CALL("bufferbuilder.drawCall"),
+        BUFFERBUILDER_INITIAL_VAO_BIND("bufferbuilder.initialVaoBind"),
+        BUFFERBUILDER_PREPARE_DRAW("bufferbuilder.prepareDraw"),
+        BUFFERBUILDER_CHECK_DRAW_ERRORS("bufferbuilder.checkDrawErrors"),
+        BUFFERBUILDER_RESTORE_BINDINGS("bufferbuilder.restoreBindings"),
+        SHADOW_RENDER("shadow.renderShadows", true),
+        SHADOW_SETUP_TERRAIN("shadow.setupShadowTerrain", true),
+        SHADOW_OPAQUE_TERRAIN("shadow.opaqueTerrain", true),
+        SHADOW_ENTITIES("shadow.entities", true),
+        SHADOW_TRANSLUCENT_TERRAIN("shadow.translucentTerrain", true),
+        SHADOW_COMPOSITE("shadow.composite", true),
+        CHUNK_UPLOAD("chunk.upload"),
+        CHUNK_UPDATE_CHUNKS("chunk.updateChunks", true),
+        CHUNK_OCCLUSION_SEARCH("chunk.occlusionSearch", true);
+
+        private final String label;
+        private final boolean alwaysSample;
+
+        Stage(String label) {
+            this(label, false);
+        }
+
+        Stage(String label, boolean alwaysSample) {
+            this.label = label;
+            this.alwaysSample = alwaysSample;
+        }
+    }
+
+    public enum Source {
+        STREAM_TESSELLATOR("source.streamTessellator"),
+        DIRECT_LIVE_IMMEDIATE("source.directLiveImmediate"),
+        DIRECT_COMPILE_EXECUTE("source.directCompileExecute"),
+        DIRECT_EXTERNAL("source.directExternal");
+
+        private final String label;
+
+        Source(String label) {
+            this.label = label;
+        }
+    }
+
+    private static final long[] totalNanos = new long[Stage.values().length];
+    private static final long[] maxNanos = new long[Stage.values().length];
+    private static final int[] sampledCounts = new int[Stage.values().length];
+    private static final int[] observedCounts = new int[Stage.values().length];
+    private static final int[] sourceCounts = new int[Source.values().length];
+    private static final Map<String, Integer> bufferBuilderSourceCounts = new HashMap<>();
+    private static final Map<String, Integer> bufferBuilderStackSamples = new HashMap<>();
+    private static final Map<String, Integer> clientArrayStackSamples = new HashMap<>();
+    private static long fenceReclaimedBytes;
+    private static int fenceReclaimedRegions;
+    private static int fenceQueuePeak;
+    private static long lastReportNanos;
+
+    private GLSMPerfDebug() {}
+
+    public static boolean isEnabled() {
+        return enabled;
+    }
+
+    static boolean setConfiguredEnabled(boolean configuredEnabled) {
+        boolean resolvedEnabled = resolveEnabled(ENABLED_OVERRIDE, configuredEnabled);
+        if (enabled == resolvedEnabled) {
+            return false;
+        }
+
+        enabled = false;
+        resetStats();
+        enabled = resolvedEnabled;
+        return true;
+    }
+
+    static boolean resolveEnabled(String explicitOverride, boolean configuredEnabled) {
+        return explicitOverride != null ? Boolean.parseBoolean(explicitOverride) : configuredEnabled;
+    }
+
+    static int getSampledCount(Stage stage) {
+        return sampledCounts[stage.ordinal()];
+    }
+
+    private static void resetStats() {
+        Arrays.fill(totalNanos, 0L);
+        Arrays.fill(maxNanos, 0L);
+        Arrays.fill(sampledCounts, 0);
+        Arrays.fill(observedCounts, 0);
+        Arrays.fill(sourceCounts, 0);
+        bufferBuilderSourceCounts.clear();
+        bufferBuilderStackSamples.clear();
+        clientArrayStackSamples.clear();
+        fenceReclaimedBytes = 0L;
+        fenceReclaimedRegions = 0;
+        fenceQueuePeak = 0;
+        lastReportNanos = 0L;
+        DebugCounters.advanceReportBaseline();
+    }
+
+    public static long begin(Stage stage) {
+        final int index = stage.ordinal();
+        observedCounts[index]++;
+        if (!stage.alwaysSample && (observedCounts[index] & SAMPLE_MASK) != 0) {
+            return 0L;
+        }
+        return System.nanoTime();
+    }
+
+    public static void end(Stage stage, long startNanos) {
+        if (startNanos == 0L) return;
+        final long endNanos = System.nanoTime();
+        recordSample(stage, endNanos, endNanos - startNanos);
+    }
+
+    public static long now() {
+        return System.nanoTime();
+    }
+
+    public static void count(Source source) {
+        sourceCounts[source.ordinal()]++;
+    }
+
+    public static void countBufferBuilder(String source, int drawMode, int vertexCount) {
+        if (!isEnabled()) return;
+        final String sourceKey = source + "/mode=" + drawMode;
+        bufferBuilderSourceCounts.put(sourceKey, bufferBuilderSourceCounts.getOrDefault(sourceKey, 0) + 1);
+        final int observed = observedCounts[Stage.BUFFERBUILDER_STREAM_DRAW.ordinal()];
+        if ((observed & SAMPLE_MASK) == 0) {
+            final String stackKey = sourceKey + "/" + findBufferBuilderCaller() + "/vertices~" + bucketVertexCount(vertexCount);
+            bufferBuilderStackSamples.put(stackKey, bufferBuilderStackSamples.getOrDefault(stackKey, 0) + 1);
+        }
+    }
+
+    /**
+     * Attributes a client-array VBO upload to its draw-call origin. Sampled at the same cadence
+     * as the stage timer; the key carries the first non-glsm caller and a power-of-two bucket of
+     * the uploaded byte total, so the periodic report shows who drives large uploads.
+     */
+    public static void countClientArrayUpload(int totalBytes) {
+        if (!isEnabled()) return;
+        final int observed = observedCounts[Stage.GL_CLIENT_ARRAY_UPLOAD.ordinal()];
+        if ((observed & SAMPLE_MASK) == 0) {
+            final String stackKey = findClientArrayCaller() + "/bytes~" + bucketVertexCount(totalBytes);
+            clientArrayStackSamples.put(stackKey, clientArrayStackSamples.getOrDefault(stackKey, 0) + 1);
+        }
+    }
+
+    /** Identifies the buffer owner in the fence poll report. */
+    public enum FenceSource {
+        TESSELLATOR(Stage.STREAM_FENCE_POLL_TESSELLATOR),
+        BUFFER_BUILDER(Stage.STREAM_FENCE_POLL_BUFFER_BUILDER),
+        ENTITY_INSTANCES(Stage.STREAM_FENCE_POLL_ENTITY_INSTANCES),
+        UNATTRIBUTED(Stage.STREAM_FENCE_POLL);
+
+        private final Stage stage;
+
+        FenceSource(Stage stage) {
+            this.stage = stage;
+        }
+    }
+
+    /** Records one poll in both its source bucket and the aggregate window. */
+    public static void recordFencePoll(FenceSource source, long startNanos, long endNanos) {
+        if (startNanos == 0L) return;
+        if (source.stage != Stage.STREAM_FENCE_POLL) {
+            observedCounts[source.stage.ordinal()]++;
+            accumulateSample(source.stage, endNanos - startNanos);
+        }
+        record(Stage.STREAM_FENCE_POLL, startNanos, endNanos);
+    }
+
+    public static void recordFenceReclaim(int bytes) {
+        fenceReclaimedRegions++;
+        fenceReclaimedBytes += bytes;
+    }
+
+    public static void recordFenceQueueDepth(int depth) {
+        if (depth > fenceQueuePeak) {
+            fenceQueuePeak = depth;
+        }
+    }
+
+    static int getFenceReclaimedRegions() {
+        return fenceReclaimedRegions;
+    }
+
+    static long getFenceReclaimedBytes() {
+        return fenceReclaimedBytes;
+    }
+
+    static int getFenceQueuePeak() {
+        return fenceQueuePeak;
+    }
+
+    public static void record(Stage stage, long startNanos, long endNanos) {
+        if (startNanos == 0L) return;
+        observedCounts[stage.ordinal()]++;
+        recordSample(stage, endNanos, endNanos - startNanos);
+    }
+
+    private static void recordSample(Stage stage, long now, long elapsed) {
+        accumulateSample(stage, elapsed);
+        if (lastReportNanos == 0L) {
+            lastReportNanos = now;
+        } else if (now - lastReportNanos >= REPORT_INTERVAL_NS) {
+            report(now);
+        }
+    }
+
+    private static void accumulateSample(Stage stage, long elapsed) {
+        final int index = stage.ordinal();
+        totalNanos[index] += elapsed;
+        sampledCounts[index]++;
+        if (elapsed > maxNanos[index]) {
+            maxNanos[index] = elapsed;
+        }
+    }
+
+    private static void report(long now) {
+        lastReportNanos = now;
+        drainAndLog();
+    }
+
+    /**
+     * Emits the report for the current window when the report interval has elapsed and the window
+     * recorded something. Called once per rendered frame so a window in which only
+     * {@link DebugCounters} moved still produces a report, for example the PBR animation counters
+     * with shaders disabled.
+     *
+     * <p>The emptiness check runs before {@link #drainReport()} so an idle window does not invoke
+     * the registered extra stats providers, which reset their own counters on every call.
+     */
+    public static void pollCounters() {
+        pollCountersAt(System.nanoTime());
+    }
+
+    static String pollCountersAt(long nowNanos) {
+        if (lastReportNanos == 0L) {
+            lastReportNanos = nowNanos;
+            return "";
+        }
+        if (nowNanos - lastReportNanos < REPORT_INTERVAL_NS || !hasUnreportedSamples()) {
+            return "";
+        }
+        lastReportNanos = nowNanos;
+        return drainAndLog();
+    }
+
+    private static String drainAndLog() {
+        final String text = drainReport();
+        if (!text.isEmpty()) {
+            LOGGER.info(text);
+        }
+        return text;
+    }
+
+    private static boolean hasUnreportedSamples() {
+        for (int observed : observedCounts) {
+            if (observed != 0) return true;
+        }
+        for (int count : sourceCounts) {
+            if (count != 0) return true;
+        }
+        if (!bufferBuilderSourceCounts.isEmpty()
+            || !bufferBuilderStackSamples.isEmpty()
+            || !clientArrayStackSamples.isEmpty()) {
+            return true;
+        }
+        if (fenceReclaimedRegions != 0 || fenceQueuePeak != 0) {
+            return true;
+        }
+        return DebugCounters.hasDeltaSinceLastReport();
+    }
+
+    /**
+     * Text of the report for the current window, covering stage samples, source counts, fence
+     * statistics, the registered extra stats providers and the {@link DebugCounters} deltas.
+     * Consumes the window statistics and returns an empty string when nothing was recorded.
+     */
+    static String drainReport() {
+        final StringBuilder sb = new StringBuilder(512);
+        sb.append("GLSM perf:");
+        boolean hasContent = false;
+        final Stage[] stages = Stage.values();
+        for (int i = 0; i < stages.length; i++) {
+            final int observed = observedCounts[i];
+            final int sampled = sampledCounts[i];
+            if (observed == 0) continue;
+            hasContent = true;
+            sb.append(' ')
+                .append(stages[i].label)
+                .append("[count=").append(observed)
+                .append(",samples=").append(sampled)
+                .append(",avgUs=").append(sampled == 0 ? "n/a" : formatMicros(totalNanos[i] / sampled))
+                .append(",maxUs=").append(formatMicros(maxNanos[i]))
+                .append(",totalMs=").append(formatMillis(totalNanos[i]))
+                .append(']');
+            observedCounts[i] = 0;
+            sampledCounts[i] = 0;
+            totalNanos[i] = 0L;
+            maxNanos[i] = 0L;
+        }
+        final Source[] sources = Source.values();
+        for (int i = 0; i < sources.length; i++) {
+            final int count = sourceCounts[i];
+            if (count == 0) continue;
+            hasContent = true;
+            sb.append(' ')
+                .append(sources[i].label)
+                .append("[count=").append(count).append(']');
+            sourceCounts[i] = 0;
+        }
+        if (!bufferBuilderSourceCounts.isEmpty()
+            || !bufferBuilderStackSamples.isEmpty()
+            || !clientArrayStackSamples.isEmpty()) {
+            hasContent = true;
+        }
+        appendTopEntries(sb, "bufferbuilder.source", bufferBuilderSourceCounts, MAX_BUFFERBUILDER_SOURCE_LINES);
+        appendTopEntries(sb, "bufferbuilder.stackSample", bufferBuilderStackSamples, MAX_BUFFERBUILDER_SOURCE_LINES);
+        appendTopEntries(sb, "clientArray.stackSample", clientArrayStackSamples, MAX_CLIENT_ARRAY_STACK_LINES);
+        if (fenceReclaimedRegions != 0 || fenceQueuePeak != 0) {
+            hasContent = true;
+            sb.append(" stream.fence[")
+                .append("reclaimedRegions=").append(fenceReclaimedRegions)
+                .append(",reclaimedBytes=").append(fenceReclaimedBytes)
+                .append(",queuePeak=").append(fenceQueuePeak)
+                .append(']');
+            fenceReclaimedRegions = 0;
+            fenceReclaimedBytes = 0L;
+            fenceQueuePeak = 0;
+        }
+        String extraStats = GLSMPerfDebugHooks.getExtraStats();
+        if (extraStats != null && !extraStats.isEmpty()) {
+            hasContent = true;
+            sb.append(' ').append(extraStats);
+        }
+        final String counterStats = DebugCounters.dumpDeltaAndAdvance();
+        if (!counterStats.isEmpty()) {
+            hasContent = true;
+            sb.append(' ').append(counterStats);
+        }
+        if (!hasContent) {
+            return "";
+        }
+        return sb.toString();
+    }
+
+    private static void appendTopEntries(StringBuilder sb, String label, Map<String, Integer> counts, int limit) {
+        if (counts.isEmpty()) return;
+        for (int i = 0; i < limit; i++) {
+            String bestKey = null;
+            int bestCount = 0;
+            for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+                if (entry.getValue() > bestCount) {
+                    bestKey = entry.getKey();
+                    bestCount = entry.getValue();
+                }
+            }
+            if (bestKey == null) {
+                break;
+            }
+            sb.append(' ')
+                .append(label)
+                .append('[')
+                .append(bestKey)
+                .append(",count=")
+                .append(bestCount)
+                .append(']');
+            counts.remove(bestKey);
+        }
+        counts.clear();
+    }
+
+    private static String findBufferBuilderCaller() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (StackTraceElement element : stack) {
+            String className = element.getClassName();
+            if (className.startsWith("org.soutalab.celtium.glcompat.debug.")
+                || className.startsWith("com.dhj.actinium.render.")
+                || className.startsWith("com.dhj.actinium.mixin.vintage.core.")
+                || isBufferBuilderBridge(className, element.getMethodName())
+                || className.equals("java.lang.Thread")) {
+                continue;
+            }
+            return shortenClassName(className) + "#" + element.getMethodName();
+        }
+        return "unknown";
+    }
+
+    private static boolean isBufferBuilderBridge(String className, String methodName) {
+        return (className.equals("net.minecraft.client.renderer.Tessellator")
+            || className.equals("net.minecraft.client.renderer.WorldVertexBufferUploader"))
+            && (methodName.equals("draw") || methodName.startsWith("handler$"));
+    }
+
+    /**
+     * Like {@link #findBufferBuilderCaller()} but additionally skips all glsm frames: the
+     * client-array upload is triggered from GLStateManager draw entry points, so the first
+     * interesting frame is the Minecraft/mod code that issued the draw.
+     */
+    private static String findClientArrayCaller() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (StackTraceElement element : stack) {
+            String className = element.getClassName();
+            if (className.startsWith("org.soutalab.celtium.glcompat.")
+                || className.startsWith("com.dhj.actinium.render.")
+                || className.startsWith("com.dhj.actinium.mixin.vintage.core.")
+                || className.equals("java.lang.Thread")) {
+                continue;
+            }
+            return shortenClassName(className) + "#" + element.getMethodName();
+        }
+        return "unknown";
+    }
+
+    private static String shortenClassName(String className) {
+        int index = className.lastIndexOf('.');
+        return index >= 0 ? className.substring(index + 1) : className;
+    }
+
+    private static int bucketVertexCount(int vertexCount) {
+        if (vertexCount <= 0) return 0;
+        int bucket = 1;
+        while (bucket < vertexCount && bucket < 16384) {
+            bucket <<= 1;
+        }
+        return bucket;
+    }
+
+    private static String formatMicros(long nanos) {
+        return String.format("%.2f", nanos / 1_000.0);
+    }
+
+    private static String formatMillis(long nanos) {
+        return String.format("%.3f", nanos / 1_000_000.0);
+    }
+}
