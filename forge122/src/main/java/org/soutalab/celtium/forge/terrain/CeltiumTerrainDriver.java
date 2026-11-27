@@ -271,6 +271,54 @@ public final class CeltiumTerrainDriver {
                     }
                     lines.add(sb.toString());
                 }
+                // TEMP G1 PROBE24: server-world vs client-world light for section (8,3,0):
+                // face-cell (y=64) combined sky over all columns, plus the server chunk's
+                // raw stored histogram for sections 3 and 4.
+                try {
+                    net.minecraft.server.MinecraftServer server =
+                            net.minecraft.client.Minecraft.getMinecraft().getIntegratedServer();
+                    if (server != null) {
+                        net.minecraft.world.World serverWorld = server.getWorld(0);
+                        net.minecraft.util.math.BlockPos.MutableBlockPos sp =
+                                new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                        long sDark = 0L;
+                        long cDark = 0L;
+                        for (int lz = 0; lz < 16; lz++) {
+                            for (int lx = 0; lx < 16; lx++) {
+                                sp.setPos(8 * 16 + lx, 64, lz);
+                                if (((serverWorld.getCombinedLight(sp, 0) >> 20) & 0xF) == 0) {
+                                    sDark++;
+                                }
+                                if (((world.getCombinedLight(sp, 0) >> 20) & 0xF) == 0) {
+                                    cDark++;
+                                }
+                            }
+                        }
+                        net.minecraft.world.chunk.Chunk sc = serverWorld.getChunk(8, 0);
+                        StringBuilder hist = new StringBuilder();
+                        for (int sy = 3; sy <= 4; sy++) {
+                            net.minecraft.world.chunk.storage.ExtendedBlockStorage st =
+                                    sc.getBlockStorageArray()[sy];
+                            long sum = 0L;
+                            long zeros = 0L;
+                            if (st != null && st.getSkyLight() != null) {
+                                byte[] data = st.getSkyLight().getData();
+                                for (byte b : data) {
+                                    int lo = b & 0xF;
+                                    int hi = (b >> 4) & 0xF;
+                                    sum += lo + hi;
+                                    if (lo == 0) zeros++;
+                                    if (hi == 0) zeros++;
+                                }
+                            }
+                            hist.append(" sy").append(sy).append("sum=").append(sum)
+                                    .append(" zeros=").append(zeros);
+                        }
+                        lines.add("srv830 serverDark=" + sDark + " clientDark=" + cDark + hist);
+                    }
+                } catch (Throwable t) {
+                    lines.add("srv830 failed " + t);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
