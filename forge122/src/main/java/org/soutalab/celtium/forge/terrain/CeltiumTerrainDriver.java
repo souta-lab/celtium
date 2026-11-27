@@ -125,10 +125,25 @@ public final class CeltiumTerrainDriver {
             try {
                 net.minecraft.entity.player.EntityPlayer player = Minecraft.getMinecraft().player;
                 int sx = ((int) Math.floor(player.posX)) >> 4;
-                int sy = ((int) Math.floor(player.posY)) >> 4;
                 int sz = ((int) Math.floor(player.posZ)) >> 4;
+                int sy = ((int) Math.floor(player.posY)) >> 4;
                 WorldSectionSnapshot snap = new WorldSectionSnapshot();
-                ForgeSectionScanner.fill(snap, world, faceData, fluids, sx, sy, sz);
+                // Descend to the first section that actually holds terrain.
+                for (int probeY = sy; probeY >= 0; probeY--) {
+                    snap = new WorldSectionSnapshot();
+                    ForgeSectionScanner.fill(snap, world, faceData, fluids, sx, probeY, sz);
+                    int solid = 0;
+                    for (int i = 0; i < WorldSectionSnapshot.SIZE * WorldSectionSnapshot.SIZE
+                            * WorldSectionSnapshot.SIZE; i++) {
+                        if (snap.stateAt(i) != 0) {
+                            solid++;
+                        }
+                    }
+                    if (solid > 200) {
+                        sy = probeY;
+                        break;
+                    }
+                }
                 int sky15 = 0, skyMid = 0, sky0 = 0, blockPos = 0, nonAir = 0;
                 for (int y = 1; y <= WorldSectionSnapshot.INNER; y++) {
                     for (int z = 1; z <= WorldSectionSnapshot.INNER; z++) {
