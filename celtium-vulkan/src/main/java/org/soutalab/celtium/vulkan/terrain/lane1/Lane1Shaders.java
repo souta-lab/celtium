@@ -265,9 +265,13 @@ public final class Lane1Shaders {
             layout(location = 6) flat in uint rawZ;
             layout(location = 0) out vec4 outColor;
             void main() {
-                // TEMP G1 BISECT14: raw slab word fields - R=sky/15, G=block/15, B=cellU/255.
-                outColor = vec4(float((rawZ >> 16) & 15u) / 15.0, float((rawZ >> 20) & 15u) / 15.0,
-                        float(rawZ & 255u) / 255.0, 1.0);
+                // TEMP G1 BISECT15: lightmap texels at the four corners + centre, in 5 bands.
+                vec2 probeUv = gl_FragCoord.x < 256.0 ? vec2(0.03, 0.03)
+                        : gl_FragCoord.x < 512.0 ? vec2(0.97, 0.03)
+                        : gl_FragCoord.x < 768.0 ? vec2(0.03, 0.97)
+                        : gl_FragCoord.x < 1024.0 ? vec2(0.97, 0.97)
+                        : vec2(0.5, 0.5);
+                outColor = vec4(texture(lightMap, probeUv).rgb, 1.0);
                 return;
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
