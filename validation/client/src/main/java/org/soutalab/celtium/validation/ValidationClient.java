@@ -10782,6 +10782,25 @@ public final class ValidationClient {
         return true;
     }
 
+    /**
+     * Scrolls the native screen's list by writing its own scroll offset (the wheel handler's
+     * target field; the draw pass clamps it to the page's real maximum). The Quality page is
+     * taller than the viewport, so rows below the fold - the Vignette toggle among them - only
+     * exist in the laid-out row list after a scroll.
+     */
+    private static void celtium$tourScrollToBottom(Object screen) throws Exception {
+        for (Class<?> type = screen.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                java.lang.reflect.Field field = type.getDeclaredField("scrollOffset");
+                field.setAccessible(true);
+                field.setInt(screen, 10000);
+                return;
+            } catch (NoSuchFieldException missing) {
+                // keep walking up
+            }
+        }
+    }
+
     /** The centre of one footer button: 0 = Undo, 1 = Apply, 2 = Done, in the screen's own geometry. */
     private static int[] celtium$tourFooterCenter(Object screen, int which) {
         int screenWidth = ((Number) celtium$fieldValue(screen, new String[] {"width", "field_146294_l"})).intValue();
@@ -10853,16 +10872,19 @@ public final class ValidationClient {
             }
             case 4: {
                 report.addProperty("videoSettingsTourQualityRows", celtium$tourRowNames(screen));
+                celtium$tourScrollToBottom(screen);
+                report.addProperty("videoSettingsTourQualityScrolled", "scrollOffset set to bottom");
+                celtium$tourStep = 5;
+                return false;
+            }
+            case 5: {
+                report.addProperty("videoSettingsTourQualityRowsAfterScroll", celtium$tourRowNames(screen));
                 boolean clicked = celtium$tourClickRow(screen, "celtium.options.vignette.name", false);
                 Object vg = celtium$tourEntry(screen, "celtium.options.vignette.name");
                 report.addProperty("videoSettingsTourVignetteClicked", Boolean.valueOf(clicked));
                 report.addProperty("videoSettingsTourVignettePending",
                         String.valueOf(vg == null ? null : celtium$tourInvoke(vg, "getValue")));
                 celtium$captureGlScreenshot(mc, "celtium-tour-quality.png", "tourQuality");
-                celtium$tourStep = 5;
-                return false;
-            }
-            case 5: {
                 celtium$tourClickTab(mc, screen, 3);
                 report.addProperty("videoSettingsTourActivePageAfterLighting",
                         String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
@@ -11000,6 +11022,7 @@ public final class ValidationClient {
             }
             case 1: {
                 celtium$tourClickTab(mc, screen, 1);
+                celtium$tourScrollToBottom(screen);
                 celtium$tourStep = 2;
                 return false;
             }
