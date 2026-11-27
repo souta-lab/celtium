@@ -271,18 +271,19 @@ final class PackPipelineFactory implements AutoCloseable {
         }
         VkDevice device = context.device();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkComputePipelineCreateInfo pipelineInfo = VkComputePipelineCreateInfo.calloc(stack)
-                    .sType(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO)
-                    .layout(pipelineLayout);
-            // The stage struct is filled through a local: chaining setters directly on the
-            // nested-accessor result trips a javac Flow NPE (tree.sym null) on this toolchain.
+            // The create call takes the Buffer form: passing the single struct trips a
+            // javac Flow NPE (tree.sym null) on this toolchain instead of a clean error.
+            VkComputePipelineCreateInfo.Buffer pipelineInfos = VkComputePipelineCreateInfo.calloc(1, stack);
+            VkComputePipelineCreateInfo pipelineInfo = pipelineInfos.get(0);
+            pipelineInfo.sType(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
+            pipelineInfo.layout(pipelineLayout);
             org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo stage = pipelineInfo.stage();
             stage.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
                     .stage(VK_SHADER_STAGE_COMPUTE_BIT)
                     .module(shaderModule(words))
                     .pName(stack.UTF8("main"));
             LongBuffer handle = stack.mallocLong(1);
-            int result = vkCreateComputePipelines(device, 0L, pipelineInfo, null, handle);
+            int result = vkCreateComputePipelines(device, 0L, pipelineInfos, null, handle);
             if (result != VK_SUCCESS || handle.get(0) == 0L) {
                 throw new IllegalStateException("vkCreateComputePipelines failed for "
                         + cacheKey + ": " + result);

@@ -19,6 +19,7 @@ public final class SpirvReflection {
 
     // Opcodes used below.
     private static final int OP_NAME = 5;
+    private static final int OP_MEMBER_NAME = 6;
     private static final int OP_ENTRY_POINT = 15;
     private static final int OP_EXECUTION_MODE = 16;
     private static final int OP_TYPE_FLOAT = 21;
@@ -55,7 +56,8 @@ public final class SpirvReflection {
     }
 
     /** One reflected descriptor variable. {@code name} may be empty when the module carries no OpName. */
-    public record DescriptorVariable(String name, int set, int binding, DescriptorKind kind) {
+    public record DescriptorVariable(String name, int set, int binding, DescriptorKind kind,
+                                     int pointeeTypeId) {
     }
 
     /** One reflected stage interface variable (vertex input / fragment output). */
@@ -67,13 +69,21 @@ public final class SpirvReflection {
             List<DescriptorVariable> descriptors,
             List<InterfaceVariable> inputs,
             List<InterfaceVariable> outputs,
-            int[] computeLocalSize) {
+            int[] computeLocalSize,
+            Map<Integer, Map<Integer, String>> structMemberNames) {
 
         public ModuleInfo {
             descriptors = List.copyOf(descriptors);
             inputs = List.copyOf(inputs);
             outputs = List.copyOf(outputs);
             computeLocalSize = computeLocalSize == null ? null : computeLocalSize.clone();
+            structMemberNames = Map.copyOf(structMemberNames);
+        }
+
+        /** The OpMemberName of one struct member, or null when the module does not name it. */
+        public String memberName(int structTypeId, int memberIndex) {
+            Map<Integer, String> members = structMemberNames.get(structTypeId);
+            return members == null ? null : members.get(memberIndex);
         }
     }
 
@@ -82,6 +92,8 @@ public final class SpirvReflection {
 
     public static ModuleInfo reflect(int[] words) {
         Map<Integer, String> names = new LinkedHashMap<>();
+        Map<Integer, Map<Integer, String>> memberNames = new LinkedHashMap<>();
+        Map<Integer, Integer> imageSampled = new LinkedHashMap<>();
         Map<Integer, Integer> typeKinds = new LinkedHashMap<>();
         Map<Integer, int[]> vectorTypes = new LinkedHashMap<>();
         Map<Integer, Integer> pointerPointee = new LinkedHashMap<>();
@@ -101,6 +113,9 @@ public final class SpirvReflection {
             }
             switch (opcode) {
                 case OP_NAME -> names.put(words[i + 1], readString(words, i + 2, i + wordCount));
+                case OP_MEMBER_NAME -> memberNames
+                        .computeIfAbsent(words[i + 1], key -> new LinkedHashMap<>())
+                        .put(words[i + 2], readString(words, i + 3, i + wordCount));
                 case OP_ENTRY_POINT -> {
                     for (int k = i + 3 + stringWordLength(words, i + 3, i + wordCount); k < i + wordCount; k++) {
                         entryInterfaceIds.add(words[k]);
@@ -112,7 +127,11 @@ public final class SpirvReflection {
                     }
                 }
                 case OP_TYPE_FLOAT -> typeKinds.put(words[i + 1], OP_TYPE_FLOAT);
-                case OP_TYPE_IMAGE -> typeKinds.put(words[i + 1], OP_TYPE_IMAGE);
+                case OP_TYPE_IMAGE -> {
+                    typeKinds.put(words[i + 1], OP_TYPE_IMAGE);
+                    // The Sampled operand: 1 = sampled-only, 2 = storage.
+                    imageSampled.put(words[i + 1], wordCount >= 8 ? words[i + 7] : 0);
+                }
                 case OP_TYPE_SAMPLER -> typeKinds.put(words[i + 1], OP_TYPE_SAMPLER);
                 case OP_TYPE_SAMPLED_IMAGE -> typeKinds.put(words[i + 1], OP_TYPE_SAMPLED_IMAGE);
                 case OP_TYPE_ARRAY, OP_TYPE_RUNTIME_ARRAY -> {
@@ -165,9 +184,11 @@ public final class SpirvReflection {
             String name = names.getOrDefault(id, "");
             if (storage == STORAGE_UNIFORM_CONSTANT || storage == STORAGE_UNIFORM
                     || storage == STORAGE_STORAGE_BUFFER) {
-                DescriptorKind kind = descriptorKind(pointee, typeKinds, arrayElement, structDecorations, storage);
+                DescriptorKind kind = descriptorKind(pointee, typeKinds, arrayElement, structDecorations,
+                        storage, imageSampled);
                 if (kind != null && deco[1] >= 0) {
-                    descriptors.add(new DescriptorVariable(name, Math.max(deco[2], 0), deco[1], kind));
+                    descriptors.add(new DescriptorVariable(name, Math.max(deco[2], 0), deco[1], kind,
+                            unwrap(pointee, arrayElement)));
                 }
             } else if ((storage == STORAGE_INPUT || storage == STORAGE_OUTPUT)
                     && entryInterfaceIds.contains(id) && deco[0] >= 0) {
@@ -188,19 +209,19 @@ public final class SpirvReflection {
         descriptors.sort((a, b) -> Integer.compare(a.binding(), b.binding()));
         inputs.sort((a, b) -> Integer.compare(a.location(), b.location()));
         outputs.sort((a, b) -> Integer.compare(a.location(), b.location()));
-        return new ModuleInfo(descriptors, inputs, outputs, localSize);
+        return new ModuleInfo(descriptors, inputs, outputs, localSize, memberNames);
     }
 
     private static DescriptorKind descriptorKind(int typeId, Map<Integer, Integer> typeKinds,
                                                  Map<Integer, Integer> arrayElement,
                                                  Map<Integer, Integer> structDecorations,
-                                                 int storage) {
+                                                 int storage, Map<Integer, Integer> imageSampled) {
         int base = unwrap(typeId, arrayElement);
         int kind = typeKinds.getOrDefault(base, -1);
         return switch (kind) {
             case OP_TYPE_SAMPLED_IMAGE -> DescriptorKind.COMBINED_IMAGE_SAMPLER;
-            case OP_TYPE_IMAGE -> storage == STORAGE_UNIFORM_CONSTANT
-                    ? DescriptorKind.SAMPLED_IMAGE : DescriptorKind.STORAGE_IMAGE;
+            case OP_TYPE_IMAGE -> imageSampled.getOrDefault(base, 0) == 2
+                    ? DescriptorKind.STORAGE_IMAGE : DescriptorKind.SAMPLED_IMAGE;
             case OP_TYPE_SAMPLER -> DescriptorKind.SAMPLER;
             case OP_TYPE_STRUCT -> {
                 int deco = structDecorations.getOrDefault(base, -1);
