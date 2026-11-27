@@ -15,9 +15,9 @@ import org.soutalab.celtium.core.shader.PackTerrainDriver;
 import org.soutalab.celtium.shader.ShaderLogger;
 import org.soutalab.celtium.shader.compiler.CeltiumPackCompiler;
 import org.soutalab.celtium.shader.compiler.CompiledShaderPack;
-import org.soutalab.celtium.shader.compiler.PackCompilerCapabilities;
+import org.soutalab.celtium.shader.features.PackCompilerCapabilities;
 import org.soutalab.celtium.shader.shaderpack.ShaderPack;
-import org.soutalab.celtium.shader.shaderpack.loading.ShaderpackDirectoryManager;
+import org.soutalab.celtium.shader.shaderpack.discovery.ShaderpackDirectoryManager;
 import org.soutalab.celtium.shader.shaderpack.option.menu.OptionMenuContainer;
 import org.soutalab.celtium.vulkan.VulkanContext;
 
@@ -72,9 +72,14 @@ public final class ShaderPackRuntime {
             return List.of();
         }
         ShaderpackDirectoryManager manager = new ShaderpackDirectoryManager(shaderpacksRoot);
-        List<String> names = new ArrayList<>(manager.enumerate());
-        names.sort(String::compareToIgnoreCase);
-        return names;
+        try {
+            List<String> names = new ArrayList<>(manager.enumerate());
+            names.sort(String::compareToIgnoreCase);
+            return names;
+        } catch (IOException e) {
+            ShaderLogger.LOGGER.warn("Failed to enumerate shader packs: {}", e.toString());
+            return List.of();
+        }
     }
 
     public boolean isPackValid(String packName) {

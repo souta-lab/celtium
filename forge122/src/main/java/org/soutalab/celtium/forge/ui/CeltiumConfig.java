@@ -34,6 +34,7 @@ public class CeltiumConfig {
     public PerformanceSettings performance = new PerformanceSettings();
     public LightingSettings lighting = new LightingSettings();
     public AdvancedSettings advanced = new AdvancedSettings();
+    public ShaderSettings shaders = new ShaderSettings();
 
     private transient boolean readOnly;
     private transient Path configPath;
@@ -82,6 +83,15 @@ public class CeltiumConfig {
 
     public static class AdvancedSettings {
         public int cpuRenderAheadLimit = 3;
+    }
+
+    public static class ShaderSettings {
+        /**
+         * The selected shader pack: a pack name from the shaderpacks directory (the folder
+         * holding its {@code shaders/} directory), or empty for packs off. Consumed by the
+         * pack runtime at world load; edited through the shader pack screen.
+         */
+        public String shaderPack = "";
     }
 
     public enum GraphicsQuality {
@@ -146,7 +156,8 @@ public class CeltiumConfig {
                 && config.quality != null
                 && config.performance != null
                 && config.lighting != null
-                && config.advanced != null;
+                && config.advanced != null
+                && config.shaders != null;
     }
 
     /**
@@ -169,6 +180,9 @@ public class CeltiumConfig {
         config.performance.idleFrameLimit = clamp(config.performance.idleFrameLimit, 10, 260);
         config.performance.idleDelaySeconds = clamp(config.performance.idleDelaySeconds, 30, 1800);
         config.advanced.cpuRenderAheadLimit = clamp(config.advanced.cpuRenderAheadLimit, 0, 9);
+        if (config.shaders.shaderPack == null) {
+            config.shaders.shaderPack = "";
+        }
     }
 
     private static int clamp(int value, int min, int max) {
