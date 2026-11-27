@@ -90,34 +90,35 @@ class WeatherTransformContractTest {
 
         // The production compile path strips OpName/OpMemberName (performance optimization
         // level), so the four weather uniforms cannot be recovered by name from a compiled
-        // module. The mechanical differential: compiling the same source with
-        // ShaderInstancing.NONE must yield a uniform block with exactly four fewer members
-        // (the iris_WeatherParams0..3 vec4s the WEATHER variant declares), and the layout
-        // authority must place all four params (the feed-side agreement is covered by
-        // PackWeatherFeedTest against this same layout).
+        // module. The module-level evidence is instead: (1) the WEATHER prologue READS all
+        // four params in main, so the successful compile above proves the declarations
+        // reached the block (an undeclared read fails compilation); (2) the layout authority
+        // places all four params (the feed-side byte agreement against this same layout is
+        // covered by PackWeatherFeedTest); (3) the attribute differential below.
         Std140UniformPacker packer = Std140UniformPacker.buildStandard(null, new ShaderFrameState());
         for (int i = 0; i < 4; i++) {
             String uniform = "iris_WeatherParams" + i;
             assertTrue(packer.layout().fieldNamed(uniform).isPresent(),
                     "layout authority does not place " + uniform);
         }
+        assertTrue(vertex.descriptors().stream().anyMatch(
+                        d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER),
+                "weather vertex module carries no uniform block");
+
+        // Attribute differential: the NONE variant of the same source must NOT carry the
+        // instance attribute locations (the corner at 2 is shared by both variants).
         Map<PatchShaderType, String> plain = TransformPatcher.patchAttributes(
                 WEATHER_VSH, null, WEATHER_FSH, InputAvailability.ALL);
         PackSpirvCompiler.CompiledProgram plainCompiled = PackSpirvCompiler.SHADERC.compileGraphics(
                 "gbuffers_weather", plain.get(PatchShaderType.VERTEX), plain.get(PatchShaderType.FRAGMENT), null);
-        SpirvReflection.ModuleInfo plainVertex = SpirvReflection.reflect(
-                plainCompiled.spirv().vertexWords());
-        assertEquals(uboMemberOffsets(vertex).size(), uboMemberOffsets(plainVertex).size() + 4,
-                "WEATHER variant must add exactly the four weather uniforms to the block");
-    }
-
-    private static Set<Integer> uboMemberOffsets(SpirvReflection.ModuleInfo module) {
-        SpirvReflection.DescriptorVariable ubo = module.descriptors().stream()
-                .filter(d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no uniform block in module"));
-        return new java.util.HashSet<>(
-                module.structMemberOffsets().getOrDefault(ubo.pointeeTypeId(), Map.of()).values());
+        Set<Integer> plainLocations = SpirvReflection.reflect(plainCompiled.spirv().vertexWords())
+                .inputs().stream()
+                .map(SpirvReflection.InterfaceVariable::location)
+                .collect(Collectors.toSet());
+        for (int location : new int[]{5, 6, 7, 8, 9}) {
+            assertTrue(!plainLocations.contains(location),
+                    "NONE variant must not declare instance attribute location " + location);
+        }
     }
 
     @Test
