@@ -22,18 +22,6 @@ public final class ForgeSectionScanner {
     private ForgeSectionScanner() {
     }
 
-    // TEMP G1 PROBE4: build-time light census (read by the driver's debug strings).
-    public static final java.util.concurrent.atomic.AtomicLong FILLS_TOTAL =
-            new java.util.concurrent.atomic.AtomicLong();
-    public static final java.util.concurrent.atomic.AtomicLong FILLS_CENTER_UNPOPULATED =
-            new java.util.concurrent.atomic.AtomicLong();
-    public static final java.util.concurrent.atomic.AtomicLong FILLS_SURFACE_DARK =
-            new java.util.concurrent.atomic.AtomicLong();
-    public static final java.util.concurrent.atomic.AtomicLong FILL_14M4 =
-            new java.util.concurrent.atomic.AtomicLong(-1L);
-    public static final java.util.concurrent.atomic.AtomicLong FILL_040 =
-            new java.util.concurrent.atomic.AtomicLong(-1L);
-
     public static void fill(WorldSectionSnapshot snapshot, IBlockAccess world,
                             ForgeBlockFaceData table, FluidloggedProbe fluids,
                             int sectionX, int sectionY, int sectionZ) {
@@ -67,14 +55,6 @@ public final class ForgeSectionScanner {
                     }
                 }
             }
-        }
-        FILLS_TOTAL.incrementAndGet();
-        try {
-            Chunk center = chunks[1][1];
-            if (center != null && !center.isLightPopulated()) {
-                FILLS_CENTER_UNPOPULATED.incrementAndGet();
-            }
-        } catch (Throwable ignored) {
         }
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int baseX = sectionX * 16 - 1;
@@ -129,25 +109,6 @@ public final class ForgeSectionScanner {
                     snapshot.setCell(index, id, blockLight, skyLight, tint);
                     snapshot.setNeighborBrightness(index, state.useNeighborBrightness());
                 }
-            }
-        }
-        FILLS_TOTAL.incrementAndGet();
-        // TEMP G1 PROBE9: per-section fill-side light census for the darkest known section.
-        if (sectionY == 4 && ((sectionX == 1 && sectionZ == -4) || (sectionX == 0 && sectionZ == 0))) {
-            int darkCells = 0;
-            int totalCells = 0;
-            for (int i = 0; i < WorldSectionSnapshot.VOLUME; i++) {
-                if (snapshot.stateAt(i) != 0) {
-                    totalCells++;
-                    if (snapshot.skyLightAt(i) == 0 && snapshot.blockLightAt(i) == 0) {
-                        darkCells++;
-                    }
-                }
-            }
-            if (sectionX == 1) {
-                FILL_14M4.set(darkCells * 1000L / Math.max(1, totalCells));
-            } else {
-                FILL_040.set(darkCells * 1000L / Math.max(1, totalCells));
             }
         }
         if (fluids != null && fluids.present() && world instanceof net.minecraft.world.World realWorld2) {

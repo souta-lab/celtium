@@ -246,7 +246,7 @@ public final class Lane1TerrainFrontend {
     }
 
     public String diagnosticsSummary() {
-        return store.surfaceLightReadback() + " " + store.generalLightReadback() + " " + store.worstSectionReadback() + " " + drawStage.diagnosticsSummary()
+        return drawStage.diagnosticsSummary()
                 + " sections=" + store.sectionCount()
                 + " axisUsed=" + store.axisUsedBytes()
                 + " generalUsed=" + store.generalUsedBytes()
@@ -362,7 +362,7 @@ public final class Lane1TerrainFrontend {
         ShellStream shell = (ShellStream) stream;
         VkCommandBuffer cmd = shell.commandBuffer();
         int slot = shell.slot();
-        boolean useIndirect = false; // TEMP G1 BISECT22: direct draws only
+        boolean useIndirect = context.multiDrawIndirectEnabled();
         int index = 0;
         while (index < commands.size()) {
             boolean general = commands.get(index).general();
