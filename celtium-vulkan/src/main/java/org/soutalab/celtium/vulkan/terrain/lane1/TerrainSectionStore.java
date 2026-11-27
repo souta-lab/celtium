@@ -349,8 +349,20 @@ public final class TerrainSectionStore {
                     maxC = c;
                 }
             }
+            int sky15 = 0;
+            int dark = 0;
+            for (int i = 0; i < count; i++) {
+                PackedAxisQuad q = PackedAxisQuad.readFrom(seg, (long) i * PackedAxisQuad.BYTE_SIZE);
+                if (q.skyLight() == 15) {
+                    sky15++;
+                }
+                if (q.skyLight() == 0 && q.blockLight() == 0) {
+                    dark++;
+                }
+            }
             out.append(" axisN=").append(count).append(" maxExt=").append(maxE)
-                    .append(" big=").append(big).append(" maxCorner=").append(maxC);
+                    .append(" big=").append(big).append(" maxCorner=").append(maxC)
+                    .append(" sky15=").append(sky15).append(" dark=").append(dark);
         }
         if (resident.generalBytes > 0L) {
             java.lang.foreign.MemorySegment seg =
@@ -374,8 +386,24 @@ public final class TerrainSectionStore {
                     }
                 }
             }
+            int gSky15 = 0;
+            int gDark = 0;
+            for (int i = 0; i < count; i++) {
+                org.soutalab.celtium.core.geometry.GeneralQuad q =
+                        org.soutalab.celtium.core.geometry.GeneralQuad.readFrom(seg,
+                                (long) i * org.soutalab.celtium.core.geometry.GeneralQuad.BYTE_SIZE);
+                int sky = (q.lightWord() & 0xFF) / 17;
+                int block = ((q.lightWord() >> 8) & 0xFF) / 17;
+                if (sky == 15) {
+                    gSky15++;
+                }
+                if (sky == 0 && block == 0) {
+                    gDark++;
+                }
+            }
             out.append(" genN=").append(count).append(" maxAbsPos=").append(maxAbs)
-                    .append(" wildPos=").append(wild);
+                    .append(" wildPos=").append(wild)
+                    .append(" sky15=").append(gSky15).append(" dark=").append(gDark);
         }
         return out.toString();
     }
