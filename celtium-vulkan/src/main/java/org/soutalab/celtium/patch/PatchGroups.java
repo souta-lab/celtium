@@ -221,7 +221,6 @@ public final class PatchGroups {
               "core.WorldCombinedLightMixin",
               "core.EntityPlayerMPMixin",
               "core.EntityRendererFogGuardMixin",
-              "core.EntityRendererFrameStateProbeMixin",
               "features.options.MixinEntityRenderer",
               "core.TileEntityEndPortalRendererMixin",
               "core.TileEntitySignRendererMixin",
@@ -260,10 +259,6 @@ public final class PatchGroups {
               "core.GuiScreenDrawMixin",
               "core.GuiContainerDrawMixin"
         );
-        group("upstream_arrival_instrument", "upstream arrival instrument", false,
-              "the CELTIUM_UPSTREAM series (item 727) loses its renders / mapRenders stage, so a run can no longer separate the renderer entry from the dispatch; rendering itself is untouched because the injector is require=0 and read-only, and the rest of the series counts from hooks in the mechanism groups",
-              "core.RenderItemFrameArrivalMixin"
-        );
         group("text", "text", false,
               "the font batcher stops and glyphs fall back to the generic recording through the GL stub (unmeasured)",
               "core.FontRendererMixin",
@@ -274,15 +269,11 @@ public final class PatchGroups {
         group("particles", "particles", false,
               "particles fall back to the generic recording through the GL stub (unmeasured)",
               "core.ParticleMixin",
-              "core.ParticleManagerMixin",
-              "core.ParticleManagerAccessor",
-              "core.ParticleDrawProbeMixin"
+              "core.ParticleManagerMixin"
         );
         group("sky", "sky and weather", false,
-              "cloud cellisation and rain capture stop (unmeasured)",
-              "core.ForgeCloudCellsMixin",
-              "core.CloudDrawProbeMixin",
-              "core.RainDrawProbeMixin"
+              "cloud cellisation stops (unmeasured)",
+              "core.ForgeCloudCellsMixin"
         );
         group("shaders", "mod shader chains", false,
               "the chain bridge stops; this is independent of the modPrograms opt-in (unmeasured)",
@@ -292,7 +283,7 @@ public final class PatchGroups {
               "core.ShaderUniformAccessor"
         );
         group("tweaks", "speed and diagnostics", false,
-              "the light epoch, tick timing, join/watch observation, the funnel summary print, the empty outline composite skip, the EnumFacing.getFacingFromVector replacement, the Demonica shadow frustum init cache (E7 remaining branch, itself behind -Dceltium.shadowFrustumInitCache default off) and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
+              "the light epoch, tick timing, the watch observation, the funnel summary print, the EnumFacing.getFacingFromVector replacement, the Demonica shadow frustum init cache (E7 remaining branch, itself behind -Dceltium.shadowFrustumInitCache default off) and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
               "core.WorldLightEpochMixin",
               "core.MinecraftTickTimingMixin",
               "core.MinecraftTickSplitMixin",
@@ -302,10 +293,8 @@ public final class PatchGroups {
               "core.RenderGlobalTickSplitMixin",
               "core.MinecraftWorldAssignedWatchMixin",
               "core.MinecraftFunnelSummaryMixin",
-              "core.NetHandlerJoinProbeMixin",
               "core.IntegratedServerShutdownMixin",
               "core.crash.SplashProgressCallableMixin",
-              "core.RenderGlobalOutlineCompositeMixin",
               "core.DemonicaShadowFrustumInitCacheMixin",
               "core.MixinDirection",
               "features.options.MixinGuiOptions"
