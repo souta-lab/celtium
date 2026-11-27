@@ -7,6 +7,8 @@ import org.soutalab.celtium.shader.model.InputAvailability;
 import org.soutalab.celtium.shader.transform.PatchShaderType;
 import org.soutalab.celtium.shader.transform.ShaderInstancing;
 import org.soutalab.celtium.shader.transform.TransformPatcher;
+import org.soutalab.celtium.shader.uniforms.ShaderFrameState;
+import org.soutalab.celtium.shader.uniforms.Std140UniformPacker;
 import org.soutalab.celtium.vulkan.pack.SpirvReflection;
 
 import java.util.Map;
@@ -86,20 +88,30 @@ class WeatherTransformContractTest {
         assertTrue(locations.containsAll(Set.of(2, 5, 6, 7, 8, 9)),
                 "reflected input locations: " + locations);
 
-        // The lowered module carries the uniforms as members of its uniform block struct
-        // (the block variable itself is bound by plan convention, so member names across
-        // all structs are the recovery surface).
-        Set<String> memberNames = vertex.structMemberNames().values().stream()
-                .flatMap(members -> members.values().stream())
-                .collect(Collectors.toSet());
-        Set<String> variableNames = vertex.descriptors().stream()
-                .map(SpirvReflection.DescriptorVariable::name)
-                .collect(Collectors.toSet());
+        // The production compile path strips OpName/OpMemberName (performance optimization
+        // level), so the uniform contract is recovered by OFFSET: the layout authority
+        // (Std140UniformPacker, the same one the executor's UBO writer uses) places
+        // iris_WeatherParams0..3 at four offsets, and each of those offsets must exist as a
+        // member offset of the compiled module's uniform block struct.
+        Std140UniformPacker packer = Std140UniformPacker.buildStandard(null, new ShaderFrameState());
+        Map<String, Integer> layoutOffsets = new java.util.HashMap<>();
+        for (var field : packer.layout().fields()) {
+            layoutOffsets.put(field.name(), field.offsetBytes());
+        }
+        SpirvReflection.DescriptorVariable ubo = vertex.descriptors().stream()
+                .filter(d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no uniform block in the weather vertex module"));
+        Set<Integer> memberOffsets = new java.util.HashSet<>(
+                vertex.structMemberOffsets().getOrDefault(ubo.pointeeTypeId(), Map.of()).values());
+        assertTrue(!memberOffsets.isEmpty(), "uniform block carries no member offsets");
         for (int i = 0; i < 4; i++) {
-            String name = "iris_WeatherParams" + i;
-            assertTrue(memberNames.contains(name) || variableNames.contains(name),
-                    "weather uniform " + name + " not recovered; members=" + memberNames
-                            + " variables=" + variableNames);
+            String uniform = "iris_WeatherParams" + i;
+            Integer offset = layoutOffsets.get(uniform);
+            assertTrue(offset != null, "layout authority does not place " + uniform);
+            assertTrue(memberOffsets.contains(offset),
+                    "weather uniform " + uniform + " at layout offset " + offset
+                            + " not a member offset of the compiled block; members=" + memberOffsets);
         }
     }
 

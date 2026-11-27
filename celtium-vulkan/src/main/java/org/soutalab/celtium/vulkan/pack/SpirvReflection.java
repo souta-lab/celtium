@@ -22,7 +22,8 @@ public final class SpirvReflection {
     private static final int OP_MEMBER_NAME = 6;
     private static final int OP_ENTRY_POINT = 15;
     private static final int OP_EXECUTION_MODE = 16;
-    private static final int OP_TYPE_FLOAT = 21;
+    private static final int OP_TYPE_INT = 21;
+    private static final int OP_TYPE_FLOAT = 22;
     private static final int OP_TYPE_IMAGE = 25;
     private static final int OP_TYPE_SAMPLER = 26;
     private static final int OP_TYPE_SAMPLED_IMAGE = 27;
@@ -32,6 +33,7 @@ public final class SpirvReflection {
     private static final int OP_TYPE_POINTER = 32;
     private static final int OP_VARIABLE = 59;
     private static final int OP_DECORATE = 71;
+    private static final int OP_MEMBER_DECORATE = 72;
 
     // Decorations.
     private static final int DECORATION_BLOCK = 2;
@@ -39,6 +41,7 @@ public final class SpirvReflection {
     private static final int DECORATION_LOCATION = 30;
     private static final int DECORATION_BINDING = 33;
     private static final int DECORATION_DESCRIPTOR_SET = 34;
+    private static final int DECORATION_OFFSET = 35;
 
     // Execution modes.
     private static final int EXEC_LOCAL_SIZE = 17;
@@ -70,7 +73,8 @@ public final class SpirvReflection {
             List<InterfaceVariable> inputs,
             List<InterfaceVariable> outputs,
             int[] computeLocalSize,
-            Map<Integer, Map<Integer, String>> structMemberNames) {
+            Map<Integer, Map<Integer, String>> structMemberNames,
+            Map<Integer, Map<Integer, Integer>> structMemberOffsets) {
 
         public ModuleInfo {
             descriptors = List.copyOf(descriptors);
@@ -78,12 +82,19 @@ public final class SpirvReflection {
             outputs = List.copyOf(outputs);
             computeLocalSize = computeLocalSize == null ? null : computeLocalSize.clone();
             structMemberNames = Map.copyOf(structMemberNames);
+            structMemberOffsets = Map.copyOf(structMemberOffsets);
         }
 
         /** The OpMemberName of one struct member, or null when the module does not name it. */
         public String memberName(int structTypeId, int memberIndex) {
             Map<Integer, String> members = structMemberNames.get(structTypeId);
             return members == null ? null : members.get(memberIndex);
+        }
+
+        /** The OpMemberDecorate Offset of one struct member, or -1 when not decorated. */
+        public int memberOffset(int structTypeId, int memberIndex) {
+            Map<Integer, Integer> members = structMemberOffsets.get(structTypeId);
+            return members == null ? -1 : members.getOrDefault(memberIndex, -1);
         }
     }
 
@@ -93,6 +104,7 @@ public final class SpirvReflection {
     public static ModuleInfo reflect(int[] words) {
         Map<Integer, String> names = new LinkedHashMap<>();
         Map<Integer, Map<Integer, String>> memberNames = new LinkedHashMap<>();
+        Map<Integer, Map<Integer, Integer>> memberOffsets = new LinkedHashMap<>();
         Map<Integer, Integer> imageSampled = new LinkedHashMap<>();
         Map<Integer, Integer> typeKinds = new LinkedHashMap<>();
         Map<Integer, int[]> vectorTypes = new LinkedHashMap<>();
@@ -139,12 +151,15 @@ public final class SpirvReflection {
                     arrayElement.put(words[i + 1], words[i + 2]);
                 }
                 case OP_TYPE_STRUCT -> typeKinds.put(words[i + 1], OP_TYPE_STRUCT);
-                case 22 -> { // OpTypeInt
-                    typeKinds.put(words[i + 1], 22);
-                    vectorTypes.put(words[i + 1], new int[]{1, 0});
-                }
+                case OP_TYPE_INT -> typeKinds.put(words[i + 1], OP_TYPE_INT);
                 case 23 -> { // OpTypeVector: id, componentType, count
                     vectorTypes.put(words[i + 1], new int[]{words[i + 3], words[i + 2]});
+                }
+                case OP_MEMBER_DECORATE -> {
+                    if (words[i + 3] == DECORATION_OFFSET) {
+                        memberOffsets.computeIfAbsent(words[i + 1], key -> new LinkedHashMap<>())
+                                .put(words[i + 2], words[i + 4]);
+                    }
                 }
                 case OP_TYPE_POINTER -> pointerPointee.put(words[i + 1], words[i + 3]);
                 case OP_DECORATE -> {
@@ -209,7 +224,7 @@ public final class SpirvReflection {
         descriptors.sort((a, b) -> Integer.compare(a.binding(), b.binding()));
         inputs.sort((a, b) -> Integer.compare(a.location(), b.location()));
         outputs.sort((a, b) -> Integer.compare(a.location(), b.location()));
-        return new ModuleInfo(descriptors, inputs, outputs, localSize, memberNames);
+        return new ModuleInfo(descriptors, inputs, outputs, localSize, memberNames, memberOffsets);
     }
 
     private static DescriptorKind descriptorKind(int typeId, Map<Integer, Integer> typeKinds,
