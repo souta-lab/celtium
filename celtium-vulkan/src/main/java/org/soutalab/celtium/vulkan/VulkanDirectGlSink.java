@@ -16,8 +16,6 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -30,14 +28,14 @@ import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK13;
-import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
@@ -50,7 +48,6 @@ import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
 import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier2;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
-import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
@@ -99,9 +96,11 @@ import org.soutalab.celtium.vulkan.hal.VulkanDynamicRendering;
  *   as an external image, so sampling later sees the very image the draw wrote (the blackness
  *   fixes' {@code SAMPLED} invariant is carried in every attachment image's usage flags);</li>
  *   <li>custom-framebuffer attachments backed by the {@link TransientAttachmentSlab};</li>
- *   <li>buffers as persistently mapped host-visible allocations (the yardstick profiles are UMA
- *   or ReBAR; a staged profile still exposes host-visible memory for the small buffers mods
- *   use);</li>
+ *   <li>buffers as {@link VulkanHostBuffer}s - persistently mapped host-visible buffers backed
+ *   by sub-allocations of the context's shared host-visible slabs, so a converter buffer never
+ *   issues its own {@code vkAllocateMemory} (plan section 2.4: zero per-buffer allocations at
+ *   runtime) and a delete hands the slab range back as a timeline-deferred release instead of
+ *   freeing memory under a possibly in-flight submission;</li>
  *   <li>per-program uniform blocks: the executor packs a program's uniform values into one block
  *   and hands it over through {@link DirectGlSinkExtensions}; the sink keeps it in a per-program
  *   uniform buffer bound at set 0, binding 0 of every converter pipeline.</li>
@@ -137,8 +136,16 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
 
     private long uniformSetLayout;
     private long pipelineLayout;
-    private long descriptorPool;
+    /**
+     * Every descriptor pool created for program uniform sets, oldest first. Pools are only ever
+     * appended, never destroyed or replaced while the sink lives: a set allocated from an earlier
+     * pool stays valid for the pool's whole life, so growing past one pool's capacity must not
+     * invalidate the sets programs already hold (audit #16 F-1).
+     */
+    private final List<Long> descriptorPools = new ArrayList<>();
+    /** How many sets the newest pool can still hand out / has handed out. */
     private int descriptorPoolCapacity;
+    private int descriptorPoolUsed;
 
     private ExtendedFixedState extendedState = ExtendedFixedState.DEFAULT;
 
@@ -197,7 +204,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                 VK10.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
                         UNIFORM_SET, stack.longs(program.descriptorSet), null);
             }
-            VK10.vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertexBuffer.vkBuffer),
+            VK10.vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertexBuffer.buffer.buffer()),
                     stack.longs(vertices.offsetBytes()));
             if (draw.indexed()) {
                 BufferRec indexBuffer = this.buffers.get(indices.bufferHandle());
@@ -208,7 +215,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                     BackendCallCounters.noteLane3DroppedDraw();
                     return;
                 }
-                VK10.vkCmdBindIndexBuffer(cmd, indexBuffer.vkBuffer, indices.offsetBytes(),
+                VK10.vkCmdBindIndexBuffer(cmd, indexBuffer.buffer.buffer(), indices.offsetBytes(),
                         indices.indexType() == IndexSpan.IndexType.UINT32
                                 ? VK10.VK_INDEX_TYPE_UINT32 : VK10.VK_INDEX_TYPE_UINT16);
                 VK10.vkCmdDrawIndexed(cmd, draw.indexCount(), draw.instanceCount(), draw.firstIndex(),
@@ -505,16 +512,21 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         }
     }
 
-    private void ensureDescriptorPool(int sets) {
-        if (this.descriptorPool != VK_NULL_HANDLE && this.descriptorPoolCapacity >= sets) {
+    /**
+     * Makes sure the newest descriptor pool still has a free set, appending a fresh pool when it
+     * does not. The previous pool is left fully alive - sets already allocated from it stay valid -
+     * so crossing a pool boundary can never leave a program holding a destroyed pool's set
+     * (audit #16 F-1: the old code destroyed the pool at 65 programs and dangled every existing
+     * {@code ProgramRec.descriptorSet}).
+     *
+     * @param setsHint how many programs exist, used only to size a newly appended pool
+     */
+    private void ensureDescriptorPool(int setsHint) {
+        if (!this.descriptorPools.isEmpty() && this.descriptorPoolUsed < this.descriptorPoolCapacity) {
             return;
         }
+        int capacity = Math.max(64, setsHint * 2);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (this.descriptorPool != VK_NULL_HANDLE) {
-                VK10.vkDestroyDescriptorPool(this.device, this.descriptorPool, null);
-                this.descriptorPool = VK_NULL_HANDLE;
-            }
-            int capacity = Math.max(64, sets * 2);
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(1, stack);
             sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(capacity);
             VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
@@ -522,9 +534,15 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             LongBuffer handle = stack.longs(0);
             check(VK10.vkCreateDescriptorPool(this.device, poolInfo, null, handle),
                     "vkCreateDescriptorPool(converter)");
-            this.descriptorPool = handle.get(0);
+            this.descriptorPools.add(handle.get(0));
             this.descriptorPoolCapacity = capacity;
+            this.descriptorPoolUsed = 0;
         }
+    }
+
+    /** The pool new descriptor sets are allocated from: always the newest appended pool. */
+    private long currentDescriptorPool() {
+        return this.descriptorPools.get(this.descriptorPools.size() - 1);
     }
 
     // -- DirectGlSinkExtensions -------------------------------------------------
@@ -555,35 +573,34 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             return;
         }
         ensurePipelineLayout();
-        if (rec.uniformBuffer == VK_NULL_HANDLE
-                || rec.uniformBufferSize < values.byteSize()) {
-            if (rec.uniformBuffer != VK_NULL_HANDLE) {
-                destroyBufferRaw(rec.uniformBuffer, rec.uniformMemory);
-            }
-            long size = Math.max(256L, values.byteSize());
-            long[] created = createBufferRaw(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-            rec.uniformBuffer = created[0];
-            rec.uniformMemory = created[1];
-            rec.uniformBufferSize = size;
-            rec.uniformMapped = mapMemory(rec.uniformMemory, size);
+        if (rec.uniformBuffer == null) {
+            rec.uniformBuffer = new VulkanHostBuffer(this.context,
+                    Math.max(256L, values.byteSize()), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+            // The program's descriptor set names this buffer, and a set written before a growth
+            // could keep naming the grown-away handle: retention keeps every superseded uniform
+            // buffer alive until the program itself is destroyed (see VulkanHostBuffer).
+            rec.uniformBuffer.retainSupersededBuffers();
+        } else {
+            rec.uniformBuffer.ensureCapacity(values.byteSize());
         }
-        MemorySegment.copy(values, 0L, MemorySegment.ofAddress(rec.uniformMapped)
+        MemorySegment.copy(values, 0L, MemorySegment.ofAddress(rec.uniformBuffer.mappedAddress())
                 .reinterpret(values.byteSize()), 0L, values.byteSize());
         if (rec.descriptorSet == VK_NULL_HANDLE) {
             ensureDescriptorPool(this.programs.size());
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack)
-                        .sType$Default().descriptorPool(this.descriptorPool)
+                        .sType$Default().descriptorPool(currentDescriptorPool())
                         .pSetLayouts(stack.longs(this.uniformSetLayout));
                 LongBuffer set = stack.longs(0);
                 check(VK10.vkAllocateDescriptorSets(this.device, alloc, set),
                         "vkAllocateDescriptorSets(converter)");
                 rec.descriptorSet = set.get(0);
+                this.descriptorPoolUsed++;
             }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack);
-            bufferInfo.get(0).buffer(rec.uniformBuffer).offset(0L).range(values.byteSize());
+            bufferInfo.get(0).buffer(rec.uniformBuffer.buffer()).offset(0L).range(values.byteSize());
             VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
             write.get(0).sType$Default().dstSet(rec.descriptorSet).dstBinding(UNIFORM_BINDING)
                     .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).pBufferInfo(bufferInfo);
@@ -656,15 +673,12 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         @Override
         public long createBuffer(long sizeBytes, int usageFlags) {
             BackendCallCounters.noteLane3SinkCall();
-            long[] created = createBufferRaw(Math.max(16L, sizeBytes),
+            BufferRec rec = new BufferRec();
+            rec.size = Math.max(16L, sizeBytes);
+            rec.buffer = new VulkanHostBuffer(VulkanDirectGlSink.this.context, rec.size,
                     usageFlags | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
                             | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
             long id = VulkanDirectGlSink.this.nextBufferId++;
-            BufferRec rec = new BufferRec();
-            rec.vkBuffer = created[0];
-            rec.memory = created[1];
-            rec.size = Math.max(16L, sizeBytes);
-            rec.mapped = mapMemory(rec.memory, rec.size);
             VulkanDirectGlSink.this.buffers.put(id, rec);
             return id;
         }
@@ -673,14 +687,15 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         public void writeBuffer(long bufferId, long offsetBytes, MemorySegment data) {
             BackendCallCounters.noteLane3SinkCall();
             BufferRec rec = VulkanDirectGlSink.this.buffers.get(bufferId);
-            if (rec == null || data == null || rec.mapped == 0L) {
+            if (rec == null || data == null || rec.buffer.mappedAddress() == 0L) {
                 return;
             }
             long writable = Math.min(data.byteSize(), rec.size - offsetBytes);
             if (writable <= 0L) {
                 return;
             }
-            MemorySegment.copy(data, 0L, MemorySegment.ofAddress(rec.mapped).reinterpret(rec.size),
+            MemorySegment.copy(data, 0L,
+                    MemorySegment.ofAddress(rec.buffer.mappedAddress()).reinterpret(rec.size),
                     offsetBytes, writable);
         }
 
@@ -689,7 +704,10 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             BackendCallCounters.noteLane3SinkCall();
             BufferRec rec = VulkanDirectGlSink.this.buffers.remove(bufferId);
             if (rec != null) {
-                destroyBufferRaw(rec.vkBuffer, rec.memory);
+                // VulkanHostBuffer.delete() never frees memory immediately: with a recording
+                // open the handle joins the context's retired list, and the slab range itself
+                // is released against the timeline completion value (audit #16 F-1).
+                rec.buffer.delete();
             }
         }
     };
@@ -697,50 +715,6 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     @Override
     public BufferOps bufferOps() {
         return this.bufferOps;
-    }
-
-    private long[] createBufferRaw(long size, int usage) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
-                    .size(size).usage(usage).sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
-            LongBuffer buffer = stack.longs(0);
-            check(VK10.vkCreateBuffer(this.device, bufferInfo, null, buffer), "vkCreateBuffer(converter)");
-            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
-            VK10.vkGetBufferMemoryRequirements(this.device, buffer.get(0), requirements);
-            int type = this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    "converter buffer");
-            if (type < 0) {
-                type = this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, "converter buffer (host-visible)");
-            }
-            VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size()).memoryTypeIndex(type);
-            LongBuffer memory = stack.longs(0);
-            check(VulkanContext.allocateMemory(this.device, allocInfo, memory,
-                            "direct-GL converter buffer"),
-                    "vkAllocateMemory(converter buffer)");
-            check(VK10.vkBindBufferMemory(this.device, buffer.get(0), memory.get(0), 0L),
-                    "vkBindBufferMemory(converter)");
-            return new long[] {buffer.get(0), memory.get(0)};
-        }
-    }
-
-    private long mapMemory(long memory, long size) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            PointerBuffer data = stack.callocPointer(1);
-            check(VK10.vkMapMemory(this.device, memory, 0L, size, 0, data), "vkMapMemory(converter)");
-            return data.get(0);
-        }
-    }
-
-    private void destroyBufferRaw(long buffer, long memory) {
-        if (buffer != VK_NULL_HANDLE) {
-            VK10.vkDestroyBuffer(this.device, buffer, null);
-        }
-        if (memory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(this.device, memory);
-        }
     }
 
     // -- framebuffer ops ------------------------------------------------------------
@@ -941,8 +915,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             if (rec.computePipeline != VK_NULL_HANDLE) {
                 VK10.vkDestroyPipeline(VulkanDirectGlSink.this.device, rec.computePipeline, null);
             }
-            if (rec.uniformBuffer != VK_NULL_HANDLE) {
-                destroyBufferRaw(rec.uniformBuffer, rec.uniformMemory);
+            if (rec.uniformBuffer != null) {
+                rec.uniformBuffer.delete();
             }
         }
     };
@@ -977,10 +951,9 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     // -- records ------------------------------------------------------------------------
 
     private static final class BufferRec {
-        long vkBuffer;
-        long memory;
+        /** Slab-backed, persistently mapped; owns no device memory of its own. */
+        VulkanHostBuffer buffer;
         long size;
-        long mapped;
     }
 
     private static final class TextureRec {
@@ -1009,10 +982,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         long computePipeline;
         AttribDesc[] attribs = new AttribDesc[0];
         long vertexLayoutHash = 0x9E3779B97F4A7C15L;
-        long uniformBuffer;
-        long uniformMemory;
-        long uniformBufferSize;
-        long uniformMapped;
+        /** Slab-backed uniform block buffer; superseded growths are retained until destroy. */
+        VulkanHostBuffer uniformBuffer;
         long descriptorSet;
     }
 }
