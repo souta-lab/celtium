@@ -173,7 +173,7 @@ public final class Lane1Shaders {
                 fragLightMap = vec2(float((q.z >> 20) & 15u), float((q.z >> 16) & 15u)) / 15.0;
                 fragWorldPos = worldPos;
                 // V2-5: the vertex stage evaluates the cluster's dynamic lights (findLSB walk).
-                fragDynamicLight = evaluateLights(worldPos + vec3(0.5));
+                fragDynamicLight = vec3(0.0); // TEMP G1 BISECT17: dynamic light off
             }
             """;
 
