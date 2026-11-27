@@ -2221,6 +2221,23 @@ public final class ValidationClient {
      * nothing".
      */
     private org.soutalab.celtium.validation.DisplayListLegacyScreen celtium$displayListScreen;
+    /**
+     * The Xaero full-screen world map, when {@code -Dceltium.validation.screen=xaeromap} opened it.
+     * <p>
+     * Kept as a plain {@code GuiScreen} on purpose: the fixture is not compiled against the mod, so the screen is
+     * built reflectively (see {@code celtium$openXaeroMap}) and everything after it - the camera/zoom drive, the
+     * close - goes through the same reflective field access. Null when the mod is absent or has no session yet,
+     * which the report names rather than the request reading as an unknown one.
+     */
+    private net.minecraft.client.gui.GuiScreen celtium$xaeroMapScreen;
+    /** The tick the Xaero map opened, so the camera/zoom drive and the close are placed from it. */
+    private int celtium$xaeroMapOpenedTick;
+    /** Whether the xaeromap request was this leg's, so an absent mod is not misreported as an unknown request. */
+    private boolean celtium$xaeroMapHandled;
+    /** Whether the camera/zoom request has been applied to the open map, so it is driven once per leg. */
+    private boolean celtium$xaeroMapDriven;
+    /** Whether the map has been closed again at the leg's request, so that step also happens once. */
+    private boolean celtium$xaeroMapClosed;
     /** Whether the creative tab request has been applied, so the grid is selected once per leg. */
     private boolean celtium$creativeTabApplied;
     /**
@@ -2356,6 +2373,144 @@ public final class ValidationClient {
             return ((Number) field.get(slot)).intValue();
         } catch (ReflectiveOperationException | RuntimeException error) {
             return -1;
+        }
+    }
+
+    /**
+     * {@return the named double field's value on the target}, read up the class hierarchy, or null when there is
+     * no such field or it cannot be read. The Xaero map's camera and zoom state is private and the fixture is not
+     * compiled against the mod, so the drive below reads and writes it by name - the mod's own field names, which
+     * a production jar keeps because only Minecraft's own names are remapped.
+     */
+    private static Double celtium$readDoubleField(Object target, String name) {
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                java.lang.reflect.Field field = type.getDeclaredField(name);
+                if (field.getType() != double.class) {
+                    return null;
+                }
+                field.setAccessible(true);
+                return Double.valueOf(field.getDouble(target));
+            } catch (NoSuchFieldException next) {
+                // Try the superclass.
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** Writes the named double field on the target, by the same lookup {@code celtium$readDoubleField} reads. */
+    private static boolean celtium$writeDoubleField(Object target, String name, double value) {
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                java.lang.reflect.Field field = type.getDeclaredField(name);
+                if (field.getType() != double.class) {
+                    return false;
+                }
+                field.setAccessible(true);
+                field.setDouble(target, value);
+                return true;
+            } catch (NoSuchFieldException next) {
+                // Try the superclass.
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Writes a static double field on the named class - the Xaero map's zoom destination is a static. */
+    private static boolean celtium$writeStaticDoubleField(Class<?> type, String name, double value) {
+        try {
+            java.lang.reflect.Field field = type.getDeclaredField(name);
+            if (field.getType() != double.class
+                    || !java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                return false;
+            }
+            field.setAccessible(true);
+            field.setDouble(null, value);
+            return true;
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            return false;
+        }
+    }
+
+    /** Nulls the named field on the target when it exists; an absent field is not an error. */
+    private static void celtium$nullField(Object target, String name) {
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                java.lang.reflect.Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(target, null);
+                return;
+            } catch (NoSuchFieldException next) {
+                // Try the superclass.
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * {@return Xaero's full-screen world map screen, built exactly the way the mod itself builds it}, or null
+     * when the mod is absent or has no session yet - the report says which, so a leg that asked for the map can
+     * tell "not installed" from "installed but not ready".
+     * <p>
+     * This is not key input, and the report names it as what it is: the fixture cannot synthesise an LWJGL key
+     * event honestly (the same limit the JEI search records), and Xaero opens its map from a KeyBinding handler,
+     * so there is no key path to drive. What is driven instead is the mod's own open call, through its public
+     * surface: {@code ControlsHandler.keyDown} runs {@code displayGuiScreen(new GuiMap(null, null,
+     * WorldMapSession.getCurrentSession().getMapProcessor(), mc.getRenderViewEntity()))} - the constructor and
+     * the session accessors are both public, read from the shipped jar's bytecode - and this method reproduces
+     * that call reflectively, because the fixture's main source set is not compiled against the mod. The screen
+     * that opens, and everything it draws, is the mod's own.
+     */
+    private net.minecraft.client.gui.GuiScreen celtium$openXaeroMap(Minecraft mc) {
+        try {
+            Class<?> sessionClass = Class.forName("xaero.map.WorldMapSession");
+            Object session = sessionClass.getMethod("getCurrentSession").invoke(null);
+            if (session == null) {
+                report.addProperty("xaeroMapScreen", "no current WorldMapSession");
+                return null;
+            }
+            Object processor = sessionClass.getMethod("getMapProcessor").invoke(session);
+            if (processor == null) {
+                report.addProperty("xaeroMapScreen", "the current session has no MapProcessor");
+                return null;
+            }
+            net.minecraft.entity.Entity viewEntity = mc.getRenderViewEntity();
+            if (viewEntity == null) {
+                report.addProperty("xaeroMapScreen", "no render view entity yet");
+                return null;
+            }
+            Class<?> guiMapClass = Class.forName("xaero.map.gui.GuiMap");
+            java.lang.reflect.Constructor<?> constructor = null;
+            for (java.lang.reflect.Constructor<?> candidate : guiMapClass.getConstructors()) {
+                Class<?>[] parameters = candidate.getParameterTypes();
+                if (parameters.length == 4
+                        && parameters[0] == net.minecraft.client.gui.GuiScreen.class
+                        && parameters[1] == net.minecraft.client.gui.GuiScreen.class
+                        && parameters[2].isAssignableFrom(processor.getClass())
+                        && parameters[3].isAssignableFrom(viewEntity.getClass())) {
+                    constructor = candidate;
+                    break;
+                }
+            }
+            if (constructor == null) {
+                report.addProperty("xaeroMapScreen", "no GuiMap constructor matches the mod's own open call");
+                return null;
+            }
+            Object screen = constructor.newInstance(null, null, processor, viewEntity);
+            report.addProperty("xaeroMapScreen", screen.getClass().getName()
+                    + " (the mod's own open call driven through its public API - no key event was synthesised)");
+            return (net.minecraft.client.gui.GuiScreen) screen;
+        } catch (ClassNotFoundException absent) {
+            report.addProperty("xaeroMapScreen", "xaero world map is not installed: " + absent.getMessage());
+            return null;
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException error) {
+            report.addProperty("xaeroMapScreen", "failed: " + error);
+            return null;
         }
     }
 
@@ -6956,6 +7111,20 @@ public final class ValidationClient {
                     // glCallList every frame. This screen does the same and asks for two consecutive frames, so the
                     // picture answers "was the list replayed at the caller's transform" without a wrench or a block.
                     requested = new org.soutalab.celtium.validation.DisplayListLegacyScreen();
+                } else if ("xaeromap".equalsIgnoreCase(screenRequest)) {
+                    // The full-screen half of the Xaero report: the minimap leg proved the HUD element, and this
+                    // is the screen the M key opens. No setting, command or queued event can open it (the route
+                    // survey read both mods' settings in full and all three jars for a command handler), and a
+                    // key event cannot be synthesised honestly, so the fixture drives the mod's own open call
+                    // through its public API instead - see celtium$openXaeroMap, which also records what was
+                    // driven. An absent mod opens nothing, and that is a named outcome in the report, not an
+                    // unknown request.
+                    celtium$xaeroMapHandled = true;
+                    requested = celtium$openXaeroMap(mc);
+                    if (requested != null) {
+                        celtium$xaeroMapScreen = requested;
+                        celtium$xaeroMapOpenedTick = worldTicks;
+                    }
                 }
                 if (requested != null) {
                     mc.displayGuiScreen(requested);
@@ -7000,7 +7169,7 @@ public final class ValidationClient {
                     celtium$namedScreenScrollTicks = worldTicks;
                     celtium$namedScreenScrollBy =
                             HarnessConfig.integer("scrollList", 0);
-                } else {
+                } else if (!celtium$xaeroMapHandled) {
                     report.addProperty("namedScreenOpened", "unknown request: " + screenRequest);
                 }
             } catch (Throwable error) {
@@ -7137,6 +7306,76 @@ public final class ValidationClient {
                 }
             } catch (Throwable error) {
                 report.addProperty("listScroll", "failed: " + error);
+            }
+        }
+        // The Xaero map's camera and zoom, a few ticks after it opened (its layout has run by then). The knobs
+        // are doubles read through HarnessConfig like every other knob; a knob left unset leaves that part of the
+        // state alone, so a leg can open the map untouched, pan only, or zoom only.
+        //
+        // What is driven is the screen's own state, not input. GuiMap derives its rendered scale every frame as
+        // userScale x a display multiplier (read from the shipped jar's drawScreen), so the zoom writes userScale
+        // and the static destScale to the same value: destScale alone would only start the zoom animation, and
+        // the derived scale field alone would be overwritten on the next frame. A pan writes cameraX/cameraZ and
+        // clears the camera destination animations, which is the same cancellation the mod's own changeZoom
+        // performs before it moves the camera state. The report carries the values either side of the write, so
+        // the drive is read from the record rather than assumed from the knobs.
+        if (celtium$xaeroMapScreen != null && !celtium$xaeroMapDriven
+                && worldTicks >= celtium$xaeroMapOpenedTick + 5) {
+            celtium$xaeroMapDriven = true;
+            try {
+                if (mc.currentScreen != celtium$xaeroMapScreen) {
+                    report.addProperty("xaeroMapDrive", "the map is no longer the current screen: "
+                            + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName()));
+                } else {
+                    Object map = celtium$xaeroMapScreen;
+                    double cameraX = HarnessConfig.doubleValue("xaeroMapCameraX", Double.NaN);
+                    double cameraZ = HarnessConfig.doubleValue("xaeroMapCameraZ", Double.NaN);
+                    if (!Double.isNaN(cameraX) || !Double.isNaN(cameraZ)) {
+                        Double beforeX = celtium$readDoubleField(map, "cameraX");
+                        Double beforeZ = celtium$readDoubleField(map, "cameraZ");
+                        celtium$nullField(map, "cameraDestinationAnimX");
+                        celtium$nullField(map, "cameraDestinationAnimZ");
+                        boolean wroteX = Double.isNaN(cameraX)
+                                || celtium$writeDoubleField(map, "cameraX", cameraX);
+                        boolean wroteZ = Double.isNaN(cameraZ)
+                                || celtium$writeDoubleField(map, "cameraZ", cameraZ);
+                        report.addProperty("xaeroMapCamera", "cameraX " + beforeX + " -> "
+                                + celtium$readDoubleField(map, "cameraX") + ", cameraZ " + beforeZ + " -> "
+                                + celtium$readDoubleField(map, "cameraZ")
+                                + " (state fields written directly, camera destination animations cleared;"
+                                + " no key or mouse input was synthesised)"
+                                + (wroteX && wroteZ ? "" : " - a write did not land"));
+                    }
+                    double scale = HarnessConfig.doubleValue("xaeroMapScale", Double.NaN);
+                    if (!Double.isNaN(scale)) {
+                        Double beforeUser = celtium$readDoubleField(map, "userScale");
+                        boolean wroteUser = celtium$writeDoubleField(map, "userScale", scale);
+                        boolean wroteDest = celtium$writeStaticDoubleField(map.getClass(), "destScale", scale);
+                        report.addProperty("xaeroMapZoom", "userScale " + beforeUser + " -> "
+                                + celtium$readDoubleField(map, "userScale") + ", destScale set to " + scale
+                                + " (the rendered scale is derived from userScale every frame, so both are"
+                                + " written; no key or mouse input was synthesised)"
+                                + (wroteUser && wroteDest ? "" : " - a write did not land"));
+                    }
+                }
+            } catch (Throwable error) {
+                report.addProperty("xaeroMapDrive", "failed: " + error);
+            }
+        }
+        // The map closed again at the leg's request, so the run's remaining frames - and its capture, when the
+        // close is placed before it - show the world with no screen over it. 0 (the default) leaves it open.
+        if (celtium$xaeroMapScreen != null && !celtium$xaeroMapClosed) {
+            int xaeroMapCloseAfterTicks = HarnessConfig.integer("xaeroMapCloseAfterTicks", 0);
+            if (xaeroMapCloseAfterTicks > 0
+                    && worldTicks >= celtium$xaeroMapOpenedTick + xaeroMapCloseAfterTicks) {
+                celtium$xaeroMapClosed = true;
+                if (mc.currentScreen == celtium$xaeroMapScreen) {
+                    mc.displayGuiScreen(null);
+                    report.addProperty("xaeroMapClosedAtTick", worldTicks);
+                } else {
+                    report.addProperty("xaeroMapClosedAtTick",
+                            "not the current screen at tick " + worldTicks);
+                }
             }
         }
         if (worldTicks >= 30 && !celtium$jeiScreen && HarnessConfig.bool("jeiScreen", false)) {
