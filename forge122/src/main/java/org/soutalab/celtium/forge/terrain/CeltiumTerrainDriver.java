@@ -160,6 +160,37 @@ public final class CeltiumTerrainDriver {
                         }
                     }
                 }
+                // TEMP G1 PROBE5: raw skylight arrays, player chunk vs 8 chunks west.
+                try {
+                    net.minecraft.world.World w = (net.minecraft.world.World) world;
+                    StringBuilder raw = new StringBuilder("rawLight");
+                    for (int dx : new int[]{0, -8}) {
+                        net.minecraft.world.chunk.Chunk c =
+                                w.getChunk(sx + dx, sz);
+                        raw.append(" chunk[").append(sx + dx).append(',').append(sz)
+                                .append("] populated=").append(c.isLightPopulated())
+                                .append(" empty=").append(c.isEmpty());
+                        net.minecraft.world.chunk.storage.ExtendedBlockStorage[] arr =
+                                c.getBlockStorageArray();
+                        for (int yy = 4; yy <= 5; yy++) {
+                            net.minecraft.world.chunk.storage.ExtendedBlockStorage st =
+                                    yy < arr.length ? arr[yy] : null;
+                            raw.append(" y").append(yy).append('=');
+                            if (st == null) {
+                                raw.append("null");
+                            } else {
+                                int sum = 0;
+                                for (int cell = 0; cell < 4096; cell++) {
+                                    sum += st.getSkyLight(cell & 15, (cell >> 8) & 15, (cell >> 4) & 15);
+                                }
+                                raw.append("skySum=").append(sum);
+                            }
+                        }
+                    }
+                    lines.add(raw.toString());
+                } catch (Throwable t) {
+                    lines.add("rawLight failed: " + t);
+                }
                 lines.add("lightProbe section=" + sx + "," + sy + "," + sz
                         + " sky15=" + sky15 + " skyMid=" + skyMid + " sky0=" + sky0
                         + " blockPos=" + blockPos + " nonAir=" + nonAir);

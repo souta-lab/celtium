@@ -268,8 +268,6 @@ public final class Lane1Shaders {
                 // the atlas and the lightmap), so V is flipped back here.
                 uv.y = 1.0 - uv.y;
                 vec4 texel = texture(atlas, uv);
-                // TEMP G1 BISECT18: R = alphaCutoff x10 (SOLID 0, CUTOUT 1, TRANSLUCENT ~0).
-                outColor = vec4(vec3(fog.alphaCutoff * 10.0), 1.0); return;
                 if (texel.a < fog.alphaCutoff) discard;
                 // The lightmap image's axes run (u = sky, v = block) as stored - measured
                 // at Gate G1 by displaying the bound image: brightness grows along U and
