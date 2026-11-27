@@ -547,7 +547,7 @@ public class MinecraftMixin {
         }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
         try {
-            if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() != null) {
+            if (org.soutalab.celtium.vulkan.CeltiumBackends.current() != null) {
                 celtium$windowRendererCreated = true;
                 return;
             }
@@ -620,8 +620,8 @@ public class MinecraftMixin {
         // refusal's reasons sitting in the backend's log. The backend only latches the consecutive
         // refusals (it cannot throw past the catch below, and celtium-vulkan cannot call
         // displayCrashReport), so the report and the throw live here, in the renderer's shape.
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend installed =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend installed =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (installed instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend) {
             String swapchainFailure = vulkanBackend.celtium$swapchainCreationFailure();
             if (swapchainFailure != null) {
@@ -639,8 +639,8 @@ public class MinecraftMixin {
             System.out.println("[Celtium] CELTIUM_SWAPPOINT calls=" + celtium$swapPointCalls);
         }
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 // The frame's pending work is flushed at GL draw and bind boundaries, and a GL-less frame crosses none
                 // of them - measured on legs gv-cohort-fix154/155, where submitCommands was never entered and every
@@ -670,8 +670,8 @@ public class MinecraftMixin {
                     target = "Lorg/lwjgl/opengl/Display;update()V"), require = 0)
     private void celtium$maybeSkipGlSwap() {
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     && vulkan.celtium$consumeSwapPendingFromVulkan()) {
                 // The frame is already on the swapchain, so only the swap is skipped: processMessages() is
