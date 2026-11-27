@@ -2231,6 +2231,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     int presentHookCalls;
+    /**
+     * Exceptions the swap point's two catches swallowed (drawpath audit DP-14). Static, because the
+     * catches sit in the mixin and the second of them guards the lookup of the current backend itself,
+     * so no instance is known at the seat. A present that threw every frame used to be
+     * indistinguishable from a present that was never attempted - the window froze, or fell back to
+     * the GL swap, with no record anywhere - because both catches discarded the exception without a
+     * count or a line. Printed on the verification summary as {@code swapPointExceptions} and reported
+     * to stderr on the cadence {@link #celtium$swapPointExceptionReported(int)} pins.
+     */
+    public static int swapPointExceptions;
+
+    /**
+     * Counts and reports an exception the swap point swallowed (DP-14). The catches keep their
+     * behaviour - the frame is still shown and the GL swap still runs - only the silence is removed.
+     * The report goes to stderr rather than the bounded {@code [Celtium]} log, whose per-tag line
+     * limit is exactly what a per-frame failure would exhaust first.
+     */
+    public static void celtium$noteSwapPointException(String seat, Throwable error) {
+        swapPointExceptions++;
+        if (celtium$swapPointExceptionReported(swapPointExceptions)) {
+            System.err.println("[Celtium] CELTIUM_SWAPPOINT_EXCEPTION seat=" + seat
+                    + " count=" + swapPointExceptions + " error=" + error);
+        }
+    }
+
+    /**
+     * {@return whether the swap-point exception with this count is reported}: the first three, then
+     * every 300th - the CELTIUM_PRESENT heartbeat's cadence, so a failure that starts mid-run is named
+     * when it starts and its persistence stays visible without a line per frame. Pure, so the cadence
+     * the production path takes is the one a test can pin.
+     */
+    static boolean celtium$swapPointExceptionReported(int count) {
+        return count <= 3 || count % 300 == 0;
+    }
     // The swap-point accounting (swapPoint*) lives in PresentSwapchain with the present path it
     // measures (item 704, R3 candidate 2 carried out with the R10 extraction).
     /**
@@ -3187,6 +3221,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " " + SubmitTrail.describe());
         }
         this.submissionStatistics.noteStalledStops();
+    }
+
+    /**
+     * Latches the stall from the context's device-loss fact (drawpath audit DP-17). The present path
+     * observes a device loss first - a {@code VK_ERROR_DEVICE_LOST} from its acquire or present - and
+     * routes it through the context's loss funnel, but the stall latch the resource-owning paths key
+     * on is this class's own, and nothing carried the fact across: the frame loop kept recording and
+     * presenting into the dead device, with only the present-failure counters moving. The present body
+     * calls this at its head (so the frame about to be recorded sees the latch) and again after its
+     * present attempt (so a loss that attempt itself observed is latched before the next frame). A
+     * no-op while the context reports no loss, and after the latch has already fired.
+     */
+    void celtium$noteStalledOnDeviceLoss() {
+        if (!this.gpuStalled && this.context != null && this.context.celtium$isDeviceLost()) {
+            this.noteStalled();
+        }
     }
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();

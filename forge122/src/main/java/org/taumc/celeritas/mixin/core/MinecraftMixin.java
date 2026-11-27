@@ -649,8 +649,12 @@ public class MinecraftMixin {
                 vulkan.celtium$flushPendingAtFrameBoundary();
                 vulkan.celtium$presentFrame();
             }
-        } catch (RuntimeException | LinkageError ignored) {
+        } catch (RuntimeException | LinkageError error) {
             // A failed present must not stop the frame from being shown, and the swap below still runs.
+            // The failure itself is counted and reported on the backend (drawpath audit DP-14): this
+            // catch used to discard it without a trace, so a present that threw every frame - in
+            // GL-less, where the swap below is a no-op - silently deleted the frame's presentation.
+            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$noteSwapPointException("present", error);
         }
     }
 
@@ -678,8 +682,11 @@ public class MinecraftMixin {
                 }
                 return;
             }
-        } catch (RuntimeException | LinkageError ignored) {
+        } catch (RuntimeException | LinkageError error) {
             // A frame must still be shown if this fails, so the swap below happens.
+            // Counted and reported like the present catch above (DP-14): a boundary flush or consume
+            // that throws here otherwise leaves no record that the swap decision was ever reached.
+            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$noteSwapPointException("swap", error);
         }
         org.lwjgl.opengl.Display.update();
     }

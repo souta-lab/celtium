@@ -304,6 +304,47 @@ public final class VulkanSwapchain {
     }
 
     /**
+     * Records a borrow-path acquire's out-of-date verdict (drawpath audit DP-16). The direct-present
+     * borrow acquires through the context's {@code PresentEngine}, not through this class's own
+     * acquire, so its verdicts never reached the fields above: the borrow's caller saw only a boolean,
+     * and the rebuild latched here by the composed present's acquire was incidental - a frame whose
+     * present was skip-gated after a failed borrow dropped the verdict entirely and retried the same
+     * stale generation next frame. The recording mirrors this class's own acquire branch exactly
+     * (the stale flag, the census count, the sticky rebuild request), so the backend's consumption
+     * cannot tell the two acquire paths apart.
+     */
+    void celtium$noteBorrowOutOfDate() {
+        this.outOfDate = true;
+        this.acquireOutOfDate++;
+        celtium$noteRebuildNeeded("the borrow acquire reported the swapchain out of date");
+    }
+
+    /**
+     * Records a borrow-path acquire's lost-surface verdict (DP-16), classified exactly as this class's
+     * own acquire and present paths classify it: on its own flag, because the recovery recreates the
+     * surface with the swapchain instead of handing the dead handle over.
+     */
+    void celtium$noteBorrowSurfaceLost() {
+        this.surfaceLost = true;
+    }
+
+    /**
+     * Routes a present-path {@code VK_ERROR_DEVICE_LOST} through the context's loss funnel (drawpath
+     * audit DP-17). The present paths used to classify only out-of-date and surface-lost; a device
+     * loss fell into the generic failure return, so the context never learned of it, the backend's
+     * stall latch - the flag every resource-owning path keys on - never synced, and the frame loop
+     * kept recording and presenting into a dead device for the rest of the session. The funnel is the
+     * one funnel every reported loss passes through (it latches the context unusable and leaves the
+     * breadcrumb dump), and it is entered only on the transition: a session whose device is already
+     * recorded lost does not dump again for every later present.
+     */
+    private void celtium$notePresentDeviceLost(String operation) {
+        if (!this.context.celtium$isDeviceLost()) {
+            this.context.celtium$reportDeviceLost(operation, VK_ERROR_DEVICE_LOST);
+        }
+    }
+
+    /**
      * {@return what the backend does with this swapchain at the next ensure}: {@code "recreate-surface"} when the
      * surface was lost (it wins over a plain rebuild, because reusing a dead surface is the failure being avoided),
      * {@code "rebuild"} when a rebuild was requested, {@code "keep"} otherwise. Pure and static so the decision the
@@ -1294,6 +1335,10 @@ public final class VulkanSwapchain {
                 if (presented == VK_ERROR_SURFACE_LOST_KHR) {
                     this.surfaceLost = true;
                 }
+                if (presented == VK_ERROR_DEVICE_LOST) {
+                    // Classified like the frame paths' losses (DP-17): through the context's funnel.
+                    celtium$notePresentDeviceLost("the present probe");
+                }
                 if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                     return "present probe: vkQueuePresentKHR returned " + presented;
                 }
@@ -1538,6 +1583,14 @@ public final class VulkanSwapchain {
                 replaceAcquireSemaphore(stack, acquire);
                 return "present image: the surface was lost at acquire (VK_ERROR_SURFACE_LOST_KHR)";
             }
+            if (result == VK_ERROR_DEVICE_LOST) {
+                // The device itself is gone, not the surface (DP-17): classified through the context's
+                // loss funnel instead of the generic failure return below, which recorded it nowhere.
+                // The semaphore is replaced as for any failed acquire - it may be left signaled.
+                celtium$notePresentDeviceLost("the composed present's acquire");
+                replaceAcquireSemaphore(stack, acquire);
+                return "present image: the device was lost at acquire (VK_ERROR_DEVICE_LOST)";
+            }
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 replaceAcquireSemaphore(stack, acquire);
                 return "present image: vkAcquireNextImageKHR returned " + result;
@@ -1654,6 +1707,11 @@ public final class VulkanSwapchain {
                 // Classified like the acquire-side loss (bughunt LANE-05 #5): the frame is gone either way, and
                 // the backend recreates the surface with the swapchain instead of retrying on a dead handle.
                 this.surfaceLost = true;
+            }
+            if (presented == VK_ERROR_DEVICE_LOST) {
+                // The device itself is gone (DP-17): routed through the context's loss funnel, where
+                // the generic failure return below left it unrecorded.
+                celtium$notePresentDeviceLost("the composed present");
             }
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkQueuePresentKHR returned " + presented;
@@ -2012,6 +2070,13 @@ public final class VulkanSwapchain {
             }
             if (presented == VK_ERROR_SURFACE_LOST_KHR) {
                 this.surfaceLost = true;
+            }
+            if (presented == VK_ERROR_DEVICE_LOST) {
+                // The device itself is gone (DP-17): routed through the context's loss funnel, where
+                // the generic failure return below left it unrecorded - the backend's stall latch keys
+                // off the context's loss fact, so without this the frame loop kept presenting into the
+                // dead device.
+                celtium$notePresentDeviceLost("the direct present");
             }
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: the direct present returned " + presented;

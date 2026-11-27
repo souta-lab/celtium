@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
+import static org.lwjgl.vulkan.KHRSurface.VK_ERROR_SURFACE_LOST_KHR;
+import static org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
@@ -8,6 +10,7 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
 import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
@@ -264,6 +267,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * view are the lender's (the context's {@code PresentEngine}): this class never destroys them.
      */
     private PresentEngine.BorrowedImage presentBorrow;
+    /**
+     * The fatal verdict of the most recent failed borrow acquire (drawpath audit DP-16), waiting for
+     * {@link #celtium$takeBorrowAcquireVerdict()}: {@code VK_ERROR_OUT_OF_DATE_KHR},
+     * {@code VK_ERROR_SURFACE_LOST_KHR} or {@code VK_ERROR_DEVICE_LOST}, or {@code VK_SUCCESS} when no
+     * verdict is waiting. Recorded only at the acquire seat itself, where the engine's
+     * {@code lastAcquireResult} is this call's own - the borrow's earlier refusals (the format gate, an
+     * exhausted semaphore pool) never reach an acquire, so a verdict read after them would name a
+     * previous call's result. The verdict has to be carried out of this method explicitly: the caller
+     * used to see only the boolean, so an out-of-date borrow acquire latched no rebuild anywhere and a
+     * frame whose present was then skip-gated dropped the verdict entirely.
+     */
+    private int pendingBorrowAcquireVerdict = VK_SUCCESS;
     /** The owned colour image's tracked layout, saved at borrow time and restored when the borrow ends. */
     private int ownedColorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     /**
@@ -634,6 +649,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // would hand that pending signal to a later acquire: replace the semaphore, the owned
             // pool's replaceAcquireSemaphore discipline. The slot stays unowned.
             replacePresentAcquireSemaphore(slot);
+            // The fatal verdicts are kept for the caller (DP-16): they are the swapchain's own
+            // recovery signals, and this is the one seat where the result is known to be this
+            // acquire's. Non-fatal failures (a device-local error the composed present's own acquire
+            // will meet and classify) are not carried.
+            int acquireResult = engine.lastAcquireResult();
+            if (celtium$isFatalBorrowVerdict(acquireResult)) {
+                this.pendingBorrowAcquireVerdict = acquireResult;
+            }
             return false;
         }
         VulkanSwapchain.assignAcquireOwner(this.presentAcquireOwnerImage, slot, borrowed.index());
@@ -643,6 +666,32 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.presentAcquireSemaphoreUsed = acquireSemaphore;
         this.presentAcquireWaitPending = true;
         return true;
+    }
+
+    /**
+     * {@return whether a borrow acquire result is one of the fatal verdicts the caller must act on}
+     * (DP-16): out-of-date (the generation is stale and must be rebuilt), surface lost (the surface is
+     * dead and must be recreated with the swapchain) or device lost (the context's loss funnel must
+     * hear of it). Every other failure is not carried: the frame keeps its owned image and takes the
+     * composed present, whose own acquire meets and classifies the same surface state. Pure and
+     * static, so the classification the production seat takes is the one a test can pin.
+     */
+    static boolean celtium$isFatalBorrowVerdict(int acquireResult) {
+        return acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_ERROR_SURFACE_LOST_KHR
+                || acquireResult == VK_ERROR_DEVICE_LOST;
+    }
+
+    /**
+     * {@return the fatal verdict a failed borrow acquire left (DP-16), clearing it}: one of
+     * {@code VK_ERROR_OUT_OF_DATE_KHR}, {@code VK_ERROR_SURFACE_LOST_KHR} or
+     * {@code VK_ERROR_DEVICE_LOST}, or {@code VK_SUCCESS} when no verdict is waiting. Consume-on-read,
+     * like the lender's {@code borrowAbandoned()}: the recovery the verdict asks for is requested once,
+     * by the caller that owns the swapchain wrapper this target borrows through.
+     */
+    public int celtium$takeBorrowAcquireVerdict() {
+        int verdict = this.pendingBorrowAcquireVerdict;
+        this.pendingBorrowAcquireVerdict = VK_SUCCESS;
+        return verdict;
     }
 
     /** {@return whether a swapchain borrow is live and still valid}. */
