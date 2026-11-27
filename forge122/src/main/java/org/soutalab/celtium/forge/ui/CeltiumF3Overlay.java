@@ -4,8 +4,6 @@ import com.mojang.realmsclient.gui.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import org.embeddedt.embeddium.impl.common.util.MathUtil;
-import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.taumc.celeritas.CeleritasVintage;
 
 import java.lang.management.ManagementFactory;
@@ -183,10 +181,10 @@ public final class CeltiumF3Overlay {
     }
 
     private static String getNativeMemoryString() {
-        return "Off-Heap: +" + MathUtil.toMib(getNativeMemoryUsage()) + "MB";
+        return "Off-Heap: +" + (getNativeMemoryUsage() / (1024L * 1024L)) + "MB";
     }
 
     private static long getNativeMemoryUsage() {
-        return ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage().getUsed() + NativeBuffer.getTotalAllocated();
+        return ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage().getUsed();
     }
 }
