@@ -11445,7 +11445,6 @@ this.frameBufferOpen = false;
                         + " drawn=" + this.immediateStatistics.immediateGroupsDrawn() + " discarded=" + this.immediateStatistics.immediateGroupsDiscarded()
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
-                        + " deferredNextFrame=" + this.immediateStatistics.immediateDeferredNextFrame()
                         + " lastError=" + this.immediateLastFlushError);
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {

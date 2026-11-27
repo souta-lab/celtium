@@ -29,13 +29,15 @@ public final class TargetStatistics {
     private int drainedOtherTargetPasses;
     private int unflushedTargetGroupsDropped;
     /**
-     * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
-     * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
+     * Window flushes that threw. The batches of a failed window flush are retained, not dropped -
+     * {@code windowFlushRetainedBatches} is the live counterpart - so this counter records the failure
+     * itself, and the loss aggregate reads it as a failure signal rather than a drop count. Bounded to
+     * the frame they happened in since task-60: the count and the text are what let a reader tell a
+     * refused window from a device that stopped.
      */
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
     private int windowFlushRetainedBatches;
-    private int compositePresentRefusals;
     private int splashCanvasInvalidations;
     private int splashSourcedGroups;
     /** Off-target passes not begun because their target had no pending geometry. */
@@ -45,7 +47,6 @@ public final class TargetStatistics {
     private int windowDrawsToFrameImage;
     private int windowFramesMarkedPresentable;
     private String lastPairClearRefusal = "none";
-    private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
     private int gameClearsLatchedForFrame;
 
@@ -199,21 +200,6 @@ public final class TargetStatistics {
         return this.windowFlushRetainedBatches;
     }
 
-    /** Records one compositePresentRefusals. */
-    void noteCompositePresentRefusals() {
-        this.compositePresentRefusals++;
-    }
-
-    /** Sets compositePresentRefusals. */
-    void setCompositePresentRefusals(int value) {
-        this.compositePresentRefusals = value;
-    }
-
-    /** {@return compositePresentRefusals}. */
-    int compositePresentRefusals() {
-        return this.compositePresentRefusals;
-    }
-
     /** Records one splashCanvasInvalidations. */
     void noteSplashCanvasInvalidations() {
         this.splashCanvasInvalidations++;
@@ -327,21 +313,6 @@ public final class TargetStatistics {
     /** {@return lastPairClearRefusal}. */
     String lastPairClearRefusal() {
         return this.lastPairClearRefusal;
-    }
-
-    /** Records one outsideWorldPassRefusals. */
-    void noteOutsideWorldPassRefusals() {
-        this.outsideWorldPassRefusals++;
-    }
-
-    /** Sets outsideWorldPassRefusals. */
-    void setOutsideWorldPassRefusals(int value) {
-        this.outsideWorldPassRefusals = value;
-    }
-
-    /** {@return outsideWorldPassRefusals}. */
-    int outsideWorldPassRefusals() {
-        return this.outsideWorldPassRefusals;
     }
 
     /** Records one outsideWorldPassAccepted. */

@@ -535,7 +535,6 @@ final class BackendDiagnostics {
                 + " invalidImmediateRecords=" + b.immediateStatistics.invalidImmediateRecords()
                 + " backendCommandBuffer=" + Long.toHexString(b.commandBuffer.address())
                 + " backendCommandState=" + b.commandState.state()
-                + " drawsWithoutCommandBuffer=" + b.immediateStatistics.drawsWithoutCommandBuffer()
                 + " offTargetRefusals=" + (b.offTargetRefusalsByReason.isEmpty()
                         ? "none" : b.offTargetRefusalsByReason.toString())
                 // Off-target passes whose routing failed and were redirected into the frame image
@@ -544,7 +543,7 @@ final class BackendDiagnostics {
                 + " offTargetRedirects=" + b.offTargetRedirects
                 + " offTargetOffered=" + b.targetStatistics.offTargetOffered() + " offTargetAccepted=" + b.targetStatistics.offTargetAccepted()
                 + " offTargetDrawn=" + b.targetStatistics.offTargetDrawn() + " offTargetCopiedBack=" + b.targetStatistics.offTargetCopiedBack()
-                + " outsideWorldPassAccepted=" + b.targetStatistics.outsideWorldPassAccepted() + " outsideWorldPassRefusals=" + b.targetStatistics.outsideWorldPassRefusals() + " compositePresentRefusals=" + b.targetStatistics.compositePresentRefusals()
+                + " outsideWorldPassAccepted=" + b.targetStatistics.outsideWorldPassAccepted()
                 + " descriptorSets=" + b.descriptorSetCensus()
                 // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
                 // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
@@ -706,7 +705,7 @@ final class BackendDiagnostics {
                 + " immediateGroupsClosed=" + b.immediateStatistics.immediateGroupsClosed()
                 + " immediateMaxGroupVertices=" + b.immediateStatistics.immediateMaxGroupVertices()
                 + " immediateRefusal=" + b.celtium$refusalText().replace(' ', '_')
-                + " snapshotCaptures=" + b.immediateStatistics.snapshotCaptures() + " snapshotServed=" + b.immediateStatistics.snapshotServedCaptures() + " outsideWorldPassRefusals=" + b.targetStatistics.outsideWorldPassRefusals()
+                + " snapshotCaptures=" + b.immediateStatistics.snapshotCaptures() + " snapshotServed=" + b.immediateStatistics.snapshotServedCaptures()
                 + " textureRefusalsBeforeAccept=" + b.textureStats.textureRefusalsBeforeAccept()
                 + " postAcceptDroppedGroups=" + b.immediateStatistics.postAcceptDroppedGroups()
                 // The post-accept loss aggregate (drawpath audit DP-10): the loss counters are scattered
@@ -800,17 +799,18 @@ final class BackendDiagnostics {
                 // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
                 // than from a hand-written list: the list stopped at 9 and hid POSITION_NORMAL's own entry, which is
                 // the same shape as the counters that hid ids 6..10 before. droppedByFormat is incremented at the
-                // one post-accept drop seat (the ordering flush's framebuffer-replacement drop, DP-10); printing
-                // every id is what says which formats lost batches rather than a list that stops at 5.
+                // one post-accept drop boundary (framebuffer replacement in the ordering flush), per group and
+                // format; printing every id is what says which formats lost groups rather than a list that
+                // stops at 5.
                 // The group lifecycle at the end of the run: what the queue did with what it accepted.
                 // immediateGroupsFlushed is incremented beside immediateGroupsDrawn, so both count groups drawn -
                 // the key was called immediateFlushes until round 49, which read as a window count and was not one:
                 // the real flush count is actualFlushes (22.1 a frame on the world scene against 113.6 groups). The
                 // rename is the whole change; closed minus drawn is the number that reached no pipeline, and the
                 // pending/recorded/retired sizes are what
-                // is still held. immediateGroupsKeptForOtherTargets and immediateDeferredNextFrame are printed
-                // because they name the two ways a group can be held back;
-                // reading them here is what makes a zero that cannot move (no increment site) visible as such.
+                // is still held. immediateGroupsKeptForOtherTargets is printed because it names a way a group
+                // can be held back; a counter with no increment site anywhere is not printed at all - the
+                // reader-wiring pass removed those rather than leave a permanent zero on the line.
                 + " immediateGroupsDrawn=" + b.immediateStatistics.immediateGroupsDrawn()
                 + " groupPool=[created=" + ImmediateGroup.poolCreated + " reused=" + ImmediateGroup.poolReused
                 + " recycled=" + ImmediateGroup.poolRecycled + "]"
@@ -852,7 +852,6 @@ final class BackendDiagnostics {
                 + " immediateStateCalls=" + b.immediateStatistics.immediateStateCalls()
                 + " immediateGroupsDiscarded=" + b.immediateStatistics.immediateGroupsDiscarded()
                 + " immediateGroupsKeptForOtherTargets=" + b.immediateStatistics.immediateGroupsKeptForOtherTargets()
-                + " immediateDeferredNextFrame=" + b.immediateStatistics.immediateDeferredNextFrame()
                 + " groupsStaleTargetGeneration=" + b.immediateStatistics.groupsStaleTargetGeneration()
                 + " groupsStaleWorldEpoch=" + b.immediateStatistics.groupsStaleWorldEpoch()
                 + " worldEpoch=" + b.worldEpoch
@@ -925,7 +924,61 @@ final class BackendDiagnostics {
                 + b.skippedGluPerspectives + ",gluSites:" + b.gluPerspectiveShapes.size()
                 + ",gluSkipSites:" + b.gluPerspectiveSkips.size()
                 + ",mode:" + b.matrixModeCalls + ",identity:" + b.loadIdentityCalls
-                + ",texture:" + b.textureStats.bindTextureCalls();
+                + ",texture:" + b.textureStats.bindTextureCalls()
+                + " " + lossAggregateSummary()
+                + " " + flushBoundarySummary()
+                + " " + CeltiumLogLimiter.suppressionSummary();
+    }
+
+    /**
+     * The loss aggregate the leg gates read (drawpath audit X-1): every counted-but-unread loss and
+     * failure counter that is zero on a healthy run, summed into one total beside its breakdown. The
+     * members are the counters whose individual keys elsewhere on this line had no automated reader -
+     * post-accept group drops, ordering-flush failures and the batches they dropped, geometry dropped
+     * at a stalled submission, target groups dropped unflushed, failed window flushes (whose batches
+     * are retained, so the member is the failure count) and stale-group refusals. Counters that are
+     * nonzero by design (terrain budget drops, pre-accept format negotiation) and counters another
+     * bundle promotes on their own keys (the batch route's dropped draws) are deliberately not members.
+     */
+    private String lossAggregateSummary() {
+        long postAcceptDroppedGroups = b.immediateStatistics.postAcceptDroppedGroups();
+        long orderingFlushFailures = b.immediateStatistics.orderingFlushFailures();
+        long orderingFlushDroppedBatches = b.immediateStatistics.orderingFlushDroppedBatches();
+        long stalledGeometryDrops = b.submissionStatistics.stalledGeometryDrops();
+        long stalledGeometryDroppedBatches = b.submissionStatistics.stalledGeometryDroppedBatches();
+        long unflushedTargetGroupsDropped = b.targetStatistics.unflushedTargetGroupsDropped();
+        long windowFlushFailures = b.targetStatistics.windowFlushFailures();
+        long staleGroupRefusals = b.immediateStatistics.staleGroupRefusals();
+        long total = postAcceptDroppedGroups + orderingFlushFailures + orderingFlushDroppedBatches
+                + stalledGeometryDrops + stalledGeometryDroppedBatches + unflushedTargetGroupsDropped
+                + windowFlushFailures + staleGroupRefusals;
+        return "lossAggregate=[postAcceptDroppedGroups=" + postAcceptDroppedGroups
+                + ",orderingFlushFailures=" + orderingFlushFailures
+                + ",orderingFlushDroppedBatches=" + orderingFlushDroppedBatches
+                + ",stalledGeometryDrops=" + stalledGeometryDrops
+                + ",stalledGeometryDroppedBatches=" + stalledGeometryDroppedBatches
+                + ",unflushedTargetGroupsDropped=" + unflushedTargetGroupsDropped
+                + ",windowFlushFailures=" + windowFlushFailures
+                + ",staleGroupRefusals=" + staleGroupRefusals
+                + ",total=" + total + "]";
+    }
+
+    /**
+     * The flush-boundary census's output seat: the census counts every flush cause at ten increment
+     * sites and had tests, but nothing printed it, so a leg could never read why frames flushed.
+     */
+    private String flushBoundarySummary() {
+        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus census =
+                org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current();
+        StringBuilder out = new StringBuilder("flushBoundary=[");
+        for (org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason reason
+                : org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.values()) {
+            if (out.length() > "flushBoundary=[".length()) {
+                out.append(",");
+            }
+            out.append(reason.name()).append("=").append(census.count(reason));
+        }
+        return out.append(",boundaries=").append(census.boundaries()).append("]").toString();
     }
 
     /** The bounded window diagnostics {@link #b.drawPendingImmediate(Long)} used to run inline; see the call site. */

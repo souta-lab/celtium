@@ -193,10 +193,8 @@ public final class ImmediateStatistics {
     private float mirroredProjectionDelta = -1.0f;
     private String particleDescriptorFailureReason;    private long actualFlushWorstNanos;
     /** Flushes refused because no command buffer was recording (A11 exposes this path). */
-    private int drawsWithoutCommandBuffer;
     private int frameAccepted;
     private int immediateBatchesOffered;
-    private int immediateDeferredNextFrame;
     private int immediateMaxGroupVertices;
     private int immediateWindowsThisFrame;
     private float lastAlphaPushReference = Float.NaN;
@@ -1851,26 +1849,6 @@ public final class ImmediateStatistics {
         return this.actualFlushWorstNanos;
     }
 
-    /** Records one drawsWithoutCommandBuffer. */
-    void noteDrawsWithoutCommandBuffer() {
-        this.drawsWithoutCommandBuffer++;
-    }
-
-    /** Adds to drawsWithoutCommandBuffer. */
-    void addDrawsWithoutCommandBuffer(int value) {
-        this.drawsWithoutCommandBuffer += value;
-    }
-
-    /** Sets drawsWithoutCommandBuffer. */
-    void setDrawsWithoutCommandBuffer(int value) {
-        this.drawsWithoutCommandBuffer = value;
-    }
-
-    /** {@return drawsWithoutCommandBuffer}. */
-    int drawsWithoutCommandBuffer() {
-        return this.drawsWithoutCommandBuffer;
-    }
-
     /** Records one frameAccepted. */
     void noteFrameAccepted() {
         this.frameAccepted++;
@@ -1909,26 +1887,6 @@ public final class ImmediateStatistics {
     /** {@return immediateBatchesOffered}. */
     int immediateBatchesOffered() {
         return this.immediateBatchesOffered;
-    }
-
-    /** Records one immediateDeferredNextFrame. */
-    void noteImmediateDeferredNextFrame() {
-        this.immediateDeferredNextFrame++;
-    }
-
-    /** Adds to immediateDeferredNextFrame. */
-    void addImmediateDeferredNextFrame(int value) {
-        this.immediateDeferredNextFrame += value;
-    }
-
-    /** Sets immediateDeferredNextFrame. */
-    void setImmediateDeferredNextFrame(int value) {
-        this.immediateDeferredNextFrame = value;
-    }
-
-    /** {@return immediateDeferredNextFrame}. */
-    int immediateDeferredNextFrame() {
-        return this.immediateDeferredNextFrame;
     }
 
     /** Records one immediateMaxGroupVertices. */

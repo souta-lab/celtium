@@ -14,7 +14,7 @@ class FallbackPathsTest {
 
     @Test
     void countsAttemptsAndVerdictsPerPath() {
-        FallbackPaths.Handle present = FallbackPaths.register(FallbackPaths.PRESENT_DIRECT);
+        FallbackPaths.Handle present = FallbackPaths.register("present.direct");
         present.attempt();
         present.fast();
         present.attempt();
@@ -31,16 +31,16 @@ class FallbackPathsTest {
 
     @Test
     void pathsAreCountedIndependently() {
-        FallbackPaths.attempt(FallbackPaths.SLAB_ALLOC);
-        FallbackPaths.fast(FallbackPaths.SLAB_ALLOC);
+        FallbackPaths.attempt("slab.alloc");
+        FallbackPaths.fast("slab.alloc");
         FallbackPaths.attempt(FallbackPaths.TERRAIN_ENGINE);
         FallbackPaths.fallback(FallbackPaths.TERRAIN_ENGINE);
         FallbackPaths.attempt(FallbackPaths.TERRAIN_ENGINE);
         FallbackPaths.fallback(FallbackPaths.TERRAIN_ENGINE);
 
-        assertEquals(1L, FallbackPaths.register(FallbackPaths.SLAB_ALLOC).attempts());
-        assertEquals(1L, FallbackPaths.register(FallbackPaths.SLAB_ALLOC).fastHits());
-        assertEquals(0L, FallbackPaths.register(FallbackPaths.SLAB_ALLOC).fallbacks());
+        assertEquals(1L, FallbackPaths.register("slab.alloc").attempts());
+        assertEquals(1L, FallbackPaths.register("slab.alloc").fastHits());
+        assertEquals(0L, FallbackPaths.register("slab.alloc").fallbacks());
         assertEquals(2L, FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE).attempts());
         assertEquals(0L, FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE).fastHits());
         assertEquals(2L, FallbackPaths.register(FallbackPaths.TERRAIN_ENGINE).fallbacks());
@@ -62,7 +62,7 @@ class FallbackPathsTest {
 
     @Test
     void verdictRoutesToFastOrFallback() {
-        FallbackPaths.Handle handle = FallbackPaths.register(FallbackPaths.GLSM_ASYNC);
+        FallbackPaths.Handle handle = FallbackPaths.register("glsm.async");
         handle.attempt();
         handle.verdict(true);
         handle.attempt();
@@ -86,7 +86,7 @@ class FallbackPathsTest {
 
     @Test
     void summaryPrintsAttemptsFastFallbackAndRatePerPath() {
-        FallbackPaths.Handle present = FallbackPaths.register(FallbackPaths.PRESENT_DIRECT);
+        FallbackPaths.Handle present = FallbackPaths.register("present.direct");
         for (int i = 0; i < 4; i++) {
             present.attempt();
         }
@@ -104,10 +104,10 @@ class FallbackPathsTest {
 
     @Test
     void summarySortsTheBusiestPathFirst() {
-        FallbackPaths.Handle quiet = FallbackPaths.register(FallbackPaths.GLSM_ASYNC);
+        FallbackPaths.Handle quiet = FallbackPaths.register("glsm.async");
         quiet.attempt();
         quiet.fallback();
-        FallbackPaths.Handle busy = FallbackPaths.register(FallbackPaths.PRESENT_DIRECT);
+        FallbackPaths.Handle busy = FallbackPaths.register("present.direct");
         busy.attempt();
         busy.fast();
         busy.attempt();
@@ -121,7 +121,7 @@ class FallbackPathsTest {
 
     @Test
     void summaryRateIsZeroWhenNothingWasAttempted() {
-        FallbackPaths.register(FallbackPaths.SLAB_ALLOC);
+        FallbackPaths.register("slab.alloc");
         assertTrue(FallbackPaths.summary().contains(
                 "slab.alloc:attempts=0,fast=0,fallback=0,fastRate=0.000"),
                 FallbackPaths.summary());
