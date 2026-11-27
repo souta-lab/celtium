@@ -38,6 +38,7 @@ public final class WorldSectionSnapshot {
     private final byte[] blockLight = new byte[VOLUME];
     private final byte[] skyLight = new byte[VOLUME];
     private final int[] tintRgb = new int[VOLUME];
+    private final boolean[] neighborBrightness = new boolean[VOLUME];
 
     public static int index(int x, int y, int z) {
         return x + SIZE * (z + SIZE * y);
@@ -58,6 +59,7 @@ public final class WorldSectionSnapshot {
         Arrays.fill(blockLight, (byte) 0);
         Arrays.fill(skyLight, (byte) 0);
         Arrays.fill(tintRgb, NO_TINT);
+        Arrays.fill(neighborBrightness, false);
     }
 
     public int sectionX() {
@@ -103,13 +105,55 @@ public final class WorldSectionSnapshot {
         return skyLight[index] & 0xFF;
     }
 
+    /** Whether the state at {@code index} samples its render light from its neighbours. */
+    public void setNeighborBrightness(int index, boolean value) {
+        neighborBrightness[index] = value;
+    }
+
+    /**
+     * The render light at a face cell, following vanilla's getLightFromNeighborsFor rule
+     * (the rule World.getCombinedLight delegates to and the old slice applied): when the
+     * face cell's own state uses neighbour brightness - air, leaves, and every other
+     * non-full-cube state - the light is the maximum over the cell's six neighbours,
+     * not the cell's own stored value. The stored arrays legitimately hold 0 for pocket
+     * cells under a canopy; the neighbour maximum is what lifts those faces in vanilla.
+     */
+    public int renderSkyLightAt(int faceIndex) {
+        if (!neighborBrightness[faceIndex]) {
+            return skyLightAt(faceIndex);
+        }
+        int max = 0;
+        for (int dir = 0; dir < 6; dir++) {
+            int value = skyLightAt(faceIndex + offset(dir));
+            if (value > max) {
+                max = value;
+            }
+        }
+        return max;
+    }
+
+    /** The block-light twin of {@link #renderSkyLightAt(int)}. */
+    public int renderBlockLightAt(int faceIndex) {
+        if (!neighborBrightness[faceIndex]) {
+            return blockLightAt(faceIndex);
+        }
+        int max = 0;
+        for (int dir = 0; dir < 6; dir++) {
+            int value = blockLightAt(faceIndex + offset(dir));
+            if (value > max) {
+                max = value;
+            }
+        }
+        return max;
+    }
+
     /** The light of the cell a face points into: the neighbour cell along {@code dir}. */
     public int faceBlockLight(int index, int dir) {
-        return blockLightAt(index + offset(dir)) & 0xFF;
+        return renderBlockLightAt(index + offset(dir)) & 0xFF;
     }
 
     public int faceSkyLight(int index, int dir) {
-        return skyLightAt(index + offset(dir)) & 0xFF;
+        return renderSkyLightAt(index + offset(dir)) & 0xFF;
     }
 
     public int tintAt(int index) {

@@ -91,6 +91,7 @@ public final class ForgeSectionScanner {
                         // Off the world (or no world handle): air, with the light the
                         // world's own out-of-range rule answers (sky full, block none).
                         snapshot.setCell(index, 0, 0, 15, WorldSectionSnapshot.NO_TINT);
+                        snapshot.setNeighborBrightness(index, true);
                         continue;
                     }
                     int cx = (wx >> 4) - sectionX + 1;
@@ -107,6 +108,7 @@ public final class ForgeSectionScanner {
                         Chunk chunk = chunks[cx][cz];
                         int sky = chunk != null && wy >= chunk.getHeightValue(lx, lz) ? 15 : 0;
                         snapshot.setCell(index, 0, 0, sky, WorldSectionSnapshot.NO_TINT);
+                        snapshot.setNeighborBrightness(index, true);
                         continue;
                     }
                     IBlockState state = storage.get(lx, ly, lz);
@@ -125,6 +127,7 @@ public final class ForgeSectionScanner {
                         tint = resolveTint(world, pos, state);
                     }
                     snapshot.setCell(index, id, blockLight, skyLight, tint);
+                    snapshot.setNeighborBrightness(index, state.useNeighborBrightness());
                 }
             }
         }
