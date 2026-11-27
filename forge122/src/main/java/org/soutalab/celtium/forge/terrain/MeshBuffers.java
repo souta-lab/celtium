@@ -3,7 +3,6 @@ package org.soutalab.celtium.forge.terrain;
 import org.soutalab.celtium.core.geometry.GeneralQuad;
 import org.soutalab.celtium.core.geometry.PackedAxisQuad;
 
-import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 
 /**
@@ -114,34 +113,39 @@ public final class MeshBuffers {
         return new GeneralQuad(positions, m[meta], m[meta + 1], m[meta + 2], m[meta + 3]);
     }
 
-    /** Writes one layer's axis quads into {@code segment} at {@code offset}; returns bytes written. */
-    public long writeAxisLayerTo(int layer, MemorySegment segment, long offset) {
-        int count = axisCounts[layer];
-        int[] words = axisWords[layer];
-        for (int i = 0; i < count; i++) {
-            int base = i * 4;
-            new PackedAxisQuad(words[base], words[base + 1], words[base + 2], words[base + 3])
-                    .writeTo(segment, offset + i * PackedAxisQuad.BYTE_SIZE);
+    /** One layer's axis quads as a list, in emission order - the store's input shape. */
+    public java.util.List<PackedAxisQuad> axisLayerList(int layer) {
+        java.util.List<PackedAxisQuad> out = new java.util.ArrayList<>(axisCounts[layer]);
+        for (int i = 0; i < axisCounts[layer]; i++) {
+            out.add(axisQuad(layer, i));
         }
-        return count * PackedAxisQuad.BYTE_SIZE;
+        return out;
     }
 
-    /** Writes one layer's aux column into {@code segment} at {@code offset}; returns bytes written. */
-    public long writeAuxLayerTo(int layer, MemorySegment segment, long offset) {
-        int count = axisCounts[layer];
-        short[] aux = axisAux[layer];
-        for (int i = 0; i < count; i++) {
-            segment.set(java.lang.foreign.ValueLayout.JAVA_SHORT, offset + i * 2L, aux[i]);
+    /** One layer's general quads as a list, in emission order. */
+    public java.util.List<GeneralQuad> generalLayerList(int layer) {
+        java.util.List<GeneralQuad> out = new java.util.ArrayList<>(generalCounts[layer]);
+        for (int i = 0; i < generalCounts[layer]; i++) {
+            out.add(generalQuad(layer, i));
         }
-        return count * 2L;
+        return out;
     }
 
-    /** Writes one layer's general quads into {@code segment} at {@code offset}; returns bytes written. */
-    public long writeGeneralLayerTo(int layer, MemorySegment segment, long offset) {
-        int count = generalCounts[layer];
-        for (int i = 0; i < count; i++) {
-            generalQuad(layer, i).writeTo(segment, offset + i * GeneralQuad.BYTE_SIZE);
+    /**
+     * The auxiliary column for the whole section: the per-quad {@code mc_Entity} ids concatenated
+     * in layer order (SOLID, CUTOUT, TRANSLUCENT), matching the store's axis range layout. Empty
+     * when the mesh ran without an auxiliary column.
+     */
+    public short[] auxColumn() {
+        if (!auxEnabled) {
+            return new short[0];
         }
-        return count * GeneralQuad.BYTE_SIZE;
+        short[] out = new short[axisTotal()];
+        int cursor = 0;
+        for (int layer = 0; layer < TerrainLayer.COUNT; layer++) {
+            System.arraycopy(axisAux[layer], 0, out, cursor, axisCounts[layer]);
+            cursor += axisCounts[layer];
+        }
+        return out;
     }
 }

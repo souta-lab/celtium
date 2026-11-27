@@ -4,7 +4,6 @@ import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.chunk.Chunk;
 
@@ -42,9 +41,12 @@ public final class ForgeSectionScanner {
                         tint = resolveTint(world, pos, state);
                     }
                     int index = WorldSectionSnapshot.index(x, y, z);
+                    // IBlockAccess carries no per-channel light getter in 1.12.2; the combined
+                    // value packs sky in bits 20..23 and block in bits 4..7.
+                    int combined = world.getCombinedLight(pos, 0);
                     snapshot.setCell(index, id,
-                            world.getLightFor(EnumSkyBlock.BLOCK, pos),
-                            world.getLightFor(EnumSkyBlock.SKY, pos),
+                            (combined >> 4) & 0xF,
+                            (combined >> 20) & 0xF,
                             tint);
                 }
             }
@@ -70,7 +72,7 @@ public final class ForgeSectionScanner {
 
     private static int resolveTint(IBlockAccess world, BlockPos pos, IBlockState state) {
         try {
-            int color = Minecraft.getMinecraft().getBlockColors().getColor(state, world, pos, 0);
+            int color = Minecraft.getMinecraft().getBlockColors().colorMultiplier(state, world, pos, 0);
             if (color != -1) {
                 return color & 0xFFFFFF;
             }

@@ -40,8 +40,13 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         }
 
         @Override
-        public int getLightFor(net.minecraft.world.EnumSkyBlock lightType, BlockPos pos) {
-            return 15;
+        public int getCombinedLight(BlockPos pos, int lightValue) {
+            return (15 << 20) | (15 << 4);
+        }
+
+        @Override
+        public boolean isSideSolid(BlockPos pos, EnumFacing side, boolean _default) {
+            return _default;
         }
 
         @Override
@@ -116,7 +121,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         List<IBlockState> states = new ArrayList<>();
         int maxId = -1;
         for (Block block : Block.REGISTRY) {
-            for (IBlockState state : block.getStateContainer().getValidStates()) {
+            for (IBlockState state : block.getBlockState().getValidStates()) {
                 int id = Block.BLOCK_STATE_IDS.get(state);
                 if (id > maxId) {
                     maxId = id;
@@ -159,7 +164,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             return;
         }
         t.leaves[id] = block instanceof BlockLeaves;
-        t.mcEntity[id] = (short) Block.getIdForBlock(block);
+        t.mcEntity[id] = (short) Block.getIdFromBlock(block);
         t.layer[id] = (byte) layerOf(state);
         t.cullsSame[id] = block instanceof BlockBreakable || block instanceof BlockLiquid;
         t.noGreedy[id] = material == Material.LEAVES || material == Material.PLANTS
@@ -266,14 +271,18 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         int positionOffset = -1;
         int normalOffset = -1;
         int strideInts = format.getIntegerSize();
+        // VertexFormatElement carries no offset getter in 1.12.2; offsets accumulate in element
+        // order (the same walk CeltiumVertexFormats uses to validate a format).
+        int elementByteOffset = 0;
         for (VertexFormatElement element : format.getElements()) {
             if (element.getUsage() == VertexFormatElement.EnumUsage.POSITION
                     && element.getType() == VertexFormatElement.EnumType.FLOAT) {
-                positionOffset = element.getOffset() / 4;
+                positionOffset = elementByteOffset / 4;
             }
             if (element.getUsage() == VertexFormatElement.EnumUsage.NORMAL) {
-                normalOffset = element.getOffset() / 4;
+                normalOffset = elementByteOffset / 4;
             }
+            elementByteOffset += element.getSize();
         }
         if (positionOffset < 0 || vertexData.length < strideInts * 4) {
             return false;
