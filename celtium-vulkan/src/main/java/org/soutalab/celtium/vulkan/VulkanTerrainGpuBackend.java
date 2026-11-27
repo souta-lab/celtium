@@ -19221,19 +19221,23 @@ this.frameBufferOpen = false;
             shadowStage = DemonicaTerrainBridge.shadowsBeingRendered();
             packStageBracket = shadowStage ? "packRecordShadow" : "packRecordGbuffers";
             org.soutalab.celtium.vulkan.FramePassTimings.begin(packStageBracket);
+            // E10 shadow arm: the one pass the shadow executor speaks for - the solid
+            // pass, under the camera executor's own target predicate. The stage head,
+            // the collection hook and the pre-enumeration all gate on this single
+            // predicate, so the collected population and the enumerated population are
+            // the same pass' by construction (a second subpass' regions can never be
+            // concatenated into the collection the reproduction test compares against).
+            boolean shadowDrawTargetPass = shadowStage && GpuTerrainCulling.SHADOW_DRAW
+                    && celtium$gpuTerrainDrawTarget(pass);
             if (shadowStage) {
                 // E10 shadow preparation: dispatch the finished frame's shadow collection
                 // here, at the stage head - this stage's render pass has not opened yet,
                 // which is where the census' compute dispatch may be recorded.
                 celtium$shadowGpuTerrainCensusRollover();
-                // E10 shadow arm: the executor's generation head at the same position -
-                // it finalizes the previous frame's shadow collection and, on an exact
-                // reproduction, records the generation dispatch here, before the render
-                // pass opens, and arms the generated list. The loop below issues that
-                // list when this stage's program is on the GLSM region-table route and
-                // draws unchanged otherwise (the arm is cancelled at the loop's head).
-                celtium$shadowGpuTerrainDrawStageHead(matrices, renderLists, pass,
-                        occlusionCamera, useBlockFaceCulling, view);
+                // The E10 shadow arm's generation head runs further down, after the
+                // pack variant's arming is decided: it stands down (held) when the
+                // variant arms, and a refusal or cache hit above it no longer leaves
+                // a generation dispatch dangling over an execution that never draws.
             }
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
@@ -19617,6 +19621,21 @@ this.frameBufferOpen = false;
                 }
             }
 
+            if (shadowDrawTargetPass) {
+                // E10 shadow arm: the executor's generation head, after the pack
+                // variant's arming is decided and before this stage's render pass
+                // opens - still outside the render pass, where the generation
+                // dispatch may be recorded. It finalizes the previous frame's shadow
+                // collection and, on an exact reproduction, records the generation
+                // dispatch and arms the generated list; when the variant armed this
+                // stage it only notes the hold and stands down. The loop below issues
+                // the armed list when this stage's program is on the GLSM region-table
+                // route and draws unchanged otherwise (the arm is cancelled at the
+                // loop's head).
+                celtium$shadowGpuTerrainDrawStageHead(matrices, renderLists, pass,
+                        occlusionCamera, useBlockFaceCulling, view, packVariantArmed);
+            }
+
             // Begin the load/store-depth MRT render pass.
             VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack)
                     .sType$Default()
@@ -19705,6 +19724,11 @@ this.frameBufferOpen = false;
                                 <= modPipeline.celtium$glsmRegionTableSlots()) {
                     shadowIssuanceArmed = true;
                 } else {
+                    this.shadowGpuTerrainDraw.noteCancelReason(packVariantArmed
+                            ? VulkanGpuTerrainDraw.CancelReason.VARIANT : !glsmRegionTable
+                            ? VulkanGpuTerrainDraw.CancelReason.NO_TABLE : !shadowArenaSinglePage
+                            ? VulkanGpuTerrainDraw.CancelReason.MULTI_PAGE
+                            : VulkanGpuTerrainDraw.CancelReason.OVER_SLOTS);
                     this.shadowGpuTerrainDraw.cancelArmed();
                 }
                 this.shadowGpuTerrainDrawGenerated = false;
@@ -19809,6 +19833,8 @@ this.frameBufferOpen = false;
                     if (issuedDescSet == 0L && (modPipeline.uniformsViaBuffer()
                             || !samplers.isEmpty() || !imageBindings.isEmpty())) {
                         shadowIssuanceArmed = false;
+                        this.shadowGpuTerrainDraw.noteCancelReason(
+                                VulkanGpuTerrainDraw.CancelReason.CLAIM);
                         this.shadowGpuTerrainDraw.cancelArmed();
                     } else {
                         modPipeline.bindTerrainUniformsAndSet(this.commandBuffer,
@@ -19916,12 +19942,16 @@ this.frameBufferOpen = false;
                                 region, shadowCensusRegionOrdinal++, batch);
                     }
                     // E10 shadow arm: the executor's collect hook, immediately after the
-                    // census hook and under the same conditions (shadow stage, unsorted
-                    // pass only), feeding the arm's own instance under the same light
-                    // view-projection. The frame index is the visit ordinal, as the census
-                    // uses: the pack route assigns no binding-5 region indices.
-                    if (shadowStage && GpuTerrainCulling.SHADOW_DRAW
-                            && this.shadowGpuTerrainDraw != null && !sortedPass) {
+                    // census hook, feeding the arm's own instance under the same light
+                    // view-projection. It is gated on the stage's one target predicate
+                    // (shadowDrawTargetPass - the solid pass alone), the same predicate
+                    // the stage head and the pre-enumeration gate on: the collection,
+                    // the enumeration and the issuance all speak for the one pass, so a
+                    // later subpass' population can never be concatenated into the
+                    // collection the reproduction test compares against. The frame index
+                    // is the visit ordinal, as the census uses: the pack route assigns
+                    // no binding-5 region indices.
+                    if (shadowDrawTargetPass && this.shadowGpuTerrainDraw != null) {
                         if (shadowCensusVp == null) {
                             shadowCensusVp = new float[16];
                             new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView())
@@ -20013,15 +20043,24 @@ this.frameBufferOpen = false;
                         glsmFirstInstance = slot;
                         glsmRegionSlot++;
                     }
-                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
-                    try {
-                        // E6: the vertex buffer is the pass-head bind above and the index buffer
-                        // is the draw span's own business now (the indirect path binds through
-                        // the renderer's belief; the direct fallback binds at its entry), so the
-                        // only bind left per region is the uniform set itself.
-                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
-                    } finally {
-                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
+                    if (!shadowIssuanceArmed) {
+                        // E10 shadow issuance: under the arm this span's descSet is the
+                        // non-zero sentinel (1L) that keeps the exhausted-claim skip
+                        // above from firing - the stage's one legitimate bind was
+                        // recorded before the loop, with the issued set. Binding the
+                        // sentinel here would hand handle 0x1 to vkCmdBindDescriptorSets
+                        // as if it were a descriptor set, so the per-region bind stands
+                        // down under the arm entirely.
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
+                        try {
+                            // E6: the vertex buffer is the pass-head bind above and the index buffer
+                            // is the draw span's own business now (the indirect path binds through
+                            // the renderer's belief; the direct fallback binds at its entry), so the
+                            // only bind left per region is the uniform set itself.
+                            modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
+                        } finally {
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
+                        }
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionDraw");
                     try {
@@ -20515,28 +20554,37 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * The shadow arm's stage head (E10 shadow arm + issuance): once per frame, at the pack
-     * route's shadow stage head — the same position as the shadow census rollover, after
-     * the stage is known and before its render pass opens — the previous frame's shadow
-     * collection is finalized and this frame's population pre-enumerated with the camera
-     * head's own enumerator ({@link #celtium$gpuTerrainVisitList}, same arguments); on an
-     * exact reproduction the executor records its generation dispatch here and arms the
-     * generated list. The differences from the camera head are the pack route's facts: the
-     * region offset cursor is 0 (the pack loop stamps its GLSM region table from slot 0 in
-     * visit order, so the remap is the visit order), and the view-projection is this
-     * stage's own matrices (the light's projection x modelView, the shadow census'
-     * formula — never the camera frame's cached VP). The armed list is handed to this
-     * stage's own loop, which issues it only when the stage's program is on the GLSM
-     * region-table route and cancels the arm otherwise; the outcome is kept in
-     * {@link #shadowGpuTerrainDrawGenerated} / {@link #shadowGpuTerrainDrawVisits} for
-     * that decision. With the shadow draw flag off this returns on the first test and the
-     * stage records exactly what it recorded before.
+     * The shadow arm's stage head (E10 shadow arm + issuance): once per frame, in the pack
+     * route's shadow stage after the pack variant's arming is decided and before the
+     * stage's render pass opens — the previous frame's shadow collection is finalized and
+     * this frame's population pre-enumerated with the camera head's own enumerator
+     * ({@link #celtium$gpuTerrainVisitList}, same arguments); on an exact reproduction the
+     * executor records its generation dispatch here and arms the generated list. When the
+     * pack variant armed the stage, the variant owns its shadow generation and the
+     * executor only notes the hold — no enumeration, no dispatch. The differences from the
+     * camera head are the pack route's facts: the region offset cursor is 0 (the pack loop
+     * stamps its GLSM region table from slot 0 in visit order, so the remap is the visit
+     * order), and the view-projection is this stage's own matrices (the light's projection
+     * x modelView, the shadow census' formula — never the camera frame's cached VP). The
+     * armed list is handed to this stage's own loop, which issues it only when the stage's
+     * program is on the GLSM region-table route and cancels the arm otherwise; the outcome
+     * is kept in {@link #shadowGpuTerrainDrawGenerated} /
+     * {@link #shadowGpuTerrainDrawVisits} for that decision. With the shadow draw flag off
+     * this returns on the first test and the stage records exactly what it recorded before.
      */
     private void celtium$shadowGpuTerrainDrawStageHead(ChunkRenderMatrices matrices,
             ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-            CameraTransform occlusionCamera, boolean useBlockFaceCulling, Object view) {
+            CameraTransform occlusionCamera, boolean useBlockFaceCulling, Object view,
+            boolean packVariantArmed) {
         if (!GpuTerrainCulling.SHADOW_DRAW || this.shadowGpuTerrainDrawFailed
                 || this.commandBuffer == null) {
+            return;
+        }
+        if (!celtium$gpuTerrainDrawTarget(pass)) {
+            // The executor speaks for the solid pass alone (the call site gates on the
+            // same predicate); a non-target pass must not consume the frame stamp,
+            // or a frame whose solid pass drew nothing would lose its head to a later
+            // subpass and the collection would never be finalized for it.
             return;
         }
         if (this.shadowGpuTerrainDrawFrame == this.frameId) {
@@ -20548,6 +20596,10 @@ this.frameBufferOpen = false;
         try {
             if (this.shadowGpuTerrainDraw == null) {
                 this.shadowGpuTerrainDraw = new VulkanGpuTerrainDraw(this.context, 3, "shadow");
+            }
+            if (packVariantArmed) {
+                this.shadowGpuTerrainDraw.noteHeldByVariant();
+                return;
             }
             List<VulkanGpuTerrainDraw.Visit> visits = celtium$gpuTerrainVisitList(
                     renderLists, pass, useBlockFaceCulling, view, occlusionCamera);

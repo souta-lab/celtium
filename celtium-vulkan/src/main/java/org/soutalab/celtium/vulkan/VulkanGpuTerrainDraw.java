@@ -92,6 +92,34 @@ final class VulkanGpuTerrainDraw {
     private long fallbackEmpty;
     private long fallbackGate;
     private long fallbackPopulation;
+    // Shadow-head fallback split (the population fallback's two causes, counted apart so a
+    // failed shadow arm names its cause in one line) and the held-by-variant count.
+    private long fallbackVisitsNull;
+    private long fallbackMismatch;
+    private long fallbackHeldByVariant;
+    /** The last reproduction failure's two sizes (visits / collected), or -1 before any. */
+    private int lastMismatchVisits = -1;
+    private int lastMismatchCollected = -1;
+    // Armed-list cancellations by the backend, by reason (see {@link CancelReason}).
+    private long cancelVariant;
+    private long cancelNoTable;
+    private long cancelMultiPage;
+    private long cancelOverSlots;
+    private long cancelClaim;
+
+    /** Why the backend cancelled an armed generated list instead of issuing it. */
+    enum CancelReason {
+        /** The pack variant armed the stage; its executor draws the pass whole. */
+        VARIANT,
+        /** The stage's program is not on the GLSM region-table route. */
+        NO_TABLE,
+        /** The shared vertex arena spans more than one page. */
+        MULTI_PAGE,
+        /** The visit list does not fit the GLSM region table's slots. */
+        OVER_SLOTS,
+        /** The stage's one descriptor claim failed before the loop. */
+        CLAIM
+    }
 
     private static final class Slot {
         VulkanHostBuffer table;
@@ -452,6 +480,15 @@ final class VulkanGpuTerrainDraw {
             } else if (this.ready.tainted) {
                 this.fallbackTainted++;
                 this.ready = null;
+            } else if (this.ready.commandCount == 0) {
+                // The camera head's degenerate-table refusal, in the same counted shape:
+                // a finalized table with no commands would record a zero-group dispatch
+                // and a host-zero IndirectCount draw, the issuance forms whose behaviour
+                // varies most by driver. Only the host-degenerate table is refused; a
+                // live table the frame's own tests cull to a count of zero still issues
+                // through recordDraw untouched.
+                this.fallbackEmpty++;
+                this.ready = null;
             } else if (GpuTerrainCulling.capabilityGate(
                     this.context.drawIndirectCountEnabled(), budgetActive)
                     != GpuTerrainCulling.GateReason.NONE) {
@@ -461,8 +498,16 @@ final class VulkanGpuTerrainDraw {
                     != GpuTerrainCulling.GateReason.NONE) {
                 this.fallbackGate++;
                 this.ready = null;
-            } else if (visits == null || !reproduces(visits)) {
-                this.fallbackPopulation++;
+            } else if (visits == null) {
+                // No pre-enumeration at all: some region's drawn batch was unpredictable,
+                // so the pass cannot be predicted either. Counted apart from a failed
+                // reproduction, whose two sizes are the diagnosis.
+                this.fallbackVisitsNull++;
+                this.ready = null;
+            } else if (!reproduces(visits)) {
+                this.fallbackMismatch++;
+                this.lastMismatchVisits = visits.size();
+                this.lastMismatchCollected = this.ready.regionIds.length;
                 this.ready = null;
             } else {
                 int[] remap = new int[this.ready.table.remap.length];
@@ -486,15 +531,7 @@ final class VulkanGpuTerrainDraw {
                 generated = true;
             }
             if (this.passHeads % PRINT_EVERY_PASS_HEADS == 0) {
-                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
-                        + " mode=shadow-generation heads=" + this.passHeads
-                        + " generated=" + this.framesArmed
-                        + " issued=" + this.framesIssued
-                        + " generatedCommands=" + this.armedCommands
-                        + " fallbacks=[noReady=" + this.fallbackNoReady
-                        + " tainted=" + this.fallbackTainted
-                        + " gate=" + this.fallbackGate
-                        + " population=" + this.fallbackPopulation + "]");
+                printGenerationSummary();
             }
             return generated;
         } catch (RuntimeException error) {
@@ -505,16 +542,93 @@ final class VulkanGpuTerrainDraw {
 
     /** Whether the pre-enumerated visits are the collected population, element for element. */
     private boolean reproduces(List<Visit> visits) {
-        if (visits.size() != this.ready.regionIds.length) {
+        return reproducesPopulation(visits, this.ready.regionIds, this.ready.batches);
+    }
+
+    /**
+     * The reproduction test itself, as a pure function of the two populations: same
+     * length, same region ids in the same order, the identical cached batch objects.
+     * Package-visible so the contract tests can drive it without a device.
+     */
+    static boolean reproducesPopulation(List<Visit> visits, int[] regionIds,
+                                        VulkanMultiDrawBatch[] batches) {
+        if (visits.size() != regionIds.length) {
             return false;
         }
         for (int i = 0; i < visits.size(); i++) {
             Visit visit = visits.get(i);
-            if (visit.regionId != this.ready.regionIds[i] || visit.batch != this.ready.batches[i]) {
+            if (visit.regionId != regionIds[i] || visit.batch != batches[i]) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * The shadow head's held form: the pack variant armed this stage, so its executor
+     * owns the stage's shadow generation and this executor stands down — no visit
+     * enumeration, no generation dispatch, and no fallback counted (a held frame is not
+     * a failed arm). The head still counts, so the periodic line's cadence covers held
+     * frames too. Called by the backend's stage head in place of {@link #generationHead}.
+     */
+    void noteHeldByVariant() {
+        if (this.disabled) {
+            return;
+        }
+        this.armed = false;
+        this.passHeads++;
+        this.fallbackHeldByVariant++;
+        if (this.passHeads % PRINT_EVERY_PASS_HEADS == 0) {
+            printGenerationSummary();
+        }
+    }
+
+    /**
+     * Counts one backend cancellation of an armed generated list, by its reason. The
+     * cancellation itself is {@link #cancelArmed}; this only names it, so the periodic
+     * line shows which route decision stood the arm down.
+     */
+    void noteCancelReason(CancelReason reason) {
+        switch (reason) {
+            case VARIANT:
+                this.cancelVariant++;
+                break;
+            case NO_TABLE:
+                this.cancelNoTable++;
+                break;
+            case MULTI_PAGE:
+                this.cancelMultiPage++;
+                break;
+            case OVER_SLOTS:
+                this.cancelOverSlots++;
+                break;
+            case CLAIM:
+                this.cancelClaim++;
+                break;
+        }
+    }
+
+    /** The shadow executor's periodic line: heads, generation and issuance, and every counted stand-down. */
+    private void printGenerationSummary() {
+        System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
+                + " mode=shadow-generation+issuance heads=" + this.passHeads
+                + " generated=" + this.framesArmed
+                + " issued=" + this.framesIssued
+                + " generatedCommands=" + this.armedCommands
+                + " fallbacks=[noReady=" + this.fallbackNoReady
+                + " tainted=" + this.fallbackTainted
+                + " empty=" + this.fallbackEmpty
+                + " gate=" + this.fallbackGate
+                + " visitsNull=" + this.fallbackVisitsNull
+                + " mismatch=" + this.fallbackMismatch
+                + " heldByVariant=" + this.fallbackHeldByVariant + "]"
+                + " cancels=[variant=" + this.cancelVariant
+                + " noTable=" + this.cancelNoTable
+                + " multiPage=" + this.cancelMultiPage
+                + " overSlots=" + this.cancelOverSlots
+                + " claim=" + this.cancelClaim + "]"
+                + " lastMismatch=" + (this.lastMismatchVisits < 0 ? "none"
+                        : this.lastMismatchVisits + "/" + this.lastMismatchCollected));
     }
 
     private static BuiltFrame buildFrame(FrameCollection frame) {
