@@ -1,0 +1,226 @@
+package org.soutalab.celtium.shader.shaderpack.preprocessor;
+
+import org.soutalab.celtium.shader.ShaderLogger;
+import org.soutalab.celtium.shader.shaderpack.StringPair;
+import org.soutalab.celtium.shader.shaderpack.option.ShaderPackOptions;
+import org.anarres.cpp.Feature;
+import org.anarres.cpp.LexerException;
+import org.anarres.cpp.Preprocessor;
+import org.anarres.cpp.PreprocessorCommand;
+import org.anarres.cpp.StringLexerSource;
+import org.anarres.cpp.Token;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+public class PropertiesPreprocessor {
+	// Derived from ShaderProcessor.glslPreprocessSource, which is derived from GlShader from Canvas, licenced under LGPL
+	public static String preprocessSource(String source, ShaderPackOptions shaderPackOptions, Iterable<StringPair> environmentDefines) {
+		if (source.contains(PropertyCollectingListener.PROPERTY_MARKER) || source.contains("IRIS_PASSTHROUGHBACKSLASH")) {
+			throw new RuntimeException("Some shader author is trying to exploit internal Iris implementation details, stop!");
+		}
+
+		final List<String> booleanValues = getBooleanValues(shaderPackOptions);
+		final Map<String, String> stringValues = getStringValues(shaderPackOptions);
+
+		final List<StringPair> macros = new ArrayList<>();
+		for (String value : booleanValues) {
+			macros.add(new StringPair(value, ""));
+		}
+		for (StringPair envDefine : environmentDefines) {
+			macros.add(envDefine);
+		}
+		stringValues.forEach((name, value) -> macros.add(new StringPair(name, value)));
+
+		final PreprocessedSourceCache.Key cacheKey = PreprocessedSourceCache.key("properties", source, macros);
+		final String cached = PreprocessedSourceCache.get(cacheKey);
+		if (cached != null) {
+			return cached;
+		}
+
+		try (Preprocessor pp = new Preprocessor()) {
+			// jcpp lexes macro values inside addMacro through an internal lexer source that has
+			// no listener attached, so lexer warnings (e.g. "Decimal constant starts with 0, but
+			// not octal") throw LexerException from addMacro itself; the preprocessor listener is
+			// never consulted there. A single bad define must not fail the whole pack load
+			// (production: ACTINIUM_VERSION=000058359 from version alpha-0.0.5-da83c59), so the
+			// offending macro is skipped with a warning and processing continues.
+			for (String value : booleanValues) {
+				pp.addMacro(value);
+			}
+
+			for (StringPair envDefine : environmentDefines) {
+				try {
+					pp.addMacro(envDefine.getKey(), envDefine.getValue());
+				} catch (LexerException e) {
+					ShaderLogger.LOGGER.warn("Skipping environment define {}={}: {}", envDefine.getKey(), envDefine.getValue(), e.getMessage());
+				}
+			}
+
+			stringValues.forEach((name, value) -> {
+				try {
+					pp.addMacro(name, value);
+				} catch (LexerException e) {
+					ShaderLogger.LOGGER.warn("Skipping string option macro {}={}: {}", name, value, e.getMessage());
+				}
+			});
+
+			final String preprocessed = process(pp, source);
+			PreprocessedSourceCache.put(cacheKey, preprocessed);
+
+			return preprocessed;
+		} catch (IOException e) {
+			throw new RuntimeException("Unexpected IOException while processing macros", e);
+		} catch (LexerException e) {
+			throw new RuntimeException("Unexpected LexerException processing macros", e);
+		}
+	}
+
+	public static String preprocessSource(String source, Iterable<StringPair> environmentDefines) {
+		if (source.contains(PropertyCollectingListener.PROPERTY_MARKER)) {
+			throw new RuntimeException("Some shader author is trying to exploit internal Iris implementation details, stop!");
+		}
+
+		final Preprocessor preprocessor = new Preprocessor();
+
+		// See the comment in the other preprocessSource overload: addMacro throws on lexer
+		// warnings regardless of any listener, so skip the offending macro instead of failing.
+		for (StringPair envDefine : environmentDefines) {
+			try {
+				preprocessor.addMacro(envDefine.getKey(), envDefine.getValue());
+			} catch (LexerException e) {
+				ShaderLogger.LOGGER.warn("Skipping environment define {}={}: {}", envDefine.getKey(), envDefine.getValue(), e.getMessage());
+			}
+		}
+
+		return process(preprocessor, source);
+	}
+
+	private static String process(Preprocessor preprocessor, String source) {
+		preprocessor.setListener(new PropertiesCommentListener());
+		PropertyCollectingListener listener = new PropertyCollectingListener();
+		preprocessor.setListener(listener);
+
+		// This removes trailing whitespace on lines, fixing an issue with whitespace after
+		// line continuations (see PreprocessorTest#testWeirdPropertiesLineContinuation)
+		// Required for Voyager Shader
+		source = cleanLines(source);
+		// TODO: This is a horrible fix to trick the preprocessor into not seeing the backslashes during processing. We need a better way to do this.
+		source = source.replace("\\", "IRIS_PASSTHROUGHBACKSLASH");
+
+		preprocessor.addInput(new StringLexerSource(source, true));
+		preprocessor.addFeature(Feature.KEEPCOMMENTS);
+
+		final StringBuilder builder = new StringBuilder();
+
+		try {
+			for (;;) {
+				final Token tok = preprocessor.token();
+				if (tok == null) break;
+				if (tok.getType() == Token.EOF) break;
+				builder.append(tok.getText());
+			}
+		} catch (final Exception e) {
+			ShaderLogger.LOGGER.error("Properties pre-processing failed", e);
+		}
+
+		source = builder.toString();
+
+		return (listener.collectLines() + source).replace("IRIS_PASSTHROUGHBACKSLASH", "\\");
+	}
+
+	private static final String[] DIRECTIVE_PREFIXES = Arrays.stream(PreprocessorCommand.values())
+		.map(command -> "#" + command.name().replace("PP_", "").toLowerCase(Locale.ROOT))
+		.toArray(String[]::new);
+
+	/**
+	 * Trims every line, drops the empty ones and joins the rest with {@code \n} plus a trailing newline, without
+	 * allocating a list and a string per line the way the stream pipeline did.
+	 *
+	 * <p>Every separator {@code \R} matches also breaks a line here: a pack that ships a file with vertical tabs or
+	 * a Unicode line separator must split at the same places it always did.
+	 */
+	static String cleanLines(String source) {
+		final StringBuilder out = new StringBuilder(source.length());
+		boolean first = true;
+		int start = 0;
+		final int length = source.length();
+
+		while (start <= length) {
+			int end = start;
+
+			while (end < length && !isLineBreak(source.charAt(end))) {
+				end++;
+			}
+
+			final String line = source.substring(start, end).trim();
+
+			if (!line.isEmpty()) {
+				if (!first) {
+					out.append('\n');
+				}
+
+				first = false;
+				out.append(cleanLine(line));
+			}
+
+			// \R matches \r\n as one break, so the \n must not start another empty line.
+			if (end < length && source.charAt(end) == '\r' && end + 1 < length && source.charAt(end + 1) == '\n') {
+				end++;
+			}
+
+			start = end + 1;
+		}
+
+		return out.append('\n').toString();
+	}
+
+	private static boolean isLineBreak(char c) {
+		return c == '\n' || c == '\r' || c == '\u000B' || c == '\f' || c == '\u0085' || c == '\u2028' || c == '\u2029';
+	}
+
+	private static String cleanLine(String line) {
+		if (line.startsWith("#")) {
+			for (String prefix : DIRECTIVE_PREFIXES) {
+				if (line.startsWith(prefix)) {
+					return line;
+				}
+			}
+
+			return "";
+		}
+
+		// In PropertyCollectingListener we suppress "unknown preprocessor directive errors" and
+		// assume the line to be a comment, since in .properties files `#` also functions as a comment
+		// marker.
+		return line.indexOf('#') < 0 ? line : line.replace("#", "");
+	}
+
+	private static List<String> getBooleanValues(ShaderPackOptions shaderPackOptions) {
+		List<String> booleanValues = new ArrayList<>();
+
+		shaderPackOptions.getOptionSet().getBooleanOptions().forEach((string, value) -> {
+			boolean trueValue = shaderPackOptions.getOptionValues().getBooleanValueOrDefault(string);
+
+			if (trueValue) {
+				booleanValues.add(string);
+			}
+		});
+
+		return booleanValues;
+	}
+
+	private static Map<String, String> getStringValues(ShaderPackOptions shaderPackOptions) {
+		Map<String, String> stringValues = new HashMap<>();
+
+		shaderPackOptions.getOptionSet().getStringOptions().forEach(
+				(optionName, value) -> stringValues.put(optionName, shaderPackOptions.getOptionValues().getStringValueOrDefault(optionName)));
+
+		return stringValues;
+	}
+}

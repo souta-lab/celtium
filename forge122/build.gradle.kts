@@ -88,6 +88,7 @@ repositories {
             // library the direct-GL converter embeds (S4) - is a GTNH build published
             // only on this nexus; the maven.taumc.org exclusive block that used to claim
             // the group resolved nothing and was removed so the group can land here.
+            // S5-a's modEmbed of the same library resolves through this claim as well.
             includeGroup("org.taumc")
         }
     }
@@ -179,6 +180,10 @@ dependencies {
         isTransitive = false
     }
     modEmbedDependencies("org.joml:joml:1.10.5")
+    // Built-in shader pack interpreter dependencies (v0.4.0 S5-a), relocated in shadowRemapJar below.
+    modEmbedDependencies("org.anarres:jcpp:1.4.14") { isTransitive = false }
+    modEmbedDependencies("org.antlr:antlr4-runtime:4.13.2") { isTransitive = false }
+    modEmbedDependencies("org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH") { isTransitive = false }
     implementation("org.joml:joml:1.10.5")
     implementation("zone.rong:mixinbooter:10.5")
     // LWJGL is a direct dependency now: the immediate path reads a ByteBuffer address with MemoryUtil instead of
@@ -230,6 +235,9 @@ tasks.named<ShadowJar>("shadowRemapJar") {
     // hash did not move across a shaderpack fix, and three separate rounds verified their fixes offline because of it.
     inputs.files(modEmbedDependencies)
     exclude("module-info.class", "**/module-info.class")
+    relocate("org.anarres.cpp", "org.soutalab.celtium.impl.shadow.jcpp")
+    relocate("org.antlr", "org.soutalab.celtium.impl.shadow.antlr")
+    relocate("org.taumc.glsl", "org.soutalab.celtium.impl.shadow.glsl")
 }
 
 tasks.named<JSTTransformerTask>("applyJST") {

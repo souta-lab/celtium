@@ -10,6 +10,7 @@ repositories {
     // The GLSL transformation library the direct-GL converter's FFP shader
     // transformer parses with is published as a GTNH build on the GTNH nexus
     // (the same artifact Actinium bundles); it is not on Maven Central.
+    // S5-a's absorbed shader core resolves the same artifact from here.
     maven { url = 'https://nexus.gtnewhorizons.com/repository/public/' }
 }
 
@@ -104,6 +105,17 @@ dependencies {
     testImplementation('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
     testImplementation 'org.antlr:antlr4-runtime:4.13.2'
     compileOnly 'com.google.code.gson:gson:2.10.1'
+    // Built-in shader pack interpreter (v0.4.0 S5-a): C preprocessor, ANTLR4 runtime and GLSL AST transformer.
+    // Embedded and relocated into the mod jar by :forge122's shadowRemapJar; Guava and log4j are supplied by MC 1.12.2.
+    compileOnly 'org.anarres:jcpp:1.4.14'
+    compileOnly 'org.antlr:antlr4-runtime:4.13.2'
+    compileOnly('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
+    compileOnly 'com.google.guava:guava:21.0'
+    compileOnly 'org.apache.logging.log4j:log4j-api:2.0-beta9'
+    compileOnly 'org.jetbrains:annotations:24.1.0'
+    def lombokVersion = rootProject.findProperty('lombok_version') ?: '1.18.44'
+    compileOnly "org.projectlombok:lombok:${lombokVersion}"
+    annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
     // The mod's core API exposes joml matrices. They are relocated into the mod's own namespace by the shadow
     // step, and this module goes through that same step, so it compiles against the original coordinates.
     compileOnly 'org.joml:joml:1.10.5'
@@ -133,6 +145,11 @@ dependencies {
     testImplementation 'org.lwjgl:lwjgl-shaderc'
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':' + lwjglNativesClassifier
     testImplementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation 'org.anarres:jcpp:1.4.14'
+    testImplementation 'org.antlr:antlr4-runtime:4.13.2'
+    testImplementation('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
+    testImplementation 'com.google.guava:guava:21.0'
+    testImplementation 'org.jetbrains:annotations:24.1.0'
     // The common modJar is consumed non-transitively, so the log4j-api that common's
     // classes link against statically (e.g. NativeBuffer's logger) must be named here.
     testImplementation 'org.apache.logging.log4j:log4j-api:2.0-beta9'
