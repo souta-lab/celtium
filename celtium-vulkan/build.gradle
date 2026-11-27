@@ -21,6 +21,13 @@ tasks.withType(JavaCompile).configureEach {
     // as the Mixin/ASM safety boundary; :celtium-core is release 25 as well.
     options.release = 25
     options.encoding = 'UTF-8'
+    // Forked with an explicit compiler stack: the absorbed shader tree (S5-a) contains sources
+    // whose ASTs overflow the default Windows compiler-thread stack inside Lombok's JavacAST
+    // construction (StackOverflowError in :celtium-vulkan:compileJava on windows-latest, while
+    // the same sources compile in-process on Linux/macOS). The fork only sizes the compiler
+    // JVM's stack; it changes no compilation semantics.
+    options.fork = true
+    options.forkOptions.jvmArgs += ['-Xss16m']
 }
 
 // The mod-side Vulkan code is compiled against the LWJGL version the validated Cleanroom installation ships.
