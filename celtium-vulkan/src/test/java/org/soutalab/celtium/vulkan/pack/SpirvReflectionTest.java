@@ -87,8 +87,8 @@ class SpirvReflectionTest {
         Asm asm = new Asm();
         asm.op(OP_CAPABILITY, 1); // Shader
         asm.op(OP_MEMORY_MODEL, 0, 1); // Logical, GLSL450
-        // OpEntryPoint: model=0, entry=4, name="main", interface = 5, 6
-        asm.words.add(((2 + 2 + 2) << 16) | OP_ENTRY_POINT);
+        // OpEntryPoint: model=0, entry=4, name="main", interface = 5, 6 (7 words total)
+        asm.words.add((7 << 16) | OP_ENTRY_POINT);
         asm.words.add(0);
         asm.words.add(4);
         asm.words.add(0x6E69616D); // "main"
@@ -154,7 +154,7 @@ class SpirvReflectionTest {
         Asm asm = new Asm();
         asm.op(OP_CAPABILITY, 1);
         asm.op(OP_MEMORY_MODEL, 0, 1);
-        asm.words.add(((1 + 2 + 2) << 16) | OP_ENTRY_POINT);
+        asm.words.add((5 << 16) | OP_ENTRY_POINT);
         asm.words.add(5); // GLCompute
         asm.words.add(4);
         asm.words.add(0x6E69616D);

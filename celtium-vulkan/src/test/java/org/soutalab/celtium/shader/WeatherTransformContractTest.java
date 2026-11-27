@@ -86,10 +86,11 @@ class WeatherTransformContractTest {
         assertTrue(locations.containsAll(Set.of(2, 5, 6, 7, 8, 9)),
                 "reflected input locations: " + locations);
 
-        Set<String> memberNames = vertex.descriptors().stream()
-                .filter(d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER)
-                .flatMap(d -> vertex.structMemberNames()
-                        .getOrDefault(d.pointeeTypeId(), Map.of()).values().stream())
+        // The lowered module carries the uniforms as members of its uniform block struct
+        // (the block variable itself is bound by plan convention, so member names across
+        // all structs are the recovery surface).
+        Set<String> memberNames = vertex.structMemberNames().values().stream()
+                .flatMap(members -> members.values().stream())
                 .collect(Collectors.toSet());
         Set<String> variableNames = vertex.descriptors().stream()
                 .map(SpirvReflection.DescriptorVariable::name)
