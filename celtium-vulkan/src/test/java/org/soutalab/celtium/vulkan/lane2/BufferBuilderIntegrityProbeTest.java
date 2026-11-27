@@ -51,9 +51,9 @@ class BufferBuilderIntegrityProbeTest {
                 BufferBuilderIntegrityProbe.inspectReasons(true, direct(4096), 64, 32, true, 7));
         assertEquals(BufferBuilderIntegrityProbe.REASON_NO_BUFFER,
                 BufferBuilderIntegrityProbe.inspectReasons(false, null, 64, 32, true, 7));
-        assertEquals(BufferBuilderIntegrityProbe.REASON_NOT_DIRECT,
+        assertEquals(BufferBuilderIntegrityProbe.REASON_BUFFER_NOT_DIRECT,
                 BufferBuilderIntegrityProbe.inspectReasons(false, ByteBuffer.allocate(4096), 64, 32, true, 7));
-        assertEquals(BufferBuilderIntegrityProbe.REASON_TOO_SMALL,
+        assertEquals(BufferBuilderIntegrityProbe.REASON_BUFFER_TOO_SMALL,
                 BufferBuilderIntegrityProbe.inspectReasons(false, direct(1024), 64, 32, true, 7));
         assertEquals(BufferBuilderIntegrityProbe.REASON_NO_FORMAT,
                 BufferBuilderIntegrityProbe.inspectReasons(false, direct(4096), 64, 32, false, 7));
@@ -68,19 +68,19 @@ class BufferBuilderIntegrityProbeTest {
         int reasons = BufferBuilderIntegrityProbe.inspectReasons(
                 true, ByteBuffer.allocate(16), 64, 32, false, 42);
         assertEquals(BufferBuilderIntegrityProbe.REASON_SHADOW_STORAGE
-                | BufferBuilderIntegrityProbe.REASON_NOT_DIRECT
-                | BufferBuilderIntegrityProbe.REASON_TOO_SMALL
+                | BufferBuilderIntegrityProbe.REASON_BUFFER_NOT_DIRECT
+                | BufferBuilderIntegrityProbe.REASON_BUFFER_TOO_SMALL
                 | BufferBuilderIntegrityProbe.REASON_NO_FORMAT
                 | BufferBuilderIntegrityProbe.REASON_BAD_DRAW_MODE, reasons);
     }
 
     @Test
     void countersRecordDecisions() {
-        long zeroBefore = BufferBuilderIntegrityProbe.zeroCopyOffers();
-        long copyBefore = BufferBuilderIntegrityProbe.oneCopyOffers();
+        long zeroBefore = BufferBuilderIntegrityProbe.zeroCopyDecisions();
+        long copyBefore = BufferBuilderIntegrityProbe.oneCopyDecisions();
         BufferBuilderIntegrityProbe.decide(false, direct(4096), 4, 32, true, 4);
         BufferBuilderIntegrityProbe.decide(true, direct(4096), 4, 32, true, 4);
-        assertEquals(zeroBefore + 1, BufferBuilderIntegrityProbe.zeroCopyOffers());
-        assertEquals(copyBefore + 1, BufferBuilderIntegrityProbe.oneCopyOffers());
+        assertEquals(zeroBefore + 1, BufferBuilderIntegrityProbe.zeroCopyDecisions());
+        assertEquals(copyBefore + 1, BufferBuilderIntegrityProbe.oneCopyDecisions());
     }
 }
