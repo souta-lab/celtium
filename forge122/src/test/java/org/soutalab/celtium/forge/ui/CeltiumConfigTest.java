@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for {@link CeltiumConfig}: defaults, atomic round-trip, clean fresh creation
- * (no embeddium-options.json import), defensive load on corrupt/null JSON, and value sanitization.
+ * (no legacy options file import), defensive load on corrupt/null JSON, and value sanitization.
  */
 class CeltiumConfigTest {
 
@@ -105,15 +105,15 @@ class CeltiumConfigTest {
     }
 
     @Test
-    void freshLoadIgnoresSiblingEmbeddiumOptionsJson(@TempDir Path tempDir) throws Exception {
-        Path legacy = tempDir.resolve("embeddium-options.json");
+    void freshLoadIgnoresSiblingLegacyOptionsJson(@TempDir Path tempDir) throws Exception {
+        Path legacy = tempDir.resolve("legacy-options.json");
         Files.writeString(legacy, "{\"quality\":{\"enable_vignette\":false}}", StandardCharsets.UTF_8);
 
         Path fresh = tempDir.resolve(CeltiumConfig.DEFAULT_FILE_NAME);
         CeltiumConfig loaded = CeltiumConfig.load(fresh);
 
         assertTrue(Files.exists(fresh), "fresh celtium-options.json should be created");
-        assertTrue(loaded.quality.enableVignette, "must not import embeddium-options.json");
+        assertTrue(loaded.quality.enableVignette, "must not import the sibling legacy options file");
     }
 
     @Test

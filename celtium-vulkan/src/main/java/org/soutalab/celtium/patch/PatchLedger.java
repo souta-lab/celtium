@@ -37,7 +37,7 @@ import java.util.Properties;
  * a quarantined group):
  * <ul>
  *   <li>The file is {@code Paths.get("config", ...)} relative to the working directory - the same convention
- *   as {@code SodiumGameOptions} ({@code config/embeddium-options.json}) and MixinBooter's own
+ *   as {@code SodiumGameOptions} (whose options file also sat under {@code config/}) and MixinBooter's own
  *   {@code config/mixinbooter.cfg}. {@code Launch.minecraftHome} is not used: it would split the product's
  *   persistent state across two directories and is null without {@code --gameDir}.</li>
  *   <li>{@code Properties.store} escapes a {@code :} inside a value as {@code \:}; {@code Properties.load}

@@ -20,7 +20,7 @@ import java.nio.file.StandardCopyOption;
 /**
  * Celtium's native client configuration, stored at {@code config/celtium-options.json}.
  *
- * <p>Clean v0.4.0 schema: does not read {@code embeddium-options.json}, carries no donation
+ * <p>Clean v0.4.0 schema: does not read any legacy options file, carries no donation
  * notification flags, and omits retired Celeritas terrain/raster legacy fields. Writes are
  * atomic (temp file + rename) and loads are defensive against missing, empty, malformed, or
  * partially-null JSON files.
