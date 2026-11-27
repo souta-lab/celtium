@@ -126,7 +126,7 @@ class TerrainDrawStageTest {
         TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world),
                 (cmd, kind, commands) -> { });
         AtomicInteger gathered = new AtomicInteger();
-        stage.gatherShadowBlockEntities(allInside(), (x, y, z, type) -> {
+        stage.gatherShadowBlockEntities(xPositive(), (x, y, z, type) -> {
             gathered.incrementAndGet();
             assertEquals(99, type);
         });
