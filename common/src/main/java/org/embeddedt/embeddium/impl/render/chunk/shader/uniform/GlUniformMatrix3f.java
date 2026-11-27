@@ -1,10 +1,10 @@
-package org.embeddedt.embeddium.impl.gl.shader.uniform;
+package org.embeddedt.embeddium.impl.render.chunk.shader.uniform;
 
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.opengl.GL20C;
 
 import org.joml.Matrix3f;
 import org.joml.Matrix3fc;
-import org.taumc.celeritas.lwjgl.MemoryStack;
+import org.lwjgl.system.MemoryStack;
 
 import java.nio.FloatBuffer;
 
@@ -25,7 +25,7 @@ public class GlUniformMatrix3f extends GlUniform<Matrix3fc> {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer buf = stack.callocFloat(9);
             value.get(buf);
-            LWJGL.glUniformMatrix3fv(this.index, false, buf);
+            GL20C.glUniformMatrix3fv(this.index, false, buf);
         }
     }
 }

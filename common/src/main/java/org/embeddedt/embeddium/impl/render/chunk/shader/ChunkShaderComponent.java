@@ -1,6 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.embeddedt.embeddium.impl.gl.shader.ShaderBindingContext;
+import org.embeddedt.embeddium.impl.render.chunk.shader.ShaderBindingContext;
 
 import java.util.Collection;
 import java.util.List;

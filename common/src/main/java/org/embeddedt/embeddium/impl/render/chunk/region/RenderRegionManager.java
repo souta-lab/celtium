@@ -1,7 +1,7 @@
 package org.embeddedt.embeddium.impl.render.chunk.region;
 
 import it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap;
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.CommandList;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.jetbrains.annotations.NotNull;
 

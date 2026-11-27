@@ -1,6 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk;
 
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.CommandList;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;

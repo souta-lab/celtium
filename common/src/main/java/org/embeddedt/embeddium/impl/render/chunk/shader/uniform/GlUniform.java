@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.impl.gl.shader.uniform;
+package org.embeddedt.embeddium.impl.render.chunk.shader.uniform;
 
 public abstract class GlUniform<T> {
     protected final int index;

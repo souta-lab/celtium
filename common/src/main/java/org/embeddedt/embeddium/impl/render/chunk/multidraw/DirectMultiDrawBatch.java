@@ -1,56 +1,54 @@
-package org.embeddedt.embeddium.impl.gl.device;
+package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
-import org.embeddedt.embeddium.impl.gl.tessellation.GlPrimitiveType;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
 
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
-import org.taumc.celeritas.lwjgl.LWJGLServiceProvider;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.Pointer;
 
 public class DirectMultiDrawBatch extends MultiDrawBatch {
     public final long pElementPointer;
     public final long pElementCount;
     public final long pBaseVertex;
 
-    private static final int POINTER_SHIFT = Integer.numberOfTrailingZeros(LWJGL.getPointerSize());
+    private static final int POINTER_SHIFT = Integer.numberOfTrailingZeros(Pointer.POINTER_SIZE);
 
     public DirectMultiDrawBatch(int capacity) {
         super(capacity);
 
         int allocCount = this.capacity();
 
-        this.pElementPointer = LWJGL.nmemAlignedAlloc(32, (long) allocCount * LWJGL.getPointerSize());
-        if (this.pElementPointer == LWJGLServiceProvider.NULL) {
+        this.pElementPointer = MemoryUtil.nmemAlignedAlloc(32, (long) allocCount * Pointer.POINTER_SIZE);
+        if (this.pElementPointer == MemoryUtil.NULL) {
             throw new OutOfMemoryError("Failed to allocate element pointer array");
         }
-        LWJGL.memSet(this.pElementPointer, 0x0, (long) allocCount * LWJGL.getPointerSize());
+        MemoryUtil.memSet(this.pElementPointer, 0x0, (long) allocCount * Pointer.POINTER_SIZE);
 
-        this.pElementCount = LWJGL.nmemAlignedAlloc(32, (long) allocCount * Integer.BYTES);
-        if (this.pElementCount == LWJGLServiceProvider.NULL) {
-            LWJGL.nmemAlignedFree(this.pElementPointer);
+        this.pElementCount = MemoryUtil.nmemAlignedAlloc(32, (long) allocCount * Integer.BYTES);
+        if (this.pElementCount == MemoryUtil.NULL) {
+            MemoryUtil.nmemAlignedFree(this.pElementPointer);
             throw new OutOfMemoryError("Failed to allocate element count array");
         }
-        this.pBaseVertex = LWJGL.nmemAlignedAlloc(32, (long) allocCount * Integer.BYTES);
-        if (this.pBaseVertex == LWJGLServiceProvider.NULL) {
-            LWJGL.nmemAlignedFree(this.pElementPointer);
-            LWJGL.nmemAlignedFree(this.pElementCount);
+        this.pBaseVertex = MemoryUtil.nmemAlignedAlloc(32, (long) allocCount * Integer.BYTES);
+        if (this.pBaseVertex == MemoryUtil.NULL) {
+            MemoryUtil.nmemAlignedFree(this.pElementPointer);
+            MemoryUtil.nmemAlignedFree(this.pElementCount);
             throw new OutOfMemoryError("Failed to allocate base vertex array");
         }
     }
 
     @Override
     public void delete() {
-        LWJGL.nmemAlignedFree(this.pElementPointer);
-        LWJGL.nmemAlignedFree(this.pElementCount);
-        LWJGL.nmemAlignedFree(this.pBaseVertex);
+        MemoryUtil.nmemAlignedFree(this.pElementPointer);
+        MemoryUtil.nmemAlignedFree(this.pElementCount);
+        MemoryUtil.nmemAlignedFree(this.pBaseVertex);
     }
 
     @Override
     public void appendDrawCommand(int baseVertex, int elementCount, long elementPointer) {
         int index = this.size;
 
-        LWJGL.memPutInt(this.pBaseVertex + ((long) index << 2), baseVertex);
-        LWJGL.memPutInt(this.pElementCount + ((long) index << 2), elementCount);
-        LWJGL.memPutAddress(this.pElementPointer + ((long) index << POINTER_SHIFT), elementPointer);
+        MemoryUtil.memPutInt(this.pBaseVertex + ((long) index << 2), baseVertex);
+        MemoryUtil.memPutInt(this.pElementCount + ((long) index << 2), elementCount);
+        MemoryUtil.memPutAddress(this.pElementPointer + ((long) index << POINTER_SHIFT), elementPointer);
 
         // Element counts are never negative, so the sign bit of the negation is set iff the command is non-empty.
         this.size = index + ((-elementCount) >>> 31);
@@ -62,9 +60,9 @@ public class DirectMultiDrawBatch extends MultiDrawBatch {
     @Override
     public void mergeIntoLastCommand(int additionalElementCount) {
         long countPointer = this.pElementCount + ((long) (this.size - 1) << 2);
-        int mergedCount = LWJGL.memGetInt(countPointer) + additionalElementCount;
+        int mergedCount = MemoryUtil.memGetInt(countPointer) + additionalElementCount;
 
-        LWJGL.memPutInt(countPointer, mergedCount);
+        MemoryUtil.memPutInt(countPointer, mergedCount);
         this.maxElementCount = Math.max(this.maxElementCount, mergedCount);
     }
 

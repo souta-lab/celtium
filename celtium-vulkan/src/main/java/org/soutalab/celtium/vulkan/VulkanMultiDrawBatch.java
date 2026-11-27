@@ -1,9 +1,9 @@
 package org.soutalab.celtium.vulkan;
 
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
-import org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlPrimitiveType;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatch;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.GlPrimitiveType;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.GlTessellation;
 
 /**
  * Records the same draw commands {@link org.embeddedt.embeddium.impl.render.chunk.multidraw.BatchAssembler}
@@ -28,7 +28,7 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
     /**
      * The local section index each command was assembled for, retained for the GPU-culling census
      * (E10-b preparation): the assembler announces the section through
-     * {@link org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch#beginSection} before appending its
+     * {@link org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatch#beginSection} before appending its
      * commands, and {@link #appendDrawCommand} stamps the slot it writes. A slot an empty append wrote
      * (the append does not advance the size) is simply overwritten by the next append and its stamp, so
      * every slot below {@link #size()} carries the section of the command that stuck there. -1 where no

@@ -1,10 +1,10 @@
 package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
-import org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch;
-import org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch;
-import org.embeddedt.embeddium.impl.gl.device.MultiDrawBatchFactory;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.DirectMultiDrawBatch;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatch;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatchFactory;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.GlTessellation;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;

@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.impl.gl.attribute;
+package org.embeddedt.embeddium.impl.render.chunk.vertex.format;
 
 import lombok.Getter;
 

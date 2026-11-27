@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.impl.gl.device;
+package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
 /**
  * Minimal Demonica Tier A binary-compatibility shell. Celtium renders terrain exclusively through Vulkan

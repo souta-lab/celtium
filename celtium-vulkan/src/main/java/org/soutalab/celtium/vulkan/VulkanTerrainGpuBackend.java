@@ -1516,7 +1516,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * "the factory currently installed is mine" from "a newer backend has installed its own since" - a fresh
      * {@code VulkanMultiDrawBatch::new} per call would defeat the comparison (BH10-13).
      */
-    private final org.embeddedt.embeddium.impl.gl.device.MultiDrawBatchFactory batchFactory =
+    private final org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatchFactory batchFactory =
             VulkanMultiDrawBatch::obtain;
 
     /** Records the Vulkan backend in place of the OpenGL one for the batch assembly path. */
@@ -1527,7 +1527,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Restores the OpenGL batch factory when this backend is torn down, if its own factory is still installed. */
     private void uninstall() {
         if (BatchAssembler.getBatchFactory() == this.batchFactory) {
-            BatchAssembler.setBatchFactory(org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch::new);
+            BatchAssembler.setBatchFactory(org.embeddedt.embeddium.impl.render.chunk.multidraw.DirectMultiDrawBatch::new);
         }
     }
 
@@ -19239,7 +19239,7 @@ this.frameBufferOpen = false;
         if (!PACK_TERRAIN_PROGRAMS || this.configuration == null || this.gpuStalled) {
             return false;
         }
-        org.embeddedt.embeddium.impl.gl.shader.GlProgram<? extends org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface> packProgram =
+        org.embeddedt.embeddium.impl.render.chunk.shader.GlProgram<? extends org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface> packProgram =
                 DemonicaTerrainBridge.packProgram(pass, this.configuration);
         if (packProgram == null) {
             return false;

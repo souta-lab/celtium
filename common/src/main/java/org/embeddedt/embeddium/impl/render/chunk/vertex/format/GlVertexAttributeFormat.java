@@ -1,6 +1,6 @@
-package org.embeddedt.embeddium.impl.gl.attribute;
+package org.embeddedt.embeddium.impl.render.chunk.vertex.format;
 
-import org.taumc.celeritas.lwjgl.GL20;
+import org.lwjgl.opengl.GL20;
 
 
 /**

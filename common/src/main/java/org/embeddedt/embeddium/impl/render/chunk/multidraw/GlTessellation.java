@@ -1,6 +1,6 @@
-package org.embeddedt.embeddium.impl.gl.tessellation;
+package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.CommandList;
 
 public interface GlTessellation {
     void delete(CommandList commandList);

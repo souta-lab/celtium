@@ -1,6 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.embeddedt.embeddium.impl.gl.tessellation.GlPrimitiveType;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.GlPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.joml.Matrix4fc;
 

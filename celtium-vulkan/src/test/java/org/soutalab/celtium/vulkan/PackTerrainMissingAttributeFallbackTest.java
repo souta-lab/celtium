@@ -40,7 +40,7 @@ final class PackTerrainMissingAttributeFallbackTest {
         assertTrue(text.contains("private VulkanUniformBuffer terrainZeroAttributeBuffer;"),
                 "terrain zero-attribute fallback must use its own dedicated field");
         int createStart = text.indexOf("private void createTerrainPipeline(");
-        int createEnd = text.indexOf("private static org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttribute matchTerrainAttribute(");
+        int createEnd = text.indexOf("private static org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexAttribute matchTerrainAttribute(");
         String createBody = text.substring(createStart, createEnd);
         assertTrue(createBody.contains("VK_BUFFER_USAGE_VERTEX_BUFFER_BIT"),
                 "terrainZeroAttributeBuffer must be allocated with VK_BUFFER_USAGE_VERTEX_BUFFER_BIT");

@@ -1,6 +1,6 @@
-package org.embeddedt.embeddium.impl.gl.shader;
+package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniform;
+import org.embeddedt.embeddium.impl.render.chunk.shader.uniform.GlUniform;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.IntFunction;

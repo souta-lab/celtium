@@ -1,9 +1,9 @@
 package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.embeddedt.embeddium.impl.gl.shader.ShaderBindingContext;
-import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniformFloat;
-import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniformFloat4v;
-import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniformInt;
+import org.embeddedt.embeddium.impl.render.chunk.shader.ShaderBindingContext;
+import org.embeddedt.embeddium.impl.render.chunk.shader.uniform.GlUniformFloat;
+import org.embeddedt.embeddium.impl.render.chunk.shader.uniform.GlUniformFloat4v;
+import org.embeddedt.embeddium.impl.render.chunk.shader.uniform.GlUniformInt;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 
 /**

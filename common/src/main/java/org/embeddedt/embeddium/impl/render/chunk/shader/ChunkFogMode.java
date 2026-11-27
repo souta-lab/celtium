@@ -1,9 +1,8 @@
 package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.taumc.celeritas.lwjgl.GL20;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.opengl.GL20;
 
-import org.embeddedt.embeddium.impl.gl.shader.ShaderBindingContext;
+import org.embeddedt.embeddium.impl.render.chunk.shader.ShaderBindingContext;
 
 import java.util.List;
 import java.util.function.BiFunction;

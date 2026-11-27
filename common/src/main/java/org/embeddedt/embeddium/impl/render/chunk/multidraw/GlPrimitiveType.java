@@ -1,10 +1,9 @@
-package org.embeddedt.embeddium.impl.gl.tessellation;
+package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
-import org.taumc.celeritas.lwjgl.GL11;
-import org.taumc.celeritas.lwjgl.GL30;
-import org.taumc.celeritas.lwjgl.GL32;
-import org.taumc.celeritas.lwjgl.GL40;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL32;
+import org.lwjgl.opengl.GL40;
 
 
 /**

@@ -1,7 +1,7 @@
 package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
-import org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.MultiDrawBatch;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.GlTessellation;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;

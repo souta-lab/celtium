@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.impl.gl.device;
+package org.embeddedt.embeddium.impl.render.chunk.multidraw;
 
 /**
  * Minimal GL-free Demonica Tier A compatibility shell. Celtium renders exclusively through Vulkan

@@ -1,7 +1,7 @@
 package org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl;
 
-import org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttributeFormat;
-import org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat;
+import org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexAttributeFormat;
+import org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexFormat;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.material.Material;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;

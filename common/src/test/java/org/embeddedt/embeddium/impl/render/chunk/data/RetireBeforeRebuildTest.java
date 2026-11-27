@@ -1,7 +1,7 @@
 package org.embeddedt.embeddium.impl.render.chunk.data;
 
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
-import org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch;
+import org.embeddedt.embeddium.impl.render.chunk.multidraw.DirectMultiDrawBatch;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.QuadPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage.BatchCacheParams;
 import org.embeddedt.embeddium.impl.render.chunk.multidraw.CachedBatch;

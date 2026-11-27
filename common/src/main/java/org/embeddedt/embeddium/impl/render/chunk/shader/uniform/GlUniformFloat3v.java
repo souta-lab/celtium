@@ -1,7 +1,6 @@
-package org.embeddedt.embeddium.impl.gl.shader.uniform;
+package org.embeddedt.embeddium.impl.render.chunk.shader.uniform;
 
-import org.taumc.celeritas.lwjgl.GL30;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.opengl.GL20C;
 
 
 public class GlUniformFloat3v extends GlUniform<float[]> {
@@ -15,10 +14,10 @@ public class GlUniformFloat3v extends GlUniform<float[]> {
             throw new IllegalArgumentException("value.length != 3");
         }
 
-        LWJGL.glUniform3fv(this.index, value);
+        GL20C.glUniform3fv(this.index, value);
     }
 
     public void set(float x, float y, float z) {
-        LWJGL.glUniform3f(this.index, x, y, z);
+        GL20C.glUniform3f(this.index, x, y, z);
     }
 }

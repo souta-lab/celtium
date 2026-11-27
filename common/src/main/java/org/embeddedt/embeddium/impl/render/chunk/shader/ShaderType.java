@@ -1,10 +1,9 @@
-package org.embeddedt.embeddium.impl.gl.shader;
+package org.embeddedt.embeddium.impl.render.chunk.shader;
 
-import org.taumc.celeritas.lwjgl.GL20;
-import org.taumc.celeritas.lwjgl.GL32;
-import org.taumc.celeritas.lwjgl.GL42;
-import org.taumc.celeritas.lwjgl.GL43;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL32;
+import org.lwjgl.opengl.GL42;
+import org.lwjgl.opengl.GL43;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;

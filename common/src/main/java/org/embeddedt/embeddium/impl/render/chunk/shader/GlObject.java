@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.impl.gl;
+package org.embeddedt.embeddium.impl.render.chunk.shader;
 
 /**
  * An abstract object used to represent objects in OpenGL code safely. This class hides the direct handle to a OpenGL
