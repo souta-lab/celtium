@@ -289,7 +289,8 @@ public final class Lane1Shaders {
                 // TEMP G1 BISECT25: stream separation - axis red, general green, brightness = light.
                 {
                     float lum = dot(light, vec3(0.3333));
-                    outColor = fragStream == 0 ? vec4(lum, 0.0, 0.0, 1.0) : vec4(0.0, lum, 0.0, 1.0);
+                    vec3 tint = fragStream == 0 ? vec3(1.0, 0.25, 0.25) : vec3(0.25, 1.0, 0.25);
+                    outColor = vec4(tint * (0.2 + 0.8 * lum), 1.0);
                     return;
                 }
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
