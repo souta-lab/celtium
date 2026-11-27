@@ -134,11 +134,11 @@ public final class CeltiumTerrainDriver {
             return -1L;
         }
         net.minecraft.world.chunk.storage.ExtendedBlockStorage[] arr = chunk.getBlockStorageArray();
-        if (arr.length <= 4 || arr[4] == null || arr[4].getSkyLightArray() == null) {
+        if (arr.length <= 4 || arr[4] == null || arr[4].getSkyLight() == null) {
             return -2L;
         }
         long sum = 0L;
-        byte[] data = arr[4].getSkyLightArray().getData();
+        byte[] data = arr[4].getSkyLight().getData();
         for (int i = 0; i < 4096; i++) {
             int b = data[i >> 1] & 0xFF;
             sum += (i & 1) == 0 ? (b & 0xF) : (b >> 4);
@@ -402,8 +402,8 @@ public final class CeltiumTerrainDriver {
                 hash = hash * 31 + 7;
                 continue;
             }
-            hash = hash * 31 + nibbleHash(sections[idx].getSkyLightArray());
-            hash = hash * 31 + nibbleHash(sections[idx].getBlockLightArray());
+            hash = hash * 31 + nibbleHash(sections[idx].getSkyLight());
+            hash = hash * 31 + nibbleHash(sections[idx].getBlockLight());
         }
         return hash;
     }
