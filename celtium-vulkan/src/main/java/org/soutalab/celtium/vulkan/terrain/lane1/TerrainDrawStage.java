@@ -38,6 +38,34 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     public record DrawCommand(int vertexCount, int firstQuad, int sectionSlot, int layer, boolean general) {
     }
 
+    // TEMP G1 PROBE21: the last recorded pass's commands + visible set, for readback.
+    private volatile List<DrawCommand> lastCommands = List.of();
+    private volatile List<SectionDesc> lastVisible = List.of();
+
+    /** TEMP G1 PROBE21: commands issued for two sections in the last pass, resolved by coords. */
+    public String probeCommandDump(TerrainSectionStore store) {
+        StringBuilder out = new StringBuilder("cmdDump visible=" + lastVisible.size()
+                + " cmds=" + lastCommands.size());
+        java.util.List<SectionDesc> descs = store.descriptors();
+        for (DrawCommand c : lastCommands) {
+            if (c.sectionSlot() < 0 || c.sectionSlot() >= descs.size()) {
+                out.append(" BADSLOT").append(c.sectionSlot());
+                continue;
+            }
+            SectionDesc d = descs.get(c.sectionSlot());
+            if ((d.sectionX() == -4 && d.sectionY() == 4 && d.sectionZ() == 3)
+                    || (d.sectionX() == 0 && d.sectionY() == 4 && d.sectionZ() == 0)) {
+                out.append(' ').append(c.general() ? 'G' : 'A')
+                        .append('[').append(d.sectionX()).append(',').append(d.sectionY())
+                        .append(',').append(d.sectionZ()).append("] fq=").append(c.firstQuad())
+                        .append(" vc=").append(c.vertexCount())
+                        .append(" descOff=").append(c.general()
+                                ? d.generalSlabOffset() : d.axisSlabOffset());
+            }
+        }
+        return out.toString();
+    }
+
     /** Receives one pass's draw commands against the pass's command stream. */
     @FunctionalInterface
     public interface DrawSink {
@@ -144,6 +172,8 @@ public final class TerrainDrawStage implements PackTerrainDriver {
         if (groupStreams) {
             commands.addAll(generalCommands);
         }
+        lastCommands = List.copyOf(commands);
+        lastVisible = cachedVisible;
         cmd.beginRendering(targets);
         try {
             cmd.bindTerrainProgram(program);

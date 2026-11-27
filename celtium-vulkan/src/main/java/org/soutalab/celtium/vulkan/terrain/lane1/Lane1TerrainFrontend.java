@@ -297,6 +297,7 @@ public final class Lane1TerrainFrontend {
                 + " atlasCells=" + atlasCellsAcross
                 + " texCells=" + textureCellCount
                 + " | " + probeDescBlock()
+                + " | " + drawStage.probeCommandDump(store)
                 + " | " + store.probeOverlaps()
                 + " | " + store.probeSection(-4, 4, 3)
                 + " | " + store.probeSection(0, 4, 0);
