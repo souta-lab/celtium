@@ -89,3 +89,26 @@ def harnessJarTask = tasks.register('harnessJar', Jar) {
 artifacts {
     harnessJar(harnessJarTask)
 }
+
+// The module's own (release-25) classes alone, without the harness source set the default jar
+// folds in: :forge122's zero-based terrain mesher (v0.4.0 S2-a) compiles against the geometry
+// contracts (PackedAxisQuad / GeneralQuad / SectionDesc) and the mod jar embeds this artifact
+// next to the harnessJar, so the two artifacts together carry every core class exactly once.
+// The attributes mirror the harnessJar's so RFG-side consumers resolve it under the same rules.
+configurations {
+    mainJar {
+        canBeConsumed = true
+        canBeResolved = false
+        attributes {
+            attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
+            attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+        }
+    }
+}
+def mainJarTask = tasks.register('mainJar', Jar) {
+    from(sourceSets.main.output)
+    archiveClassifier.set('main')
+}
+artifacts {
+    mainJar(mainJarTask)
+}

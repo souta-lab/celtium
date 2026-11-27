@@ -146,9 +146,21 @@ dependencies {
         isTransitive = false
     }
     // HarnessConfig moved from :common to :celtium-core in the v0.4.0 S1-a stage. The harnessJar
-    // artifact carries it at release 21, which this module's 21 compiler can read; :celtium-core's
-    // own release-25 classes are not on this module's classpath.
+    // artifact carries it at release 21, which this module's 21 compiler can read.
     implementation(project(":celtium-core", configuration = "harnessJar")) {
+        isTransitive = false
+    }
+    // The v0.4.0 S2-a stage puts :celtium-core's own release-25 contract classes on this module's
+    // classpath after all: the zero-based terrain mesher (org.soutalab.celtium.forge.terrain)
+    // produces the core geometry contracts (PackedAxisQuad / GeneralQuad / SectionDesc) directly.
+    // This module's compiler is the JDK 25 javac (see the S1-a compiler swap), which reads
+    // release-25 class files while still emitting release 21; the game JVM is Java 25+, so the
+    // embedded classes load as they are. The mainJar artifact carries the main source set only,
+    // so no class arrives twice (the harness classes come from the harnessJar above).
+    implementation(project(":celtium-core", configuration = "mainJar")) {
+        isTransitive = false
+    }
+    modEmbedDependencies(project(":celtium-core", configuration = "mainJar")) {
         isTransitive = false
     }
     modEmbedDependencies(project(":celtium-core", configuration = "harnessJar")) {
