@@ -403,6 +403,49 @@ public final class CeltiumTerrainDriver {
                 } catch (Throwable t) {
                     lines.add("direct830 failed " + t);
                 }
+                // TEMP G1 PROBE25c: decode snapshot ints through a forward-built
+                // BLOCK_STATE_IDS id->name map (the same direction build() uses).
+                try {
+                    if (world != null && faceData != null) {
+                        java.util.Map<Integer, String> names = new java.util.HashMap<>();
+                        for (net.minecraft.block.Block b : net.minecraft.block.Block.REGISTRY) {
+                            for (net.minecraft.block.state.IBlockState bs
+                                    : b.getBlockState().getValidStates()) {
+                                names.put(net.minecraft.block.Block.BLOCK_STATE_IDS.get(bs),
+                                        b.getRegistryName().toString());
+                            }
+                        }
+                        WorldSectionSnapshot snap5 = new WorldSectionSnapshot();
+                        ForgeSectionScanner.fill(snap5, world, faceData, fluids, 8, 3, 0);
+                        java.util.Map<String, long[]> c5 = new java.util.TreeMap<>();
+                        int[] states5 = snap5.states();
+                        for (int i = 0; i < states5.length; i++) {
+                            if (!WorldSectionSnapshot.isInner(i % 18, (i / 324), (i / 18) % 18)) {
+                                continue;
+                            }
+                            int st = states5[i];
+                            String nm = names.getOrDefault(st, "id" + st);
+                            long[] c = c5.computeIfAbsent(nm, k -> new long[4]);
+                            c[0]++;
+                            if (faceData.isFullCube(st)) {
+                                c[1]++;
+                            }
+                            if (faceData.isLeaves(st)) {
+                                c[2]++;
+                            }
+                            if (faceData.generalQuadCount(st) > 0) {
+                                c[3]++;
+                            }
+                        }
+                        StringBuilder eb = new StringBuilder("fwd830");
+                        c5.forEach((k, v) -> eb.append(" ").append(k)
+                                .append(" n=").append(v[0]).append(" full=").append(v[1])
+                                .append(" leaf=").append(v[2]).append(" gen=").append(v[3]));
+                        lines.add(eb.toString());
+                    }
+                } catch (Throwable t) {
+                    lines.add("fwd830 failed " + t);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
