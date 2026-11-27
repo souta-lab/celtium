@@ -201,6 +201,76 @@ public final class CeltiumTerrainDriver {
                     lines.add("col" + probeSx + " ownDark=" + ownDark + " ownLit=" + ownLit
                             + " aboveDark=" + aboveDark);
                 }
+                // TEMP G1 PROBE23: per-face comparison for section (8,3,0). For every
+                // surface face (opaque cell, non-opaque neighbour) compare the snapshot's
+                // faceSkyLight against the world AO-style max (face cell + 4 in-plane
+                // neighbours, sky channel of getCombinedLight).
+                {
+                    WorldSectionSnapshot snap3 = new WorldSectionSnapshot();
+                    ForgeSectionScanner.fill(snap3, world, faceData, fluids, 8, 3, 0);
+                    long[] faceDarkByDir = new long[6];
+                    long[] worldLitByDir = new long[6];
+                    long[] facesByDir = new long[6];
+                    net.minecraft.util.math.BlockPos.MutableBlockPos cell =
+                            new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                    net.minecraft.util.math.BlockPos.MutableBlockPos nb =
+                            new net.minecraft.util.math.BlockPos.MutableBlockPos();
+                    for (int lz = 1; lz <= 16; lz++) {
+                        for (int ly = 1; ly <= 16; ly++) {
+                            for (int lx = 1; lx <= 16; lx++) {
+                                int wx = 8 * 16 + lx - 1;
+                                int wy = 3 * 16 + ly - 1;
+                                int wz = lx * 0 + lz - 1;
+                                cell.setPos(wx, wy, wz);
+                                if (!world.getBlockState(cell).isOpaqueCube()) {
+                                    continue;
+                                }
+                                int idx = WorldSectionSnapshot.index(lx, ly, lz);
+                                for (int dir = 0; dir < 6; dir++) {
+                                    int fx = wx + TerrainDirs.DX[dir];
+                                    int fy = wy + TerrainDirs.DY[dir];
+                                    int fz = wz + TerrainDirs.DZ[dir];
+                                    nb.setPos(fx, fy, fz);
+                                    if (world.getBlockState(nb).isOpaqueCube()) {
+                                        continue;
+                                    }
+                                    facesByDir[dir]++;
+                                    if (snap3.faceSkyLight(idx, dir) != 0) {
+                                        continue;
+                                    }
+                                    faceDarkByDir[dir]++;
+                                    int max = (world.getCombinedLight(nb, 0) >> 20) & 0xF;
+                                    int[][] axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+                                    for (int a = 0; a < 3; a++) {
+                                        if (axes[a][0] == Math.abs(TerrainDirs.DX[dir])
+                                                && axes[a][1] == Math.abs(TerrainDirs.DY[dir])
+                                                && axes[a][2] == Math.abs(TerrainDirs.DZ[dir])) {
+                                            continue;
+                                        }
+                                        for (int s = -1; s <= 1; s += 2) {
+                                            nb.setPos(fx + axes[a][0] * s, fy + axes[a][1] * s,
+                                                    fz + axes[a][2] * s);
+                                            int v = (world.getCombinedLight(nb, 0) >> 20) & 0xF;
+                                            if (v > max) {
+                                                max = v;
+                                            }
+                                        }
+                                    }
+                                    if (max > 0) {
+                                        worldLitByDir[dir]++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    StringBuilder sb = new StringBuilder("faces830");
+                    for (int dir = 0; dir < 6; dir++) {
+                        sb.append(" d").append(dir).append("=").append(facesByDir[dir])
+                                .append("/dark").append(faceDarkByDir[dir])
+                                .append("/worldLit").append(worldLitByDir[dir]);
+                    }
+                    lines.add(sb.toString());
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
