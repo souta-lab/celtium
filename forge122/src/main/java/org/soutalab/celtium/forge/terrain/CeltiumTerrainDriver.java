@@ -370,12 +370,10 @@ public final class CeltiumTerrainDriver {
                 if (chunk.isLightPopulated()) {
                     populatedChunks.add(net.minecraft.util.math.ChunkPos.asLong(chunk.x, chunk.z));
                 }
-                // TEMP G1 PROBE15: run the light propagation vanilla would have run for
-                // this chunk, once per chunk per world. The fixture's stored arrays are a
-                // binary cast (15 in the open, 0 in shadow, no gradient) on both the
-                // client and the integrated server; if propagation fills the gradient,
-                // the seat is that nothing ever ran it here.
-                if (RELIT.add(net.minecraft.util.math.ChunkPos.asLong(chunk.x, chunk.z))) {
+                // TEMP G1 PROBE15b: keep asking the chunk to run its light propagation
+                // until it reports populated; the first attempts bail while neighbours
+                // are still arriving (checkLight clears the flag again in that case).
+                if (!chunk.isLightPopulated()) {
                     try {
                         chunk.checkLight();
                     } catch (Throwable ignored) {
