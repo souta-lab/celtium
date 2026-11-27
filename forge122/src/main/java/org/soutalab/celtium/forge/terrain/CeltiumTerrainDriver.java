@@ -379,6 +379,30 @@ public final class CeltiumTerrainDriver {
                 } catch (Throwable t) {
                     lines.add("census830 failed " + t);
                 }
+                // TEMP G1 PROBE25b: census the same section straight from chunk storage
+                // by block registry name (no state-id decoding anywhere).
+                try {
+                    if (world != null) {
+                        net.minecraft.world.chunk.Chunk ch = world.getChunk(8, 0);
+                        net.minecraft.world.chunk.storage.ExtendedBlockStorage st =
+                                ch.getBlockStorageArray()[3];
+                        java.util.Map<String, Long> direct = new java.util.TreeMap<>();
+                        for (int y = 0; y < 16; y++) {
+                            for (int z = 0; z < 16; z++) {
+                                for (int x = 0; x < 16; x++) {
+                                    net.minecraft.block.state.IBlockState bs = st.get(x, y, z);
+                                    String nm = bs.getBlock().getRegistryName().toString();
+                                    direct.merge(nm, 1L, Long::sum);
+                                }
+                            }
+                        }
+                        StringBuilder db = new StringBuilder("direct830");
+                        direct.forEach((k, v) -> db.append(" ").append(k).append("=").append(v));
+                        lines.add(db.toString());
+                    }
+                } catch (Throwable t) {
+                    lines.add("direct830 failed " + t);
+                }
             }
         } catch (Throwable t) {
             lines.add("snap830 failed " + t);
