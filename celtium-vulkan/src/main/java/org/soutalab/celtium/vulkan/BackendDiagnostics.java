@@ -273,6 +273,21 @@ final class BackendDiagnostics {
                                 Math.min(120, b.lastUnflushedTargetFailure.length())))
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + b.gpuStalled
+                // Drawpath audit DP-04/DP-05/DP-06/DP-36: the terrain executors' and pack
+                // path's silent-failure quantities, previously visible only as one printed
+                // line at the moment of failure (or, for region skips, only inside the
+                // first 16 CELTIUM_PACK_TERRAIN_DRAWN lines). All are zero in a healthy
+                // run, which is the shape the leg gates read: a disabled executor, a
+                // latched pipeline failure, an atlas backoff, a pack refusal, a skipped
+                // region or a broken Demonica bridge can no longer hide behind a
+                // summary that never mentions them.
+                + " terrainEngines=[" + (b.terrain.terrainAHost() == null ? "absent"
+                        : b.terrain.terrainAHost().engineHealthSummary()) + "]"
+                + " failedPipelines=" + b.terrain.failedPipelineCount()
+                + " atlasRefreshFailures=" + b.atlasRefreshFailures
+                + " packTerrainRefused=" + b.packTerrainRefused
+                + " packTerrainSkippedRegions=" + b.packTerrainSkippedRegions
+                + " demonicaBridge=[" + DemonicaTerrainBridge.failureSummary() + "]"
                 + " deviceWaitToken=" + b.submissionStatistics.deviceWaitToken()
                 + " stalledGeometryDrops=" + b.submissionStatistics.stalledGeometryDrops()
                 + " stalledGeometryDroppedBatches=" + b.submissionStatistics.stalledGeometryDroppedBatches()

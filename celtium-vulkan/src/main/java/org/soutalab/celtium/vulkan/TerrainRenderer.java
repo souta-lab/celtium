@@ -507,6 +507,15 @@ public final class TerrainRenderer {
     private final java.util.Set<TerrainRenderPass> failedPipelines =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /**
+     * Passes whose pipeline creation failed and is permanently latched off (drawpath
+     * audit DP-04): every terrain pass in this set answers null for the rest of the run,
+     * so the count belongs in {@code CELTIUM_VERIFY} next to the failure's print line.
+     */
+    int failedPipelineCount() {
+        return this.failedPipelines.size();
+    }
+
     VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
         if (pass == null) {
             // With no bridge there is no last pass to look up, and the map this reads rejects a null key with a

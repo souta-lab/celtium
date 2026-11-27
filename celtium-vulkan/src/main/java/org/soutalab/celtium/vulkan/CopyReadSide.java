@@ -1319,6 +1319,7 @@ final class CopyReadSide {
                 this.backend.atlasRefreshCountdown = 400;
             } catch (RuntimeException | LinkageError error) {
                 this.backend.record("block atlas upload failed: " + VulkanTerrainGpuBackend.describe(error));
+                this.backend.atlasRefreshFailures++;
                 this.backend.atlasRefreshCountdown = 400;
             }
         }
