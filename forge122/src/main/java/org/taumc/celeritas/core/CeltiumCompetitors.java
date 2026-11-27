@@ -107,7 +107,9 @@ public final class CeltiumCompetitors {
             // itself, so neither of these runs alongside it. Actinium is a competing whole-renderer
             // overhaul: its GLSM forwards every GL call to a single backend while Celtium's engine owns
             // the same surface, and it ships a second copy of the terrain renderer. Marker is its @Mod
-            // class, verified in the Actinium source tree (Actinium-Dev/Actinium, tip ce77eed9). The
+            // class, verified in the Actinium source tree (Actinium-Dev/Actinium, tip ce77eed9) and in
+            // the distributed Actinium-beta-0.1.0.jar (sha256
+            // fdaaff1147ad4cd18c710ba76b15b66755b332ebc38a805f7c1eb5c1d716d988). The
             // CeleritasLoadingPlugin class name exists in both jars and must not be used as a marker.
             // Demonica is the Angelica fork whose shader hosting Celtium used to interoperate with; that
             // combination was retired when Celtium took shader pack interpretation in-house. Marker is

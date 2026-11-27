@@ -33,7 +33,7 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 | --- | --- | --- |
 | Alfheim | Its client light pass re-marks the same chunk sections for rebuild every tick (~80,000 marks a second in E2E), so distant terrain never settles. Celtium logs a warning at startup. | [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine) |
 | Celeritas | Celtium is a replacement for it. Install one, not both. | — |
-| Shader packs / OptiFine shaders | Not part of Celtium. Shadows and shader packs are planned as a separate addon (a Demonica fork). | — |
+| Shader packs / OptiFine shaders | Not part of Celtium yet. Shadows and shader packs are planned as a built-in Celtium feature in v0.4.0. | — |
 
 ## Known rendering gaps
 

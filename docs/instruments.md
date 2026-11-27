@@ -64,7 +64,7 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.allowCompetitors` | `Boolean.getBoolean` | [CeltiumCompetitors.java:128](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java#L128>) |
+| `celtium.allowCompetitors` | `Boolean.getBoolean` | [CeltiumCompetitors.java:130](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java#L130>) |
 
 <a id="group-celtium-backendCounters"></a>
 ## `celtium.backendCounters.*`
