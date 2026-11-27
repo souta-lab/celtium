@@ -43,6 +43,9 @@ public final class CeltiumTerrainDriver {
     /** Finished builds uploaded per frame at most. */
     private static final int MAX_UPLOADS_PER_FRAME = 160;
 
+    /** The live driver, for the F3 panel and the validation fixture's renderer evidence reads. */
+    private static volatile CeltiumTerrainDriver instance;
+
     private WorldClient world;
     private TerrainBuildScheduler scheduler;
     private ForgeBlockFaceData faceData;
@@ -57,6 +60,38 @@ public final class CeltiumTerrainDriver {
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
+
+    public CeltiumTerrainDriver() {
+        instance = this;
+    }
+
+    /** The live driver, or null before the world renderer exists. */
+    public static CeltiumTerrainDriver instanceNullable() {
+        return instance;
+    }
+
+    /** The live terrain backend description (same text as the /celtium report). */
+    public String getTerrainBackendDescription() {
+        return org.soutalab.celtium.forge.TerrainBackendStatus.describe();
+    }
+
+    /** Renderer evidence lines for the validation fixture and the F3 panel. */
+    public java.util.List<String> getDebugStrings() {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add("Celtium terrain driver (lane1): " + getTerrainBackendDescription());
+        lines.add(getChunksDebugString());
+        CeltiumBackend backend = CeltiumBackends.current();
+        if (backend != null) {
+            String diagnostics = backend.celtium$lane1DiagnosticsSummary();
+            if (!diagnostics.isEmpty()) {
+                lines.add(diagnostics);
+            }
+        }
+        lines.add("driver resident=" + resident.size() + " present=" + present.size()
+                + " pending=" + pending.size() + " dirty=" + dirty.size()
+                + " visible=" + visibleSectionCount);
+        return lines;
+    }
 
     private static long key(int x, int y, int z) {
         return ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFFFFF);

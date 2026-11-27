@@ -11,6 +11,11 @@ package org.soutalab.celtium.vulkan;
 public interface CeltiumBackend {
     String getName();
 
+    /** Lane 1 terrain diagnostics for the F3 panel and the validation fixture; empty when not applicable. */
+    default String celtium$lane1DiagnosticsSummary() {
+        return "";
+    }
+
     // ---------------------------------------------------------------- Lane 1 terrain (S2-b)
 
     /** Uploads one meshed section's geometry to the Lane 1 resident store. */

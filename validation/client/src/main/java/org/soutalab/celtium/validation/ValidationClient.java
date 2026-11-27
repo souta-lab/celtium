@@ -5913,7 +5913,7 @@ public final class ValidationClient {
         }
         try {
             if (celtium$rendererClass == null && !celtium$rendererLookupFailed) {
-                celtium$rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+                celtium$rendererClass = celtium$worldRendererClass();
                 celtium$rendererInstanceMethod = celtium$rendererClass.getMethod("instanceNullable");
                 celtium$rendererDebugMethod = celtium$rendererClass.getMethod("getDebugStrings");
             }
@@ -6459,7 +6459,7 @@ public final class ValidationClient {
     private static long celtium$packedCounters() {
         try {
             if (celtium$countersMethod == null && !celtium$countersLookupFailed) {
-                Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+                Class<?> rendererClass = celtium$worldRendererClass();
                 celtium$countersMethod = rendererClass.getMethod("celtium$captureCountersPacked");
             }
             if (celtium$countersMethod == null) {
@@ -8039,9 +8039,9 @@ public final class ValidationClient {
                 finish(mc);
                 return;
             }
-            Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+            Class<?> rendererClass = celtium$worldRendererClass();
             Object renderer = rendererClass.getMethod("instanceNullable").invoke(null);
-            if (renderer == null) throw new IllegalStateException("Celeritas world renderer was not active");
+            if (renderer == null) throw new IllegalStateException("world renderer was not active");
             report.addProperty("worldRendererClass", renderer.getClass().getName());
             report.add("rendererDebug", new GsonBuilder().create().toJsonTree(rendererClass.getMethod("getDebugStrings").invoke(renderer)));
             try {
@@ -9474,6 +9474,19 @@ public final class ValidationClient {
      * The class name is compared as a string and the calls go through {@link #celtium$backendCall}, which is the same
      * shape the JEI and framebuffer-interop probes in this file already use.
      */
+    /**
+     * The world renderer's class: celtium's own terrain driver in the final form, or the retired
+     * Celeritas renderer in upstream-pinned comparison runs. Both expose instanceNullable(),
+     * getDebugStrings() and getTerrainBackendDescription() to this fixture.
+     */
+    private static Class<?> celtium$worldRendererClass() throws ClassNotFoundException {
+        try {
+            return Class.forName("org.soutalab.celtium.forge.terrain.CeltiumTerrainDriver");
+        } catch (ClassNotFoundException | LinkageError absent) {
+            return Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+        }
+    }
+
     private static Object celtium$vulkanBackend() {
         try {
             Object current = org.soutalab.celtium.vulkan.CeltiumBackends.current();
