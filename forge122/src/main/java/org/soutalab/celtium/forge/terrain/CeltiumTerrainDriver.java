@@ -253,6 +253,8 @@ public final class CeltiumTerrainDriver {
                             + " x=" + keyX(e.getKey()) + " y=" + keyY(e.getKey())
                             + " z=" + keyZ(e.getKey()) + " darkPermille=" + e.getValue()));
         }
+        lines.add("fillSectionCensus s14m4Permille=" + ForgeSectionScanner.FILL_14M4.get()
+                + " s040Permille=" + ForgeSectionScanner.FILL_040.get());
         lines.add("fillCensus total=" + ForgeSectionScanner.FILLS_TOTAL.get()
                 + " centerUnpopulated=" + ForgeSectionScanner.FILLS_CENTER_UNPOPULATED.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
