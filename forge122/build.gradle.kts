@@ -138,12 +138,6 @@ dependencies {
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
 
-    implementation(project(":common", configuration = "modJar")) {
-        isTransitive = false
-    }
-    modEmbedDependencies(project(":common", configuration = "modJar")) {
-        isTransitive = false
-    }
     // HarnessConfig moved from :common to :celtium-core in the v0.4.0 S1-a stage. The harnessJar
     // artifact carries it at release 21, which this module's 21 compiler can read.
     implementation(project(":celtium-core", configuration = "harnessJar")) {
@@ -255,10 +249,6 @@ tasks.named<Jar>("jar") {
     val repositoryRoot = rootProject.findProperty("celtium_repository_root") ?: rootProject.projectDir
     from(file(repositoryRoot)) {
         include("README.md", "docs/upstream-README.md")
-    }
-    from(file("$repositoryRoot/common/src/main/java/grondag/bitraster/LICENSE")) {
-        into("licenses")
-        rename { "bitraster-LICENSE" }
     }
     // LWJGL Vulkan Java bindings are bundled since v0.1.2-alpha; include their BSD-3-Clause notice.
     from(file("$repositoryRoot/licenses/lwjgl-LICENSE")) {

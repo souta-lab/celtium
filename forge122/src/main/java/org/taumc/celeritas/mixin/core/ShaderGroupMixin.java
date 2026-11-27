@@ -9,8 +9,8 @@ import net.minecraft.client.shader.Shader;
 import net.minecraft.client.shader.ShaderGroup;
 import net.minecraft.client.shader.ShaderManager;
 import net.minecraft.client.shader.ShaderUniform;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.soutalab.celtium.vulkan.VulkanPostChain;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -64,7 +64,7 @@ public abstract class ShaderGroupMixin {
     private void celtium$renderChainNatively(float partialTicks, CallbackInfo info) {
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean mainIsGame = this.mainFramebuffer == minecraft.getFramebuffer();
-        TerrainGpuBackend current = TerrainGpuBackends.current();
+        CeltiumBackend current = CeltiumBackends.current();
         if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)
                 || !backend.celtium$postChainAvailable()) {
             celtium$skip("unavailable");

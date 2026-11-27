@@ -1,8 +1,8 @@
 package org.taumc.celeritas.impl.font;
 
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -432,7 +432,7 @@ public final class CeltiumFontGlyphCapture {
         // A frame with no backend yet - the splash and loading screens - has nothing to draw into, so it is skipped at
         // the window rather than counted as a refusal: measured, that is 291500 glyph quads in 45 s of startup and
         // none of them geometry.
-        armed = TerrainGpuBackends.current() != null;
+        armed = CeltiumBackends.current() != null;
         if (armed) {
             org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowBegin();
         }
@@ -466,7 +466,7 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@return whether the Celtium-side default-glyph path may draw a glyph itself right now}. */
     public static boolean fastPathAvailable() {
-        return TerrainGpuBackends.current() != null;
+        return CeltiumBackends.current() != null;
     }
 
     /** Records that the fast path had to re-bind the font sheet because another texture had taken the unit. */
@@ -491,7 +491,7 @@ public final class CeltiumFontGlyphCapture {
      * @return the advance vanilla would have returned, or -1 when this glyph must take the window path
      */
     public static float fastDefaultGlyph(int[] charWidth, float posX, float posY, int ch, boolean italic) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null || charWidth == null || ch < 0 || ch >= charWidth.length) {
             return -1.0F;
         }
@@ -557,7 +557,7 @@ public final class CeltiumFontGlyphCapture {
      *
      * @return {@code true} when the quad was buffered; {@code false} only when the segment cannot grow to hold it
      */
-    private static boolean bufferQuad(TerrainGpuBackend backend, int packed,
+    private static boolean bufferQuad(CeltiumBackend backend, int packed,
             float x0, float y0, float u0, float v0, float x1, float y1, float u1, float v1,
             float x2, float y2, float u2, float v2, float x3, float y3, float u3, float v3) {
         int needed = (bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2) * STRIDE;
@@ -611,7 +611,7 @@ public final class CeltiumFontGlyphCapture {
      * @return the advance vanilla would have returned, 0 for a glyph vanilla skips, or -1 to take the window path
      */
     public static float fastUnicodeGlyph(byte[] glyphWidth, float posX, float posY, char ch, boolean italic) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null || glyphWidth == null || ch >= 256) {
             return -1.0F;
         }
@@ -699,7 +699,7 @@ public final class CeltiumFontGlyphCapture {
      */
     public static float fastAtlasGlyph(byte[] glyphWidth, int[] charWidth, float posX, float posY, char ch,
             boolean italic, boolean unicodePath) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null || !CeltiumFontAtlas.active()) {
             return -1.0F;
         }
@@ -841,7 +841,7 @@ public final class CeltiumFontGlyphCapture {
      *
      * @param backend the caller's backend, looked up when {@code null}
      */
-    public static void flushBufferedQuads(TerrainGpuBackend backend) {
+    public static void flushBufferedQuads(CeltiumBackend backend) {
         if (!bufferedOpen) {
             return;
         }
@@ -850,7 +850,7 @@ public final class CeltiumFontGlyphCapture {
         // Measured as the leg that hung: the open flag let the hook re-enter and recurse until the timeout.
         bufferedOpen = false;
         if (backend == null) {
-            backend = TerrainGpuBackends.current();
+            backend = CeltiumBackends.current();
         }
         try {
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -944,7 +944,7 @@ public final class CeltiumFontGlyphCapture {
      * first, so the buffered glyphs land in that same run and keep their submission order against the draw that is
      * about to happen.
      */
-    private static void registerBufferedHook(TerrainGpuBackend backend) {
+    private static void registerBufferedHook(CeltiumBackend backend) {
         if (backend == bufferedHookBackend) {
             return;
         }
@@ -1137,7 +1137,7 @@ public final class CeltiumFontGlyphCapture {
 
     /** Writes the glyph into the native vertex buffer and offers it as one POSITION_TEX_COLOR quad. */
     private static void submit() {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         long vertexAddress;
         if (backend == null) {
             refuse("no-backend", shape());
@@ -1395,7 +1395,7 @@ public final class CeltiumFontGlyphCapture {
      */
     private static String mirroredMatrices() {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
                 return "mirror=none";
             }
@@ -1490,8 +1490,8 @@ public final class CeltiumFontGlyphCapture {
      * intervening submission, at a boundary, or on a state change.
      */
     private static String batchSummary() {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             return vulkan.celtium$fontBatchSummary();
         }
@@ -1510,8 +1510,8 @@ public final class CeltiumFontGlyphCapture {
      * batch summary's flush reasons are read against.
      */
     private static String runCensus() {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             return vulkan.celtium$fontRetentionSummary() + " " + vulkan.celtium$fontStateSummary()
                     + " " + vulkan.celtium$fontBakeSummary();

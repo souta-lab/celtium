@@ -14,7 +14,6 @@ import org.soutalab.celtium.forge.CeltiumCommand;
 import org.soutalab.celtium.forge.ui.CeltiumConfig;
 import org.soutalab.celtium.forge.ui.CeltiumF3Overlay;
 import org.taumc.celeritas.core.CeltiumCompetitors;
-import org.taumc.celeritas.impl.command.TogglePassCommand;
 
 @Mod(modid = CeleritasVintage.MODID, useMetadata = true, clientSideOnly = true, acceptableRemoteVersions = "*")
 public class CeleritasVintage {
@@ -43,7 +42,6 @@ public class CeleritasVintage {
         LOGGER.info("Celtium terrain backend: {}. Optional Vulkan device check: /celtium vulkan",
                 org.soutalab.celtium.forge.TerrainBackendStatus.describe());
         if ((Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")) {
-            ClientCommandHandler.instance.registerCommand(new TogglePassCommand());
         }
         if (Loader.isModLoaded("alfheim")) {
             // Unsupported with Celtium (2026-10-26): Alfheim's client light pass re-marks the same sections for rebuild

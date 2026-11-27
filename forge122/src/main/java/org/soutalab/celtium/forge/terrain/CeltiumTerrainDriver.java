@@ -1,0 +1,372 @@
+package org.soutalab.celtium.forge.terrain;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ChunkProviderClient;
+import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.renderer.culling.ICamera;
+import net.minecraft.client.renderer.tileentity.TileEntityRendererDispatcher;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.BlockRenderLayer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
+import org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometry;
+import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
+import org.taumc.celeritas.mixin.core.terrain.ChunkProviderClientAccessor;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * The Lane 1 terrain driver (S2-b): celtium's own replacement for the retired Celeritas world
+ * renderer at the {@code RenderGlobal} seats. It polls the client's loaded-chunk set each frame
+ * (no chunk tracker), snapshots changed sections on the render thread, meshes them on the S2-a
+ * build scheduler, and uploads the finished geometry to the backend's Lane 1 store; the layer
+ * draws themselves are one backend call per vanilla layer.
+ * <p>
+ * Residency is diffed, not event-driven: a section exists when its chunk is loaded and its
+ * storage is non-empty. Block edits arrive through {@link #scheduleRebuildForBlockArea} (the
+ * {@code markBlocksForUpdate} seat); everything else - chunk load, chunk unload, world change -
+ * falls out of the per-frame diff.
+ */
+public final class CeltiumTerrainDriver {
+
+    /** Builds allowed in flight at once; the initial load streams in instead of hitching. */
+    private static final int MAX_PENDING_BUILDS = 96;
+    /** Finished builds uploaded per frame at most. */
+    private static final int MAX_UPLOADS_PER_FRAME = 160;
+
+    private WorldClient world;
+    private TerrainBuildScheduler scheduler;
+    private ForgeBlockFaceData faceData;
+    private FluidloggedProbe fluids;
+
+    /** Section keys (packed) whose geometry is in the backend store. */
+    private final Set<Long> resident = new HashSet<>();
+    /** Section keys the world currently has, recomputed by the per-frame diff. */
+    private final Set<Long> present = new HashSet<>();
+    /** Section keys waiting for a (re)build. */
+    private final Set<Long> dirty = new HashSet<>();
+    private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
+
+    private int visibleSectionCount;
+
+    private static long key(int x, int y, int z) {
+        return ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFFFFF);
+    }
+
+    private static int keyX(long key) {
+        int v = (int) (key >> 42) & 0x3FFFFF;
+        return v >= 0x200000 ? v - 0x400000 : v;
+    }
+
+    private static int keyZ(long key) {
+        int v = (int) (key >> 20) & 0x3FFFFF;
+        return v >= 0x200000 ? v - 0x400000 : v;
+    }
+
+    private static int keyY(long key) {
+        return (int) (key & 0xFFFFF);
+    }
+
+    // ------------------------------------------------------------------
+    // Lifecycle (RenderGlobalMixin seats)
+    // ------------------------------------------------------------------
+
+    public void setWorld(WorldClient world) {
+        if (this.world == world) {
+            return;
+        }
+        CeltiumBackend backend = CeltiumBackends.current();
+        if (backend != null) {
+            for (long k : resident) {
+                backend.celtium$lane1RemoveSection(keyX(k), keyY(k), keyZ(k));
+            }
+        }
+        resident.clear();
+        present.clear();
+        dirty.clear();
+        for (CompletableFuture<MeshBuffers> future : pending.values()) {
+            future.cancel(false);
+        }
+        pending.clear();
+        this.world = world;
+    }
+
+    /** Resource reload: the atlas changed, so every resident section is stale. */
+    public void reload() {
+        faceData = null;
+        dirty.addAll(resident);
+    }
+
+    public void scheduleTerrainUpdate() {
+        dirty.addAll(resident);
+    }
+
+    public void scheduleRebuildForBlockArea(int minX, int minY, int minZ,
+                                            int maxX, int maxY, int maxZ, boolean important) {
+        // The border sections are included: a face on the boundary can change either side.
+        for (int x = (minX >> 4) - 1; x <= (maxX >> 4) + 1; x++) {
+            for (int y = Math.max(0, (minY >> 4) - 1); y <= Math.min(15, (maxY >> 4) + 1); y++) {
+                for (int z = (minZ >> 4) - 1; z <= (maxZ >> 4) + 1; z++) {
+                    long k = key(x, y, z);
+                    if (present.contains(k)) {
+                        dirty.add(k);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The entity-culling seat: an entity is culled only when its section exists in the world
+     * but has no geometry yet and none is coming - residency, not frustum visibility (the draw
+     * stage frustum-culls terrain itself; an entity culled on a stale visibility set would pop).
+     */
+    public boolean isEntityVisible(net.minecraft.entity.Entity entity) {
+        int sx = net.minecraft.util.math.MathHelper.floor(entity.posX) >> 4;
+        int sy = net.minecraft.util.math.MathHelper.floor(entity.posY) >> 4;
+        int sz = net.minecraft.util.math.MathHelper.floor(entity.posZ) >> 4;
+        long k = key(sx, sy, sz);
+        return resident.contains(k) || pending.containsKey(k) || dirty.contains(k)
+                || !present.contains(k);
+    }
+
+    public int getVisibleChunkCount() {
+        return visibleSectionCount;
+    }
+
+    public boolean isTerrainRenderComplete() {
+        return pending.isEmpty() && dirty.isEmpty();
+    }
+
+    public String getChunksDebugString() {
+        CeltiumBackend backend = CeltiumBackends.current();
+        int sections = backend == null ? 0 : backend.celtium$lane1SectionCount();
+        return "C: " + visibleSectionCount + "/" + sections
+                + " (lane1 pending=" + pending.size() + " dirty=" + dirty.size() + ")";
+    }
+
+    // ------------------------------------------------------------------
+    // Per-frame work
+    // ------------------------------------------------------------------
+
+    /**
+     * The setupTerrain seat: diff the loaded sections, schedule builds for what changed, and
+     * upload what finished. Runs on the render thread before the layer draws.
+     */
+    public void setupTerrain(double cameraX, double cameraY, double cameraZ) {
+        if (world == null) {
+            return;
+        }
+        ensureBuildSide();
+        diffLoadedSections();
+        drainFinishedBuilds();
+        scheduleBuilds(cameraX, cameraY, cameraZ);
+        visibleSectionCount = resident.size();
+    }
+
+    private void ensureBuildSide() {
+        if (scheduler == null) {
+            scheduler = new TerrainBuildScheduler();
+            fluids = FluidloggedProbe.resolve();
+        }
+        if (faceData == null) {
+            AtlasSpriteIndex sprites = new AtlasSpriteIndex();
+            sprites.setAtlasSize(atlasWidthPx(), atlasWidthPx());
+            faceData = ForgeBlockFaceData.build(sprites);
+        }
+    }
+
+    /** The block atlas' pixel width, derived from one known sprite's UV span. */
+    private int atlasWidthPx() {
+        try {
+            var sprite = Minecraft.getMinecraft().getTextureMapBlocks()
+                    .getAtlasSprite("minecraft:blocks/stone");
+            float span = sprite.getMaxU() - sprite.getMinU();
+            if (span > 0.0001f) {
+                return Math.round(sprite.getIconWidth() / span);
+            }
+        } catch (RuntimeException ignored) {
+            // No atlas yet (menu-time driver): the default below is corrected on the next reload.
+        }
+        return 1024;
+    }
+
+    private void diffLoadedSections() {
+        present.clear();
+        ChunkProviderClient provider = world.getChunkProvider();
+        if (provider instanceof ChunkProviderClientAccessor accessor) {
+            for (Chunk chunk : accessor.celeritas$getLoadedChunks().values()) {
+                if (chunk == null || chunk.isEmpty()) {
+                    continue;
+                }
+                ExtendedBlockStorage[] storages = chunk.getBlockStorageArray();
+                for (int y = 0; y < storages.length; y++) {
+                    ExtendedBlockStorage storage = storages[y];
+                    if (storage != null && !storage.isEmpty()) {
+                        present.add(key(chunk.x, y, chunk.z));
+                    }
+                }
+            }
+        }
+        CeltiumBackend backend = CeltiumBackends.current();
+        // Sections that vanished: unload from the store.
+        Iterator<Long> residentIt = resident.iterator();
+        while (residentIt.hasNext()) {
+            long k = residentIt.next();
+            if (!present.contains(k)) {
+                if (backend != null) {
+                    backend.celtium$lane1RemoveSection(keyX(k), keyY(k), keyZ(k));
+                }
+                residentIt.remove();
+                dirty.remove(k);
+                CompletableFuture<MeshBuffers> stale = pending.remove(k);
+                if (stale != null) {
+                    stale.cancel(false);
+                }
+            }
+        }
+        // Sections that appeared: build.
+        for (long k : present) {
+            if (!resident.contains(k) && !pending.containsKey(k)) {
+                dirty.add(k);
+            }
+        }
+    }
+
+    private void scheduleBuilds(double cameraX, double cameraY, double cameraZ) {
+        if (dirty.isEmpty()) {
+            return;
+        }
+        // Nearest first, so the view fills in around the camera instead of at the horizon.
+        List<Long> queue = new ArrayList<>(dirty);
+        queue.sort((a, b) -> Double.compare(distanceSq(a, cameraX, cameraY, cameraZ),
+                distanceSq(b, cameraX, cameraY, cameraZ)));
+        for (long k : queue) {
+            if (pending.size() >= MAX_PENDING_BUILDS) {
+                break;
+            }
+            dirty.remove(k);
+            int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
+            WorldSectionSnapshot snapshot = new WorldSectionSnapshot();
+            ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
+            pending.put(k, scheduler.build(snapshot, faceData, MesherOptions.PACK_OFF));
+        }
+    }
+
+    private static double distanceSq(long k, double cameraX, double cameraY, double cameraZ) {
+        double dx = keyX(k) * 16.0 + 8.0 - cameraX;
+        double dy = keyY(k) * 16.0 + 8.0 - cameraY;
+        double dz = keyZ(k) * 16.0 + 8.0 - cameraZ;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private void drainFinishedBuilds() {
+        CeltiumBackend backend = CeltiumBackends.current();
+        if (backend == null) {
+            return;
+        }
+        int uploads = 0;
+        Iterator<Map.Entry<Long, CompletableFuture<MeshBuffers>>> it = pending.entrySet().iterator();
+        while (it.hasNext() && uploads < MAX_UPLOADS_PER_FRAME) {
+            Map.Entry<Long, CompletableFuture<MeshBuffers>> entry = it.next();
+            CompletableFuture<MeshBuffers> future = entry.getValue();
+            if (!future.isDone()) {
+                continue;
+            }
+            it.remove();
+            if (future.isCancelled() || future.isCompletedExceptionally()) {
+                continue;
+            }
+            MeshBuffers buffers = future.getNow(null);
+            if (buffers == null) {
+                continue;
+            }
+            long k = entry.getKey();
+            try {
+                if (present.contains(k)) {
+                    backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
+                    resident.add(k);
+                    uploads++;
+                }
+            } finally {
+                scheduler.releaseBuffers(buffers);
+            }
+        }
+    }
+
+    private static SectionGeometry toGeometry(MeshBuffers buffers) {
+        short[] aux = buffers.auxEnabled() ? buffers.auxColumn() : new short[0];
+        int axisTotal = buffers.axisTotal();
+        if (aux.length != axisTotal) {
+            aux = new short[0];
+        }
+        return new SectionGeometry(
+                List.copyOf(buffers.axisLayerList(0)),
+                List.copyOf(buffers.axisLayerList(1)),
+                List.copyOf(buffers.axisLayerList(2)),
+                List.copyOf(buffers.generalLayerList(0)),
+                List.copyOf(buffers.generalLayerList(1)),
+                List.copyOf(buffers.generalLayerList(2)),
+                aux);
+    }
+
+    // ------------------------------------------------------------------
+    // Draws (RenderGlobalMixin seats)
+    // ------------------------------------------------------------------
+
+    /** The renderBlockLayer seat: one backend draw for the vanilla layers, nothing for others. */
+    public void drawChunkLayer(BlockRenderLayer layer, double cameraX, double cameraY, double cameraZ) {
+        int ordinal = switch (layer) {
+            case SOLID -> 0;
+            case CUTOUT, CUTOUT_MIPPED -> 1;
+            case TRANSLUCENT -> 2;
+            default -> -1;
+        };
+        if (ordinal < 0) {
+            return;
+        }
+        CeltiumBackend backend = CeltiumBackends.current();
+        if (backend == null) {
+            return;
+        }
+        float[] projection = new float[16];
+        float[] modelView = new float[16];
+        java.nio.FloatBuffer projBuf = ActiveRenderInfoAccessor.getProjectionMatrix();
+        java.nio.FloatBuffer mvBuf = ActiveRenderInfoAccessor.getModelViewMatrix();
+        for (int i = 0; i < 16; i++) {
+            projection[i] = projBuf.get(i);
+            modelView[i] = mvBuf.get(i);
+        }
+        backend.celtium$lane1DrawLayer(ordinal, projection, modelView, cameraX, cameraY, cameraZ);
+    }
+
+    /**
+     * The block-entity seat inside renderEntities: every loaded tile entity with a renderer,
+     * frustum-tested against the pass camera, drawn through the vanilla dispatcher (whose draws
+     * ride the backend's immediate capture like any other mod draw).
+     */
+    public void renderBlockEntities(ICamera camera, float partialTicks) {
+        if (world == null) {
+            return;
+        }
+        int pass = net.minecraftforge.client.MinecraftForgeClient.getRenderPass();
+        TileEntityRendererDispatcher.instance.preDrawBatch();
+        for (TileEntity te : world.loadedTileEntityList) {
+            if (te.shouldRenderInPass(pass)
+                    && TileEntityRendererDispatcher.instance.getRenderer(te) != null
+                    && (camera == null || camera.isBoundingBoxInFrustum(te.getRenderBoundingBox()))) {
+                TileEntityRendererDispatcher.instance.render(te, partialTicks, -1);
+            }
+        }
+        TileEntityRendererDispatcher.instance.drawBatch(pass);
+    }
+}

@@ -528,7 +528,7 @@ public final class CeltiumGllessHint {
             return;
         }
         int index = light - 0x4000; // GL_LIGHT0
-        var state = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current()
+        var state = org.soutalab.celtium.vulkan.CeltiumBackends.current()
                 instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
         if (state == null || index < 0 || index >= 2) {
             // Only as many components as this pname has: GL_SPOT_CUTOFF and the attenuation terms are single floats,
@@ -631,7 +631,7 @@ public final class CeltiumGllessHint {
             return;
         }
         int index = light - 0x4000;
-        var state = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current()
+        var state = org.soutalab.celtium.vulkan.CeltiumBackends.current()
                 instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
         if (state != null && index >= 0 && index < 2 && pname == 0x1203) {
             float[] directions = state.celtium$lightDirections();
@@ -698,7 +698,7 @@ public final class CeltiumGllessHint {
         if (index < 0 || index >= 2 || address == 0L) {
             return;
         }
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend == null) {
             return;
         }
@@ -720,7 +720,7 @@ public final class CeltiumGllessHint {
         if (pname != 0x0B53 || address == 0L) { // GL_LIGHT_MODEL_AMBIENT
             return;
         }
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             backend.setLightAmbient(
                     org.lwjgl.system.MemoryUtil.memGetFloat(address),
@@ -1783,7 +1783,7 @@ public final class CeltiumGllessHint {
      * projection that way around its framebuffer pass - reached no mirror at all: the natives were no-ops, so the HUD
      * after the minimap kept the minimap's projection and drew in the wrong place.
      */
-    private static org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend rawMatrix(int kind) {
+    private static org.soutalab.celtium.vulkan.CeltiumBackend rawMatrix(int kind) {
         // The one-shot flag, read cheaply. Reading the caller frame here instead was measured at 29.2 ms of warm frame
         // against 4.3 ms with the flag: glPushMatrix/glPopMatrix/glTranslate run per model and per entity, and a stack
         // walk on each of them costs more than the whole frame. The flag's stale case (a GlStateManager method whose
@@ -1796,7 +1796,7 @@ public final class CeltiumGllessHint {
                 return null;
             }
         }
-        return org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        return org.soutalab.celtium.vulkan.CeltiumBackends.current();
     }
 
     public static void glPushMatrix() {
@@ -1887,7 +1887,7 @@ public final class CeltiumGllessHint {
         // skipped the next mod multiply, which is how the projection multiply went missing while its matrix-mode switch
         // was applied.
         vanillaMatrixCall = 0;
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             backend.matrixMode(lastMatrixMode);
             backend.multiplyMatrix(org.lwjgl.system.MemoryUtil.memFloatBuffer(pointer, 16));
@@ -1900,7 +1900,7 @@ public final class CeltiumGllessHint {
             return;
         }
         vanillaMatrixCall = 0;
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             backend.matrixMode(lastMatrixMode);
             java.nio.FloatBuffer buffer = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
@@ -1974,7 +1974,7 @@ public final class CeltiumGllessHint {
         // The legacy immediate capture keeps its own current colour: glBegin geometry carries the colour at vertex
         // time, and the mirror's colour is state the batch path reads later.
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyColor(red, green, blue, alpha);
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) backend.setColor(red, green, blue, alpha);
         // Keep GlStateManager's colour cache honest. 1.12.2's `GlStateManager.color` only reaches GL when the value
         // differs from its cached ColorState, and a Mod that sets its colour through GL11 itself changes GL's current
@@ -2403,7 +2403,7 @@ public final class CeltiumGllessHint {
      * whichever comparison the last GlStateManager call left.
      */
     public static void glAlphaFunc(int func, float reference) {
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) backend.setAlphaFunc(func, reference);
         // Same reason as glDepthFunc: glPushAttrib(GL_COLOR_BUFFER_BIT) saves the comparison, and the stack that puts
         // it back is the stub's.
@@ -2421,7 +2421,7 @@ public final class CeltiumGllessHint {
      * with a zero and the mirror kept whichever comparison the last mirrored call left.
      */
     public static void glDepthFunc(int func) {
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) backend.depthFunc(func);
         // The stub keeps the same value for its attribute stack: a glPushAttrib(GL_DEPTH_BUFFER_BIT) has to be able
         // to put the comparison back, and the stub is what owns that stack (the backend's mirror is what it reads
@@ -2431,7 +2431,7 @@ public final class CeltiumGllessHint {
 
         /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
     public static void glDepthMask(boolean mask) {
-        var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) backend.setDepthMask(mask);
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthMask(mask);
     }
@@ -2473,8 +2473,8 @@ public final class CeltiumGllessHint {
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
     public static void glViewport(int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$viewport(x, y, width, height);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             backend.viewport(x, y, width, height);
         }
@@ -2673,8 +2673,8 @@ public final class CeltiumGllessHint {
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
     public static void glClear(int mask) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             backend.flushBeforeClear(mask);
         }

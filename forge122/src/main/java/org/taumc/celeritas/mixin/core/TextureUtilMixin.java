@@ -1,8 +1,8 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.texture.TextureUtil;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -63,7 +63,7 @@ public class TextureUtilMixin {
                 System.out.println("celtium texture animation upload: hit=" + celtium$animationHits + " size=" + width + "x"
                         + height + " at " + x + "," + y);
             }
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 // The pixels go with the hint: this is the animation path, it has the data in hand, and a region that covers
                 // the texture is a complete replacement the mirror can take without reading GL back.
@@ -185,8 +185,8 @@ public class TextureUtilMixin {
             // reused id all look like from here. The size goes along so a same-size write is treated as the content
             // update it is - a DynamicTexture refresh - rather than a new identity, which is what keeps the light map's
             // mirror alive across its per-update uploads.
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.onGlTextureReallocated(glTextureId, width, height);
                 // The id rides along too: this method's own parameter names the texture it writes, and aiming the
@@ -210,8 +210,8 @@ public class TextureUtilMixin {
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.forgetTextureAllocation(glTextureId);
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.onGlTextureReallocated(glTextureId);
             }
@@ -239,7 +239,7 @@ public class TextureUtilMixin {
                 celtium$hooked++;
                 System.out.println("celtium texture-upload hook: id=" + glTextureId + " hit=" + celtium$hooked);
             }
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 // The image goes with the announcement: it is the same data GL is about to be given, so the mirror can be
                 // built from it rather than from a readback of what GL received.
@@ -250,7 +250,7 @@ public class TextureUtilMixin {
                 // announcements silently: measured, announceImage never fired for the panorama's ids while
                 // forgetTexture did, so the reused name kept the splash logo's white fill and the panorama sampled
                 // white. Kept until a backend installs, which replays it.
-                TerrainGpuBackends.notePendingTextureUpload(glTextureId, image);
+                CeltiumBackends.notePendingTextureUpload(glTextureId, image);
             }
         } catch (Throwable ignored) {
             // A bookkeeping hint must never break a texture upload: if anything goes wrong the mirror simply keeps

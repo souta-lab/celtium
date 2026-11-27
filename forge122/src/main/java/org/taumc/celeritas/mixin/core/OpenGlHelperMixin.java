@@ -29,8 +29,8 @@ public class OpenGlHelperMixin {
             if (attachment != org.lwjgl.opengl.GL30.GL_DEPTH_ATTACHMENT) {
                 return;
             }
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
                 return;
             }

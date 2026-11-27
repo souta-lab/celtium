@@ -6,9 +6,6 @@ import java.nio.LongBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.QuadPrimitiveType;
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
-import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -22,17 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TerrainStatisticsReportTest {
 
-    private static TerrainRenderPass pass(String name) {
-        return TerrainRenderPass.builder()
-                .name(name)
-                .pipelineState(new TerrainRenderPass.PipelineState() {
-                    @Override public void setup() { }
-                    @Override public void clear() { }
-                })
-                .vertexType(ChunkMeshFormats.COMPACT)
-                .primitiveType(QuadPrimitiveType.TRIANGULATED)
-                .build();
-    }
 
     private static long[] totals(long iaV, long iaP, long vsi, long clipIn, long clipOut, long fs,
             long draws, long sections, long charge) {
@@ -107,8 +93,8 @@ class TerrainStatisticsReportTest {
 
     @Test
     void theWindowLineCarriesTheCountersAndTheDerivedRatios() {
-        Map<TerrainRenderPass, long[]> perPass = new LinkedHashMap<>();
-        perPass.put(pass("solid"), totals(120000, 40000, 80000, 39000, 38000, 900000, 600, 200, 80000));
+        Map<String, long[]> perPass = new LinkedHashMap<>();
+        perPass.put("solid", totals(120000, 40000, 80000, 39000, 38000, 900000, 600, 200, 80000));
         String line = TerrainStatisticsReport.formatWindow(200L, perPass);
         assertTrue(line.contains("frames=200"), line);
         assertTrue(line.contains("solid[vsi=80000 iaV=120000 iaP=40000"), line);
@@ -121,8 +107,8 @@ class TerrainStatisticsReportTest {
     void theSummaryNamesAnUnsupportedInstrumentInsteadOfGoingSilent() {
         String off = TerrainStatisticsReport.formatSummary(false, "device", 0, 0, 0, 0, Map.of());
         assertEquals("terrainStats=[supported=false reason=device]", off);
-        Map<TerrainRenderPass, long[]> totals = new LinkedHashMap<>();
-        totals.put(pass("solid"), totals(120000, 40000, 80000, 39000, 38000, 900000, 600, 200, 80000));
+        Map<String, long[]> totals = new LinkedHashMap<>();
+        totals.put("solid", totals(120000, 40000, 80000, 39000, 38000, 900000, 600, 200, 80000));
         String on = TerrainStatisticsReport.formatSummary(true, "", 612, 0, 0, 0, totals);
         assertTrue(on.contains("terrainStats=[supported=true samples=612 droppedPasses=0 droppedSamples=0 readFailures=0"), on);
         assertTrue(on.contains("solid[vsi=80000"), on);

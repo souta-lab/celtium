@@ -1,8 +1,8 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.shader.Framebuffer;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -47,8 +47,8 @@ public abstract class FramebufferMixin {
      */
     private static void celtium$noteHintFailure(String seat, Throwable error) {
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
                         .celtium$noteFramebufferHintFailure(seat, error);
@@ -61,7 +61,7 @@ public abstract class FramebufferMixin {
     /** Native phase boundary: metadata only; the renderer owns the fullscreen geometry/material and execution. */
     @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$nativeComposite(int width, int height, boolean opaque, CallbackInfo info) {
-        TerrainGpuBackend current = TerrainGpuBackends.current();
+        CeltiumBackend current = CeltiumBackends.current();
         if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) return;
         Framebuffer self = (Framebuffer) (Object) this;
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
@@ -90,7 +90,7 @@ public abstract class FramebufferMixin {
     /** deleteFramebuffer also deletes its colour texture; the pair can now be retired after pending GPU work. */
     @Inject(method = "func_147608_a", at = @At("RETURN"), require = 0)
     private void celtium$retireDeletedFramebuffer(CallbackInfo info) {
-        TerrainGpuBackend current = TerrainGpuBackends.current();
+        CeltiumBackend current = CeltiumBackends.current();
         if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend) {
             backend.celtium$forgetDeletedFramebuffer(System.identityHashCode(this));
         }
@@ -104,8 +104,8 @@ public abstract class FramebufferMixin {
         // size read would be the previous framebuffer's; it runs in celtium$adoptAfterBind instead.
         try {
             net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                 // Which framebuffer this is decides whether a size difference means "the shared images are being
                 // replaced". The game binds its own differently-sized framebuffers on purpose (the loading screen's is
@@ -123,8 +123,8 @@ public abstract class FramebufferMixin {
         // Probe A: right after the game's framebuffer is bound. Reading the error clears it, so the first probe that finds
         // one names the window it was produced in; the frame's own begin path then sees a clean state.
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend probeBackend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend probeBackend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
                         .celtium$noteGlErrorAt("after bindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
@@ -133,7 +133,7 @@ public abstract class FramebufferMixin {
             // A probe must never break the frame; the failure is counted instead (DP-34).
             celtium$noteHintFailure("gl error probe after bind", error);
         }
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend != null) {
             net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
@@ -215,8 +215,8 @@ public abstract class FramebufferMixin {
             if (mc == null || mc.getFramebuffer() != self) {
                 return;
             }
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
                 return;
             }
@@ -257,8 +257,8 @@ public abstract class FramebufferMixin {
     private void celtium$beforeUnbind(CallbackInfo info) {
         // Probe A2: the other end of the same method, so "during the bind" and "before it" are told apart.
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend probeBackend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend probeBackend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
                         .celtium$noteGlErrorAt("before unbindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
@@ -267,7 +267,7 @@ public abstract class FramebufferMixin {
             // A probe must never break the frame; the failure is counted instead (DP-34).
             celtium$noteHintFailure("gl error probe before unbind", error);
         }
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend != null) backend.bindFramebuffer(0L, false);
     }
 

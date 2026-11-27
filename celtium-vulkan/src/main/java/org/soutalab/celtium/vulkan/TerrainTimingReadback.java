@@ -4,7 +4,6 @@ import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.Map;
 
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 
 /**
  * Which submitted frame's timestamp state a readback may consume, and what happens to the rest.
@@ -41,10 +40,10 @@ final class TerrainTimingReadback {
         /** How many pass slots the frame timed (queries {@code poolBase..poolBase+passSlots*2}). */
         final int passSlots;
         /** Which pass each natively timed slot belonged to, by slot index. */
-        final Map<Integer, TerrainRenderPass> passes;
+        final Map<Integer, String> passes;
         /**
          * The printed name of each pack-route timed slot, by slot index: the pack stage
-         * ({@code shadow} / {@code gbuffers}) rather than a {@link TerrainRenderPass}, because the
+         * ({@code shadow} / {@code gbuffers}) rather than a terrain pass, because the
          * pack route's passes are the pack pipeline's stages - the same subpass object serves the
          * shadow stage and the gbuffers stage in one frame, so the pass object cannot name them apart.
          */
@@ -60,7 +59,7 @@ final class TerrainTimingReadback {
         final String[] markLabels;
 
         Snapshot(long sequence, long frameId, int poolBase, int passSlots,
-                Map<Integer, TerrainRenderPass> passes, Map<Integer, String> packPassNames,
+                Map<Integer, String> passes, Map<Integer, String> packPassNames,
                 int windowCount, long[] windowTargets, boolean immediateTimed, boolean frameTimed,
                 int markCount, String[] markLabels) {
             this.sequence = sequence;

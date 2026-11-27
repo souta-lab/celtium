@@ -53,16 +53,8 @@ def lwjglNativesClassifier = {
     return arm ? 'natives-linux-arm64' : 'natives-linux'
 }()
 
-// The Vulkan terrain backend implements the mod's own interfaces, so it compiles against the shared core.
+// The Vulkan terrain backend implements the mod's own interfaces from :celtium-core below.
 // The core classes are provided by the mod at runtime; nothing is bundled here.
-def coreProject = findProject(':common')
-if (coreProject != null) {
-    dependencies {
-        compileOnly(project(path: ':common', configuration: 'modJar')) { transitive = false }
-        // Real adapter-dispatch tests load its core API signatures, without initializing Minecraft or a GL context.
-        testImplementation(project(path: ':common', configuration: 'modJar')) { transitive = false }
-    }
-}
 
 // The v0.4.0 contract module: the native interfaces and geometry contracts this backend implements
 // against, and - since the S1-a move - the home of HarnessConfig, which this module's classes read.

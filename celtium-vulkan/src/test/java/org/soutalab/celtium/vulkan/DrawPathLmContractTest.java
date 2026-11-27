@@ -87,7 +87,7 @@ class DrawPathLmContractTest {
     void dp24FontGlyphCaptureCountsDropsAndNonVulkanRefusals() throws IOException {
         String capture = readSource(
                 "forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java");
-        int flushStart = capture.indexOf("public static void flushBufferedQuads(TerrainGpuBackend backend) {");
+        int flushStart = capture.indexOf("public static void flushBufferedQuads(CeltiumBackend backend) {");
         int flushEnd = capture.indexOf("private static boolean ensureBufferedCapacity(int bytes) {", flushStart);
         assertTrue(flushStart >= 0 && flushEnd > flushStart, "flushBufferedQuads is located");
         String flushBody = capture.substring(flushStart, flushEnd);

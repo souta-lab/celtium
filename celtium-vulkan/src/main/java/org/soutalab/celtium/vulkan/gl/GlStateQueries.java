@@ -43,7 +43,7 @@ final class GlStateQueries {
      * {@return the live Vulkan driver identity for {@code GL_RENDERER}}, or {@code "unavailable"} when no device
      * exists.
      * <p>
-     * Resolved through {@code TerrainGpuBackends.current()} rather than cached: the window renderer is created at
+     * Resolved through {@code CeltiumBackends.current()} rather than cached: the window renderer is created at
      * display creation and adopted by the world renderer later, so the answer appears as soon as a device exists and
      * never goes stale across a world change. The string is the one the driver itself reports
      * ({@code VulkanContext.driverSummary()}: driverName/driverID/driverInfo/driverVersion and the device), because
@@ -55,8 +55,8 @@ final class GlStateQueries {
      */
     static String celtium$nativeRendererName() {
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend current =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                 String driver = org.soutalab.celtium.vulkan.VulkanContext.driverSummary();
                 if (driver != null && !driver.isEmpty() && !"unavailable".equals(driver)) {
@@ -828,7 +828,7 @@ final class GlStateQueries {
      * agree on what the frame's matrices are.
      */
     static float[] mirroredMatrix(int pname) {
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
             return null;
         }
@@ -941,7 +941,7 @@ final class GlStateQueries {
 
     /** {@return the live Vulkan backend, or null when another renderer (or none) is installed. */
     static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend() {
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
     }
 

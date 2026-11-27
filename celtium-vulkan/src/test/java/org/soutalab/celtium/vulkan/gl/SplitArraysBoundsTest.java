@@ -1,14 +1,5 @@
 package org.soutalab.celtium.vulkan.gl;
 
-import it.unimi.dsi.fastutil.objects.Object2LongMap;
-import it.unimi.dsi.fastutil.objects.Object2LongMaps;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
-import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
-import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
-import org.embeddedt.embeddium.impl.render.chunk.compile.executor.ChunkJobResult;
-import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
-import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
@@ -39,7 +30,7 @@ class SplitArraysBoundsTest {
     private static final int GL_STATIC_DRAW = 0x88E4;
 
     private static final class RecordingBackend
-            implements org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend {
+            implements org.soutalab.celtium.vulkan.CeltiumBackend {
         record Submission(int stride, int formatId, int vertexCount, float firstX, float firstU, int firstColor) {}
 
         final List<Submission> submissions = new ArrayList<>();
@@ -47,11 +38,6 @@ class SplitArraysBoundsTest {
         @Override
         public String getName() {
             return "test-recording";
-        }
-
-        @Override
-        public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                           CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile) {
         }
 
         @Override
@@ -65,25 +51,7 @@ class SplitArraysBoundsTest {
         }
 
         @Override
-        public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
-                                 Runnable graphUpdateTrigger) {
-        }
-
-        @Override
-        public void updateRegions() {
-        }
-
-        @Override
         public void updateTimings() {
-        }
-
-        @Override
-        public Object2LongMap<TerrainRenderPass> snapshotTimings() {
-            return Object2LongMaps.emptyMap();
-        }
-
-        @Override
-        public void collectMemoryStats(RenderSectionManager.DeviceMemoryStats destination) {
         }
 
         @Override
@@ -136,10 +104,10 @@ class SplitArraysBoundsTest {
     @Test
     void refusesSplitArrayDrawWhenFirstAdvancesTexCoordPastVboBounds() throws Exception {
         Object previousStub = this.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         this.installedField.set(null, this.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
 
         // Allocate 1024B first so the backing ByteBuffer stays safely readable, then shrink logical size to 512B.
         ByteBuffer large = MemoryUtil.memAlloc(1024);
@@ -173,7 +141,7 @@ class SplitArraysBoundsTest {
                     "split-array draw must reject overflowing texCoord offset");
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             this.installedField.set(null, previousStub);
             MemoryUtil.memFree(large);
             MemoryUtil.memFree(logical);
@@ -183,10 +151,10 @@ class SplitArraysBoundsTest {
     @Test
     void drawsValidSplitArrayWithNonZeroFirstWithinBounds() throws Exception {
         Object previousStub = this.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         this.installedField.set(null, this.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
 
         ByteBuffer buf = MemoryUtil.memAlloc(512);
         try {
@@ -217,7 +185,7 @@ class SplitArraysBoundsTest {
             assertEquals(0x11223344, sub.firstColor());
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             this.installedField.set(null, previousStub);
             MemoryUtil.memFree(buf);
         }

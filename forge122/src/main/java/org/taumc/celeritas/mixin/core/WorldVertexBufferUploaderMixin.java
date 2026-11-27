@@ -5,8 +5,8 @@ import net.minecraft.client.renderer.WorldVertexBufferUploader;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.renderer.vertex.VertexFormat;
 import net.minecraft.client.renderer.vertex.VertexFormatElement;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -231,7 +231,7 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     @Inject(method = "func_181679_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$offerBatch(BufferBuilder buffer, CallbackInfo info) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null || buffer == null) {
             if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
                 org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(

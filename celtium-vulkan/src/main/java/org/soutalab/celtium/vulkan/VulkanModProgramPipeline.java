@@ -586,13 +586,13 @@ public final class VulkanModProgramPipeline {
 
     /**
      * Builds a pipeline for a shader-pack terrain program ({@code gbuffers_terrain} / {@code gbuffers_water} /
-     * {@code shadow}) whose vertex attributes come directly from a Celeritas/Iris {@link org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexFormat}
+     * {@code shadow}) whose vertex attributes come directly from a Celeritas/Iris {@link org.soutalab.celtium.vulkan.gl.GlVertexFormat}
      * (such as Demonica's 44-byte {@code ExtendedChunkVertexType}).
      */
     public static VulkanModProgramPipeline createForTerrain(
             VulkanContext context,
             ModProgramRegistry.Program program,
-            org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexFormat vertexFormat,
+            org.soutalab.celtium.vulkan.gl.GlVertexFormat vertexFormat,
             long renderPass,
             int cull,
             boolean depthTest,
@@ -629,7 +629,7 @@ public final class VulkanModProgramPipeline {
     private void createTerrainPipeline(
             byte[] vertexSpirv,
             byte[] fragmentSpirv,
-            org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexFormat vertexFormat,
+            org.soutalab.celtium.vulkan.gl.GlVertexFormat vertexFormat,
             long renderPass,
             int cull,
             boolean depthTest,
@@ -679,7 +679,7 @@ public final class VulkanModProgramPipeline {
                     VkVertexInputAttributeDescription.calloc(declared.size(), stack);
             for (int i = 0; i < declared.size(); i++) {
                 ModGlslTranslator.Attribute attr = declared.get(i);
-                org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexAttribute matched =
+                org.soutalab.celtium.vulkan.gl.GlVertexAttribute matched =
                         matchTerrainAttribute(vertexFormat, attr.name());
                 if (matched == null) {
                     attrs.get(i).location(attr.location()).binding(1)
@@ -743,8 +743,8 @@ public final class VulkanModProgramPipeline {
         }
     }
 
-    private static org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexAttribute matchTerrainAttribute(
-            org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexFormat format, String shaderName) {
+    private static org.soutalab.celtium.vulkan.gl.GlVertexAttribute matchTerrainAttribute(
+            org.soutalab.celtium.vulkan.gl.GlVertexFormat format, String shaderName) {
         if (shaderName == null) {
             return null;
         }
@@ -772,7 +772,7 @@ public final class VulkanModProgramPipeline {
     }
 
     private static int vkFormatForTerrainAttribute(
-            org.embeddedt.embeddium.impl.render.chunk.vertex.format.GlVertexAttribute attr, String glslType) {
+            org.soutalab.celtium.vulkan.gl.GlVertexAttribute attr, String glslType) {
         int glType = attr.getFormat().typeId();
         int count = attr.getCount();
         boolean norm = attr.isNormalized();

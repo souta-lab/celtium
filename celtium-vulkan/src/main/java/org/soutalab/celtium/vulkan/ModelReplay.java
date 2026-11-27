@@ -538,8 +538,7 @@ final class ModelReplay {
         if (!instances.hasRoom()) {
             return false;
         }
-        VulkanTerrainPipeline terrainPipeline = b.terrain.pipelineFor(b.lastUiPass);
-        long pass = terrainPipeline != null ? terrainPipeline.renderPass() : b.uiRenderPass();
+        long pass = b.uiRenderPass();
         int[] viewport = b.currentGroupViewportValues;
         ImmediateGroup open = b.openModelRunGroup;
         boolean extend = open != null && !b.immediateGroups.isEmpty()
@@ -637,7 +636,7 @@ final class ModelReplay {
         probe.texture = texture;
         probe.frameId = b.frameId;
         probe.target = target;
-        probe.pass = b.lastUiPass;
+        probe.pass = b;
         probe.meshTable = b.modelGeometry.modelMeshes();
         probe.openGroup = b.openModelRunGroup;
         probe.instances = b.modelInstances;
@@ -758,7 +757,7 @@ final class ModelReplay {
         probe.texture = texture;
         probe.frameId = b.frameId;
         probe.target = b.targetRegistry.currentIdentity();
-        probe.pass = b.lastUiPass;
+        probe.pass = b;
         probe.renderPass = open.modelRun.pipeline.renderPass;
         probe.quads = mesh.indexCount() / 6;
         probe.textureIndex = textureIndex;

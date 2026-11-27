@@ -1,8 +1,8 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.OpenGlHelper;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -41,7 +41,7 @@ public class LightmapCoordsMixin {
                 // Unit 0's coordinates are not the light map; only the light-map unit's pair is the world light level.
                 return;
             }
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 backend.setLightmapCoords(x, y);
             }

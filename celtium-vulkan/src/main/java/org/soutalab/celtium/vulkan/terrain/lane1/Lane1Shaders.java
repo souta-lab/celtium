@@ -115,9 +115,12 @@ public final class Lane1Shaders {
             layout(std430, set = 0, binding = 5) readonly buffer ClusterMasks { uint64_t masks[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
-                vec3 cameraPos;
-                ivec3 gridOrigin;
+                vec4 cameraPos;
+                ivec4 gridOrigin;
                 int lightCount;
+                int pushPad0;
+                int pushPad1;
+                int pushPad2;
             } pc;
             layout(location = 0) out vec2 fragUv;
             layout(location = 1) out vec4 fragColor;
@@ -126,7 +129,7 @@ public final class Lane1Shaders {
             layout(location = 4) out vec3 fragDynamicLight;
             const vec2 CORNERS[6] = vec2[](vec2(0,0), vec2(1,0), vec2(0,1), vec2(0,1), vec2(1,0), vec2(1,1));
             vec3 evaluateLights(vec3 worldPos) {
-                ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin)) / 16.0));
+                ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin.xyz)) / 16.0));
                 if (any(lessThan(cell, ivec3(0))) || cell.x >= 16 || cell.y >= 8 || cell.z >= 16) return vec3(0.0);
                 uint64_t mask = masks[(cell.y * 16 + cell.z) * 16 + cell.x];
                 vec3 sum = vec3(0.0);
@@ -155,7 +158,7 @@ public final class Lane1Shaders {
                 else if (axis == 1u) { local.x += corner.x * float(extentU); local.z += corner.y * float(extentV); }
                 else { local.x += corner.x * float(extentU); local.y += corner.y * float(extentV); }
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
-                vec3 relative = worldPos - pc.cameraPos;
+                vec3 relative = worldPos - pc.cameraPos.xyz;
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
@@ -186,9 +189,12 @@ public final class Lane1Shaders {
             } generalQuads[];
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
-                vec3 cameraPos;
-                ivec3 gridOrigin;
+                vec4 cameraPos;
+                ivec4 gridOrigin;
                 int lightCount;
+                int pushPad0;
+                int pushPad1;
+                int pushPad2;
             } pc;
             layout(location = 0) out vec2 fragUv;
             layout(location = 1) out vec4 fragColor;
@@ -204,7 +210,7 @@ public final class Lane1Shaders {
                                   generalQuads[quadIndex].positions[corner * 3 + 1],
                                   generalQuads[quadIndex].positions[corner * 3 + 2]);
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
-                gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos, 1.0);
+                gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos.xyz, 1.0);
                 fragUv = vec2(0.0);
                 int flags = generalQuads[quadIndex].flags;
                 vec3 tint = ((flags & 1) != 0)
@@ -222,6 +228,15 @@ public final class Lane1Shaders {
     public static final String TERRAIN_FRAGMENT = "#version 450\n" + """
             layout(set = 0, binding = 6) uniform sampler2D atlas;
             layout(set = 0, binding = 7) uniform sampler2D lightMap;
+            layout(set = 0, binding = 8) uniform FogBlock {
+                vec4 fogColor;
+                vec3 fogCameraPos;
+                float fogStart;
+                float fogEnd;
+                float fogDensity;
+                int fogMode;
+                float alphaCutoff;
+            } fog;
             layout(location = 0) in vec2 fragUv;
             layout(location = 1) in vec4 fragColor;
             layout(location = 2) in vec2 fragLightMap;
@@ -230,10 +245,23 @@ public final class Lane1Shaders {
             layout(location = 0) out vec4 outColor;
             void main() {
                 vec4 texel = texture(atlas, fragUv);
-                if (texel.a < 0.01) discard;
+                if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
-                outColor = vec4(texel.rgb * fragColor.rgb * (light + fragDynamicLight),
-                        texel.a * fragColor.a);
+                vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
+                if (fog.fogMode != 0) {
+                    float dist = length(fragWorldPos - fog.fogCameraPos);
+                    float factor;
+                    if (fog.fogMode == 1) {
+                        factor = clamp((dist - fog.fogStart) / max(fog.fogEnd - fog.fogStart, 0.001), 0.0, 1.0);
+                    } else if (fog.fogMode == 2) {
+                        factor = 1.0 - exp(-fog.fogDensity * dist);
+                    } else {
+                        float d = fog.fogDensity * dist;
+                        factor = 1.0 - exp(-d * d);
+                    }
+                    rgb = mix(rgb, fog.fogColor.rgb, clamp(factor, 0.0, 1.0));
+                }
+                outColor = vec4(rgb, texel.a * fragColor.a);
             }
             """;
 }

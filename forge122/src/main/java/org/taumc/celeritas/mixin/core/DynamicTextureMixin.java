@@ -1,8 +1,8 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
@@ -34,7 +34,7 @@ public class DynamicTextureMixin {
     @Inject(method = {"updateDynamicTexture", "func_110564_a"}, at = @At("HEAD"), require = 0)
     private void celtium$announceDynamicTexture(CallbackInfo info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend == null) {
                 return;
             }

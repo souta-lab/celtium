@@ -1,6 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import org.embeddedt.embeddium.impl.render.chunk.data.MeshBufferSegment;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -1140,12 +1139,12 @@ public final class VulkanArena {
     }
 
     /**
-     * A range of the arena's buffer, shared with the mod's mesh metadata through {@link MeshBufferSegment}. Offsets
+     * A range of the arena's buffer, shared with the mod's mesh metadata through {@link org.soutalab.celtium.vulkan.MeshBufferSegment}. Offsets
      * and lengths are reported in {@link VulkanArena#stride} units, exactly like the OpenGL arena, because the
      * mod's metadata converts them into vertex and index positions with the same arithmetic for both backends. The
      * byte range never changes while the segment is alive - the arena grows by copying data in place.
      */
-    public static final class Segment implements MeshBufferSegment, Runnable {
+    public static final class Segment implements org.soutalab.celtium.vulkan.MeshBufferSegment, Runnable {
         private final VulkanArena arena;
         /** The page this range lives in; fixed at allocation, because ranges never move. */
         private final Page page;

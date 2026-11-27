@@ -4,7 +4,6 @@ import java.nio.LongBuffer;
 import java.util.Locale;
 import java.util.Map;
 
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 
 import static org.lwjgl.vulkan.VK10.VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
 import static org.lwjgl.vulkan.VK10.VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT;
@@ -163,7 +162,7 @@ public final class TerrainStatisticsReport {
     }
 
     /** Prints the window line when due; the caller clears its window when this returns true. */
-    public static boolean printWindowIfDue(long frameId, long frames, Map<TerrainRenderPass, long[]> perPass) {
+    public static boolean printWindowIfDue(long frameId, long frames, Map<String, long[]> perPass) {
         if (!windowDue(frameId) || perPass.isEmpty()) {
             return false;
         }
@@ -172,12 +171,12 @@ public final class TerrainStatisticsReport {
     }
 
     /** The window line's body: per-pass totals over the window plus the derived ratios. */
-    public static String formatWindow(long frames, Map<TerrainRenderPass, long[]> perPass) {
+    public static String formatWindow(long frames, Map<String, long[]> perPass) {
         StringBuilder line = new StringBuilder(256);
         line.append("frames=").append(frames);
-        for (Map.Entry<TerrainRenderPass, long[]> entry : perPass.entrySet()) {
+        for (Map.Entry<String, long[]> entry : perPass.entrySet()) {
             long[] v = entry.getValue();
-            line.append(' ').append(entry.getKey().name()).append('[')
+            line.append(' ').append(entry.getKey()).append('[')
                     .append("vsi=").append(v[VS_INVOCATIONS])
                     .append(" iaV=").append(v[IA_VERTICES])
                     .append(" iaP=").append(v[IA_PRIMITIVES])
@@ -203,7 +202,7 @@ public final class TerrainStatisticsReport {
      * read as "nothing was drawn".
      */
     public static String formatSummary(boolean supported, String reason, long samples, long droppedPasses,
-            long droppedSamples, long readFailures, Map<TerrainRenderPass, long[]> totals) {
+            long droppedSamples, long readFailures, Map<String, long[]> totals) {
         if (!supported) {
             return "terrainStats=[supported=false reason=" + reason + "]";
         }
@@ -212,9 +211,9 @@ public final class TerrainStatisticsReport {
                 .append(" droppedPasses=").append(droppedPasses)
                 .append(" droppedSamples=").append(droppedSamples)
                 .append(" readFailures=").append(readFailures);
-        for (Map.Entry<TerrainRenderPass, long[]> entry : totals.entrySet()) {
+        for (Map.Entry<String, long[]> entry : totals.entrySet()) {
             long[] v = entry.getValue();
-            line.append(' ').append(entry.getKey().name()).append('[')
+            line.append(' ').append(entry.getKey()).append('[')
                     .append("vsi=").append(v[VS_INVOCATIONS])
                     .append(" iaP=").append(v[IA_PRIMITIVES])
                     .append(" clipIn=").append(v[CLIPPING_INVOCATIONS])

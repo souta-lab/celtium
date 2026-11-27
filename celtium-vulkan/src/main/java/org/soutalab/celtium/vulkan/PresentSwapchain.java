@@ -399,7 +399,7 @@ final class PresentSwapchain {
         // indistinguishable from the path never existing (the fallback-visibility rule).
         // 1. A shader pack is active. The pack's own passes sample the frame colour and write through
         //    their targets; the frame they compose must be an image those passes can sample.
-        if (org.embeddedt.embeddium.impl.render.ShaderModBridge.areShadersEnabled()) {
+        if (org.soutalab.celtium.vulkan.ShaderPackBridge.areShadersEnabled()) {
             celtium$noteBorrowBypass("shader-pack");
             return;
         }

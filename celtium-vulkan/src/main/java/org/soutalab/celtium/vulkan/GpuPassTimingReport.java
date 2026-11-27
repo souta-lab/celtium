@@ -2,7 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import java.util.Map;
 
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
+
 import org.soutalab.celtium.harness.HarnessConfig;
 
 /**
@@ -46,7 +46,7 @@ public final class GpuPassTimingReport {
      *                    slots the pack route timed - its stages are the pack pipeline's, not
      *                    {@link TerrainRenderPass}es, so they travel under their own names
      */
-    public static void printIfDue(long frameId, Map<TerrainRenderPass, Long> timings,
+    public static void printIfDue(long frameId, Map<String, Long> timings,
             Map<String, Long> packTimings, long immediatePassNanos,
             long frameNanos, long headNanos, long tailNanos, int windows, long windowMainNanos, long windowOffNanos,
             long windowMaxNanos, String markTimeline) {
@@ -54,7 +54,7 @@ public final class GpuPassTimingReport {
             return;
         }
         StringBuilder line = new StringBuilder(192);
-        for (Map.Entry<TerrainRenderPass, Long> entry : timings.entrySet()) {
+        for (Map.Entry<String, Long> entry : timings.entrySet()) {
             if (line.length() > 0) {
                 line.append(' ');
             }

@@ -1,7 +1,5 @@
 package org.soutalab.celtium.vulkan.gl;
 
-import it.unimi.dsi.fastutil.objects.Object2LongMap;
-import it.unimi.dsi.fastutil.objects.Object2LongMaps;
 import java.io.BufferedReader;
 import java.io.StringReader;
 import java.lang.reflect.Field;
@@ -12,13 +10,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
-import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
-import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
-import org.embeddedt.embeddium.impl.render.chunk.compile.executor.ChunkJobResult;
-import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
-import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
@@ -59,7 +50,7 @@ class ReadableMemoryRangesTest {
     private static final int PAGE_NOCACHE = 0x200;
 
     private static final class RecordingBackend
-            implements org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend {
+            implements org.soutalab.celtium.vulkan.CeltiumBackend {
         record Submission(int stride, int formatId, int vertexCount, int mode, float firstX) {}
 
         final List<Submission> submissions = new ArrayList<>();
@@ -67,11 +58,6 @@ class ReadableMemoryRangesTest {
         @Override
         public String getName() {
             return "test-recording";
-        }
-
-        @Override
-        public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                           CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile) {
         }
 
         @Override
@@ -83,25 +69,7 @@ class ReadableMemoryRangesTest {
         }
 
         @Override
-        public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
-                                 Runnable graphUpdateTrigger) {
-        }
-
-        @Override
-        public void updateRegions() {
-        }
-
-        @Override
         public void updateTimings() {
-        }
-
-        @Override
-        public Object2LongMap<TerrainRenderPass> snapshotTimings() {
-            return Object2LongMaps.emptyMap();
-        }
-
-        @Override
-        public void collectMemoryStats(RenderSectionManager.DeviceMemoryStats destination) {
         }
 
         @Override
@@ -403,10 +371,10 @@ class ReadableMemoryRangesTest {
 
         StubHarness harness = new StubHarness(provider);
         Object previousStub = harness.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         harness.installedField.set(null, harness.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
         try {
             NativeGeometryBuffer.unbind();
             harness.call("glEnableClientState", GL_VERTEX_ARRAY);
@@ -472,7 +440,7 @@ class ReadableMemoryRangesTest {
             assertEquals(2, backend.submissions.size(), "unavailable provider must refuse client draw");
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             harness.installedField.set(null, previousStub);
             MemoryUtil.memFree(vertices);
         }
@@ -521,10 +489,10 @@ class ReadableMemoryRangesTest {
 
         StubHarness harness = new StubHarness(provider);
         Object previousStub = harness.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         harness.installedField.set(null, harness.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
         try {
             NativeGeometryBuffer.unbind();
             harness.call("glEnableClientState", GL_VERTEX_ARRAY);
@@ -592,7 +560,7 @@ class ReadableMemoryRangesTest {
             assertEquals(2, backend.submissions.size(), "glDrawElements with uncovered client indices must be refused");
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             harness.installedField.set(null, previousStub);
             MemoryUtil.memFree(vertices);
             MemoryUtil.memFree(indices);

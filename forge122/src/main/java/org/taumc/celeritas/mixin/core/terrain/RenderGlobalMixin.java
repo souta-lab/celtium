@@ -18,8 +18,6 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
-import org.embeddedt.embeddium.impl.render.terrain.SimpleWorldRenderer;
-import org.embeddedt.embeddium.impl.render.viewport.ViewportProvider;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
@@ -31,12 +29,12 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.render.entity.EntityGatherer;
-import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
+import org.soutalab.celtium.forge.terrain.CeltiumTerrainDriver;
 
 import java.util.*;
 
 @Mixin(RenderGlobal.class)
-public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<CeleritasWorldRenderer> {
+public abstract class RenderGlobalMixin {
 
     /** How often the renderEntities injection ran; see the note in sodium$renderTileEntities. */
     private int celtium$renderEntitiesInjections;
@@ -72,7 +70,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     @Shadow
     @Final
     private Set<TileEntity> setTileEntities;
-    private CeleritasWorldRenderer renderer;
+    private CeltiumTerrainDriver renderer;
 
     @Redirect(method = {"loadRenderers", "func_72712_a"}, at = @At(value = "FIELD", target = "Lnet/minecraft/client/settings/GameSettings;field_151451_c:I", ordinal = 1))
     private int nullifyBuiltChunkStorage(GameSettings settings) {
@@ -156,12 +154,6 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             net.minecraft.client.renderer.culling.ICamera camera, int frameCount, boolean playerSpectator,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("setupTerrain");
-        // Once per frame, whatever the job queue does: the deferred chunk uploads drain here, so a budgeted burst can
-        // never starve waiting for build results that will not come.
-        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
-                .current() instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            vulkan.celtium$drainDeferredUploads();
-        }
     }
 
     @Inject(method = "func_174970_a(Lnet/minecraft/entity/Entity;DLnet/minecraft/client/renderer/culling/ICamera;IZ)V",
@@ -186,12 +178,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void init(Minecraft minecraft, CallbackInfo ci) {
-        this.renderer = new CeleritasWorldRenderer();
-    }
-
-    @Override
-    public CeleritasWorldRenderer celeritas$getWorldRenderer() {
-        return this.renderer;
+        this.renderer = new CeltiumTerrainDriver();
     }
 
     /**
@@ -292,8 +279,10 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (!celtium$isGameRenderGlobal()) {
             return;
         }
-        this.renderer.setupTerrain(((ViewportProvider)camera).sodium$createViewport(), CeleritasWorldRenderer.captureCameraState(tick),
-                frame, spectator, false);
+        double x = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * tick;
+        double y = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * tick;
+        double z = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * tick;
+        this.renderer.setupTerrain(x, y, z);
     }
 
     /**
@@ -354,7 +343,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             celtium$markLines++;
             System.out.println("[Celtium] CELTIUM_MARK_TRACE calls=" + celtium$markCalls + " important="
                     + celtium$markImportant + " distinctSections=" + celtium$markSections.size() + " meshed="
-                    + org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask.EXECUTIONS.getAndSet(0)
+                    + 0
                     + " in 5s");
             celtium$markWindowStart = now;
             celtium$markCalls = 0;
@@ -421,7 +410,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             return;
         }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("entBlockEntities");
-        this.renderer.renderBlockEntities(new CeleritasWorldRenderer.TileEntityRenderContext(damagedBlocks, partialTicks));
+        this.renderer.renderBlockEntities(camera, partialTicks);
         org.soutalab.celtium.vulkan.FramePassTimings.end("entBlockEntities");
 
         /*
@@ -525,7 +514,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             }
 
             // Check if any corners of the bounding box are in a visible subchunk
-            if(!CeleritasWorldRenderer.instance().isEntityVisible(entity)) {
+            if(!this.renderer.isEntityVisible(entity)) {
                 if (celtium$isItemFrame) {
                     org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteCullVisible();
                 }

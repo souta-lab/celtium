@@ -5,8 +5,8 @@ import net.minecraft.client.renderer.texture.Stitcher;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.TextureMap;
-import org.embeddedt.embeddium.impl.util.collections.quadtree.QuadTree;
-import org.embeddedt.embeddium.impl.util.collections.quadtree.Rect2i;
+import org.soutalab.celtium.forge.util.QuadTree;
+import org.soutalab.celtium.forge.util.Rect2i;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -70,8 +70,8 @@ public class TextureAtlasMixin implements TextureMapExtension {
         // tick is 131 us slower than the reference's with only 33 us of it named.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("anim");
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend != null) {
                 backend.beginAnimationUploads(((TextureMap) (Object) this).getGlTextureId());
             }
@@ -84,8 +84,8 @@ public class TextureAtlasMixin implements TextureMapExtension {
     @Inject(method = "updateAnimations", at = @At("RETURN"))
     private void celtium$endAnimationUploads(CallbackInfo ci) {
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend != null) {
                 backend.endAnimationUploads();
             }

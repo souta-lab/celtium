@@ -3,7 +3,6 @@ package org.taumc.celeritas.mixin;
 import net.minecraft.launchwrapper.Launch;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.embeddedt.embeddium.impl.util.MixinClassValidator;
 import org.objectweb.asm.tree.ClassNode;
 import org.soutalab.celtium.patch.PatchGate;
 import org.soutalab.celtium.patch.PatchGroups;

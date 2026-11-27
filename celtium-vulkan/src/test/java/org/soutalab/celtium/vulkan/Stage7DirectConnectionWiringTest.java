@@ -25,9 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * records no Vulkan command itself.
  * <p>
  * Stage 8 (S8-g) removed the escape hatch this test used to name - the
- * {@code TerrainGpuBackends.current()} + {@code instanceof} arrival at those submit sites.
+ * {@code CeltiumBackends.current()} + {@code instanceof} arrival at those submit sites.
  * The five sites now resolve the backend through the holder's submit-role accessor
- * {@code TerrainGpuBackends.submitBackend()} and offer through the {@code TerrainGpuBackend}
+ * {@code CeltiumBackends.submitBackend()} and offer through the {@code CeltiumBackend}
  * interface alone: the retained-geometry branch is the backend's
  * {@code acceptsRetainedGeometry()} capability rather than its concrete type, and the two
  * state queries the sites used to reach through a cast ({@code celtium$texture2dEnabled},
@@ -84,7 +84,7 @@ class Stage7DirectConnectionWiringTest {
     @DisplayName("the five submit sites resolve through the submit-role accessor, never by concrete type")
     void submitSitesUseTheDirectConnection() throws IOException {
         String frontend = read(FRONTEND);
-        assertEquals(5, occurrences(frontend, "TerrainGpuBackends.submitBackend()"),
+        assertEquals(5, occurrences(frontend, "CeltiumBackends.submitBackend()"),
                 "one submit-role resolution per submit site; the general door is for the other seats");
         assertTrue(frontend.contains("backend.acceptsRetainedGeometry()"),
                 "compiled client arrays branch on the retained-geometry capability, not the concrete type");

@@ -1,9 +1,9 @@
 package org.taumc.celeritas.mixin.features.mipmaps;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import org.embeddedt.embeddium.api.util.ColorARGB;
-import org.embeddedt.embeddium.impl.render.chunk.sprite.SpriteTransparencyLevel;
-import org.embeddedt.embeddium.impl.util.color.ColorSRGB;
+import org.soutalab.celtium.forge.util.ColorARGB;
+import org.soutalab.celtium.forge.util.SpriteTransparencyLevel;
+import org.soutalab.celtium.forge.util.ColorSRGB;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;

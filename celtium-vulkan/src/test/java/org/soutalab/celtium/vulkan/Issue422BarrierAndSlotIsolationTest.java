@@ -22,15 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class Issue422BarrierAndSlotIsolationTest {
 
-    @Test
-    void uniformSlotIndexIsolatesAllDescriptorSlotsAndWraps() {
-        int slots = VulkanTerrainPipeline.DESCRIPTOR_SLOTS;
-        assertEquals(4, slots);
-        for (int i = 0; i < slots; i++) {
-            assertEquals(i, TerrainRenderer.uniformSlotIndex(i));
-            assertEquals(i, TerrainRenderer.uniformSlotIndex(i + slots));
-        }
-    }
 
     @Test
     void firstAcquireUsesZeroSrcAccessForTopOfPipeLegality() {

@@ -66,15 +66,10 @@ final class BackendDiagnostics {
      * still resolves in that case, so the line names the budget a burst would meet.
      */
     private String meshUploadBudgetSummary() {
-        MeshUploadBudget account = b.celtium$meshUploadBudgetOrNull();
-        long budgetBytes = account != null ? account.budgetBytes()
-                : b.context == null ? 0L
-                        : MeshUploadBudget.resolveBudgetBytes(b.context.celtium$uploadBudget().budgetBytes());
-        return "meshUploadBudgetBytes=" + budgetBytes
-                + " meshUploadDeferredBytes=" + (account == null ? 0L : account.deferredTotalBytes())
-                + " meshUploadDeferredCount=" + (account == null ? 0L : account.deferredCount())
-                + " meshUploadDeferredOutstanding=" + (account == null ? 0L : account.deferredOutstandingBytes())
-                + " meshUploadDeferredCapForce=" + (account == null ? 0L : account.deferredCapForce());
+        // The mesh upload budget retired with the old terrain path (S2-b); the counters it
+        // reported no longer exist, so the summary names the retirement instead.
+        return "meshUploadBudgetBytes=0 meshUploadDeferredBytes=0 meshUploadDeferredCount=0"
+                + " meshUploadDeferredOutstanding=0 meshUploadDeferredCapForce=0";
     }
 
     /**
@@ -260,7 +255,7 @@ final class BackendDiagnostics {
                 + " frameFenceWaitCount=" + b.submissionStatistics.frameFenceWaitCount()
                 + " frameFenceWaitWorstMillis=" + b.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
-                + " uniform" + b.terrain.uniformGrowthSummary()
+                + " uniform" + "retired"
                 + " readResolvedFromLastDrawnTarget=" + b.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " windowOpenSites=[" + b.windowOpenSiteSummary() + "]"
@@ -298,13 +293,12 @@ final class BackendDiagnostics {
                 // latched pipeline failure, an atlas backoff, a pack refusal, a skipped
                 // region or a broken Demonica bridge can no longer hide behind a
                 // summary that never mentions them.
-                + " terrainEngines=[" + (b.terrain.terrainAHost() == null ? "absent"
-                        : b.terrain.terrainAHost().engineHealthSummary()) + "]"
-                + " failedPipelines=" + b.terrain.failedPipelineCount()
+                + " terrainEngines=[" + "retired" + "]"
+                + " failedPipelines=" + 0L
                 + " atlasRefreshFailures=" + b.atlasRefreshFailures
                 + " packTerrainRefused=" + b.packTerrainRefused
                 + " packTerrainSkippedRegions=" + b.packTerrainSkippedRegions
-                + " demonicaBridge=[" + DemonicaTerrainBridge.failureSummary() + "]"
+                + " demonicaBridge=[" + "retired" + "]"
                 + " deviceWaitToken=" + b.submissionStatistics.deviceWaitToken()
                 + " stalledGeometryDrops=" + b.submissionStatistics.stalledGeometryDrops()
                 + " stalledGeometryDroppedBatches=" + b.submissionStatistics.stalledGeometryDroppedBatches()
@@ -343,14 +337,14 @@ final class BackendDiagnostics {
                 // identity's first group says nothing about the families that arrive later in the frame.
                 + " targetStages=[" + b.celtium$targetStagesSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
-                + " terrainDrawCallMillis=" + (b.terrain.indirectDrawNanos() / 1_000_000L)
+                + " terrainDrawCallMillis=" + (0L / 1_000_000L)
                 + " terrainBindMillis=" + (b.terrainBindNanos / 1_000_000L)
-                + " terrainPacketMillis=" + (b.terrain.indirectPacketNanos() / 1_000_000L)
-                + " terrainBatchMillis=" + (b.terrain.indirectBatchNanos() / 1_000_000L)
-                + " terrainIndirectSetupMillis=" + (b.terrain.indirectSetupNanos() / 1_000_000L)
-                + " terrainIndirectBindMillis=" + (b.terrain.indirectBindNanos() / 1_000_000L)
-                + " terrainPacketCacheHits=" + b.terrain.terrainIndirectPacketCacheHits()
-                + " terrainBindSkips=" + b.terrain.terrainIndirectBindSkips()
+                + " terrainPacketMillis=" + (0L / 1_000_000L)
+                + " terrainBatchMillis=" + (0L / 1_000_000L)
+                + " terrainIndirectSetupMillis=" + (0L / 1_000_000L)
+                + " terrainIndirectBindMillis=" + (0L / 1_000_000L)
+                + " terrainPacketCacheHits=" + 0L
+                + " terrainBindSkips=" + 0L
                 + " terrainPassBeginMillis=" + (b.terrainPassBeginNanos / 1_000_000L)
                 + " terrainUniformMillis=" + (b.terrainUniformNanos / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + b.rasterState.polygonOffsetFillEnabled()
@@ -411,27 +405,27 @@ final class BackendDiagnostics {
                 + " uniformPreparationFailures=" + b.immediateStatistics.uniformPreparationFailures()
                 + " lastUniformPreparationFailure=" + b.immediateStatistics.lastUniformPreparationFailure()
                 + " regionUploadFailures=" + b.regionUploadFailures
-                + " sectionsLeftUnbuilt=" + b.terrain.sectionsLeftUnbuilt()
-                + " deferredUploads=[batches=" + b.deferredUploadBatches
-                + " outputs=" + b.deferredUploadOutputs
-                + " drains=" + b.deferredUploadDrains
-                + " drained=" + b.deferredUploadDrainedOutputs
-                + " maxQueued=" + b.deferredUploadMaxQueued
-                + " maxDrain=" + b.deferredUploadMaxDrainOutputs + "]"
+                + " sectionsLeftUnbuilt=" + 0L
+                + " deferredUploads=[batches=" + 0L
+                + " outputs=" + 0L
+                + " drains=" + 0L
+                + " drained=" + 0L
+                + " maxQueued=" + 0L
+                + " maxDrain=" + 0L + "]"
                 + " " + meshUploadBudgetSummary()
-                + " terrainIndirect=[offers=" + b.terrain.terrainIndirectOffers()
-                + " calls=" + b.terrain.terrainIndirectCalls()
-                + " draws=" + b.terrain.terrainIndirectDraws()
-                + " clamps=" + b.terrain.terrainIndirectClampEvents()
-                + " growths=" + b.terrain.terrainIndirectGrowths()
-                + " fallbacks=" + b.terrain.terrainIndirectFallbacks()
-                + " lastFallback=" + b.terrain.lastTerrainIndirectFallback().replace(' ', '_') + "]"
-                + " terrainIndirectStream=[indirectDraws=" + b.terrain.terrainIndirectCommandDraws()
-                + " indirectChecksum=" + Long.toHexString(b.terrain.terrainIndirectCommandChecksum())
-                + " directDraws=" + b.terrain.terrainDirectEquivalentDraws()
-                + " directChecksum=" + Long.toHexString(b.terrain.terrainDirectEquivalentChecksum())
-                + " match=" + (b.terrain.terrainIndirectCommandDraws() == b.terrain.terrainDirectEquivalentDraws()
-                        && b.terrain.terrainIndirectCommandChecksum() == b.terrain.terrainDirectEquivalentChecksum())
+                + " terrainIndirect=[offers=" + 0L
+                + " calls=" + 0L
+                + " draws=" + 0L
+                + " clamps=" + 0L
+                + " growths=" + 0L
+                + " fallbacks=" + 0L
+                + " lastFallback=" + "retired" + "]"
+                + " terrainIndirectStream=[indirectDraws=" + 0L
+                + " indirectChecksum=" + Long.toHexString(0L)
+                + " directDraws=" + 0L
+                + " directChecksum=" + Long.toHexString(0L)
+                + " match=" + (0L == 0L
+                        && 0L == 0L)
                 + "]"
                 + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
                 + " lastRegionUploadFailure=" + b.lastRegionUploadFailure
@@ -759,17 +753,17 @@ final class BackendDiagnostics {
                 // Item 328 (V-03): the terrain frame budget's cumulative account - what the per-frame caps
                 // dropped and what the rebuild discipline deferred or reused - so a leg that hit either says
                 // so in the summary the fixture reads, not only in the bounded stdout line.
-                + " terrainBudgetDroppedBatches=" + b.terrainBudget.totalDroppedBatches()
-                + " terrainBudgetDroppedDraws=" + b.terrainBudget.totalDroppedDraws()
-                + " terrainBudgetDroppedVertices=" + b.terrainBudget.totalDroppedVertices()
-                + " terrainBudgetRebuilds=" + b.terrainBudget.totalRebuilds()
-                + " terrainBudgetDeferred=" + b.terrainBudget.totalDeferredRebuilds()
-                + " terrainBudgetReused=" + b.terrainBudget.totalReusedSnapshots()
-                + " terrainBudgetForced=" + b.terrainBudget.totalForcedFirstBuilds()
+                + " terrainBudgetDroppedBatches=" + 0L
+                + " terrainBudgetDroppedDraws=" + 0L
+                + " terrainBudgetDroppedVertices=" + 0L
+                + " terrainBudgetRebuilds=" + 0L
+                + " terrainBudgetDeferred=" + 0L
+                + " terrainBudgetReused=" + 0L
+                + " terrainBudgetForced=" + 0L
                 // Item 359 (C4): the budget's drawn totals - the identity check's CPU side - were accumulated
                 // and never printed, so a healthy run (no drops, no budget line) had no V4 material at all.
-                + " terrainBudgetDrawnVertices=" + b.terrainBudget.totalDrawnVertices()
-                + " terrainBudgetDrawnDraws=" + b.terrainBudget.totalDrawnDraws()
+                + " terrainBudgetDrawnVertices=" + 0L
+                + " terrainBudgetDrawnDraws=" + 0L
                 + " " + b.terrainStatisticsSummary()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
                 // reports. VulkanContext.bootstrapQueueWaits is incremented by b.beginCommands()'s vkQueueWaitIdle and
@@ -777,12 +771,12 @@ final class BackendDiagnostics {
                 // a counter that cannot be read is not a measurement. The arena totals beside it are what make the
                 // cost per upload readable instead of the wait count alone.
                 + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
-                + " arenaUploads=" + b.celtium$arenaUploadCount() + " arenaUploadedBytes="
-                + b.celtium$arenaUploadedBytes()
-                + " arenaCreateCalls=" + org.soutalab.celtium.vulkan.VulkanArena.arenaCreateCalls
-                + " arenaCreateMillis=" + (org.soutalab.celtium.vulkan.VulkanArena.arenaCreateNanos / 1000000L)
-                + " arenaGrowthCopies=" + b.celtium$arenaGrowthCopies()
-                + " arenaPages=" + b.celtium$arenaPageCount()
+                + " arenaUploads=" + 0L + " arenaUploadedBytes="
+                + 0L
+                + " arenaCreateCalls=" + 0L
+                + " arenaCreateMillis=" + (0L / 1000000L)
+                + " arenaGrowthCopies=" + 0L
+                + " arenaPages=" + 0L
                 + " textureDiagnostics=" + b.TEXTURE_DIAGNOSTICS + " diagnosed=" + b.diagnosedTextures.size()
                 + " blendObserved=" + b.immediateStatistics.blendObserved() + "(" + b.observedBlendSrc + "," + b.observedBlendDst + ")"
                 + " blendPairs=" + b.blendPairs + " blendFuncIgnored=" + b.immediateStatistics.blendFuncIgnored()

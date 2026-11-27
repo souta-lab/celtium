@@ -1,13 +1,5 @@
 package org.soutalab.celtium.vulkan.gl;
 
-import it.unimi.dsi.fastutil.objects.Object2LongMap;
-import it.unimi.dsi.fastutil.objects.Object2LongMaps;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
-import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
-import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
-import org.embeddedt.embeddium.impl.render.chunk.compile.executor.ChunkJobResult;
-import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
@@ -36,7 +28,7 @@ class DrawElementsBufferBoundsTest {
     private static final int GL_STATIC_DRAW = 0x88E4;
 
     private static final class RecordingBackend
-            implements org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend {
+            implements org.soutalab.celtium.vulkan.CeltiumBackend {
         record Submission(int stride, int formatId, int vertexCount, int mode, float[] xCoords) {}
 
         final List<Submission> submissions = new ArrayList<>();
@@ -44,12 +36,6 @@ class DrawElementsBufferBoundsTest {
         @Override
         public String getName() {
             return "test-recording";
-        }
-
-        @Override
-        public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform occlusionCamera,
-                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform camera, Object view, boolean profile) {
         }
 
         @Override
@@ -64,25 +50,7 @@ class DrawElementsBufferBoundsTest {
         }
 
         @Override
-        public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
-                                 Runnable graphUpdateTrigger) {
-        }
-
-        @Override
-        public void updateRegions() {
-        }
-
-        @Override
         public void updateTimings() {
-        }
-
-        @Override
-        public Object2LongMap<TerrainRenderPass> snapshotTimings() {
-            return Object2LongMaps.emptyMap();
-        }
-
-        @Override
-        public void collectMemoryStats(RenderSectionManager.DeviceMemoryStats destination) {
         }
 
         @Override
@@ -166,10 +134,10 @@ class DrawElementsBufferBoundsTest {
     @Test
     void drawsIndexedVerticesFromStubOwnedArrayAndElementBuffers() throws Exception {
         Object previousStub = this.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         this.installedField.set(null, this.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
 
         ByteBuffer vboData = MemoryUtil.memAlloc(3 * 12);
         ByteBuffer eboData = MemoryUtil.memAlloc(3 * 4);
@@ -198,7 +166,7 @@ class DrawElementsBufferBoundsTest {
             assertEquals(11.0f, sub.xCoords()[2]);
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             this.installedField.set(null, previousStub);
             MemoryUtil.memFree(vboData);
             MemoryUtil.memFree(eboData);
@@ -208,10 +176,10 @@ class DrawElementsBufferBoundsTest {
     @Test
     void refusesIndexedDrawPastShrunkVboOrEboLogicalSizeAndOverflow() throws Exception {
         Object previousStub = this.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         this.installedField.set(null, this.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
 
         ByteBuffer largeVbo = MemoryUtil.memAlloc(64);
         ByteBuffer largeEbo = MemoryUtil.memAlloc(64);
@@ -260,7 +228,7 @@ class DrawElementsBufferBoundsTest {
                     "glDrawElements with a bound non-zero VBO lacking storage must not read vertexPointerOffset as client memory");
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             this.installedField.set(null, previousStub);
             MemoryUtil.memFree(largeVbo);
             MemoryUtil.memFree(largeEbo);
@@ -273,10 +241,10 @@ class DrawElementsBufferBoundsTest {
     @Test
     void clientVerticesWithShrunkEboRefusesStaleRangeAndOverflow() throws Exception {
         Object previousStub = this.installedField.get(null);
-        var previousBackend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        var previousBackend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         RecordingBackend backend = new RecordingBackend();
         this.installedField.set(null, this.stub);
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(backend);
+        org.soutalab.celtium.vulkan.CeltiumBackends.install(backend);
 
         ByteBuffer clientVertices = MemoryUtil.memAlloc(3 * 12);
         ByteBuffer largeEbo = MemoryUtil.memAlloc(64);
@@ -313,7 +281,7 @@ class DrawElementsBufferBoundsTest {
             assertEquals(20.0f, backend.submissions.get(0).xCoords()[1]);
         } finally {
             NativeGeometryBuffer.unbind();
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(previousBackend);
+            org.soutalab.celtium.vulkan.CeltiumBackends.install(previousBackend);
             this.installedField.set(null, previousStub);
             MemoryUtil.memFree(clientVertices);
             MemoryUtil.memFree(largeEbo);

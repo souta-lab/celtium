@@ -14,7 +14,7 @@ import javax.imageio.ImageIO;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.fml.common.ProgressManager;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
 
 /**
@@ -51,7 +51,7 @@ public final class CeltiumLoadingProgress {
         logo = null;
         forge = null;
         font = null;
-        Object backend = TerrainGpuBackends.current();
+        Object backend = CeltiumBackends.current();
         if (backend instanceof VulkanTerrainGpuBackend) {
             try {
                 ((VulkanTerrainGpuBackend) backend).finishLoadingProgress();
@@ -65,7 +65,7 @@ public final class CeltiumLoadingProgress {
         if (!active || refreshing || failures >= 3 || System.nanoTime() < nextRefresh) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || !mc.isCallingFromMinecraftThread() || mc.world != null) return;
-        Object current = TerrainGpuBackends.current();
+        Object current = CeltiumBackends.current();
         if (!(current instanceof VulkanTerrainGpuBackend)) return;
         VulkanTerrainGpuBackend backend = (VulkanTerrainGpuBackend) current;
         if (!backend.celtium$isWindowBackend() || mc.displayWidth <= 0 || mc.displayHeight <= 0) return;

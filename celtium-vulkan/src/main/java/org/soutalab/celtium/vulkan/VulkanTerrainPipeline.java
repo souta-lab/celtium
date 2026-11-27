@@ -1,9 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.QuadPrimitiveType;
-import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
-import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
-import org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.CompactChunkVertex;
+import org.soutalab.celtium.vulkan.DynamicLightService;
 import org.joml.Matrix4fc;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -18,7 +15,7 @@ import java.util.Locale;
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
- * The Vulkan graphics pipeline for exactly one {@link TerrainRenderPass}.
+ * The Vulkan graphics pipeline for exactly one TerrainRenderPass.
  * <p>
  * One instance is created per terrain render pass and kept by the backend in a map; nothing is cached statically,
  * because pass configuration (blending, culling) is baked into the pipeline object and differs between passes.
@@ -74,6 +71,15 @@ import static org.lwjgl.vulkan.VK10.*;
  * All methods must be called from the render thread. The class is not thread safe.
  */
 public final class VulkanTerrainPipeline {
+
+    /**
+     * Celtium's own description of one terrain pass for pipeline construction (S2-b: this replaces
+     * the retired Celeritas {@code TerrainRenderPass} at this seam - the pipeline factory needs a
+     * name, a vertex stride, the lightmap / discard flags and the direct-quad refusal, nothing else).
+     */
+    public record PassSpec(String name, int vertexStride, boolean hasNoLightmap,
+                           boolean supportsFragmentDiscard, boolean directQuads) {
+    }
     /**
      * The classic frame colour attachment format. The frame's format is no longer always this constant:
      * since Stage 1's BGRA ignition it follows the surface (see
@@ -137,7 +143,7 @@ public final class VulkanTerrainPipeline {
     private static final int MATRIX_FLOATS = 16;
 
     /**
-     * The compact terrain vertex format ({@link CompactChunkVertex}) transcribed to Vulkan input formats in
+     * The compact terrain vertex format (CompactChunkVertex) transcribed to Vulkan input formats in
      * attribute location order. The offsets mirror the GL vertex format element offsets exactly.
      * <p>
      * The packed attributes ({@code a_PosId}, {@code a_TexCoord}, {@code a_LightCoord}) are integer formats and
@@ -239,8 +245,8 @@ public final class VulkanTerrainPipeline {
             this.vertexModule = vertexModule;
         }
 
-        static VertexLayout forPass(TerrainRenderPass pass) {
-            return forVertexStride(pass.vertexType().getVertexFormat().getStride(), pass.name());
+        static VertexLayout forPass(PassSpec pass) {
+            return forVertexStride(pass.vertexStride(), pass.name());
         }
 
         /**
@@ -602,7 +608,7 @@ public final class VulkanTerrainPipeline {
     private static int atlasAuditPrevIdentity;
     private static boolean atlasAuditHasPrev;
 
-    private VulkanTerrainPipeline(VulkanContext context, TerrainRenderPass pass, boolean blockFaceCulling, int frontFace) {
+    private VulkanTerrainPipeline(VulkanContext context, PassSpec pass, boolean blockFaceCulling, int frontFace) {
         this.context = context;
         this.passName = pass.name();
         this.vertexLayout = VertexLayout.forPass(pass);
@@ -630,7 +636,7 @@ public final class VulkanTerrainPipeline {
      * @throws IllegalStateException    if the device lacks a limit this pipeline depends on, or if Vulkan object
      *                                  creation fails
      */
-    public static VulkanTerrainPipeline create(VulkanContext context, TerrainRenderPass pass,
+    public static VulkanTerrainPipeline create(VulkanContext context, PassSpec pass,
                                                boolean blockFaceCulling) {
         return create(context, pass, blockFaceCulling, FRONT_FACE);
     }
@@ -653,7 +659,7 @@ public final class VulkanTerrainPipeline {
      * @throws IllegalStateException    if the device lacks a limit this pipeline depends on, or if Vulkan object
      *                                  creation fails
      */
-    public static VulkanTerrainPipeline create(VulkanContext context, TerrainRenderPass pass,
+    public static VulkanTerrainPipeline create(VulkanContext context, PassSpec pass,
                                                boolean blockFaceCulling, int frontFace) {
         if (context == null) {
             throw new NullPointerException("context");
@@ -667,7 +673,7 @@ public final class VulkanTerrainPipeline {
         }
         // A quad list pass would need GL_QUADS, which Vulkan core does not have. Rejecting it here is much easier
         // to diagnose than the garbage geometry a triangle list draw of quad indices would produce.
-        if (pass.primitiveType() == QuadPrimitiveType.DIRECT) {
+        if (pass.directQuads()) {
             throw new IllegalArgumentException("Terrain pass '" + pass.name() + "' uses direct quads, which a"
                     + " triangle list Vulkan pipeline cannot draw; use a triangulated pass");
         }
@@ -685,7 +691,7 @@ public final class VulkanTerrainPipeline {
     /**
      * Whether a pass needs alpha blending.
      * <p>
-     * {@link TerrainRenderPass} carries no blend flag, and the GL pipeline state callback it does carry is opaque
+     * TerrainRenderPass carries no blend flag, and the GL pipeline state callback it does carry is opaque
      * ({@code PipelineState.setup()} touches the GL texture manager, not blending). Inspecting the vanilla pass
      * configuration leaves exactly one signal: the pass name. The vanilla terrain layers are "solid", "cutout",
      * "cutout_mipped" and "translucent", and only the translucent layer blends - the cutout layers use an alpha
@@ -696,7 +702,7 @@ public final class VulkanTerrainPipeline {
      * @param pass the render pass to classify
      * @return {@code true} if the pipeline for this pass must enable alpha blending
      */
-    public static boolean needsBlending(TerrainRenderPass pass) {
+    public static boolean needsBlending(PassSpec pass) {
         return pass.name().toLowerCase(Locale.ROOT).contains("translucent");
     }
 

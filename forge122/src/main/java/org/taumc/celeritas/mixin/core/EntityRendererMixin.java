@@ -2,8 +2,8 @@ package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.EntityRenderer;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -41,8 +41,8 @@ public abstract class EntityRendererMixin {
         org.soutalab.celtium.vulkan.FramePassTimings.beginFrame();
         try {
             // Outside every pass by construction: renderWorld opens the frame, renderWorldPass runs inside it.
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.celtium$frameBoundary();
             }
@@ -219,7 +219,7 @@ public abstract class EntityRendererMixin {
     private void celtium$seedMirrorAtCameraSetup(float partialTicks, int pass,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 // The camera transform is complete here: this is the boundary the snapshot is taken at.
                 backend.seedMirrorFromCameraSetup();
@@ -249,14 +249,14 @@ public abstract class EntityRendererMixin {
             // number is handed over here. It is needed when the light map's GL id has been zeroed by a reallocation and a
             // batch arrives before the next announcement: the renderer then asks GL for the binding on this unit.
             if (!celtium$lightmapUnitSent) {
-                TerrainGpuBackend handover = TerrainGpuBackends.current();
+                CeltiumBackend handover = CeltiumBackends.current();
                 if (handover instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
                     celtium$lightmapUnitSent = true;
                     ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) handover)
                             .celtium$setLightmapUnit(net.minecraft.client.renderer.OpenGlHelper.lightmapTexUnit);
                 }
             }
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 backend.beginWorldPass();
             }
@@ -268,7 +268,7 @@ public abstract class EntityRendererMixin {
     private void celtium$worldPassEnd(int pass, float partialTicks, long finishTimeNano,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 backend.endWorldPass();
             }
@@ -290,7 +290,7 @@ public abstract class EntityRendererMixin {
     @Inject(method = "func_180436_i", at = @At("HEAD"), require = 0)
     private void celtium$lightmapUnitOn(org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 backend.setLightmapUnitEnabled(true);
             }
@@ -302,7 +302,7 @@ public abstract class EntityRendererMixin {
     @Inject(method = "func_175072_h", at = @At("HEAD"), require = 0)
     private void celtium$lightmapUnitOff(org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend != null) {
                 backend.setLightmapUnitEnabled(false);
             }
@@ -314,7 +314,7 @@ public abstract class EntityRendererMixin {
     private void celtium$reportFieldOfView(float partialTicks, boolean useFovSetting,
             CallbackInfoReturnable<Float> info) {
         try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            CeltiumBackend backend = CeltiumBackends.current();
             if (backend == null) {
                 return;
             }

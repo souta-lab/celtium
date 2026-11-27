@@ -10,7 +10,7 @@ package org.soutalab.celtium.vulkan;
  * {@code RenderGlobal.renderSky} turns fog on for the dome and off again for the sun and the moon inside the same pass.
  * The backend writes the captured values into the push block at 128..207; this class owns the state and its selector.
  */
-public final class ImmediateFogState implements org.embeddedt.embeddium.impl.render.chunk.fog.FogService {
+public final class ImmediateFogState {
     private static final ImmediateFogState CURRENT = new ImmediateFogState();
     public static ImmediateFogState current() { return CURRENT; }
 
@@ -54,14 +54,15 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
     public float colorAlpha() { return this.alpha; }
     public boolean enabled() { return this.enabled; }
     public int glMode() { return this.glMode; }
-    @Override public float getFogStart() { return this.start; }
-    @Override public float getFogEnd() { return this.end; }
-    @Override public float getFogDensity() { return this.density; }
-    @Override public float getFogCutoff() { return this.end; }
-    @Override public int getFogShapeIndex() { return 0; }
-    @Override public float[] getFogColor() { return this.cachedFogColor; }
-    @Override public org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode getFogMode() {
-        return org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode.fromGLMode(this.enabled ? this.glMode : 0);
+    public float getFogStart() { return this.start; }
+    public float getFogEnd() { return this.end; }
+    public float getFogDensity() { return this.density; }
+    public float getFogCutoff() { return this.end; }
+    public int getFogShapeIndex() { return 0; }
+    public float[] getFogColor() { return this.cachedFogColor; }
+    /** The GL fog mode constant in force (0x2600 linear / 0x0800 exp / 0x0801 exp2), or 0 when fog is off. */
+    public int glFogMode() {
+        return this.enabled ? this.glMode : 0;
     }
 
     /**

@@ -1,7 +1,7 @@
 package org.taumc.celeritas.mixin.core;
 
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * draw was refused as such ({@code CELTIUM_DRAWARRAYS refusedByReason=[... the mirrored projection is the identity at
  * draw time ...]}), which is the 768-block sky dome drawn by the model-view alone and clipped into slivers.
  * <p>
- * The receiving end already existed with no caller: {@link TerrainGpuBackend#mirrorGluPerspective}. It is a call and
+ * The receiving end already existed with no caller: {@link CeltiumBackend#mirrorGluPerspective}. It is a call and
  * not a mixin-to-mixin call on purpose: a mixin's methods are merged into the class it targets, so this class has no
  * {@code GlStateManagerMixin.celtium$mirror} to call at runtime, and the first version of this hook died at class load
  * with {@code NoClassDefFoundError} during {@code Framebuffer}'s construction for exactly that reason.
@@ -52,7 +52,7 @@ public class GluProjectionMixin {
         if (!MIRROR_ENABLED) {
             return;
         }
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null) {
             return;
         }

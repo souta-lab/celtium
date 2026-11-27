@@ -903,8 +903,8 @@ final class CopyReadSide {
 
     /** Static probe for the font-glyph diagnostic: the mirror dims for a bound GL name, or "none"/"nobackend". */
     public static String celtium$mirrorDims(int glTextureId) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof VulkanTerrainGpuBackend vulkan) {
             return vulkan.celtium$registry().celtium$entryDims(glTextureId);
         }
@@ -917,8 +917,8 @@ final class CopyReadSide {
     /** The box-glyph hunt: the mirror's own pixels, read back, so "the GPU image holds the rasterised sheet" is
      *  measured and not assumed. {@code -Dceltium.mirrorDump=<name>:<path>} dumps the whole level-0 rect once. */
     public static String celtium$mirrorProbe(int glTextureId) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (!(backend instanceof VulkanTerrainGpuBackend vulkan)) {
             return "nobackend";
         }

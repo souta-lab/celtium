@@ -7,7 +7,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.taumc.celeritas.CeleritasVintage;
-import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
 
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
@@ -58,11 +57,19 @@ public final class CeltiumF3Overlay {
         strings.add("Full counters: CELTIUM_VERIFY in the log (-Dceltium.f3.fullSummary=true for the panel)");
     }
 
-    private static List<String> cachedSection(CeleritasWorldRenderer renderer) {
+    private static List<String> cachedSection() {
         boolean stale = cachedSection == null
                 || f3Events - cachedSectionBuiltAt >= SECTION_REFRESH_FRAMES;
         if (stale) {
-            cachedSection = new ArrayList<>(renderer.getDebugStrings());
+            cachedSection = new ArrayList<>();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.current();
+            if (backend != null) {
+                cachedSection.add("Terrain backend: " + backend.getName());
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                    cachedSection.add(vulkan.celtium$lane1DiagnosticsSummary());
+                }
+            }
             cachedSectionBuiltAt = f3Events;
             sectionRebuilds++;
             if (sectionRebuilds == 1 || sectionRebuilds % 20 == 0) {
@@ -157,10 +164,9 @@ public final class CeltiumF3Overlay {
         long sectionStart = System.nanoTime();
         int stringsBefore = strings.size();
 
-        CeleritasWorldRenderer renderer = CeleritasWorldRenderer.instanceNullable();
-        if (renderer != null) {
+        if (org.soutalab.celtium.vulkan.CeltiumBackends.current() != null) {
             if (FULL_SUMMARY) {
-                strings.addAll(cachedSection(renderer));
+                strings.addAll(cachedSection());
             } else {
                 addCuratedLines(strings);
             }

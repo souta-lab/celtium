@@ -2,8 +2,8 @@ package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.GlStateManager;
 import org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -54,8 +54,8 @@ public abstract class GlStateManagerMixin {
             // when the experiment is off nothing is drawn and nothing is cancelled.
             if (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.modelDrawEnabled()) {
                 boolean drawn = false;
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                org.soutalab.celtium.vulkan.CeltiumBackend current =
+                        org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                     int boundTexture = org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
@@ -153,7 +153,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179147_l", at = @At("HEAD"), require = 0)
     private static void celtium$enableBlend(CallbackInfo info) {
         celtium$lane2().setBlendEnabled(true);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setBlendEnabled(true);
@@ -165,7 +165,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179084_k", at = @At("HEAD"), require = 0)
     private static void celtium$disableBlend(CallbackInfo info) {
         celtium$lane2().setBlendEnabled(false);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setBlendEnabled(false);
@@ -177,7 +177,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179132_a", at = @At("HEAD"), require = 0)
     private static void celtium$depthMask(boolean mask, CallbackInfo info) {
         celtium$lane2().setDepthWriteEnabled(mask);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setDepthMask(mask);
@@ -207,7 +207,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179097_i", at = @At("HEAD"), require = 0)
     private static void celtium$disableDepth(CallbackInfo info) {
         celtium$lane2().setDepthTestEnabled(false);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setDepthTest(false);
@@ -219,7 +219,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179126_j", at = @At("HEAD"), require = 0)
     private static void celtium$enableDepth(CallbackInfo info) {
         celtium$lane2().setDepthTestEnabled(true);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setDepthTest(true);
@@ -231,7 +231,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179092_a", at = @At("HEAD"), require = 0)
     private static void celtium$alphaFunc(int glFunc, float reference, CallbackInfo info) {
         celtium$lane2().setAlphaFunc(glFunc, reference);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setAlphaFunc(glFunc, reference);
@@ -244,7 +244,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179098_w", at = @At("HEAD"), require = 0)
     private static void celtium$enableTexture2d(CallbackInfo info) {
         celtium$lane2().setTexture2dEnabled(true);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setTexture2dEnabled(true);
@@ -256,7 +256,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179090_x", at = @At("HEAD"), require = 0)
     private static void celtium$disableTexture2d(CallbackInfo info) {
         celtium$lane2().setTexture2dEnabled(false);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setTexture2dEnabled(false);
@@ -278,7 +278,7 @@ public abstract class GlStateManagerMixin {
     private static void celtium$color(float red, float green, float blue, float alpha, CallbackInfo info) {
         celtium$lane2().setColor(red, green, blue, alpha);
         CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setColor(red, green, blue, alpha);
@@ -291,7 +291,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179143_c", at = @At("HEAD"), require = 0)
     private static void celtium$depthFunc(int func, CallbackInfo info) {
         celtium$lane2().setDepthFunc(func);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.depthFunc(func);
@@ -310,7 +310,7 @@ public abstract class GlStateManagerMixin {
             // is a state the mirror reports by its absence, never a rendering failure.
         }
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_PUSH;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.pushMatrix();
@@ -329,7 +329,7 @@ public abstract class GlStateManagerMixin {
             // the depth the register reports.
         }
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_POP;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.popMatrix();
@@ -349,7 +349,7 @@ public abstract class GlStateManagerMixin {
         int srcAlpha = celtium$glFactor(SOURCE_FACTORS, sourceAlpha);
         int dstAlpha = celtium$glFactor(DEST_FACTORS, destAlpha);
         celtium$lane2().setBlendFuncSeparate(src, dst, srcAlpha, dstAlpha);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setBlendFunc(src, dst, srcAlpha, dstAlpha);
@@ -368,7 +368,7 @@ public abstract class GlStateManagerMixin {
             // An unknown mode value is vanilla's own business; the mirror keeps its mode.
         }
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MODE;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.matrixMode(mode);
@@ -381,7 +381,7 @@ public abstract class GlStateManagerMixin {
     private static void celtium$loadIdentity(CallbackInfo info) {
         celtium$lane2().loadIdentity();
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_IDENTITY;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.loadIdentity();
@@ -395,7 +395,7 @@ public abstract class GlStateManagerMixin {
                                       CallbackInfo info) {
         celtium$lane2().ortho(left, right, bottom, top, near, far);
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ORTHO;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.ortho(left, right, bottom, top, near, far);
@@ -456,7 +456,7 @@ public abstract class GlStateManagerMixin {
             // A unit outside 0..15 is not one the register can hold; the backend call below
             // remains the only mirror of it, as before this stage.
         }
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.activeTextureUnit(texture - org.lwjgl.opengl.GL13.GL_TEXTURE0);
@@ -467,7 +467,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179083_b", at = @At("HEAD"), require = 0)
     private static void celtium$viewport(int x, int y, int width, int height, CallbackInfo info) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend != null) backend.viewport(x, y, width, height);
     }
 
@@ -486,14 +486,14 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179086_m", at = @At("HEAD"), require = 0)
     private static void celtium$clear(int mask, CallbackInfo info) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend != null) backend.flushBeforeClear(mask); // ordering failure must not be swallowed as a state hint
     }
 
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
     private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
         celtium$lane2().setBlendFunc(sourceFactor, destinationFactor);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.blendFunc(sourceFactor, destinationFactor);
@@ -506,7 +506,7 @@ public abstract class GlStateManagerMixin {
     private static void celtium$tryBlendFuncSeparateInt(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha,
                                                         CallbackInfo info) {
         celtium$lane2().setBlendFuncSeparate(sourceRgb, destRgb, sourceAlpha, destAlpha);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setBlendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
@@ -517,7 +517,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_187398_d", at = @At("HEAD"), require = 0)
     private static void celtium$blendEquation(int equation, CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.blendEquation(equation, equation);
@@ -530,7 +530,7 @@ public abstract class GlStateManagerMixin {
     private static void celtium$colorMask(boolean red, boolean green, boolean blue, boolean alpha, CallbackInfo info) {
         celtium$lane2().setColorMask(red, green, blue, alpha);
         int mask = (red ? 1 : 0) | (green ? 2 : 0) | (blue ? 4 : 0) | (alpha ? 8 : 0);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.colorMask(mask);
@@ -626,7 +626,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179141_d", at = @At("HEAD"), require = 0)
     private static void celtium$enableAlpha(CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setAlphaTestEnabled(true);
@@ -637,7 +637,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179118_c", at = @At("HEAD"), require = 0)
     private static void celtium$disableAlpha(CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setAlphaTestEnabled(false);
@@ -648,7 +648,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179145_e", at = @At("HEAD"), require = 0)
     private static void celtium$enableLighting(CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setLightingEnabled(true);
@@ -659,7 +659,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179140_f", at = @At("HEAD"), require = 0)
     private static void celtium$disableLighting(CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setLightingEnabled(false);
@@ -670,7 +670,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179085_a", at = @At("HEAD"), require = 0)
     private static void celtium$enableLight(int index, CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setLightEnabled(index, true);
@@ -681,7 +681,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179122_b", at = @At("HEAD"), require = 0)
     private static void celtium$disableLight(int index, CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setLightEnabled(index, false);
@@ -700,7 +700,7 @@ public abstract class GlStateManagerMixin {
         float x = params.get(pos);
         float y = params.get(pos + 1);
         float z = params.get(pos + 2);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 if (pname == 4611) { // GL_POSITION
@@ -723,7 +723,7 @@ public abstract class GlStateManagerMixin {
         float r = params.get(pos);
         float g = params.get(pos + 1);
         float b = params.get(pos + 2);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setLightAmbient(r, g, b);
@@ -734,7 +734,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179103_j", at = @At("HEAD"), require = 0)
     private static void celtium$shadeModel(int mode, CallbackInfo info) {
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
                 backend.setShadeModel(mode);
@@ -812,8 +812,8 @@ public abstract class GlStateManagerMixin {
      * block-entity rendering. These do the same null check and the same swallow as {@link #celtium$mirror}, without
      * building an object to carry three floats.
      */
-    private static TerrainGpuBackend celtium$backendOrNull() {
-        return TerrainGpuBackends.current();
+    private static CeltiumBackend celtium$backendOrNull() {
+        return CeltiumBackends.current();
     }
 
     /**
@@ -829,7 +829,7 @@ public abstract class GlStateManagerMixin {
 
     private static void celtium$translate(float x, float y, float z) {
         celtium$lane2().translate(x, y, z);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;
         }
@@ -842,7 +842,7 @@ public abstract class GlStateManagerMixin {
 
     private static void celtium$scale(float x, float y, float z) {
         celtium$lane2().scale(x, y, z);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;
         }
@@ -854,7 +854,7 @@ public abstract class GlStateManagerMixin {
 
     private static void celtium$rotate(float angle, float x, float y, float z) {
         celtium$lane2().rotate(angle, x, y, z);
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;
         }
@@ -879,7 +879,7 @@ public abstract class GlStateManagerMixin {
         // here, so it marks itself and the route skips exactly one call.
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall =
                 org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MULT;
-        TerrainGpuBackend backend = celtium$backendOrNull();
+        CeltiumBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;
         }
@@ -889,8 +889,8 @@ public abstract class GlStateManagerMixin {
         }
     }
 
-    private static void celtium$mirror(Consumer<TerrainGpuBackend> action) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+    private static void celtium$mirror(Consumer<CeltiumBackend> action) {
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null) {
             return;
         }

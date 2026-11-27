@@ -7,8 +7,8 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.World;
 
-import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
-import org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService;
+import org.soutalab.celtium.vulkan.DynamicLightService;
+import org.soutalab.celtium.forge.light.MinecraftDynamicLightService;
 
 /**
  * Per-world-tick cache for the light lookups the render side repeats every frame.

@@ -6,8 +6,8 @@ import javax.vecmath.Matrix4f;
 
 import net.minecraftforge.client.ForgeHooksClient;
 
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -37,7 +37,7 @@ public class ForgeHooksClientMixin {
 
     @Inject(method = "multiplyCurrentGlMatrix", at = @At("HEAD"), require = 0)
     private static void celtium$multiplyCurrentGlMatrix(Matrix4f matrix, CallbackInfo info) {
-        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        CeltiumBackend backend = CeltiumBackends.current();
         if (backend == null) {
             return;
         }

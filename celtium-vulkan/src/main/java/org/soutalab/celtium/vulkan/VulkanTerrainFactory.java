@@ -1,13 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderer;
-import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
-import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
-import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
-import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegionManager;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,95 +27,11 @@ public final class VulkanTerrainFactory {
     private static final String ENABLE_SETTING = System.getProperty(ENABLE_PROPERTY, "auto");
 
     /**
-     * @param reasons receives one line per reason the Vulkan backend was not created
-     * @return the backend, or {@code null} when OpenGL must stay active
-     */
-    public static TerrainGpuBackend create(RenderPassConfiguration<?> configuration,
-                                           ChunkRenderer renderer,
-                                           RenderRegionManager regions,
-                                           List<String> reasons) {
-        String setting = ENABLE_SETTING;
-        if ("false".equalsIgnoreCase(setting)) {
-            reasons.add("Vulkan terrain is disabled by -D" + ENABLE_PROPERTY + "=false");
-            return null;
-        }
-        if (!"auto".equalsIgnoreCase(setting) && !"true".equalsIgnoreCase(setting)) {
-            reasons.add("Unknown -D" + ENABLE_PROPERTY + " value '" + setting + "'; keeping OpenGL");
-            return null;
-        }
-        boolean forced = "true".equalsIgnoreCase(setting);
-        if (!forced && !implementationComplete()) {
-            reasons.add("the Vulkan terrain backend does not implement every render pass yet: "
-                    + String.join(", ", unimplementedAreas()));
-            return null;
-        }
-        String availabilityProblem = VulkanContext.availabilityProblem();
-        if (availabilityProblem != null) {
-            reasons.add(availabilityProblem);
-            return null;
-        }
-
-        FogService fogService = renderer != null ? renderer.getFogService() : null;
-        if (fogService == null) {
-            reasons.add("the renderer does not expose a fog service, so terrain would not match the OpenGL look");
-            return null;
-        }
-
-        // Dynamic light (item 326) is an enhancement, not part of the OpenGL look: a renderer that does
-        // not expose a service gets the empty one and the terrain shades exactly as vanilla does,
-        // where the fog service's absence above refuses the backend instead.
-        DynamicLightService dynamicLightService = renderer != null ? renderer.getDynamicLightService() : null;
-        if (dynamicLightService == null) {
-            dynamicLightService = DynamicLightService.EMPTY;
-        }
-
-        // The window-time instance, if the window created one: it is the same device and the same renderer, so the
-        // world renderer's objects are handed to it rather than a second backend being built beside it. One owner for
-        // the swapchain and the frame target, and the first world frame finds them warm.
-        TerrainGpuBackend current = TerrainGpuBackends.current();
-        if (current instanceof VulkanRenderer existing && existing.celtium$isWindowBackend()) {
-            existing.celtium$adoptTerrainState(configuration, regions, fogService, dynamicLightService);
-            reasons.add("the world renderer adopted the window-time backend instead of creating a second one");
-            return existing;
-        }
-
-        if (current != null) {
-            // A second world renderer while one is installed: it gets its own device, and installing it replaces the
-            // backend every other drawing path uses. Named with its caller chain, because a mod that builds its own
-            // RenderGlobal is the only thing that does this (four times in ATM3, each taking the block atlas's mirror
-            // with the replaced backend's texture registry).
-            StringBuilder callers = new StringBuilder();
-            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-            for (int i = 2; i < stack.length && i < 16; i++) {
-                callers.append(i == 2 ? "" : " <- ").append(stack[i].getClassName().replaceAll(".*\\.", ""))
-                        .append('.').append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
-            }
-            System.out.println("[Celtium] CELTIUM_SECOND_TERRAIN_BACKEND replacing=" + current.getClass().getSimpleName()
-                    + "@" + Integer.toHexString(System.identityHashCode(current))
-                    + (current instanceof VulkanTerrainGpuBackend v ? " " + v.celtium$ownershipSummary() : "")
-                    + " callers=[" + callers + "]");
-        }
-        VulkanContext context = null;
-        try {
-            context = VulkanContext.create("Celtium terrain backend");
-            VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, configuration, regions, fogService, dynamicLightService);
-            backend.install();
-            return backend;
-        } catch (RuntimeException | LinkageError error) {
-            if (context != null) {
-                context.delete();
-            }
-            reasons.add("Vulkan device creation failed: " + error.getClass().getSimpleName() + ": " + error.getMessage());
-            return null;
-        }
-    }
-
-    /**
      * Creates the renderer at window creation, so the menu, the loading screens and every GUI-only frame have someone
      * to draw them and someone to present them.
      * <p>
      * Under the GL-less window those frames used to reach nobody: the stub decoded their draws and handed them to an
-     * empty {@code TerrainGpuBackends}, and the swap point's present only fires when a backend is installed - measured
+     * empty {@code CeltiumBackends}, and the swap point's present only fires when a backend is installed - measured
      * as 524,288 decoded draws refused with "no terrain backend is installed" while the user saw a window with nothing
      * in it. The checks are the same ones the world path makes, minus the two that describe terrain (the render pass
      * configuration and the fog service), because there is no terrain yet: the pipelines are built per pass on first
@@ -131,7 +39,7 @@ public final class VulkanTerrainFactory {
      * <p>
      * Fail-closed like the world path: a stated reason and {@code null} rather than a half-created renderer.
      */
-    public static TerrainGpuBackend createForWindow(List<String> reasons) {
+    public static CeltiumBackend createForWindow(List<String> reasons) {
         String setting = ENABLE_SETTING;
         if ("false".equalsIgnoreCase(setting)) {
             reasons.add("Vulkan terrain is disabled by -D" + ENABLE_PROPERTY + "=false");
@@ -151,7 +59,7 @@ public final class VulkanTerrainFactory {
             reasons.add(availabilityProblem);
             return null;
         }
-        TerrainGpuBackend current = TerrainGpuBackends.current();
+        CeltiumBackend current = CeltiumBackends.current();
         if (current != null) {
             reasons.add("a terrain backend is already installed");
             return null;
@@ -160,7 +68,6 @@ public final class VulkanTerrainFactory {
         try {
             context = VulkanContext.create("Celtium window renderer");
             VulkanTerrainGpuBackend backend = VulkanTerrainGpuBackend.createForWindow(context);
-            backend.install();
             return backend;
         } catch (RuntimeException | LinkageError error) {
             if (context != null) {

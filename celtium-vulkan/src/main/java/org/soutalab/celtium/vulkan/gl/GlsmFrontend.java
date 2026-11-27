@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
+import org.soutalab.celtium.vulkan.CeltiumBackend;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 import org.soutalab.celtium.vulkan.RenderObjectIds;
 import org.lwjgl.system.APIUtil;
@@ -1257,8 +1257,8 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         GlsmImmediateState.current().color(this.legacyCapture.callerRed(), this.legacyCapture.callerGreen(),
                 this.legacyCapture.callerBlue(), this.legacyCapture.callerAlpha());
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend != null) {
             // One state call per compile, and models compile once: the colour the list's compile must not tint the
             // next group with.
@@ -1788,7 +1788,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (isDepthAttachment(attachment)) {
             GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
             // Registration point, as in the bound-form attach: the record is complete enough to register from.
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.celtium$rawAttachmentChanged(framebuffer);
             }
@@ -1799,7 +1799,7 @@ public final class GlsmFrontend implements FunctionProvider {
             return;
         }
         GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
@@ -2225,8 +2225,8 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** The group-gated restore itself, beside the push so "saved here" and "put back there" cannot drift apart. */
     private void restoreAttrib(LegacyAttribSnapshot snapshot) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         int restored = 0;
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.ENABLE_BIT)) {
             for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
@@ -2772,8 +2772,8 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         boolean textured = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                 && vulkan.celtium$texture2dEnabled();
         long nested = stub.legacyCapture.nestedRefusals();
@@ -2964,8 +2964,8 @@ public final class GlsmFrontend implements FunctionProvider {
             }
             return;
         }
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
         boolean textured = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                 && vulkan.celtium$texture2dEnabled();
         // Only a run this call opened is filled: a begin that refused (a display-list compile, a mode the renderer has
@@ -3068,8 +3068,8 @@ public final class GlsmFrontend implements FunctionProvider {
             }
         }
         boolean taken = stub.legacyCapture.end((address, stride, layout, count, drawMode) -> {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.submitBackend();
             boolean accepted = backend != null
                     && backend.submitImmediateBatch(null, stride, layout, address, count, drawMode);
             if (!accepted) {
@@ -3174,8 +3174,8 @@ public final class GlsmFrontend implements FunctionProvider {
      * the run carries no matrix - {@link CompiledLegacyRun} stores vertices and a primitive only.
      */
     private void replayLegacyRun(CompiledLegacyRun run) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.submitBackend();
         // GL's rule, applied here because the copy is the run's vertices: an attribute the list never set is the
         // caller's current value, and the layout is the one the caller's texturing state selects. The commands the list
         // did record (a glColor inside the compile, a glTexCoord between two vertices) have already run through this
@@ -3263,7 +3263,7 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         this.legacyRunLogs++;
         int texture = this.textures.texture2d();
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         String mirror = "none";
         String matrix = "none";
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -4234,7 +4234,7 @@ public final class GlsmFrontend implements FunctionProvider {
     /** {@return the game's current depth-write state}; assumed true when no backend is installed. */
     private static boolean depthWritesEnabled() {
         try {
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             return !(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)
                     || vulkan.celtium$depthWritesLive();
         } catch (RuntimeException | LinkageError error) {
@@ -4267,7 +4267,7 @@ public final class GlsmFrontend implements FunctionProvider {
             // window acquire do not apply the same clear a second time. A mask the backend did not carry is left
             // pending, so the frame machinery still applies it at the next pass begin.
             try {
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                     vulkan.celtium$takeCarriedMainClear(mask);
                 }
@@ -4281,7 +4281,7 @@ public final class GlsmFrontend implements FunctionProvider {
             // keeps it between the draws before it and the draws after it, which is GL's own ordering; the
             // main-framebuffer case keeps the latch path, which the frame machinery already owns.
             try {
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                     vulkan.celtium$gameClear(mask, this.drawFbo);
                 }
@@ -5474,7 +5474,7 @@ public final class GlsmFrontend implements FunctionProvider {
                         System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + GlsmDisplayListLedger.current().compiling()
                                 + " commands=" + compiled.size() + " draws=" + draws + " bytes=" + bytes
                                 + " legacyRunBytes=" + this.openListLegacyRunBytes
-                                + " backend=" + (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
+                                + " backend=" + (org.soutalab.celtium.vulkan.CeltiumBackends
                                         .current() != null));
                     }
                 } else if (this.openListPayloads != null) {
@@ -6256,7 +6256,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private void deleteTexture(int name) {
         org.soutalab.celtium.vulkan.NativeImageBindings.current().delete(name);
         if (name != 0) {
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 for (Integer fbo : GlsmFramebufferAttachments.current().framebuffersWithColorTexture(name)) {
                     vulkan.celtium$rawAttachmentTextureDeleted(fbo.intValue());
@@ -6507,7 +6507,7 @@ public final class GlsmFrontend implements FunctionProvider {
         // the trigger while a vanilla Framebuffer method runs, because those binds are the object's own and the
         // mixin reports them by object identity.
         if (target != 0x8CA8 && bindReportSuppression == 0) {
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.celtium$registerRawFramebuffer(name, true);
             }
@@ -6533,7 +6533,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** Registers a raw framebuffer with the renderer without a bind (the hint's unbind-on-delete path). */
     public static void celtium$registerRawFramebuffer(int framebuffer) {
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$registerRawFramebuffer(framebuffer, true);
         }
@@ -6667,7 +6667,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private void forgetFramebuffer(int name) {
         if (name == 0) return;
         int color = GlsmFramebufferAttachments.current().colorTexture(name);
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
@@ -6711,7 +6711,7 @@ public final class GlsmFrontend implements FunctionProvider {
             // The depth attach completes most framebuffers' records (colour went on first), so it is a
             // registration point too: a framebuffer whose binds never reach the renderer's bind report still
             // gets its identity, pair and shared-depth borrow from here.
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 vulkan.celtium$rawAttachmentChanged(framebuffer);
             }
@@ -6728,7 +6728,7 @@ public final class GlsmFrontend implements FunctionProvider {
         GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
         // After the record update, not before: the backend's registration reads the record this call just wrote
         // (it used to be notified first and so registered the previous attachment, or none).
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
@@ -6878,20 +6878,20 @@ public final class GlsmFrontend implements FunctionProvider {
             // through GlStateManager and its mixin; a mod's raw glEnable/glDisable reached only the enables array, so
             // the pipeline kept the previous state - a raw glDisable(GL_DEPTH_TEST) overlay was still depth-tested.
             case GL_DEPTH_TEST: {
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                        org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend != null) backend.setDepthTest(enabled);
                 break;
             }
             case GL_ALPHA_TEST: {
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                        org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend != null) backend.setAlphaTestEnabled(enabled);
                 break;
             }
             case 0x0B50: { // GL_LIGHTING
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                        org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend != null) backend.setLightingEnabled(enabled);
                 break;
             }
@@ -7596,7 +7596,7 @@ public final class GlsmFrontend implements FunctionProvider {
         // or a stalled device comes back as a reason and is printed on the same line as before.
         String servedFrom;
         try {
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     ? vulkan.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
                             this.readFbo)
@@ -7793,7 +7793,7 @@ public final class GlsmFrontend implements FunctionProvider {
                     + " (only an equal-extent NEAREST depth blit is a copy)";
         } else {
             try {
-                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                         ? vulkan.celtium$serveDepthCopy(sourceTexture, destTexture, srcX0, srcY0, width, height,
                                 dstX0, dstY0)
@@ -7841,7 +7841,7 @@ public final class GlsmFrontend implements FunctionProvider {
             capacity = logicalSize - address;
             address = memAddress(storage) + address;
         }
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$getTexImage(stub.textures.texture2d(), level, format, type, address, capacity);
         }
@@ -7882,7 +7882,7 @@ public final class GlsmFrontend implements FunctionProvider {
             return;
         }
         try {
-            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     && vulkan.celtium$readPixels(this.readFbo, x, y, width, height, format, type, address);
             if (!served && readPixelsRefusals < 8) {
@@ -8241,8 +8241,8 @@ public final class GlsmFrontend implements FunctionProvider {
                         stride, formatId);
                 submitStride = formatId == 9 ? 24 : 28;
             }
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+            org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                    org.soutalab.celtium.vulkan.CeltiumBackends.submitBackend();
             if (backend != null) {
                 boolean taken = backend.submitImmediateBatch(null, submitStride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
@@ -8454,11 +8454,11 @@ public final class GlsmFrontend implements FunctionProvider {
                 this.listPayloadsOwned++;
                 return;
             }
-            TerrainGpuBackend backend;
+            CeltiumBackend backend;
             try {
                 // Resolved here rather than held as a field: this class is installed when the window is created, the
                 // backend only when the renderer comes up, and a field captured early would be permanently null.
-                backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+                backend = org.soutalab.celtium.vulkan.CeltiumBackends.submitBackend();
             } catch (RuntimeException | LinkageError error) {
                 backend = null;
                 reason = "the terrain backend could not be reached: " + error;
@@ -8854,7 +8854,7 @@ public final class GlsmFrontend implements FunctionProvider {
         return stride == 32 && (format == 8 || format == 9);
     }
 
-    private static boolean lightingOn(TerrainGpuBackend backend) {
+    private static boolean lightingOn(CeltiumBackend backend) {
         return backend != null && backend.fixedFunctionLightingEnabled();
     }
 
@@ -9182,7 +9182,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     private void replayCompiledArrays(long[] c) {
         try {
-            TerrainGpuBackend backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
+            CeltiumBackend backend = org.soutalab.celtium.vulkan.CeltiumBackends.submitBackend();
             boolean lit = c.length > 5 && c[5] != 0L && lightingOn(backend);
             NativeGeometryBuffer geometry = NativeGeometryBuffer.find((int) (lit ? c[5] : c[0]));
             // The branch is the backend's retained-geometry capability, not its concrete type (stage 8, S8-g):
@@ -9381,7 +9381,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * cannot tell "the vertices are not the sky" from "the sky is drawn with the identity matrix" - and the second is
      * a property of the renderer's matrix channel, not of this class's decoding.
      */
-    private static String celtium$mirroredMatrices(TerrainGpuBackend backend) {
+    private static String celtium$mirroredMatrices(CeltiumBackend backend) {
         try {
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 float[] projection = vulkan.celtium$mirroredProjection();
@@ -9415,7 +9415,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * "the path did not paint those pixels": the instrument's premise (the drawn colour is the group colour) is
      * exactly what was false.
      */
-    private static void celtium$noteAcceptedColor(TerrainGpuBackend backend, int buffer, int count) {
+    private static void celtium$noteAcceptedColor(CeltiumBackend backend, int buffer, int count) {
         try {
             if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
                 return;
@@ -9460,7 +9460,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * kind draws the plane itself. Refusing the degenerate transform keeps the wrong pixels out of the frame and
      * names the gap instead of hiding it - the projection channel is the fix, not this class.
      */
-    private static String celtium$projectionRefusal(TerrainGpuBackend backend, int drawFramebuffer) {
+    private static String celtium$projectionRefusal(CeltiumBackend backend, int drawFramebuffer) {
         if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
             return null;
         }
@@ -9501,7 +9501,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * Records that a fogged batch is being drawn by an immediate path whose fog state never arrived.
      * <p>
      * This was a refusal once, and it was inverted on purpose. The branch refused a fogged draw whenever
-     * {@code TerrainGpuBackend.immediateFogAvailable()} answered false, on the grounds that the batch would paint its
+     * {@code CeltiumBackend.immediateFogAvailable()} answered false, on the grounds that the batch would paint its
      * raw colour where vanilla's is the fog mix. Two things made drawing the better picture even then, and the second
      * is the stronger one:
      * <ul>
@@ -9522,7 +9522,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * channel difference 4). The line exists for the configuration where the fog mixin does not apply - a flat sky and
      * a fogged sky are two different findings, and the frame alone cannot tell them apart.
      */
-    private void celtium$noteFogDegradation(TerrainGpuBackend backend, int buffer, int count) {
+    private void celtium$noteFogDegradation(CeltiumBackend backend, int buffer, int count) {
         if (!org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled()
                 || backend.immediateFogAvailable() || SKY_DEGRADED_LINES.getAndDecrement() <= 0) {
             return;
@@ -9553,7 +9553,7 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     /** {@return the renderer's own colour mirror}, or {@code null} when this backend does not expose one. */
-    private static float[] celtium$mirroredColour(TerrainGpuBackend backend) {
+    private static float[] celtium$mirroredColour(CeltiumBackend backend) {
         try {
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 return vulkan.celtium$mirroredColor();
