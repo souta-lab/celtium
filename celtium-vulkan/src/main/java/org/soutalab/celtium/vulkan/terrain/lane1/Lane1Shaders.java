@@ -163,7 +163,7 @@ public final class Lane1Shaders {
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
-                fragCell = vec2(26.0, 13.0); // TEMP G1 BISECT6: constant stone cell (axis)
+                fragCell = vec2(cellU, cellV);
                 fragLocalUv = corner * vec2(float(extentU), float(extentV));
                 float shade = float((q.z >> 24) & 255u) / 255.0;
                 vec3 tint = ((q.w & (1u << 24)) != 0u)
@@ -264,6 +264,8 @@ public final class Lane1Shaders {
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
                 vec4 texel = texture(atlas, uv);
+                // TEMP G1 BISECT7: R=atlasCellsAcross/64, G=alphaCutoff*4, B=fogStart/200.
+                outColor = vec4(fog.atlasCellsAcross / 64.0, fog.alphaCutoff * 4.0, fog.fogStart / 200.0, 1.0); return;
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
