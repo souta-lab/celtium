@@ -89,6 +89,9 @@ public final class Lane1TerrainFrontend {
     /** Texture-cell table capacity: one uvec2 (cellU, cellV) per sprite texture index. */
     private static final int MAX_TEXTURE_CELLS = 8192;
     private static final long TEXTURE_CELL_BYTES = (long) MAX_TEXTURE_CELLS * 8L;
+    /** Per-slot indirect-draw staging capacity: 16 B VkDrawIndirectCommand records. */
+    private static final int MAX_INDIRECT_COMMANDS = 16384;
+    private static final long INDIRECT_BYTES = (long) MAX_INDIRECT_COMMANDS * 16L;
     private static final int FRAME_SLOTS = 3;
     private static final int KIND_COUNT = 3;
 
@@ -104,6 +107,9 @@ public final class Lane1TerrainFrontend {
     private final VulkanHostBuffer lightBuffer;
     private final VulkanHostBuffer maskBuffer;
     private final VulkanHostBuffer textureCellBuffer;
+    private final VulkanHostBuffer[] indirectBuffers = new VulkanHostBuffer[FRAME_SLOTS];
+    private final int[] indirectCursor = new int[FRAME_SLOTS];
+    private long indirectFrame = -1L;
     private final VulkanHostBuffer[] fogBuffers = new VulkanHostBuffer[KIND_COUNT];
 
     private final long setLayout;
@@ -150,6 +156,10 @@ public final class Lane1TerrainFrontend {
         this.descBuffer = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.textureCellBuffer = new VulkanHostBuffer(context, TEXTURE_CELL_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
+            this.indirectBuffers[slot] = new VulkanHostBuffer(context, INDIRECT_BYTES,
+                    VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+        }
         this.lightBuffer = new VulkanHostBuffer(context, LightGridBuilder.UBO_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.maskBuffer = new VulkanHostBuffer(context, LightGridBuilder.CLUSTER_MASK_BYTES,
@@ -322,6 +332,10 @@ public final class Lane1TerrainFrontend {
         if (atlasCellsAcross > 0.0f) {
             this.atlasCellsAcross = atlasCellsAcross;
         }
+        if (this.frameId != indirectFrame) {
+            java.util.Arrays.fill(indirectCursor, 0);
+            indirectFrame = this.frameId;
+        }
         int kindOrdinal = kind.ordinal();
         int slot = Math.floorMod(frameSlot, FRAME_SLOTS);
         if (boundViews[slot][0] != atlasView || boundViews[slot][1] != lightmapView) {
@@ -333,20 +347,53 @@ public final class Lane1TerrainFrontend {
         drawStage.recordTerrainPass(stream, kind, axisPrograms[kindOrdinal], null);
     }
 
-    /** The draw stage's sink: switches programs when the stream changes, then issues the draws. */
+    /**
+     * The draw stage's sink: one indirect draw per same-stream run. The per-section
+     * {@code vkCmdDraw} issuance this replaces cost more CPU than the rest of the pass combined at
+     * Gate G1 (~3.5k draws per frame through the LWJGL/JNI seam); the commands are pure data, so
+     * they are staged into the frame slot's host-visible indirect buffer and issued with a single
+     * {@code vkCmdDrawIndirect} per run (the design's production sink shape; the GPU-side count
+     * form stays S3-b's). Falls back to direct draws when the device lacks multiDrawIndirect or
+     * the frame's command budget is exhausted.
+     */
     private void sinkDraw(VulkanCommandStream stream, TerrainPassKind kind,
                           List<TerrainDrawStage.DrawCommand> commands) {
         ShellStream shell = (ShellStream) stream;
         VkCommandBuffer cmd = shell.commandBuffer();
-        boolean general = false;
-        for (TerrainDrawStage.DrawCommand command : commands) {
-            if (command.general() != general) {
-                shell.bindTerrainProgram(command.general()
-                        ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
-                general = command.general();
+        int slot = shell.slot();
+        boolean useIndirect = context.multiDrawIndirectEnabled();
+        int index = 0;
+        while (index < commands.size()) {
+            boolean general = commands.get(index).general();
+            int end = index + 1;
+            while (end < commands.size() && commands.get(end).general() == general) {
+                end++;
             }
-            VK10.vkCmdDraw(cmd, command.vertexCount(), 1, command.firstQuad() * 6,
-                    command.sectionSlot());
+            shell.bindTerrainProgram(general
+                    ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
+            int count = end - index;
+            if (useIndirect && indirectCursor[slot] + count <= MAX_INDIRECT_COMMANDS) {
+                int base = indirectCursor[slot];
+                MemorySegment segment = MemorySegment.ofAddress(indirectBuffers[slot].mappedAddress())
+                        .reinterpret(INDIRECT_BYTES);
+                for (int i = 0; i < count; i++) {
+                    TerrainDrawStage.DrawCommand command = commands.get(index + i);
+                    long offset = (long) (base + i) * 16L;
+                    segment.set(ValueLayout.JAVA_INT, offset, command.vertexCount());
+                    segment.set(ValueLayout.JAVA_INT, offset + 4L, 1);
+                    segment.set(ValueLayout.JAVA_INT, offset + 8L, command.firstQuad() * 6);
+                    segment.set(ValueLayout.JAVA_INT, offset + 12L, command.sectionSlot());
+                }
+                VK10.vkCmdDrawIndirect(cmd, indirectBuffers[slot].buffer(), (long) base * 16L, count, 16);
+                indirectCursor[slot] = base + count;
+            } else {
+                for (int i = index; i < end; i++) {
+                    TerrainDrawStage.DrawCommand command = commands.get(i);
+                    VK10.vkCmdDraw(cmd, command.vertexCount(), 1, command.firstQuad() * 6,
+                            command.sectionSlot());
+                }
+            }
+            index = end;
         }
     }
 
@@ -366,6 +413,10 @@ public final class Lane1TerrainFrontend {
 
         VkCommandBuffer commandBuffer() {
             return commandBuffer;
+        }
+
+        int slot() {
+            return slot;
         }
 
         @Override
@@ -825,6 +876,9 @@ public final class Lane1TerrainFrontend {
         }
         descBuffer.delete();
         textureCellBuffer.delete();
+        for (VulkanHostBuffer indirect : indirectBuffers) {
+            indirect.delete();
+        }
         lightBuffer.delete();
         maskBuffer.delete();
         axisSpace.close();
