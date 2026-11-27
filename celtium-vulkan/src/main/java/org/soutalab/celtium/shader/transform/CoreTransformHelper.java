@@ -96,7 +96,25 @@ class CoreTransformHelper {
     }
 
     private static void injectAttributeDecls(Transformer transformer, ShaderInstancing instancing) {
-        // instanced GLSM attributes not used in Celtium native pipeline
+        switch (instancing) {
+            case WEATHER -> {
+                // The weather feed contract (Neon ruling, 2026-11-27): five per-instance
+                // vec4 attributes on the 80-byte instance record; locations are the single
+                // source of truth in GlslTransformHelpers.
+                transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_WEATHER_COLUMN_SPAN + ") in vec4 iris_InstColumnSpan;");
+                transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_WEATHER_JITTER + ") in vec4 iris_InstJitter;");
+                transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_WEATHER_COLOR + ") in vec4 iris_InstWeatherColor;");
+                transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_WEATHER_PARAMS + ") in vec4 iris_InstWeatherParams;");
+                transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_WEATHER_LAYER + ") in vec4 iris_InstWeatherLayer;");
+            }
+            case PARTICLE, CUBE -> throw new UnsupportedOperationException(
+                    "ShaderInstancing." + instancing + " has no attribute contract in the pack transform: "
+                            + "Lane 2 owns its own particle/cube instancing, and the Angelica layouts "
+                            + "collide with LOC_ENTITY_IDS (weather ruling section 2.3.4)");
+            case NONE -> {
+                // No per-instance attributes to declare.
+            }
+        }
     }
 
     /** Whether the stage already declares {@code invariant gl_Position;}, which a second declaration rejects. */

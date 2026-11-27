@@ -144,6 +144,20 @@ public class TransformPatcher {
         return patchAttributes(vertex, geometry, null, null, fragment, inputs);
     }
 
+    /**
+     * The attributes patch with an explicit instancing contract (the weather feed contract's
+     * {@code ShaderInstancing.WEATHER} variant). The pack compiler's registered default
+     * {@code gbuffers_weather} stays on {@link #patchAttributes} (instancing NONE - the
+     * vanilla rain/snow path through Lane 2); this entry exists so the instanced variant is
+     * reachable and testable for the producer that binds the 80-byte instance record.
+     */
+    public static Map<PatchShaderType, String> patchAttributesInstanced(
+            String vertex, String geometry, String fragment, InputAvailability inputs,
+            ShaderInstancing instancing) {
+        return transform(vertex, geometry, null, null, fragment,
+                new AttributeParameters(Patch.ATTRIBUTES, geometry != null, false, inputs, instancing));
+    }
+
     public static Map<PatchShaderType, String> patchCeltiumTerrain(
             String vertex, String geometry, String fragment) {
         return transform(vertex, geometry, null, null, fragment,

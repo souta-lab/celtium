@@ -274,8 +274,10 @@ final class PackPipelineFactory implements AutoCloseable {
             VkComputePipelineCreateInfo pipelineInfo = VkComputePipelineCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO)
                     .layout(pipelineLayout);
-            pipelineInfo.stage()
-                    .sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
+            // The stage struct is filled through a local: chaining setters directly on the
+            // nested-accessor result trips a javac Flow NPE (tree.sym null) on this toolchain.
+            org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo stage = pipelineInfo.stage();
+            stage.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
                     .stage(VK_SHADER_STAGE_COMPUTE_BIT)
                     .module(shaderModule(words))
                     .pName(stack.UTF8("main"));
@@ -295,11 +297,13 @@ final class PackPipelineFactory implements AutoCloseable {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-            viewport.get(0).x(0f).y(0f).width(width).height(height).minDepth(0f).maxDepth(1f);
+            org.lwjgl.vulkan.VkViewport viewport0 = viewport.get(0);
+            viewport0.x(0f).y(0f).width(width).height(height).minDepth(0f).maxDepth(1f);
             vkCmdSetViewport(cmd, 0, viewport);
             org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-            scissor.get(0).offset().set(0, 0);
-            scissor.get(0).extent().set(width, height);
+            org.lwjgl.vulkan.VkRect2D scissor0 = scissor.get(0);
+            scissor0.offset().set(0, 0);
+            scissor0.extent().set(width, height);
             vkCmdSetScissor(cmd, 0, scissor);
         }
     }

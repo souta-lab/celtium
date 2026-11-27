@@ -108,10 +108,13 @@ class AttributeTransformer {
 					init.append(" iris_MultiTexCoord1 = vec4(iris_InstLightmap, 0.0, 1.0);");
 					assignMidTexCoord(transformer, init, "vec4((iris_InstUv.x + iris_InstUv.z) * 0.5, (iris_InstUv.y + iris_InstUv.w) * 0.5, 0.0, 1.0)");
 				} else if (weatherVertex) {
-					// The weather prologue is not emitted yet: what iris_WeatherParams0..3 carry is
-					// defined by the executor's weather feed (S5-b), and inventing the semantics here
-					// would fix a contract the feed does not know. The declared inputs and the mutable
-					// attribute globals are already in place (CoreTransformHelper#injectWeatherInputs).
+					// The weather feed contract (Neon ruling, 2026-11-27, plan section 8.3
+					// item 7): the prologue reconstructs the precipitation column vertex from
+					// the corner, the five per-instance attributes and iris_WeatherParams0..3,
+					// with semantics identical to the proven glsm/ffp arrangement, emitted
+					// from the transform's own closed helper. It fully initializes
+					// iris_Vertex / iris_Color / iris_MultiTexCoord0 / iris_MultiTexCoord1.
+					init.append(GlslTransformHelpers.weatherPrologue());
 					assignMidTexCoord(transformer, init, "vec4(0.5, 0.5, 0.0, 1.0)");
 				} else {
 					init.append("iris_ModelViewMatrix = ").append("mat4(1.0)").append(';');

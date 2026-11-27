@@ -82,6 +82,19 @@ public final class ShaderFrameState {
     public final Vector3f shadowLightPosition = new Vector3f(0.0f, 100.0f, 0.0f);
     public final Vector3f upPosition = new Vector3f(0.0f, 100.0f, 0.0f);
 
+    /**
+     * The weather feed's per-frame parameters (the weather contract's iris_WeatherParams0..3),
+     * filled by the host feeder each frame; the executor's weather feed writes the same values
+     * into the frame's uniform slot. Component layout: params0 = translate.xyz + inverse
+     * radius; params1 = cameraFrac.xz + partialTicks + age; params2 = vanilla tick (mod 1024)
+     * + provider tick (mod 1024) + rain strength + provider age; params3 = provider inverse
+     * radius in x (yzw reserved, zero).
+     */
+    public final Vector4f weatherParams0 = new Vector4f();
+    public final Vector4f weatherParams1 = new Vector4f();
+    public final Vector4f weatherParams2 = new Vector4f();
+    public final Vector4f weatherParams3 = new Vector4f();
+
     public int heldItemId = -1;
     public int heldBlockLightValue = 0;
     public int heldItemId2 = -1;

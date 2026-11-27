@@ -79,6 +79,21 @@ public final class ShaderFrameStateFeeder {
         state.previousCameraPosition.set(state.cameraPosition);
         state.cameraPosition.set(camX, camY, camZ);
 
+        // The weather feed's per-frame vectors (weather contract): translation is
+        // floor(view) - view per axis with y negated; the radius follows the vanilla
+        // rain/snow render distance (Fast 5, Fancy 10).
+        float invRadius = mc.gameSettings.fancyGraphics ? 0.1f : 0.2f;
+        state.weatherParams0.set(
+                (float) (Math.floor(camX) - camX), (float) -camY, (float) (Math.floor(camZ) - camZ),
+                invRadius);
+        state.weatherParams1.set(
+                (float) (camX - Math.floor(camX)), (float) (camZ - Math.floor(camZ)),
+                partialTicks, (float) (state.worldTime + partialTicks));
+        state.weatherParams2.set(
+                state.worldTime % 1024L, state.worldTime % 1024L,
+                state.rainStrength, (float) (state.worldTime + partialTicks));
+        state.weatherParams3.set(0.0f, 0.0f, 0.0f, 0.0f);
+
         int combinedLight = world.getCombinedLight(new BlockPos(view), 0);
         state.eyeBrightnessBlock = ((combinedLight >> 4) & 0xF) * 16;
         state.eyeBrightnessSky = ((combinedLight >> 20) & 0xF) * 16;
@@ -178,12 +193,12 @@ public final class ShaderFrameStateFeeder {
         FrustumPlanes shadowFrustum = frustumFromMatrix(shadowCombined);
 
         PackWeatherFeed.WeatherState weather = new PackWeatherFeed.WeatherState(
-                0.0f, 0.0f, 0.0f, 0.0f,
-                (float) (state.cameraPosition.x - Math.floor(state.cameraPosition.x)),
-                (float) (state.cameraPosition.z - Math.floor(state.cameraPosition.z)),
-                partialTicks, 0.0f,
+                state.weatherParams0.x, state.weatherParams0.y, state.weatherParams0.z,
+                state.weatherParams0.w,
+                state.weatherParams1.x, state.weatherParams1.y,
+                partialTicks, state.weatherParams1.w,
                 state.worldTime % 1024L, state.worldTime % 1024L,
-                state.rainStrength, 0.0f, 0.0f);
+                state.rainStrength, state.weatherParams2.w, 0.0f);
 
         return new PackFrameEnvironment() {
             @Override

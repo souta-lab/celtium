@@ -193,6 +193,13 @@ public final class Std140UniformPacker {
         b.addVec3("skyColor", (c, s) -> s.skyColor());
         b.addVec3("fogColor", (c, s) -> s.fogColor());
 
+        // The weather feed's per-frame parameters (weather contract ruling, 2026-11-27):
+        // registered under their shader-side names so the layout always resolves them.
+        b.addVec4("iris_WeatherParams0", (c, s) -> s.weatherParams0);
+        b.addVec4("iris_WeatherParams1", (c, s) -> s.weatherParams1);
+        b.addVec4("iris_WeatherParams2", (c, s) -> s.weatherParams2);
+        b.addVec4("iris_WeatherParams3", (c, s) -> s.weatherParams3);
+
         // Vec2 / IVec2 (8-byte aligned)
         b.addIVec2("eyeBrightness", (c, s) -> s.eyeBrightnessBlock, (c, s) -> s.eyeBrightnessSky);
         b.addVec2("eyeBrightnessSmooth", (c, s) -> s.eyeBrightnessSmoothBlock, (c, s) -> s.eyeBrightnessSmoothSky);
