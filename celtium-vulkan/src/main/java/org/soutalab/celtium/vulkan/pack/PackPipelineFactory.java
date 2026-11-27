@@ -209,10 +209,15 @@ final class PackPipelineFactory implements AutoCloseable {
                             .stencilTestEnable(false);
 
             int colorCount = request.colorFormats().size();
+            // The blend attachment count must equal the rendering color attachment
+            // count exactly: padding it to 1 for a colorless (shadow) pipeline makes
+            // the create info self-contradictory, and the Intel driver segfaults on
+            // it intermittently. The DirectGl sink's dynamic-rendering precedent
+            // keeps the two counts equal, including zero.
             VkPipelineColorBlendAttachmentState.Buffer blendAttachments =
-                    VkPipelineColorBlendAttachmentState.calloc(Math.max(colorCount, 1), stack);
-            for (int i = 0; i < Math.max(colorCount, 1); i++) {
-                AttachmentBlendSpec spec = request.blendSpec() != null && i < colorCount
+                    VkPipelineColorBlendAttachmentState.calloc(colorCount, stack);
+            for (int i = 0; i < colorCount; i++) {
+                AttachmentBlendSpec spec = request.blendSpec() != null
                         ? request.blendSpec().forAttachment(i)
                         : AttachmentBlendSpec.opaque();
                 blendAttachments.get(i)
