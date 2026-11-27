@@ -19889,7 +19889,11 @@ this.frameBufferOpen = false;
                             // GPU-generated list the stage head dispatched; nothing is
                             // recorded for it here, and the stage's one generated draw
                             // is recorded after the loop, in the camera executor's
-                            // issued shape.
+                            // issued shape. The visit is counted here, where the
+                            // suppression happens, so the loop's end can verify the
+                            // reproduction the stage head predicted (the camera
+                            // loop's gpuDrawVisited shape).
+                            shadowIssuanceVisited++;
                         } else if (TERRAIN_INDIRECT_ENABLED) {
                             indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
                                     stack, this.sharedIndexBuffers, resources, batch, sortedPass,
