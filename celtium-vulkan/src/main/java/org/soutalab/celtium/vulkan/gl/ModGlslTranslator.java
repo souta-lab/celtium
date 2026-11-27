@@ -194,6 +194,9 @@ public final class ModGlslTranslator {
      */
     private static final Pattern SHADOW_CALL_PATTERN = Pattern.compile(
             "\\b(shadow1DProj|shadow2DProj|shadow1D|shadow2D)\\s*\\(");
+    /** A modern fetch on a possibly-shadow sampler: the name, then the opening parenthesis. */
+    private static final Pattern MODERN_TEXTURE_CALL_PATTERN = Pattern.compile(
+            "\\b(textureProj|textureLod|texture)\\s*\\(");
     /** A call to the built-in {@code pow}: the name, then the opening parenthesis of its argument list. */
     private static final Pattern POW_CALL_PATTERN = Pattern.compile("(?<![\\w.])pow\\s*\\(");
     /** A vector constructor heading an exponent written as one call: the type name and the argument text. */
@@ -709,8 +712,16 @@ public final class ModGlslTranslator {
         if (fragment.contains("gl_FragData")) {
             throw new IllegalArgumentException("gl_FragData with a non-constant index is not lowered");
         }
-        vertex = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(vertex)));
-        fragment = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(fragment)));
+        java.util.Set<String> shadowSamplers = new java.util.HashSet<>();
+        for (Declaration d : uniforms.values()) {
+            if (isSamplerType(d.type) && d.type.contains("Shadow")) {
+                shadowSamplers.add(d.name);
+            }
+        }
+        vertex = lowerTextureCalls(lowerModernShadowFetches(
+                lowerShadowCalls(guardFractionalPow(vertex)), shadowSamplers));
+        fragment = lowerTextureCalls(lowerModernShadowFetches(
+                lowerShadowCalls(guardFractionalPow(fragment)), shadowSamplers));
 
         vs.append(vertex).append("\nvoid main() {\n")
                 .append(glsmFragmentRegion ? "    celtium_v_regionOffset = celtium_regionOffset();\n" : "")
@@ -1814,6 +1825,62 @@ public final class ModGlslTranslator {
             if (!m.find(copied)) {
                 break;
             }
+        }
+        out.append(s, copied, s.length());
+        return out.toString();
+    }
+
+    /**
+     * Lowers one stage's modern fetches on shadow samplers whose result the source treats as the
+     * legacy four-component value. GLSL 1.20 heritage packs declare {@code sampler2DShadow} and call
+     * {@code texture(s, c).z} (BSL's composite SampleShadow is the measured case): the 1.20 fetch
+     * answered {@code vec4(c, c, c, 1)} with the comparison result {@code c}, where the modern fetch
+     * returns {@code c} alone, so a component swizzle directly on the call is out of range for the
+     * scalar. Such a call is wrapped exactly like the legacy lowering wraps {@code shadow2D}:
+     * {@code vec4(vec3(texture(s, c)), 1.0)}, which reproduces every component ({@code .rgb} and
+     * {@code .z} read {@code c}, {@code .a} reads 1). A fetch with no swizzle on it keeps the modern
+     * scalar form - comparisons and explicit {@code vec4(...)} splats stay valid - and a fetch whose
+     * first argument is not a declared shadow sampler is not this pass's business.
+     */
+    private static String lowerModernShadowFetches(String s, java.util.Set<String> shadowSamplers) {
+        if (shadowSamplers.isEmpty()) {
+            return s;
+        }
+        Matcher m = MODERN_TEXTURE_CALL_PATTERN.matcher(s);
+        StringBuilder out = null;
+        int copied = 0;
+        while (m.find()) {
+            int open = m.end() - 1;
+            int close = matchingParen(s, open);
+            if (close < 0) {
+                continue;
+            }
+            List<String> args = new ArrayList<>();
+            for (String arg : splitDeclarators(s.substring(open + 1, close))) {
+                args.add(arg.strip());
+            }
+            if (args.isEmpty() || !shadowSamplers.contains(args.get(0))) {
+                continue;
+            }
+            int after = close + 1;
+            while (after < s.length() && (s.charAt(after) == ' ' || s.charAt(after) == '\t'
+                    || s.charAt(after) == '\n' || s.charAt(after) == '\r')) {
+                after++;
+            }
+            if (after >= s.length() || s.charAt(after) != '.' || after + 1 >= s.length()
+                    || "xyzwrgbastpq".indexOf(s.charAt(after + 1)) < 0) {
+                continue;
+            }
+            if (out == null) {
+                out = new StringBuilder(s.length() + 64);
+            }
+            out.append(s, copied, m.start());
+            out.append("vec4(vec3(").append(s, m.start(), close + 1).append("), 1.0)");
+            copied = close + 1;
+            m.region(copied, s.length());
+        }
+        if (out == null) {
+            return s;
         }
         out.append(s, copied, s.length());
         return out.toString();

@@ -1641,4 +1641,36 @@ class ModGlslTranslatorTest {
             System.clearProperty("celtium.vulkan.fractionalPowGuard.fastSqrt");
         }
     }
+
+    /**
+     * BSL's composite SampleShadow: a GLSL 1.20 heritage pack declares {@code sampler2DShadow} and
+     * reads {@code texture(shadowtex0, pos.xyz).z} - the 1.20 fetch answered vec4(c, c, c, 1), the
+     * modern fetch returns the scalar c, so the swizzle is out of range unless the lowering wraps
+     * the fetch the way it wraps shadow2D. A bare fetch (no swizzle) must keep the scalar form.
+     */
+    @Test
+    void wrapsASwizzledModernFetchOnAShadowSampler() {
+        String fragment = """
+                #version 120
+                uniform sampler2DShadow shadowtex0;
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                void main() {
+                    float z = texture(shadowtex0, vec3(uv, 0.5)).z;
+                    float bare = texture(shadowtex0, vec3(uv, 0.25));
+                    vec3 rgb = texture(shadowtex0, vec3(uv, 0.75)).rgb;
+                    gl_FragColor = texture2D(colortex0, uv) * (z + bare) + vec4(rgb, 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("vec4(vec3(texture(shadowtex0, vec3(uv, 0.5))), 1.0).z"),
+                () -> "swizzled fetch wrapped:\n" + result.fragment());
+        assertTrue(result.fragment().contains("float bare = texture(shadowtex0, vec3(uv, 0.25));"),
+                () -> "bare fetch keeps the scalar form:\n" + result.fragment());
+        assertTrue(result.fragment().contains("vec4(vec3(texture(shadowtex0, vec3(uv, 0.75))), 1.0).rgb"),
+                () -> "rgb fetch wrapped:\n" + result.fragment());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
 }
