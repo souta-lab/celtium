@@ -3,10 +3,10 @@ package org.soutalab.celtium.shader;
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
 import org.soutalab.celtium.shader.compiler.PackSpirvCompiler;
-import org.soutalab.celtium.shader.transform.InputAvailability;
+import org.soutalab.celtium.shader.model.InputAvailability;
+import org.soutalab.celtium.shader.transform.PatchShaderType;
 import org.soutalab.celtium.shader.transform.ShaderInstancing;
 import org.soutalab.celtium.shader.transform.TransformPatcher;
-import org.soutalab.celtium.shader.transform.TransformPatcher.PatchShaderType;
 import org.soutalab.celtium.vulkan.pack.SpirvReflection;
 
 import java.util.Map;
