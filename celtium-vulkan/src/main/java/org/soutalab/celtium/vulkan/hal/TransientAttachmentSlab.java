@@ -92,6 +92,16 @@ public final class TransientAttachmentSlab implements AutoCloseable {
         return new Allocation(offset, sizeBytes);
     }
 
+    /**
+     * The slab's single device-memory handle, for callers that bind their own images into an
+     * acquired range ({@code vkBindImageMemory} at the allocation's offset) - the direct-GL
+     * sink's custom-framebuffer attachments are the first such caller. {@code VK_NULL_HANDLE}
+     * until the first {@link #acquire} allocates the backing memory.
+     */
+    public synchronized long memoryHandle() {
+        return memoryHandle;
+    }
+
     public synchronized void release(Allocation allocation) {
         this.allocator.release(allocation.offset(), allocation.sizeBytes());
         this.liveAllocations--;

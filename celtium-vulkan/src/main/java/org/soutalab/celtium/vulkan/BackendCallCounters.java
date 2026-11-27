@@ -47,10 +47,26 @@ public final class BackendCallCounters {
     private static long barriers;
     private static long fboSwitches;
 
+    /**
+     * Lane 3 (direct-GL converter) sink calls, counted UNCONDITIONALLY - unlike the family above,
+     * these carry the v0.4.0 plan's mechanical boundary proof (Gate G2: in a scene with no
+     * direct-GL mod, the {@code DirectGlVulkanSink} call count is exactly 0), so they must be
+     * live in every run, instrument family or not. One increment per sink entry point; the sink
+     * is the only writer.
+     */
+    private static long lane3SinkCalls;
+    private static long lane3Draws;
+    private static long lane3Dispatches;
+    private static long lane3DroppedDraws;
+
     private static long lastReportedCalls;
     private static long lastReportedCallNanos;
     private static long lastReportedBarriers;
     private static long lastReportedFboSwitches;
+    private static long lastReportedLane3SinkCalls;
+    private static long lastReportedLane3Draws;
+    private static long lastReportedLane3Dispatches;
+    private static long lastReportedLane3DroppedDraws;
     private static long lastReportedFrame = -1L;
 
     private BackendCallCounters() {
@@ -92,10 +108,37 @@ public final class BackendCallCounters {
         }
     }
 
-    /** The four keys as one space-separated fragment, for a reader that prints its own line. */
+    /** One call entered the Lane 3 sink ({@code DirectGlVulkanSink} or one of its op groups). */
+    public static void noteLane3SinkCall() {
+        lane3SinkCalls++;
+    }
+
+    /** One draw was submitted through the Lane 3 sink. */
+    public static void noteLane3Draw() {
+        lane3Draws++;
+    }
+
+    /** One compute dispatch was submitted through the Lane 3 sink. */
+    public static void noteLane3Dispatch() {
+        lane3Dispatches++;
+    }
+
+    /** One Lane 3 draw arrived while no frame was bound and was dropped (counted, never silent). */
+    public static void noteLane3DroppedDraw() {
+        lane3DroppedDraws++;
+    }
+
+    /** The Lane 3 sink call total since boot - the Gate G2 boundary proof reads this. */
+    public static long lane3SinkCalls() {
+        return lane3SinkCalls;
+    }
+
+    /** The keys as one space-separated fragment, for a reader that prints its own line. */
     public static String format() {
         return "stubDispatchCalls=" + calls + " stubDispatchNanos=" + callNanos
-                + " explicitBarriers=" + barriers + " fboSwitches=" + fboSwitches;
+                + " explicitBarriers=" + barriers + " fboSwitches=" + fboSwitches
+                + " lane3SinkCalls=" + lane3SinkCalls + " lane3Draws=" + lane3Draws
+                + " lane3Dispatches=" + lane3Dispatches + " lane3DroppedDraws=" + lane3DroppedDraws;
     }
 
     /**
@@ -112,11 +155,19 @@ public final class BackendCallCounters {
                 + " stubDispatchCalls=" + (calls - lastReportedCalls)
                 + " stubDispatchNanos=" + (callNanos - lastReportedCallNanos)
                 + " explicitBarriers=" + (barriers - lastReportedBarriers)
-                + " fboSwitches=" + (fboSwitches - lastReportedFboSwitches));
+                + " fboSwitches=" + (fboSwitches - lastReportedFboSwitches)
+                + " lane3SinkCalls=" + (lane3SinkCalls - lastReportedLane3SinkCalls)
+                + " lane3Draws=" + (lane3Draws - lastReportedLane3Draws)
+                + " lane3Dispatches=" + (lane3Dispatches - lastReportedLane3Dispatches)
+                + " lane3DroppedDraws=" + (lane3DroppedDraws - lastReportedLane3DroppedDraws));
         lastReportedCalls = calls;
         lastReportedCallNanos = callNanos;
         lastReportedBarriers = barriers;
         lastReportedFboSwitches = fboSwitches;
+        lastReportedLane3SinkCalls = lane3SinkCalls;
+        lastReportedLane3Draws = lane3Draws;
+        lastReportedLane3Dispatches = lane3Dispatches;
+        lastReportedLane3DroppedDraws = lane3DroppedDraws;
         lastReportedFrame = frameId;
     }
 }
