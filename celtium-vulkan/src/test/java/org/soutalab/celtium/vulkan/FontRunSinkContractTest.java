@@ -263,7 +263,11 @@ class FontRunSinkContractTest {
         assertTrue(capture.contains(
                         "boolean captured = this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,"),
                 "the group is offered to the batcher at the drain");
-        int noRecord = capture.indexOf("if (recordIndex < 0) {");
+        // The records fallback reselection (audit 11, SOL-4 finding 1) retries a refused
+        // record once behind a segment flush, so the first refusal branch in the capture
+        // is the retry; the counted refusal this contract names is the last one, reached
+        // when the group still has no record slot after the retry.
+        int noRecord = capture.lastIndexOf("if (recordIndex < 0) {");
         assertTrue(noRecord >= 0 && capture.substring(noRecord, noRecord + 200)
                         .contains("this.batchFallbackGroups++;"),
                 "a group with no record slot is counted as a fallback");
