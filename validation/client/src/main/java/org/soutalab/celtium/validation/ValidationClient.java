@@ -1224,6 +1224,20 @@ public final class ValidationClient {
      */
     private int celtium$vsStep = -1;
     /**
+     * The scripted tour of celtium's own video settings screen, selected by
+     * {@code -Dceltium.validation.videoSettingsTour=act|verify}. The legacy chain cannot drive the
+     * native screen (no optionsRowList, no buttonList rows, no controller), so the tour clicks the
+     * rects the screen itself computed through its own mouseClicked and reads the effects back.
+     * {@code act} changes options, undoes them, re-applies them, closes with Done and reopens;
+     * {@code verify} only reads values back (the persistence half of an act run, after a relaunch).
+     */
+    private final String celtium$tourMode = HarnessConfig.string("videoSettingsTour", "");
+    private int celtium$tourStep = -1;
+    private String celtium$tourFileBefore;
+    private String celtium$tourCeltiumConfigBefore;
+    private Object celtium$tourRenderDistanceBefore;
+    private Object celtium$tourVsyncBefore;
+    /**
      * The label a Sodium-style row matched the requested token by, or null when the request matched no row.
      * <p>
      * The fallback report used to be computed from the option's name, which a Sodium {@code OptionImpl} does not
@@ -10554,6 +10568,496 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * Picks the interaction driver for the captured screen: the scripted tour when
+     * {@code videoSettingsTour} names one, the legacy chain otherwise. The tour starts only once
+     * the native screen has laid out (its rows exist only after a draw), and once started it is
+     * driven from both chain call sites, because its Done step deliberately leaves the native
+     * screen for the options screen the stage's name checks would otherwise wait on.
+     */
+    private boolean celtium$runSettingsInteraction(Minecraft mc) {
+        if (!celtium$tourMode.isEmpty() && celtium$tourStep != 99) {
+            if (celtium$tourStep >= 0) {
+                return celtium$runNativeSettingsTour(mc);
+            }
+            if (celtium$isNativeSettingsScreen(mc)) {
+                boolean laidOut = celtium$guiSettingsAtTick >= 0
+                        && worldTicks - celtium$guiSettingsAtTick >= celtium$guiLayoutTicks;
+                if (laidOut) {
+                    celtium$tourStep = 0;
+                    return celtium$runNativeSettingsTour(mc);
+                }
+                // The native screen is up but has not laid out yet: hold here so the legacy chain
+                // does not record a press attempt against a screen it cannot drive.
+                return false;
+            }
+        }
+        return celtium$runVideoSettingsChain(mc);
+    }
+
+    private static boolean celtium$isNativeSettingsScreen(Minecraft mc) {
+        return mc.currentScreen != null
+                && "org.soutalab.celtium.forge.ui.CeltiumVideoSettingsScreen"
+                        .equals(mc.currentScreen.getClass().getName());
+    }
+
+    /**
+     * The scripted tour of celtium's own video settings screen. The legacy chain cannot drive this
+     * screen: it has no optionsRowList, no buttonList rows and no controller object (measured on
+     * the S1-c leg 1: the chain stopped at "no option button could be located in the screen's row
+     * list"). The tour instead clicks where a user clicks - the tab rects, row rects and footer
+     * rects the screen itself computed - through the screen's own mouseClicked, and reads every
+     * effect back from the screen's public state, the live GameSettings, the swapchain's VSync
+     * request and the two settings files.
+     */
+    private boolean celtium$runNativeSettingsTour(Minecraft mc) {
+        try {
+            return "verify".equals(celtium$tourMode) ? celtium$tourVerifyStep(mc) : celtium$tourActStep(mc);
+        } catch (Throwable error) {
+            report.addProperty("videoSettingsTourError", String.valueOf(error));
+            celtium$tourStep = 99;
+            celtium$vsStep = 99;
+            return true;
+        }
+    }
+
+    /** A no-argument method invoked reflectively by name, or null when the object has none. */
+    private static Object celtium$tourInvoke(Object owner, String name) {
+        if (owner == null) {
+            return null;
+        }
+        for (Class<?> type = owner.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                java.lang.reflect.Method method = type.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method.invoke(owner);
+            } catch (NoSuchMethodException missing) {
+                // keep walking up
+            } catch (Throwable error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** The laid-out row for one option name key on the page currently shown, or null. */
+    private static Object celtium$tourRow(Object screen, String nameKey) {
+        Object rows = celtium$fieldValue(screen, new String[] {"visibleRows"});
+        if (!(rows instanceof java.util.List)) {
+            return null;
+        }
+        for (Object row : (java.util.List<?>) rows) {
+            Object entry = celtium$tourInvoke(row, "entry");
+            if (entry != null && nameKey.equals(celtium$tourInvoke(entry, "nameKey"))) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    private static Object celtium$tourEntry(Object screen, String nameKey) {
+        Object row = celtium$tourRow(screen, nameKey);
+        return row == null ? null : celtium$tourInvoke(row, "entry");
+    }
+
+    /** The name keys of the rows laid out on the page currently shown. */
+    private static String celtium$tourRowNames(Object screen) {
+        Object rows = celtium$fieldValue(screen, new String[] {"visibleRows"});
+        if (!(rows instanceof java.util.List)) {
+            return "no visibleRows";
+        }
+        java.util.List<String> names = new java.util.ArrayList<String>();
+        for (Object row : (java.util.List<?>) rows) {
+            Object entry = celtium$tourInvoke(row, "entry");
+            names.add(entry == null ? "?" : String.valueOf(celtium$tourInvoke(entry, "nameKey")));
+        }
+        return String.join(", ", names);
+    }
+
+    private static String celtium$tourPageTitles(Object screen) {
+        Object pages = celtium$fieldValue(screen, new String[] {"pages"});
+        if (!(pages instanceof java.util.List)) {
+            return "no pages";
+        }
+        java.util.List<String> titles = new java.util.ArrayList<String>();
+        for (Object page : (java.util.List<?>) pages) {
+            titles.add(String.valueOf(celtium$tourInvoke(page, "getTitle")));
+        }
+        return String.join(" | ", titles);
+    }
+
+    /** A click through the screen's own dispatch, press and release, as the legacy chain does. */
+    private static void celtium$tourClick(Object screen, int x, int y) throws Exception {
+        java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+        click.setAccessible(true);
+        click.invoke(screen, Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(0));
+        java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
+                new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
+        release.setAccessible(true);
+        release.invoke(screen, Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(0));
+    }
+
+    /** Clicks a row: toggles and cycles at the row centre, sliders at the track's left end. */
+    private static boolean celtium$tourClickRow(Object screen, String nameKey, boolean slider) throws Exception {
+        Object row = celtium$tourRow(screen, nameKey);
+        if (row == null) {
+            return false;
+        }
+        int x = ((Number) celtium$tourInvoke(row, "x")).intValue();
+        int y = ((Number) celtium$tourInvoke(row, "y")).intValue();
+        int w = ((Number) celtium$tourInvoke(row, "w")).intValue();
+        int controlX = ((Number) celtium$tourInvoke(row, "controlX")).intValue();
+        celtium$tourClick(screen, slider ? controlX + 3 : x + w / 2, y + 5);
+        return true;
+    }
+
+    /**
+     * The tab rect for one page index, recomputed with the screen's own rule (title-sized tabs,
+     * surplus shared evenly, proportional shrink when the panel is too narrow) so the click lands
+     * where the screen drew the tab.
+     */
+    private static int[] celtium$tourTabRect(Minecraft mc, Object screen, int index) {
+        Object pagesValue = celtium$fieldValue(screen, new String[] {"pages"});
+        if (!(pagesValue instanceof java.util.List)) {
+            return null;
+        }
+        java.util.List<?> pages = (java.util.List<?>) pagesValue;
+        if (index < 0 || index >= pages.size()) {
+            return null;
+        }
+        int screenWidth = ((Number) celtium$fieldValue(screen, new String[] {"width", "field_146294_l"})).intValue();
+        int panelWidth = Math.min(440, screenWidth - 24);
+        int left = (screenWidth - panelWidth) / 2;
+        int count = pages.size();
+        int[] widths = new int[count];
+        int natural = 0;
+        for (int i = 0; i < count; i++) {
+            widths[i] = mc.fontRenderer.getStringWidth(
+                    String.valueOf(celtium$tourInvoke(pages.get(i), "getTitle"))) + 18;
+            natural += widths[i];
+        }
+        int available = panelWidth - 3 * (count - 1);
+        int used = 0;
+        if (natural >= available) {
+            for (int i = 0; i < count; i++) {
+                if (i == count - 1) {
+                    widths[i] = Math.max(24, available - used);
+                } else {
+                    widths[i] = Math.max(24, (int) ((long) widths[i] * available / natural));
+                    used += widths[i];
+                }
+            }
+        } else {
+            int surplusEach = (available - natural) / count;
+            for (int i = 0; i < count; i++) {
+                if (i == count - 1) {
+                    widths[i] = available - used;
+                } else {
+                    widths[i] += surplusEach;
+                    used += widths[i];
+                }
+            }
+        }
+        int x = left;
+        for (int i = 0; i < index; i++) {
+            x += widths[i] + 3;
+        }
+        return new int[] {x, 10, widths[index], 22};
+    }
+
+    private static boolean celtium$tourClickTab(Minecraft mc, Object screen, int index) throws Exception {
+        int[] rect = celtium$tourTabRect(mc, screen, index);
+        if (rect == null) {
+            return false;
+        }
+        celtium$tourClick(screen, rect[0] + rect[2] / 2, rect[1] + rect[3] / 2);
+        return true;
+    }
+
+    /** The centre of one footer button: 0 = Undo, 1 = Apply, 2 = Done, in the screen's own geometry. */
+    private static int[] celtium$tourFooterCenter(Object screen, int which) {
+        int screenWidth = ((Number) celtium$fieldValue(screen, new String[] {"width", "field_146294_l"})).intValue();
+        int screenHeight = ((Number) celtium$fieldValue(screen, new String[] {"height", "field_146295_m"})).intValue();
+        int panelWidth = Math.min(440, screenWidth - 24);
+        int right = (screenWidth - panelWidth) / 2 + panelWidth;
+        int btnY = screenHeight - 32 + 6;
+        int x = right - 76 - (2 - which) * 82;
+        return new int[] {x + 38, btnY + 10};
+    }
+
+    /** One act-mode step per tick; returns false until the tour is finished and the capture may proceed. */
+    private boolean celtium$tourActStep(Minecraft mc) throws Exception {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        switch (celtium$tourStep) {
+            case 0: {
+                report.addProperty("videoSettingsTour", "act");
+                report.addProperty("videoSettingsTourScreen", screen.getClass().getName());
+                report.addProperty("videoSettingsTourPageTitles", celtium$tourPageTitles(screen));
+                report.addProperty("videoSettingsTourGeneralRows", celtium$tourRowNames(screen));
+                celtium$tourFileBefore = celtium$vsOptionsFile(mc);
+                celtium$tourCeltiumConfigBefore = celtium$tourCeltiumConfigFile(mc);
+                Object rd = celtium$tourEntry(screen, "options.renderDistance");
+                Object vs = celtium$tourEntry(screen, "options.vsync");
+                celtium$tourRenderDistanceBefore = rd == null ? null : celtium$tourInvoke(rd, "getValue");
+                celtium$tourVsyncBefore = vs == null ? null : celtium$tourInvoke(vs, "getValue");
+                report.addProperty("videoSettingsTourRenderDistanceBefore",
+                        String.valueOf(celtium$tourRenderDistanceBefore));
+                report.addProperty("videoSettingsTourVsyncBefore", String.valueOf(celtium$tourVsyncBefore));
+                report.addProperty("videoSettingsTourVsyncSwapchainBefore", celtium$tourVsyncSwapchain());
+                celtium$captureGlScreenshot(mc, "celtium-tour-general.png", "tourGeneral");
+                celtium$tourStep = 1;
+                return false;
+            }
+            case 1: {
+                boolean clicked = celtium$tourClickRow(screen, "options.renderDistance", true);
+                Object rd = celtium$tourEntry(screen, "options.renderDistance");
+                report.addProperty("videoSettingsTourRenderDistanceClicked", Boolean.valueOf(clicked));
+                report.addProperty("videoSettingsTourRenderDistancePending",
+                        String.valueOf(rd == null ? null : celtium$tourInvoke(rd, "getValue")));
+                report.addProperty("videoSettingsTourPendingAfterSlider",
+                        String.valueOf(celtium$tourInvoke(screen, "hasPendingChanges")));
+                celtium$tourStep = 2;
+                return false;
+            }
+            case 2: {
+                boolean clicked = celtium$tourClickRow(screen, "options.vsync", false);
+                Object vs = celtium$tourEntry(screen, "options.vsync");
+                report.addProperty("videoSettingsTourVsyncClicked", Boolean.valueOf(clicked));
+                report.addProperty("videoSettingsTourVsyncPending",
+                        String.valueOf(vs == null ? null : celtium$tourInvoke(vs, "getValue")));
+                // The VSync setter runs on the click itself: the live setting and the swapchain
+                // request flip now, while options.txt is only written at Apply.
+                report.addProperty("videoSettingsTourVsyncLiveAfterClick",
+                        Boolean.valueOf(mc.gameSettings.enableVsync));
+                report.addProperty("videoSettingsTourVsyncSwapchainAfterClick", celtium$tourVsyncSwapchain());
+                report.addProperty("videoSettingsTourOptionsFileChangedBeforeApply",
+                        celtium$vsOptionsDiff(celtium$tourFileBefore, celtium$vsOptionsFile(mc)));
+                celtium$tourStep = 3;
+                return false;
+            }
+            case 3: {
+                boolean clicked = celtium$tourClickTab(mc, screen, 1);
+                report.addProperty("videoSettingsTourQualityTabClicked", Boolean.valueOf(clicked));
+                report.addProperty("videoSettingsTourActivePageAfterQuality",
+                        String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
+                celtium$tourStep = 4;
+                return false;
+            }
+            case 4: {
+                report.addProperty("videoSettingsTourQualityRows", celtium$tourRowNames(screen));
+                boolean clicked = celtium$tourClickRow(screen, "celtium.options.vignette.name", false);
+                Object vg = celtium$tourEntry(screen, "celtium.options.vignette.name");
+                report.addProperty("videoSettingsTourVignetteClicked", Boolean.valueOf(clicked));
+                report.addProperty("videoSettingsTourVignettePending",
+                        String.valueOf(vg == null ? null : celtium$tourInvoke(vg, "getValue")));
+                celtium$captureGlScreenshot(mc, "celtium-tour-quality.png", "tourQuality");
+                celtium$tourStep = 5;
+                return false;
+            }
+            case 5: {
+                celtium$tourClickTab(mc, screen, 3);
+                report.addProperty("videoSettingsTourActivePageAfterLighting",
+                        String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
+                celtium$tourStep = 6;
+                return false;
+            }
+            case 6: {
+                report.addProperty("videoSettingsTourLightingRows", celtium$tourRowNames(screen));
+                Object dl = celtium$tourEntry(screen, "celtium.options.dynamic_lights.name");
+                Object lc = celtium$tourEntry(screen, "celtium.options.leaf_culling_mode.name");
+                report.addProperty("videoSettingsTourDynamicLights",
+                        String.valueOf(dl == null ? null : celtium$tourInvoke(dl, "getValue")));
+                report.addProperty("videoSettingsTourLeafCulling",
+                        String.valueOf(lc == null ? null : celtium$tourInvoke(lc, "getDisplayValue")));
+                celtium$captureGlScreenshot(mc, "celtium-tour-lighting.png", "tourLighting");
+                celtium$tourStep = 7;
+                return false;
+            }
+            case 7: {
+                celtium$tourClickTab(mc, screen, 2);
+                report.addProperty("videoSettingsTourActivePageAfterPerformance",
+                        String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
+                celtium$tourStep = 8;
+                return false;
+            }
+            case 8: {
+                report.addProperty("videoSettingsTourPerformanceRows", celtium$tourRowNames(screen));
+                celtium$captureGlScreenshot(mc, "celtium-tour-performance.png", "tourPerformance");
+                celtium$tourClickTab(mc, screen, 4);
+                report.addProperty("videoSettingsTourActivePageAfterShaders",
+                        String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
+                celtium$tourStep = 9;
+                return false;
+            }
+            case 9: {
+                report.addProperty("videoSettingsTourShadersRows", celtium$tourRowNames(screen));
+                celtium$captureGlScreenshot(mc, "celtium-tour-shaders.png", "tourShaders");
+                celtium$tourClickTab(mc, screen, 0);
+                report.addProperty("videoSettingsTourActivePageBackToGeneral",
+                        String.valueOf(celtium$tourInvoke(screen, "getActivePageIndex")));
+                celtium$tourStep = 10;
+                return false;
+            }
+            case 10: {
+                int[] undo = celtium$tourFooterCenter(screen, 0);
+                celtium$tourClick(screen, undo[0], undo[1]);
+                Object rd = celtium$tourEntry(screen, "options.renderDistance");
+                Object vs = celtium$tourEntry(screen, "options.vsync");
+                report.addProperty("videoSettingsTourPendingAfterUndo",
+                        String.valueOf(celtium$tourInvoke(screen, "hasPendingChanges")));
+                report.addProperty("videoSettingsTourRenderDistanceAfterUndo",
+                        String.valueOf(rd == null ? null : celtium$tourInvoke(rd, "getValue")));
+                report.addProperty("videoSettingsTourVsyncAfterUndo",
+                        String.valueOf(vs == null ? null : celtium$tourInvoke(vs, "getValue")));
+                report.addProperty("videoSettingsTourVsyncSwapchainAfterUndo", celtium$tourVsyncSwapchain());
+                celtium$tourStep = 11;
+                return false;
+            }
+            case 11: {
+                celtium$tourClickRow(screen, "options.renderDistance", true);
+                celtium$tourClickRow(screen, "options.vsync", false);
+                report.addProperty("videoSettingsTourPendingBeforeReapply",
+                        String.valueOf(celtium$tourInvoke(screen, "hasPendingChanges")));
+                celtium$tourStep = 12;
+                return false;
+            }
+            case 12: {
+                celtium$tourClickTab(mc, screen, 1);
+                celtium$tourStep = 13;
+                return false;
+            }
+            case 13: {
+                celtium$tourClickRow(screen, "celtium.options.vignette.name", false);
+                int[] apply = celtium$tourFooterCenter(screen, 1);
+                celtium$tourClick(screen, apply[0], apply[1]);
+                report.addProperty("videoSettingsTourPendingAfterApply",
+                        String.valueOf(celtium$tourInvoke(screen, "hasPendingChanges")));
+                report.addProperty("videoSettingsTourVsyncLiveAfterApply",
+                        Boolean.valueOf(mc.gameSettings.enableVsync));
+                report.addProperty("videoSettingsTourVsyncSwapchainAfterApply", celtium$tourVsyncSwapchain());
+                report.addProperty("videoSettingsTourOptionsFileDiff",
+                        celtium$vsOptionsDiff(celtium$tourFileBefore, celtium$vsOptionsFile(mc)));
+                report.addProperty("videoSettingsTourCeltiumConfigDiff",
+                        celtium$vsOptionsDiff(celtium$tourCeltiumConfigBefore, celtium$tourCeltiumConfigFile(mc)));
+                celtium$captureGlScreenshot(mc, "celtium-tour-applied.png", "tourApplied");
+                celtium$tourStep = 14;
+                return false;
+            }
+            case 14: {
+                celtium$tourClickTab(mc, screen, 0);
+                celtium$tourStep = 15;
+                return false;
+            }
+            case 15: {
+                int[] done = celtium$tourFooterCenter(screen, 2);
+                celtium$tourClick(screen, done[0], done[1]);
+                report.addProperty("videoSettingsTourScreenAfterDone", celtium$screenName(mc));
+                celtium$tourStep = 16;
+                return false;
+            }
+            default: {
+                // Reopen through the game's own button path so the stage capture proceeds on the
+                // operated screen, as the legacy chain does.
+                celtium$vsOpenCapturedScreen(mc);
+                report.addProperty("videoSettingsTourScreenAfterReopen", celtium$screenName(mc));
+                report.addProperty("videoSettingsTourVerdict",
+                        "act tour complete: tabs visited, options changed, undone, re-applied, Done, reopened");
+                celtium$tourStep = 99;
+                celtium$vsStep = 99;
+                return false;
+            }
+        }
+    }
+
+    /** One verify-mode step per tick: read the persisted values back and finish. */
+    private boolean celtium$tourVerifyStep(Minecraft mc) throws Exception {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        switch (celtium$tourStep) {
+            case 0: {
+                report.addProperty("videoSettingsTour", "verify");
+                report.addProperty("videoSettingsTourScreen", screen.getClass().getName());
+                report.addProperty("videoSettingsTourPageTitles", celtium$tourPageTitles(screen));
+                Object rd = celtium$tourEntry(screen, "options.renderDistance");
+                Object vs = celtium$tourEntry(screen, "options.vsync");
+                report.addProperty("videoSettingsTourVerifyRenderDistance",
+                        String.valueOf(rd == null ? null : celtium$tourInvoke(rd, "getValue")));
+                report.addProperty("videoSettingsTourVerifyVsync",
+                        String.valueOf(vs == null ? null : celtium$tourInvoke(vs, "getValue")));
+                report.addProperty("videoSettingsTourVerifyVsyncSwapchain", celtium$tourVsyncSwapchain());
+                report.addProperty("videoSettingsTourVerifyOptionsLines", celtium$tourOptionsLines(mc));
+                report.addProperty("videoSettingsTourVerifyCeltiumConfig", celtium$tourCeltiumConfigFile(mc));
+                celtium$captureGlScreenshot(mc, "celtium-tour-verify-general.png", "tourVerifyGeneral");
+                celtium$tourStep = 1;
+                return false;
+            }
+            case 1: {
+                celtium$tourClickTab(mc, screen, 1);
+                celtium$tourStep = 2;
+                return false;
+            }
+            case 2: {
+                Object vg = celtium$tourEntry(screen, "celtium.options.vignette.name");
+                report.addProperty("videoSettingsTourVerifyVignette",
+                        String.valueOf(vg == null ? null : celtium$tourInvoke(vg, "getValue")));
+                celtium$captureGlScreenshot(mc, "celtium-tour-verify-quality.png", "tourVerifyQuality");
+                celtium$tourClickTab(mc, screen, 3);
+                celtium$tourStep = 3;
+                return false;
+            }
+            default: {
+                Object dl = celtium$tourEntry(screen, "celtium.options.dynamic_lights.name");
+                Object lc = celtium$tourEntry(screen, "celtium.options.leaf_culling_mode.name");
+                report.addProperty("videoSettingsTourVerifyDynamicLights",
+                        String.valueOf(dl == null ? null : celtium$tourInvoke(dl, "getValue")));
+                report.addProperty("videoSettingsTourVerifyLeafCulling",
+                        String.valueOf(lc == null ? null : celtium$tourInvoke(lc, "getDisplayValue")));
+                celtium$captureGlScreenshot(mc, "celtium-tour-verify-lighting.png", "tourVerifyLighting");
+                report.addProperty("videoSettingsTourVerdict", "verify tour complete: values read back after relaunch");
+                celtium$tourStep = 99;
+                celtium$vsStep = 99;
+                return true;
+            }
+        }
+    }
+
+    /** The renderDistance and VSync lines of options.txt, for the persistence read-back. */
+    private static String celtium$tourOptionsLines(Minecraft mc) {
+        String file = celtium$vsOptionsFile(mc);
+        java.util.List<String> lines = new java.util.ArrayList<String>();
+        for (String line : file.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("renderDistance") || trimmed.startsWith("enableVsync")) {
+                lines.add(trimmed);
+            }
+        }
+        return lines.isEmpty() ? "no renderDistance/enableVsync lines" : String.join(" ", lines);
+    }
+
+    /** The swapchain's current VSync request, read from the renderer class when it is loaded. */
+    private static String celtium$tourVsyncSwapchain() {
+        try {
+            Class<?> type = Class.forName("org.soutalab.celtium.vulkan.VulkanSwapchain");
+            java.lang.reflect.Method method = type.getMethod("vsyncRequested");
+            return String.valueOf(method.invoke(null));
+        } catch (Throwable error) {
+            return "unreadable: " + error;
+        }
+    }
+
+    /** The whole of config/celtium-options.json, or why it cannot be read. */
+    private static String celtium$tourCeltiumConfigFile(Minecraft mc) {
+        try {
+            java.io.File file = new java.io.File(new java.io.File(mc.gameDir, "config"), "celtium-options.json");
+            if (!file.isFile()) {
+                return "no celtium-options.json at " + file;
+            }
+            return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable error) {
+            return "celtium-options.json unreadable: " + error;
+        }
+    }
+
     /** Step 0: pick an option, record it and the settings file, and press it through the screen's own dispatch. */
     private boolean celtium$vsPressOption(Minecraft mc) throws Exception {
         net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
@@ -11493,7 +11997,9 @@ public final class ValidationClient {
         // settings screen. Driving the chain before the screen-name checks keeps that wait from firing on a tick the
         // chain itself caused - measured: without this the run failed with "the screen never became GuiVideoSettings"
         // one tick after the Done press, with the option already saved to options.txt.
-        if (celtium$vsStep >= 0 && celtium$vsStep < 99 && !celtium$runVideoSettingsChain(mc)) {
+        if (((celtium$vsStep >= 0 && celtium$vsStep < 99)
+                || (!celtium$tourMode.isEmpty() && celtium$tourStep != 99))
+                && !celtium$runSettingsInteraction(mc)) {
             return;
         }
         String screenName = celtium$screenName(mc);
@@ -11531,7 +12037,7 @@ public final class ValidationClient {
         // The functional chain runs here, on the screen that is about to be captured and only after it has laid out,
         // one step per tick. It restores the option before returning, so the frame captured below is still the
         // calibrated variant.
-        if (!celtium$runVideoSettingsChain(mc)) {
+        if (!celtium$runSettingsInteraction(mc)) {
             return;
         }
         celtium$stage = 2;

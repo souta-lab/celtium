@@ -279,16 +279,58 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
         GlStateManager.color(1.0f, 1.0f, 1.0f, 1.0f);
     }
 
+    private static final int TAB_GAP = 3;
+    private static final int TAB_Y = 10;
+    private static final int TAB_HEIGHT = 22;
+
+    /**
+     * Width of each tab, sized to its title text so no title is ever clipped: every tab gets its
+     * natural width (title + padding) and any surplus panel width is shared evenly. Only when the
+     * panel is too narrow for the natural widths do tabs shrink proportionally (the draw code
+     * still trims as a last resort).
+     */
+    private int[] tabWidths(int totalWidth) {
+        int count = this.pages.size();
+        int[] widths = new int[count];
+        int natural = 0;
+        for (int i = 0; i < count; i++) {
+            widths[i] = this.fontRenderer.getStringWidth(this.pages.get(i).getTitle()) + 18;
+            natural += widths[i];
+        }
+        int available = totalWidth - TAB_GAP * (count - 1);
+        int used = 0;
+        if (natural >= available) {
+            for (int i = 0; i < count; i++) {
+                if (i == count - 1) {
+                    widths[i] = Math.max(24, available - used);
+                } else {
+                    widths[i] = Math.max(24, (int) ((long) widths[i] * available / natural));
+                    used += widths[i];
+                }
+            }
+            return widths;
+        }
+        int surplusEach = (available - natural) / count;
+        for (int i = 0; i < count; i++) {
+            if (i == count - 1) {
+                widths[i] = available - used;
+            } else {
+                widths[i] += surplusEach;
+                used += widths[i];
+            }
+        }
+        return widths;
+    }
+
     private void drawTabBar(int left, int totalWidth, int mouseX, int mouseY) {
         int tabCount = this.pages.size();
-        int gap = 3;
-        int tabWidth = (totalWidth - gap * (tabCount - 1)) / tabCount;
-        int tabY = 10;
-        int tabH = 22;
+        int[] widths = tabWidths(totalWidth);
+        int tabY = TAB_Y;
+        int tabH = TAB_HEIGHT;
 
+        int tx = left;
         for (int i = 0; i < tabCount; i++) {
-            int tx = left + i * (tabWidth + gap);
-            int tw = (i == tabCount - 1) ? (left + totalWidth - tx) : tabWidth;
+            int tw = widths[i];
             boolean active = (i == this.activePageIndex);
             boolean hovered = mouseX >= tx && mouseX < tx + tw && mouseY >= tabY && mouseY < tabY + tabH;
 
@@ -305,6 +347,7 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
             int textX = tx + (tw - this.fontRenderer.getStringWidth(clipped)) / 2;
             int textY = tabY + (tabH - this.fontRenderer.FONT_HEIGHT) / 2;
             this.fontRenderer.drawStringWithShadow(clipped, textX, textY, active ? TEXT_PRIMARY : TEXT_MUTED);
+            tx += tw + TAB_GAP;
         }
     }
 
@@ -505,18 +548,18 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
 
         // Check tab bar clicks
         int tabCount = this.pages.size();
-        int gap = 3;
-        int tabWidth = (width - gap * (tabCount - 1)) / tabCount;
-        int tabY = 10;
-        int tabH = 22;
+        int[] widths = tabWidths(width);
+        int tabY = TAB_Y;
+        int tabH = TAB_HEIGHT;
         if (mouseButton == 0 && mouseY >= tabY && mouseY < tabY + tabH) {
+            int tx = left;
             for (int i = 0; i < tabCount; i++) {
-                int tx = left + i * (tabWidth + gap);
-                int tw = (i == tabCount - 1) ? (left + width - tx) : tabWidth;
+                int tw = widths[i];
                 if (mouseX >= tx && mouseX < tx + tw) {
                     selectPage(i);
                     return;
                 }
+                tx += tw + TAB_GAP;
             }
         }
 
