@@ -129,6 +129,7 @@ public final class Lane1Shaders {
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
             layout(location = 6) flat out int fragSection;
+            layout(location = 7) flat out int fragStream;
             const vec2 CORNERS[6] = vec2[](vec2(0,0), vec2(1,0), vec2(0,1), vec2(0,1), vec2(1,0), vec2(1,1));
             vec3 evaluateLights(vec3 worldPos) {
                 ivec3 cell = ivec3(floor((worldPos - vec3(pc.gridOrigin.xyz)) / 16.0));
@@ -173,6 +174,8 @@ public final class Lane1Shaders {
                 fragColor = vec4(tint * shade, 1.0);
                 fragLightMap = vec2(float((q.z >> 20) & 15u), float((q.z >> 16) & 15u)) / 15.0;
                 fragSection = gl_InstanceIndex;
+                fragStream = 0;
+                fragStream = 1;
                 fragWorldPos = worldPos;
                 // V2-5: the vertex stage evaluates the cluster's dynamic lights (findLSB walk).
                 fragDynamicLight = evaluateLights(worldPos + vec3(0.5));
@@ -206,6 +209,7 @@ public final class Lane1Shaders {
             layout(location = 4) out vec3 fragDynamicLight;
             layout(location = 5) out vec2 fragLocalUv;
             layout(location = 6) flat out int fragSection;
+            layout(location = 7) flat out int fragStream;
             const int CORNER_INDEX[6] = int[](0, 1, 2, 2, 1, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
@@ -263,6 +267,7 @@ public final class Lane1Shaders {
             layout(location = 3) in vec3 fragWorldPos;
             layout(location = 4) in vec3 fragDynamicLight;
             layout(location = 6) flat in int fragSection;
+            layout(location = 7) flat in int fragStream;
             layout(location = 0) out vec4 outColor;
             void main() {
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
@@ -281,6 +286,12 @@ public final class Lane1Shaders {
                 // centres - the raw light/15 coordinates land on the grid's dark edges
                 // (measured at Gate G1 by probing the bound image's corners).
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
+                // TEMP G1 BISECT25: stream separation - axis red, general green, brightness = light.
+                {
+                    float lum = dot(light, vec3(0.3333));
+                    outColor = fragStream == 0 ? vec4(lum, 0.0, 0.0, 1.0) : vec4(0.0, lum, 0.0, 1.0);
+                    return;
+                }
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 
                 if (fog.fogMode != 0) {
