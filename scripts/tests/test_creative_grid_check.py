@@ -9,7 +9,9 @@ synthetic grid whose filled cells carry icons has to pass, and the same grid wit
 2026-11-02 evidence measured, where 19 of 24 cells differed from the reference - has to fail. A checker that cannot
 fail would make the leg's PASSED meaningless, which is the trap this file exists to close.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import tempfile
@@ -102,7 +104,13 @@ class CreativeGridCheckTest(unittest.TestCase):
         report_path.write_text(json.dumps(data), encoding="utf-8")
         picture_path = self.root / "presented.png"
         picture(picture_path, drawn)
-        return self.check.main(["--report", str(report_path), "--picture", str(picture_path), "--leg", "synthetic"])
+        # The checker's verdict lines ("FAIL: ..." / "... -> FAILED") are its report for the case under test, and
+        # the negative cases below are supposed to produce them. Left on the suite's stdout they read as suite
+        # failures in CI logs - the misreading that put a phantom "flaky creative-grid failure" into three landing
+        # records (audit #16 F-8). Capture them, the way test_display_list_legacy_check already does; the exit
+        # code is the verdict the assertions read.
+        with contextlib.redirect_stdout(io.StringIO()):
+            return self.check.main(["--report", str(report_path), "--picture", str(picture_path), "--leg", "synthetic"])
 
     def test_a_grid_whose_filled_cells_carry_icons_passes(self):
         self.assertEqual(0, self.run_check(report(), FILLED))

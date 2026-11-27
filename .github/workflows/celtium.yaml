@@ -20,6 +20,10 @@ jobs:
       # installed here, the way the minecraft-1122 job installs glslang-tools.
       - name: Install the image library the checks import
         run: |
+          # The runner image's Microsoft prod repo (packages.microsoft.com) intermittently answers 403, and a
+          # failed fetch fails the whole apt-get update even though nothing installed here comes from that repo
+          # (audit #16 F-11, recurring since #15 F-13). Drop the list before updating.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-pil
       - name: Test development-process safety (no GPU or game)
@@ -111,6 +115,8 @@ jobs:
       # nothing is skipped and no check is removed.
       - name: Install the shader compiler
         run: |
+          # Same Microsoft-prod-repo 403 guard as the probe job's install step (audit #16 F-11).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends glslang-tools
           glslangValidator --version | head -1
