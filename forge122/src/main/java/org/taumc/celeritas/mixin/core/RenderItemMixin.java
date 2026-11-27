@@ -53,7 +53,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <li>B14: the negative set and the tint memo are bounded like the positive cache; all three plus the
  * plans are cleared from RenderItem's own reload callback (a reload replaces every model instance they
  * key on; the resource manager's identity never changes across one, so no per-call check can see it). A cached plan also
- * re-verifies the model's null-face quad list (size + first-quad identity) on every hit, so a model
+ * re-verifies all seven of the model's quad lists (size + first/last-quad identity) on every hit, so a model
  * whose {@code getQuads} output mutates invalidates instead of replaying stale bytes; repeated
  * invalidation demotes the key to uncacheable.</li>
  * </ul>
@@ -244,37 +244,51 @@ public abstract class RenderItemMixin {
     }
 
     /**
-     * The mutation probe: vanilla reads the null-face quad list on every draw, so re-reading it on a
-     * hit costs one {@code getQuads} call where the original ran seven. Size plus first-quad identity
-     * is the cheap stability signal - a dynamic model that rotates or rebuilds its quads changes one
-     * of the two almost always, and a false negative only costs a rebuilt plan.
+     * The mutation probe: on a hit, every quad list the plan was built from is re-read and compared with the
+     * stamp the build recorded - size plus first- and last-quad identity, for the six faces and the null
+     * face. That is seven {@code getQuads} calls, exactly the seven the uncached path runs on every draw;
+     * what the cache still saves is the emission, not the asking.
      * <p>
-     * The null-face list alone is not a probe of everything this cache keys on. A model whose quads are a function of
-     * external state has no reason to change its null-face answer when that state changes, and the CreativeCore models
-     * in the creative inventory are exactly that shape: {@code CreativeBakedModel.getBlockQuads} returns an empty list
-     * for every null-face query by construction (it answers per {@code EnumFacing}), so the probe matched on every
-     * stack and the first stack's bytes - or, when the first answer was empty, nothing at all - were replayed for all
-     * thirty-six of them. A real face is part of those quads: for an ordinary baked model it is the same list instance
-     * on every call, so this costs one lookup and changes nothing; for a stack-dependent model it is what makes the
-     * next stack rebuild instead of replay.
+     * The probe used to cover two of the seven lists - the null face and UP (DP-28). That was a hole by
+     * construction, not by bad luck: per-face answers are independent in the {@code IBakedModel} contract,
+     * so a model whose external state changes only another face's answer kept matching on both probed lists
+     * and replayed the first stack's bytes for every later one. The CreativeCore models in the creative
+     * inventory were the earlier, null/UP-shaped instance of the same hole: {@code
+     * CreativeBakedModel.getBlockQuads} returns an empty list for every null-face query by construction (it
+     * answers per {@code EnumFacing}), so the null-face half of the old probe matched on every stack. A
+     * dynamic model that rotates or rebuilds its quads changes a size or an end identity almost always,
+     * and a false negative only costs a rebuilt plan.
      */
     private static boolean celtium$probe(IBakedModel model, Plan plan) {
         if (model.getClass() == net.minecraft.client.renderer.block.model.SimpleBakedModel.class) {
             return true;
         }
-        List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
-        if (probe.size() != plan.probeCount) {
-            return false;
+        for (int i = 0; i < 7; i++) {
+            List<BakedQuad> quads = model.getQuads((IBlockState) null,
+                    i < CELTIUM_FACINGS.length ? CELTIUM_FACINGS[i] : null, 0L);
+            if (quads.size() != plan.probeCounts[i]) {
+                return false;
+            }
+            if ((quads.isEmpty() ? null : quads.get(0)) != plan.probeFirst[i]) {
+                return false;
+            }
+            if ((quads.isEmpty() ? null : quads.get(quads.size() - 1)) != plan.probeLast[i]) {
+                return false;
+            }
         }
-        BakedQuad first = probe.isEmpty() ? null : probe.get(0);
-        if (first != plan.probeQuad) {
-            return false;
+        return true;
+    }
+
+    /** Records the seven lists' probe stamps: indices 0-5 are {@code CELTIUM_FACINGS} in order, 6 is the null face. */
+    private static void celtium$captureProbe(IBakedModel model, BakedQuad[] first, BakedQuad[] last,
+            int[] counts) {
+        for (int i = 0; i < 7; i++) {
+            List<BakedQuad> quads = model.getQuads((IBlockState) null,
+                    i < CELTIUM_FACINGS.length ? CELTIUM_FACINGS[i] : null, 0L);
+            counts[i] = quads.size();
+            first[i] = quads.isEmpty() ? null : quads.get(0);
+            last[i] = quads.isEmpty() ? null : quads.get(quads.size() - 1);
         }
-        List<BakedQuad> face = model.getQuads((IBlockState) null, EnumFacing.UP, 0L);
-        if (face.size() != plan.faceProbeCount) {
-            return false;
-        }
-        return (face.isEmpty() ? null : face.get(0)) == plan.faceProbeQuad;
     }
 
     /**
@@ -291,11 +305,11 @@ public abstract class RenderItemMixin {
         if (stackColored && celtium$modelHasTintedQuads(model)) {
             return null;
         }
-        // The probe records what the hit path re-verifies: the null-face list's size and first quad, and the UP face's.
-        List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
-        BakedQuad probeQuad = probe.isEmpty() ? null : probe.get(0);
-        List<BakedQuad> faceProbe = model.getQuads((IBlockState) null, EnumFacing.UP, 0L);
-        BakedQuad faceProbeQuad = faceProbe.isEmpty() ? null : faceProbe.get(0);
+        // The probe records what the hit path re-verifies: every list the plan is built from, all seven.
+        BakedQuad[] probeFirst = new BakedQuad[7];
+        BakedQuad[] probeLast = new BakedQuad[7];
+        int[] probeCounts = new int[7];
+        celtium$captureProbe(model, probeFirst, probeLast, probeCounts);
         if (!ForgeModContainer.allowEmissiveItems) {
             BufferBuilder scratch = celtium$scratch();
             for (EnumFacing enumfacing : CELTIUM_FACINGS) {
@@ -308,8 +322,7 @@ public abstract class RenderItemMixin {
             int[] data = celtium$bytes(scratch);
             CELTIUM_UPLOADER.draw(scratch);
             return new Plan(new Segment[] {
-                    new Segment(data, false, 0, 0, false, false) }, false, probeQuad, probe.size(),
-                    faceProbeQuad, faceProbe.size());
+                    new Segment(data, false, 0, 0, false, false) }, false, probeFirst, probeLast, probeCounts);
         }
         List<BakedQuad> allquads = new ArrayList<>();
         for (EnumFacing enumfacing : CELTIUM_FACINGS) {
@@ -365,8 +378,7 @@ public abstract class RenderItemMixin {
                     OpenGlHelper.lastBrightnessX, OpenGlHelper.lastBrightnessY);
             GlStateManager.enableLighting();
         }
-        return new Plan(segments.toArray(new Segment[0]), hasLighting, probeQuad, probe.size(),
-                faceProbeQuad, faceProbe.size());
+        return new Plan(segments.toArray(new Segment[0]), hasLighting, probeFirst, probeLast, probeCounts);
     }
 
     /**
@@ -504,27 +516,24 @@ public abstract class RenderItemMixin {
 
     /**
      * A plan: the segments plus the plan-level facts the replay cannot recompute - {@code hasLighting}
-     * for {@code renderLitItem}'s post-loop cleanup, and the two probe stamps
-     * ({@code probeQuad}/{@code probeCount} on the null face, {@code faceProbeQuad}/{@code faceProbeCount} on UP)
-     * the hit path re-verifies before trusting the bytes.
+     * for {@code renderLitItem}'s post-loop cleanup, and the probe stamps (first quad, last quad and size
+     * for each of the seven quad lists, indices 0-5 the faces in {@code CELTIUM_FACINGS} order and 6 the
+     * null face) the hit path re-verifies before trusting the bytes.
      */
     private static final class Plan {
         final Segment[] segments;
         final boolean hasLighting;
-        final BakedQuad probeQuad;
-        final int probeCount;
-        /** The UP face's first quad and size, the half of the probe a stack-dependent model actually changes. */
-        final BakedQuad faceProbeQuad;
-        final int faceProbeCount;
+        final BakedQuad[] probeFirst;
+        final BakedQuad[] probeLast;
+        final int[] probeCounts;
 
-        Plan(Segment[] segments, boolean hasLighting, BakedQuad probeQuad, int probeCount,
-                BakedQuad faceProbeQuad, int faceProbeCount) {
+        Plan(Segment[] segments, boolean hasLighting, BakedQuad[] probeFirst, BakedQuad[] probeLast,
+                int[] probeCounts) {
             this.segments = segments;
             this.hasLighting = hasLighting;
-            this.probeQuad = probeQuad;
-            this.probeCount = probeCount;
-            this.faceProbeQuad = faceProbeQuad;
-            this.faceProbeCount = faceProbeCount;
+            this.probeFirst = probeFirst;
+            this.probeLast = probeLast;
+            this.probeCounts = probeCounts;
         }
     }
 

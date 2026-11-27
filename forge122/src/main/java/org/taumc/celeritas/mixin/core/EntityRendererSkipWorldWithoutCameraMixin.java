@@ -44,8 +44,12 @@ public abstract class EntityRendererSkipWorldWithoutCameraMixin {
             long finishTimeNano) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null && mc.world != null && mc.player == null && mc.getRenderViewEntity() == null) {
+            // DP-29: counted, with the consecutive run tracked in the census - one skipped frame is the
+            // designed entry transient, a run that never ends is a session stuck without a camera.
+            org.soutalab.celtium.vulkan.NoCameraSkipCensus.noteWorldSkip();
             return;
         }
+        org.soutalab.celtium.vulkan.NoCameraSkipCensus.noteWorldRendered();
         this.func_175068_a(pass, partialTicks, finishTimeNano);
     }
 }

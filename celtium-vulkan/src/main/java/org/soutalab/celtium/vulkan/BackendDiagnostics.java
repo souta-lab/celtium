@@ -185,6 +185,13 @@ final class BackendDiagnostics {
                 + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.listCensus() + "] "
                 + "celtium/attrib[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.attribCensus() + "] "
                 + "celtium/legacyListRuns[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.legacyListCensus() + "] "
+                // DP-01/DP-02/DP-03/DP-29: the silent-loss censuses, printed unconditionally like the bracket
+                // readings above - a loss counter that only prints when diagnostics are on is the invisibility
+                // these audits closed. offerDeaths is the pre-backend population offerRefusals cannot see;
+                // nativeDrawSkips is the submission-side population stalledGeometryDrops cannot see.
+                + "celtium/offerDeaths[" + OfferFunnelCensus.summary() + "] "
+                + "celtium/nativeDrawSkips[" + NativeDrawSkipCensus.summary() + "] "
+                + "celtium/noCameraSkips[" + NoCameraSkipCensus.summary() + "] "
                 + "celtium/vulkan-check passes=" + b.terrainStatistics.passSubmissions() + " skipped=" + b.terrainStatistics.passSkips() + " errors="
                 + b.terrainStatistics.passErrors() + " lastDraw=" + b.terrainStatistics.lastDrawCommands() + " lastSections=" + b.terrainStatistics.lastSectionsDrawn()
                 + " skipReason=" + (b.terrainStatistics.lastSkipReason() == null ? "none" : b.terrainStatistics.lastSkipReason().replace(' ', '_'))

@@ -119,6 +119,13 @@ public final class CeltiumLoadingProgress {
         } catch (Exception | LinkageError error) {
             failures++;
             System.out.println("[Celtium] native loading progress failed: " + error);
+            if (failures == 3) {
+                // DP-27: refresh() returns at its head from here on, so without this line the splash simply
+                // stops mid-startup with nothing naming the stop - three failure lines and then silence,
+                // indistinguishable from a finished load.
+                System.out.println("[Celtium] CELTIUM_LOADING_SCREEN native loading progress disabled after"
+                        + " 3 failures; the splash will not refresh again this startup");
+            }
         } finally {
             refreshing = false;
             // This frame is drawn on the thread that is loading the game: at most ~30 frames a second, and never more

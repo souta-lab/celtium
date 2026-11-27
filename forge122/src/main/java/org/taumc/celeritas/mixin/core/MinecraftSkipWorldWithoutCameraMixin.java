@@ -40,6 +40,11 @@ public abstract class MinecraftSkipWorldWithoutCameraMixin {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null) {
             mc.skipRenderWorld = org.taumc.celeritas.core.CeltiumWorldEntryWatch.shouldSkipWorld(mc);
+            if (mc.skipRenderWorld) {
+                // DP-29: the guard's activity is counted, so a session stuck without a camera reads as a
+                // number in the verification summary instead of a silent absence of world frames.
+                org.soutalab.celtium.vulkan.NoCameraSkipCensus.noteFlagTrue();
+            }
         }
     }
 }

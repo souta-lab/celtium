@@ -211,13 +211,37 @@ final class NativeLoadingScreen {
         g.fillRect(x, y, w, h);
     }
 
+    /** Non-ASCII characters replaced by '?' so far (DP-27); the first few are printed, every one is counted. */
+    private static long nonAsciiSubstitutions;
+    private static int nonAsciiPrints;
+
+    static long nonAsciiSubstitutions() {
+        return nonAsciiSubstitutions;
+    }
+
+    private static void noteNonAscii(char c) {
+        nonAsciiSubstitutions++;
+        if (nonAsciiPrints < 3) {
+            nonAsciiPrints++;
+            System.out.println("[Celtium] CELTIUM_LOADING_SCREEN non-ASCII character U+"
+                    + Integer.toHexString(c) + " has no glyph in the ASCII font page; drawn as '?'");
+        }
+    }
+
     /** {@code FontRenderer.drawString(text, x, y, 0x000000)} at Forge's 2x scale: opaque black glyphs. */
     private void drawString(Graphics2D g, String text, int x, int y) {
         if (this.font == null) return;
         float cursor = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (c >= 256) continue;
+            if (c >= 256) {
+                // DP-27: the font is the 256-glyph ASCII page, so a non-ASCII character has no glyph of its
+                // own - but skipping it silently reduced mod-supplied bar titles and messages to fragments
+                // with nothing saying why. '?' is drawn and measured like any other glyph instead, and the
+                // substitution is counted above.
+                noteNonAscii(c);
+                c = '?';
+            }
             BufferedImage glyph = this.glyphs[c];
             if (glyph != null && c != ' ') {
                 g.drawImage(glyph, x + Math.round(cursor * 2), y, glyph.getWidth() * 2, glyph.getHeight() * 2, null);
@@ -231,7 +255,9 @@ final class NativeLoadingScreen {
         int width = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (c < 256) width += this.charWidth[c];
+            // DP-27: measured with the same '?' substitution drawString draws, so a centred string with
+            // non-ASCII characters stays centred instead of drifting by the skipped widths.
+            width += this.charWidth[c >= 256 ? '?' : c];
         }
         return width;
     }

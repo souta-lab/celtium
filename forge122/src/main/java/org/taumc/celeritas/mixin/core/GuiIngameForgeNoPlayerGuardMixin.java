@@ -32,6 +32,9 @@ public abstract class GuiIngameForgeNoPlayerGuardMixin {
     private void celtium$skipHudWithoutPlayer(float partialTicks, CallbackInfo info) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null && mc.world != null && mc.player == null) {
+            // DP-29: counted like the world-render guard beside it, so the HUD half of the no-camera
+            // state is visible in the same census.
+            org.soutalab.celtium.vulkan.NoCameraSkipCensus.noteHudSkip();
             info.cancel();
         }
     }
