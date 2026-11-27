@@ -22,6 +22,14 @@ public final class ForgeSectionScanner {
     private ForgeSectionScanner() {
     }
 
+    // TEMP G1 PROBE4: build-time light census (read by the driver's debug strings).
+    public static final java.util.concurrent.atomic.AtomicLong FILLS_TOTAL =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong FILLS_CENTER_UNPOPULATED =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong FILLS_SURFACE_DARK =
+            new java.util.concurrent.atomic.AtomicLong();
+
     public static void fill(WorldSectionSnapshot snapshot, IBlockAccess world,
                             ForgeBlockFaceData table, FluidloggedProbe fluids,
                             int sectionX, int sectionY, int sectionZ) {
@@ -55,6 +63,14 @@ public final class ForgeSectionScanner {
                     }
                 }
             }
+        }
+        FILLS_TOTAL.incrementAndGet();
+        try {
+            Chunk center = chunks[1][1];
+            if (center != null && !center.isLightPopulated()) {
+                FILLS_CENTER_UNPOPULATED.incrementAndGet();
+            }
+        } catch (Throwable ignored) {
         }
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int baseX = sectionX * 16 - 1;

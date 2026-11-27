@@ -186,6 +186,8 @@ public final class CeltiumTerrainDriver {
                 lines.add("lightProbe failed: " + t);
             }
         }
+        lines.add("fillCensus total=" + ForgeSectionScanner.FILLS_TOTAL.get()
+                + " centerUnpopulated=" + ForgeSectionScanner.FILLS_CENTER_UNPOPULATED.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
