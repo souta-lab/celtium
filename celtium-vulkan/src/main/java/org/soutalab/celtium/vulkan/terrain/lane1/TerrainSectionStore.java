@@ -142,13 +142,13 @@ public final class TerrainSectionStore {
         long auxOffset = auxBytes == 0L ? -1L : auxRegion.allocate(auxBytes, AUX_ALIGNMENT);
         if ((axisBytes > 0L && axisOffset < 0L) || (generalBytes > 0L && generalOffset < 0L)
                 || (auxBytes > 0L && auxOffset < 0L)) {
-            if (axisOffset >= 0L) {
+            if (axisBytes > 0L && axisOffset >= 0L) {
                 axisRegion.releaseDeferred(axisOffset, axisBytes, timelineValue);
             }
-            if (generalOffset >= 0L) {
+            if (generalBytes > 0L && generalOffset >= 0L) {
                 generalRegion.releaseDeferred(generalOffset, generalBytes, timelineValue);
             }
-            if (auxOffset >= 0L) {
+            if (auxBytes > 0L && auxOffset >= 0L) {
                 auxRegion.releaseDeferred(auxOffset, auxBytes, timelineValue);
             }
             throw new IllegalStateException("terrain slab cannot fit section (" + sectionX + ", "
