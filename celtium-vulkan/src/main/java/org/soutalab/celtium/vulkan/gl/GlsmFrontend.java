@@ -3026,6 +3026,8 @@ public final class GlsmFrontend implements FunctionProvider {
         int mode = stub.legacyCapture.mode();
         int format = stub.legacyCapture.format();
         long sinkRefusals = stub.legacyCapture.sinkRefusals();
+        long abandonedBefore = stub.legacyCapture.abandonedRuns();
+        long listRefusalsBefore = stub.legacyCapture.listRefusals();
         // The run's placement, read before end() resets the buffer. Taken only when the census is on, so a normal leg
         // pays nothing for it.
         float[] firstPosition = null;
@@ -3063,6 +3065,22 @@ public final class GlsmFrontend implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason="
                     + stub.legacyCapture.lastRefusal());
         }
+        if (!taken && stub.legacyCapture.abandonedRuns() != abandonedBefore
+                && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            // The run was abandoned mid-collection (a vertex with w=0): end() had nothing left to offer, so
+            // the sink-refusal branch above cannot see it - the abandonment delta is its only record, and
+            // without this branch the run vanished from every line this path prints.
+            stub.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason="
+                    + stub.legacyCapture.lastAbandonment());
+        } else if (!taken && stub.legacyCapture.listRefusals() != listRefusalsBefore
+                && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
+            // The run was being compiled into a list and the record refused it: end() counts that as a list
+            // refusal rather than a sink refusal, so it reaches this line through its own delta.
+            stub.legacyRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason="
+                    + stub.legacyCapture.lastRefusal());
+        }
         if (firstPosition != null) {
             stub.celtium$logLegacyRun(mode, vertices, format, taken, firstPosition, lastPosition, firstUv, lastUv);
         }
@@ -3093,11 +3111,14 @@ public final class GlsmFrontend implements FunctionProvider {
         long bytes = (long) count * (long) stride;
         if (this.legacyListRunBytes + bytes > MAX_LEGACY_LIST_RUN_BYTES) {
             this.legacyListRunBytesDropped += bytes;
+            this.legacyCapture.noteListRecordRefusal("filing the run would take the filed legacy runs past the "
+                    + MAX_LEGACY_LIST_RUN_BYTES + "-byte bound (" + bytes + " more bytes)");
             return false;
         }
         CompiledLegacyRun run = CompiledLegacyRun.copy(format, stride, count, drawMode, address, attributes);
         if (run == null) {
             this.legacyListRunBytesDropped += bytes;
+            this.legacyCapture.noteListRecordRefusal("the run's copy for the list could not be made");
             return false;
         }
         open.add(new Object[] { CompiledLegacyRun.TAG, run });
@@ -3184,6 +3205,8 @@ public final class GlsmFrontend implements FunctionProvider {
                 + " lists=" + stub.legacyListRunBytesByList.size()
                 + " bytes=" + stub.legacyListRunBytes + " droppedBytes=" + stub.legacyListRunBytesDropped
                 + " replayRefusals=" + stub.legacyListRunReplayRefusals
+                + " callListsTypeRefusals=" + stub.callListsTypeRefusals
+                + " abandoned=" + stub.legacyCapture.abandonedRuns()
                 + " callState=" + stub.legacyListRunsCallState
                 + " layout=" + stub.legacyListRunsLayout
                 + " provenance[colour=" + stub.legacyCapture.compiledCallStateColour()
@@ -5100,11 +5123,24 @@ public final class GlsmFrontend implements FunctionProvider {
             case SEM_GET_STRINGI:
                 return stringIndexed((int) a0, (int) a1);
             case SEM_IS_ENABLED:
+                if (fn.args.length == 2 && a1 != 0L) {
+                    // glIsEnabledi with a real index: the global bit is not the answer to that question.
+                    celtium$noteIndexedEnable(fn.name, (int) a0, a1);
+                    return 0L;
+                }
                 return enabledCap((int) a0) ? 1L : 0L;
             case SEM_ENABLE:
+                if (fn.args.length == 2 && a1 != 0L) {
+                    celtium$noteIndexedEnable(fn.name, (int) a0, a1);
+                    return 0L;
+                }
                 setCapability((int) a0, true);
                 return 0L;
             case SEM_DISABLE:
+                if (fn.args.length == 2 && a1 != 0L) {
+                    celtium$noteIndexedEnable(fn.name, (int) a0, a1);
+                    return 0L;
+                }
                 setCapability((int) a0, false);
                 return 0L;
             case SEM_CULL_FACE:
@@ -5674,11 +5710,38 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
+    /**
+     * Holds the no-op arrival total, in its own class initializer for the {@code HugeMethodLimit} reason
+     * {@link NoopDrawingNames} names: this class's own initializer is spoken for.
+     */
+    private static final class NoopCensusState {
+        static final java.util.concurrent.atomic.AtomicLong TOTAL = new java.util.concurrent.atomic.AtomicLong();
+    }
+
+    /**
+     * Prints the no-op census at powers of two of the arrival total, in addition to the line at exit.
+     * <p>
+     * The exit line used to be the only one, and it is racy: measured in this class's own notes, one run in
+     * three of the same fixture carried no {@code CELTIUM_NOOP_CENSUS} at all because the print lost the race
+     * with the harness's teardown. The draw censuses solved the same problem with powers of two - about
+     * twenty lines for any run length, the first after the very first call - and this line is deliberately
+     * not gated on {@code VulkanDiagnostics}: a support log from a run that ended early is exactly the log
+     * that needs it.
+     */
+    private static void celtium$reportNoopCensus() {
+        long total = NoopCensusState.TOTAL.get();
+        if (total > 0L && (total & (total - 1L)) == 0L) {
+            System.out.println("[Celtium] CELTIUM_NOOP_CENSUS via=periodic " + noopCensusSummary());
+        }
+    }
+
     private static void celtium$noteNoopById(int functionId) {
         if (MIRROR_REQUIRED_BY_ID.get(functionId)) {
             MIRROR_MISSES_BY_ID.incrementAndGet(functionId);
         }
         NOOP_COUNTS_BY_ID.incrementAndGet(functionId);
+        NoopCensusState.TOTAL.incrementAndGet();
+        celtium$reportNoopCensus();
     }
 
     /**
@@ -5703,6 +5766,8 @@ public final class GlsmFrontend implements FunctionProvider {
             }
         }
         counter.incrementAndGet();
+        NoopCensusState.TOTAL.incrementAndGet();
+        celtium$reportNoopCensus();
     }
 
     /**
@@ -6351,6 +6416,43 @@ public final class GlsmFrontend implements FunctionProvider {
 
     private boolean enabledCap(int cap) {
         return GlStateQueries.enabledCap(this, cap);
+    }
+
+    /** Indexed enable calls with a non-zero index, by entry-point name: counted, never applied to the global bit. */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> INDEXED_ENABLE_CALLS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    private static final java.util.Set<String> INDEXED_ENABLE_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Notes one {@code glEnablei}/{@code glDisablei}/{@code glIsEnabledi} call whose index is not zero.
+     * <p>
+     * The indexed spellings share the unindexed semantics in the table, and the dispatch used to read only
+     * the capability argument: {@code glEnablei(GL_BLEND, 2)} set the one global blend bit, and
+     * {@code glIsEnabledi} answered from it - a wrong state change and a wrong answer, both silent. This
+     * stub carries no per-index enable record, so the honest answer is to leave the global bit untouched
+     * (index zero names the same state the unindexed spelling owns, and is still served from it) and to
+     * count the call by name, with one log line per name so the gap is attributable.
+     */
+    private static void celtium$noteIndexedEnable(String name, int cap, long index) {
+        java.util.concurrent.atomic.AtomicLong counter = INDEXED_ENABLE_CALLS.get(name);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = INDEXED_ENABLE_CALLS.putIfAbsent(name, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+        if (INDEXED_ENABLE_LOGGED.add(name)) {
+            System.out.println("[Celtium] CELTIUM_INDEXED_ENABLE " + name + " cap=0x" + Integer.toHexString(cap)
+                    + " index=" + index + " (per-index enable state is not carried; the global bit is untouched)");
+        }
+    }
+
+    /** {@return the indexed-enable census, for a test or a reader that wants the counts without the log}. */
+    static java.util.Map<String, java.util.concurrent.atomic.AtomicLong> indexedEnableCalls() {
+        return INDEXED_ENABLE_CALLS;
     }
 
     /** Pixel/semantic routing - the layer the texture path plugs into; the body lives in {@link GlStateQueries}. */
@@ -7588,17 +7690,59 @@ public final class GlsmFrontend implements FunctionProvider {
     private static final java.util.Set<String> BLIT_DEPTH_SHAPES =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** GL_COLOR_BUFFER_BIT. */
+    private static final int COLOR_BUFFER_BIT = 0x00004000;
+    /** GL_STENCIL_BUFFER_BIT. */
+    private static final int STENCIL_BUFFER_BIT = 0x00000400;
+
+    private long blitUnservedRequests;
+    private static final java.util.Set<String> BLIT_UNSERVED_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Counts one blit whose colour or stencil part this handler does not serve, by shape, with a bounded log.
+     * <p>
+     * The depth route below is the only served form. A colour- or stencil-only blit used to return before any
+     * counter moved, and a blit carrying depth plus colour served the depth and dropped the colour in the
+     * same silence - so "no measured caller blits colour" was an untested claim wearing a measurement's
+     * clothes. The count is what turns it into one: a caller that does blit colour now leaves a named line,
+     * and serving colour (a native image blit between the two framebuffers' images) can be sized from it.
+     */
+    private void celtium$noteUnservedBlit(int srcX0, int srcY0, int srcX1, int srcY1,
+            int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter) {
+        this.blitUnservedRequests++;
+        String bits = (mask & COLOR_BUFFER_BIT) != 0
+                ? ((mask & STENCIL_BUFFER_BIT) != 0 ? "color+stencil" : "color")
+                : "stencil";
+        String key = bits + "/" + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
+                + "->" + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
+                + "/filter=0x" + Integer.toHexString(filter)
+                + "/readFbo=" + this.readFbo + "/drawFbo=" + this.drawFbo;
+        if (BLIT_UNSERVED_SHAPES.size() < 8 && BLIT_UNSERVED_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_BLIT_UNSERVED glBlitFramebuffer bits=" + bits
+                    + " source=" + srcX0 + "," + srcY0 + " " + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
+                    + " dest=" + dstX0 + "," + dstY0 + " " + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
+                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " requests=" + this.blitUnservedRequests
+                    + " site=[" + celtium$callSite(8) + "]");
+        }
+    }
+
     /**
      * A {@code glBlitFramebuffer}, which was a table noop until the depth form needed a route: Iris's
      * pre-translucent shadow depth copy takes the blit form on the first frame after its targets are created
      * ({@code ShadowRenderTargets.copyPreTranslucentDepth}, the dirty-flag branch) and the texture-copy form
      * in steady state, so serving only the copy left the first frame's snapshot silently dropped. The depth
      * bit between two framebuffers that both record depth attachments routes to the backend's native depth
-     * copy — equal extents only, where a copy and a NEAREST blit agree. Colour bits keep the historical noop:
-     * no measured caller blits colour under GL-less, and the line below counts only what this handler decides.
+     * copy — equal extents only, where a copy and a NEAREST blit agree. Colour and stencil bits are not
+     * served; they are counted by shape in {@link #celtium$noteUnservedBlit} so the historical claim that no
+     * caller blits colour under GL-less is a measurement rather than an assumption.
      */
     private void celtium$noteBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
             int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter) {
+        if ((mask & (COLOR_BUFFER_BIT | STENCIL_BUFFER_BIT)) != 0) {
+            celtium$noteUnservedBlit(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        }
         if ((mask & DEPTH_BUFFER_BIT) == 0) {
             return;
         }
@@ -7815,8 +7959,9 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || firsts == 0L || counts == 0L || drawcount <= 0) {
             return;
         }
-        int n = Math.min(drawcount, 1024);
-        for (int i = 0; i < n; i++) {
+        // Every sub-draw the caller named is issued. A 1024 cap used to truncate the run in silence, so a
+        // batch larger than that lost its tail with no counter anywhere naming the loss.
+        for (int i = 0; i < drawcount; i++) {
             int first = org.lwjgl.system.MemoryUtil.memGetInt(firsts + (long) i * 4L);
             int count = org.lwjgl.system.MemoryUtil.memGetInt(counts + (long) i * 4L);
             stub.drawArrays(mode, first, count);
@@ -7829,8 +7974,8 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || counts == 0L || indices == 0L || drawcount <= 0) {
             return;
         }
-        int n = Math.min(drawcount, 1024);
-        for (int i = 0; i < n; i++) {
+        // Every sub-draw the caller named is issued, as in the arrays form above: no silent truncation.
+        for (int i = 0; i < drawcount; i++) {
             int count = org.lwjgl.system.MemoryUtil.memGetInt(counts + (long) i * 4L);
             long pointer = org.lwjgl.system.MemoryUtil.memGetLong(indices + (long) i * 8L);
             stub.drawElementsNow(mode, count, type, pointer, 0);
@@ -7853,10 +7998,31 @@ public final class GlsmFrontend implements FunctionProvider {
      * decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
      */
     private void drawElementsNow(int mode, int count, int type, long indices, int baseVertex) {
-        if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
+        GlDrawCensus.DrawElementCensus.CALLS.incrementAndGet();
+        if (count <= 0) {
+            // GL draws nothing for an empty range, and so does this: counted as empty, not as a gap - the
+            // unindexed decoder's rule, which this decoder's guard used to skip by returning before the census.
+            GlDrawCensus.DrawElementCensus.EMPTY.incrementAndGet();
+            GlDrawCensus.celtium$reportDrawElements();
             return;
         }
-        GlDrawCensus.DrawElementCensus.CALLS.incrementAndGet();
+        if (count > (1 << 20)) {
+            GlDrawCensus.celtium$noteDrawElementRefusal("index count " + count
+                    + " exceeds the decode bound of " + (1 << 20));
+            GlDrawCensus.celtium$reportDrawElements();
+            return;
+        }
+        // The mode rule is the drawer's own, not a list kept here: the drawer accepts the polygon modes and
+        // the line modes (drawn at the one-pixel width the pipelines implement - a narrowing, counted as
+        // drawn rather than refused), and refuses points, for which no pipeline exists, and unknown modes.
+        // The guard this replaces accepted only triangles, triangle strips and quads and returned in silence,
+        // so a fan, a quad strip or a polygon an indexed caller issued left no trace anywhere.
+        String modeRefusal = org.soutalab.celtium.vulkan.VulkanImmediateDrawer.refusalReason(mode);
+        if (modeRefusal != null) {
+            GlDrawCensus.celtium$noteDrawElementRefusal(modeRefusal);
+            GlDrawCensus.celtium$reportDrawElements();
+            return;
+        }
         int stride = VERTEX_POINTER.stride;
         if (VERTEX_POINTER.size != 3 || VERTEX_POINTER.type != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
@@ -7873,6 +8039,9 @@ public final class GlsmFrontend implements FunctionProvider {
             vertices = bound != null ? bound.compatibilityView()
                     : boundName == 0 ? null : GlsmBufferState.current().storage(boundName);
         } catch (RuntimeException error) {
+            GlDrawCensus.celtium$noteDrawElementRefusal(
+                    "reading the bound vertex buffer's view threw " + error.getClass().getSimpleName());
+            GlDrawCensus.celtium$reportDrawElements();
             return;
         }
         // A VAO-carried draw names its vertex buffer through attribute 0's record, not through the binding the
@@ -7887,6 +8056,9 @@ public final class GlsmFrontend implements FunctionProvider {
             try {
                 vertices = bound != null ? bound.compatibilityView() : GlsmBufferState.current().storage(boundName);
             } catch (RuntimeException error) {
+                GlDrawCensus.celtium$noteDrawElementRefusal(
+                        "reading the VAO attribute buffer's view threw " + error.getClass().getSimpleName());
+                GlDrawCensus.celtium$reportDrawElements();
                 return;
             }
         }
@@ -7931,6 +8103,9 @@ public final class GlsmFrontend implements FunctionProvider {
                     celtium$otherArrayMask() | celtium$vaoArrayMask(attribs, stride), count, 0, clientVertices,
                     clientVertices ? 0L : vertexBase, vertexCapacity, layoutRefusal);
         } catch (RuntimeException error) {
+            GlDrawCensus.celtium$noteDrawElementRefusal(
+                    "the layout decode threw " + error.getClass().getSimpleName());
+            GlDrawCensus.celtium$reportDrawElements();
             return;
         }
         if (layoutRefusal[0] != null) {
@@ -7946,6 +8121,9 @@ public final class GlsmFrontend implements FunctionProvider {
                 elements = NativeGeometryBuffer.find(elementName);
                 elementView = elements != null ? elements.compatibilityView() : GlsmBufferState.current().storage(elementName);
             } catch (RuntimeException error) {
+                GlDrawCensus.celtium$noteDrawElementRefusal(
+                        "reading the bound element buffer's view threw " + error.getClass().getSimpleName());
+                GlDrawCensus.celtium$reportDrawElements();
                 return;
             }
             if (elementView == null) {
@@ -8035,10 +8213,18 @@ public final class GlsmFrontend implements FunctionProvider {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.submitBackend();
             if (backend != null) {
-                backend.submitImmediateBatch(null, submitStride, formatId,
+                boolean taken = backend.submitImmediateBatch(null, submitStride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
-                GlDrawCensus.DrawElementCensus.DRAWN.incrementAndGet();
-                GlDrawCensus.celtium$reportDrawElements();
+                if (taken) {
+                    GlDrawCensus.DrawElementCensus.DRAWN.incrementAndGet();
+                    GlDrawCensus.celtium$reportDrawElements();
+                } else {
+                    // A refused submit drew nothing. The return used to be discarded and the draw counted as
+                    // drawn either way, so the census's accepted number was a lie exactly where a
+                    // backend-side gap opened - the failure this census exists to name.
+                    GlDrawCensus.celtium$noteDrawElementRefusal("the backend refused the decoded batch: "
+                            + backend.lastRefusal());
+                }
             } else {
                 GlDrawCensus.celtium$noteDrawElementRefusal("no terrain backend is current, so the batch has nowhere to go");
             }
@@ -8850,21 +9036,30 @@ public final class GlsmFrontend implements FunctionProvider {
         return stub != null && GlsmNameLedger.current().isLive(list);
     }
 
-    /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
-    private static final int MAX_CALL_LIST_NAMES = 1 << 16;
+    /** {@code glCallLists} runs refused for a name type this replay does not read, by call. */
+    private long callListsTypeRefusals;
 
     /**
      * Executes a {@code glCallLists} run: every name is the list base plus the value read at that index. Vanilla does
      * not call this, but font and model batching mods do, and the call was a no-op - their lists produced no picture.
+     * <p>
+     * The run replays every name the caller counted. A 64 Ki clamp used to truncate a longer run in silence; a
+     * name that resolves to nothing is a counted no-op in the replay, so an inflated count costs lookups rather
+     * than drawing anything wrong, and a legitimate batch larger than the old clamp keeps its tail.
      */
     private void callLists(int count, int type, long address) {
         if (count <= 0 || address == 0L) {
             return;
         }
-        // The count is caller data; a bogus one loops for as long as it says. Replaying the first 64 Ki names is
-        // bounded work and still draws what a legitimate batch of that size would.
-        if (count > MAX_CALL_LIST_NAMES) {
-            count = MAX_CALL_LIST_NAMES;
+        if (type < 0x1400 || type > 0x1409) {
+            // Not one of the ten GL name types. The per-element switch used to meet this as a bare return part
+            // way through the run - the names before it replayed, the rest vanished, and nothing counted it.
+            this.callListsTypeRefusals++;
+            if (this.callListsTypeRefusals <= 4) {
+                System.out.println("[Celtium] CELTIUM_CALL_LISTS_REFUSED type=0x" + Integer.toHexString(type)
+                        + " count=" + count + " (not a list-name type this replay reads)");
+            }
+            return;
         }
         if (type == 0x1407 || type == 0x1408 || type == 0x1409) {
             // GL_2_BYTES/3/4: the element is a group of that many bytes, and *each byte* is one list offset - the

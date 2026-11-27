@@ -683,6 +683,33 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     }
 
     /**
+     * One id per native the no-op set answers, in a registry of its own: the set's calls are a route decision
+     * (a plain return, chosen per name), not an unanswered call, and the surface report keeps the two apart.
+     * The mechanism is the unrouted one, deliberately - same bound, same shape - so the two lines compare.
+     */
+    private static final java.util.Map<String, Integer> SURFACE_NOOP_IDS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.List<String> SURFACE_NOOP_NAMES =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+    private static int untrackedSurfaceNoopNames;
+
+    private static int surfaceNoopId(String key) {
+        Integer existing = SURFACE_NOOP_IDS.get(key);
+        if (existing != null) {
+            return existing.intValue();
+        }
+        synchronized (SURFACE_NOOP_NAMES) {
+            if (SURFACE_NOOP_NAMES.size() >= MAX_UNROUTED_TRACKED) {
+                untrackedSurfaceNoopNames++;
+                return -1;
+            }
+            int id = SURFACE_NOOP_NAMES.size();
+            SURFACE_NOOP_NAMES.add(key);
+            SURFACE_NOOP_IDS.put(key, Integer.valueOf(id));
+            return id;
+        }
+    }
+
+    /**
      * Prints the rewritten-native surface: how many natives the transformer replaced, how many a route answers, and
      * which ones only the zero-writer answers - with call counts, so a silent no-op is named instead of inferred.
      * <p>
@@ -765,6 +792,45 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     // Not fatal: the log line above is the primary record.
                 }
             }
+        }
+        // The no-op set's own line: which names the set answered, and how often. Separate from the unrouted
+        // line above because the answers differ in kind - these calls were decided per name, not missed -
+        // and a reader sizing what the set still costs needs the two apart.
+        int[] noopCounts = org.taumc.celeritas.core.CeltiumGllessHint.surfaceNoopCounts();
+        java.util.List<Integer> noopOrder = new java.util.ArrayList<Integer>();
+        int noopCalls = 0;
+        for (int i = 0; i < noopCounts.length; i++) {
+            if (noopCounts[i] > 0) {
+                noopOrder.add(Integer.valueOf(i));
+                noopCalls += noopCounts[i];
+            }
+        }
+        noopOrder.sort((a, b) -> Integer.compare(noopCounts[b.intValue()], noopCounts[a.intValue()]));
+        String[] noopNames;
+        synchronized (SURFACE_NOOP_NAMES) {
+            noopNames = SURFACE_NOOP_NAMES.toArray(new String[0]);
+        }
+        StringBuilder noopLine = new StringBuilder();
+        for (int i = 0; i < noopOrder.size() && i < limit; i++) {
+            int id = noopOrder.get(i).intValue();
+            if (id < noopNames.length) {
+                if (i > 0) {
+                    noopLine.append(' ');
+                }
+                noopLine.append(noopNames[id]).append('=').append(noopCounts[id]);
+            }
+        }
+        System.out.println("[Celtium] CELTIUM_GL_SURFACE_NOOP trigger=" + trigger
+                + " trackedNoopNames=" + noopNames.length
+                + " calledNoopNames=" + noopOrder.size()
+                + " untrackedNames=" + untrackedSurfaceNoopNames
+                + " noopCalls=" + noopCalls
+                + " [" + noopLine + "]");
+        // The instanced draws the hint would not forward, aggregated from its per-name counters.
+        String instanced = org.taumc.celeritas.core.CeltiumGllessHint.unsupportedInstancedSummary();
+        if (!instanced.isEmpty() || "shutdown".equals(trigger)) {
+            System.out.println("[Celtium] CELTIUM_UNSUPPORTED_INSTANCED trigger=" + trigger + " "
+                    + (instanced.isEmpty() ? "none" : instanced));
         }
         // The log is the harness's file; a shutdown print can lose the race with Log4j's own hook, so the same line
         // also goes to the process stdout descriptor when this is the shutdown pass.
@@ -1102,6 +1168,16 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // setters 1.6e4 each, glNormal3f 8e3, glTexCoord2f 9e3, glVertex3f 5.9e4. The fog setters are deliberately not
         // here: they have real handlers that record the fog state for the terrain path.
         if (VOID_NOOPS.contains(name) && descriptor.endsWith(")V")) {
+            // Counted per name before the return: this branch used to answer with a bare RETURN and no
+            // counter anywhere, so the set's whole cost - the state setters a mod issued that the renderer
+            // never reads - was visible only by inferring it from a picture. The opt-in rewrite/callers
+            // censuses were the only record, and both default off.
+            int surfaceNoop = surfaceNoopId(name + descriptor);
+            if (surfaceNoop >= 0) {
+                method.visitLdcInsn(Integer.valueOf(surfaceNoop));
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "noteSurfaceNoop", "(I)V", false);
+            }
             method.visitInsn(Opcodes.RETURN);
             return;
         }
