@@ -771,6 +771,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final int GAME_CLEAR_LATCH_LINES =
             Integer.getInteger("celtium.clearlatch.lines", 6).intValue();
     private String lastOffTargetFailure = "none";
+    /**
+     * Off-target passes that failed target routing and were redirected into the frame image
+     * (the catch in {@code recordImmediateOnlyPass} that sets {@link #lastOffTargetFailure}).
+     * The failure text alone could not say how often the redirect happened; the redirect is a
+     * silent picture change - the pass draws, into a different image - so it is counted, not
+     * only narrated (drawpath audit DP-33). Package-private for the verification summary.
+     */
+    long offTargetRedirects;
+    /**
+     * Immediate batches this backend refused at the {@code submitImmediateBatch} entry, counted
+     * unconditionally at the one funnel every offer passes through. The per-format refusal map
+     * lives in the Forge layer and prints only under diagnostics on a modulo of the offers, so
+     * on a default leg no always-readable number said how many offers were refused (drawpath
+     * audit DP-01, aggregation side). Package-private for the verification summary.
+     */
+    long offerRefusals;
 
     VulkanGlTexture atlasTexture;
     VulkanGlTexture lightmapTexture;
@@ -1710,17 +1726,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
-            // still referenced it, both from paths that assumed the frame had been recorded.
-            celtium$preflushIfDeferred();
-            return;
-        }
-        if (this.gpuStalled) {
-            // S02's other half: once a wait has timed out, the frame's remaining stages are skipped rather than run against
-            // a command buffer that was never begun. Recording is refused earlier; this stops everything that would use the
-            // recording, so the renderer stops drawing and the process keeps running.
+            // still referenced it, both from paths that assumed the frame had been recorded. S02's other half: once a wait
+            // has timed out, the frame's remaining stages are skipped rather than run against a command buffer that was
+            // never begun. Recording is refused earlier; this stops everything that would use the recording, so the
+            // renderer stops drawing and the process keeps running. The skip is noted and the setup bracket closed here:
+            // this branch used to exist twice, and the first copy returned without either, so a stalled pass was missing
+            // from the skip census and left the bracket open (drawpath audit DP-15).
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": the GPU stalled");
             celtium$preflushIfDeferred();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
         if (!renderLists.hasPass(pass) && !celtium$tierAHasLiveWork(pass) && !celtium$packHasLiveWork(pass)) {
@@ -2424,25 +2439,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * <p>
      * Sized from {@link VulkanImmediateFormats#COUNT}, not from the eight ids that existed when it was written: the
      * summary prints every id now, and an array that stops at 8 would have thrown on the first drop of a layout past
-     * it. It has no increment site today - the drops that happen are counted in
-     * {@code postAcceptDroppedGroups}, which is per-event rather than per-format - so this reads as an all-zero row
-     * and says that rather than looking like a measurement of "nothing was dropped by format".
+     * it. The increment site is the one seat that counts post-accept drops into
+     * {@code postAcceptDroppedGroups} (the framebuffer-replacement drop in the ordering flush), which walks the
+     * dropped groups anyway, so the per-format row is filled from the same loop with the same unit (batches).
+     * Before that wiring the row had no increment site and read as an all-zero row (drawpath audit DP-10).
      */
-    final int[] postAcceptDroppedByFormat = new int[8];
+    final int[] postAcceptDroppedByFormat = new int[VulkanImmediateFormats.COUNT];
     final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     final int[] acceptedByFormat = new int[8];
     /**
      * Non-quad groups the drain sent to the non-quad emitter, by GL primitive mode (0-7): the arrival
      * half of the strip/fan occurrence census (R-23). The count includes the groups the emitter itself
-     * fell back to the direct draw for, so offered minus emitted is that fallback (plus the
-     * record-refused drops {@code batchDroppedDraws} counts separately). Modes outside 0-7
+     * fell back to the direct draw for. Modes outside 0-7
      * (GL_QUAD_STRIP, GL_POLYGON) are not counted: the census's subjects sit inside the range, and the
      * increment sites guard the index so an exotic mode cannot throw inside the drain.
      */
     final long[] nonQuadOfferedByMode = new long[8];
     /** Non-quad groups the emitter itself drew, by GL primitive mode: the drawn half of the pair above. */
     final long[] nonQuadEmittedByMode = new long[8];
+    /**
+     * Non-quad groups the emitter delegated to the direct draw and the delegation drew, by GL
+     * primitive mode: the census's third column (drawpath audit DP-12). Offered used to be
+     * explainable only as emitted plus an unnamed difference - the completion legs measured
+     * that difference at 42 for GL_TRIANGLE_STRIP - so the delegation is now counted where it
+     * happens, and the per-mode identity offered = emitted + delegated + dropped closes
+     * structurally instead of by subtraction.
+     */
+    final long[] nonQuadDelegatedByMode = new long[8];
+    /**
+     * Non-quad groups that reached the emitter and were drawn by neither route - the emitter's
+     * own record refusal, or a delegation the direct draw dropped - by GL primitive mode: the
+     * census's fourth column, completing the identity above. The same drops are also counted
+     * globally in {@code batchDroppedDraws}; this column is their per-mode attribution.
+     */
+    final long[] nonQuadDroppedByMode = new long[8];
     /**
      * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
      * sink are the backend's, because the state they read and the submission they make are its own.
@@ -2891,7 +2922,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** How many of the boundary drops reach the record; the rest are in the counters. */
     private static final int UNFLUSHED_TARGET_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.unflushedTargetLog", 8).intValue();
-    String lastUnflushedTargetFailure = "none";
 
 
     /**
@@ -3133,8 +3163,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * The frame is abandoned either way, so nothing that was already recorded into it survives; but a group whose
      * recording never reached the queue has not been drawn, and clearing it here is what erased every entity and
      * held-item batch of the window - measured as {@code id4 28 accepted / 0 drawn} and {@code id9 228 / 0} with no
-     * loss column in the per-format histogram to show it. Paired with {@link #windowFlushDroppedBatches}: a group is
-     * either drawn, or retained here, or counted as dropped there.
+     * loss column in the per-format histogram to show it. Paired with the retained-batches counter
+     * ({@code windowFlushRetainedBatches}): a group is either drawn or retained here - the flush seats no
+     * longer drop, so the dropped-batches counter that once completed this pairing was removed with them
+     * (drawpath audit DP-09).
      */
     String lastWindowFlushFailure = "none";
     /**
@@ -3689,13 +3721,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * form (their texture rides in the record); groups that fell back after a capture was
      * attempted; draws dropped because a captured texture set was evicted and could not be
      * rebuilt; segments discarded unexecuted at a frame boundary. Read by the window census
-     * line (CELTIUM_BATCH_ROUTE), which is the leg's route evidence.
+     * line (CELTIUM_BATCH_ROUTE), which is the leg's route evidence. The two loss counters
+     * (dropped draws, discarded segments) are also printed on CELTIUM_VERIFY - the route line
+     * is a GROUP_CENSUS-gated extra, so without the promotion the loss had no reader on a
+     * default leg (drawpath audit DP-12) - and are package-private for that summary's access,
+     * the same arrangement as the non-quad census arrays.
      */
     private long batchCapturedGroups;
     private long batchArrayCapturedGroups;
     private long batchFallbackGroups;
-    private long batchDroppedDraws;
-    private long batchDiscardedSegments;
+    long batchDroppedDraws;
+    long batchDiscardedSegments;
 
     /** What a batch pipeline key binds: one record-reading twin's handles, and its family shape. */
     private static final class BatchTwinBinding {
@@ -9696,7 +9732,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             NullRenderer.noteImmediateBatchDropped(vertexCount);
             return true;
         }
-        return submitGeometryBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode, null);
+        boolean accepted = submitGeometryBatch(vertexFormat, vertexStride, formatId, vertexAddress,
+                vertexCount, drawMode, null);
+        if (!accepted) {
+            // The aggregate refusal count (DP-01): taken here, at the entry every offer funnels
+            // through, so it covers every refusal seat below without each seat having to count
+            // itself. The reason text stays where it already lives (lastRefusal).
+            this.offerRefusals++;
+        }
+        return accepted;
     }
 
     /**
@@ -13779,6 +13823,11 @@ this.frameBufferOpen = false;
             int dropped = 0;
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
+                // The per-format half of the same count (DP-10): the scalar above is per-event, so without
+                // this the droppedByFormat row could only ever read zero. Same unit as drawnByFormat: batches.
+                if (group.formatId >= 0 && group.formatId < this.postAcceptDroppedByFormat.length) {
+                    this.postAcceptDroppedByFormat[group.formatId] += group.batches;
+                }
             }
             this.immediateStatistics.addPostAcceptDroppedGroups(dropped);
             celtium$discardImmediateGroups();
@@ -16042,6 +16091,7 @@ this.frameBufferOpen = false;
                     throw error;
                 }
                 this.lastOffTargetFailure = describe(error);
+                this.offTargetRedirects++;
                 record("off-target pass refused, drawing into the frame image instead: " + describe(error));
                 // The acquire this window skipped has to be recorded here, before the pass that now attaches the
                 // frame image: the image is in GENERAL and the pass declares the attachment layout, which is
@@ -25060,7 +25110,10 @@ this.frameBufferOpen = false;
      * written - the store's fallback selection refused it too - is counted in the route census' dropped
      * counter and not drawn: never drawn with a wrong binding, and never silently.
      *
-     * @return always true: the group is consumed here, drawn or counted
+     * @return true only when the draw was issued; false when the group was dropped (and counted).
+     *         This used to return true on the drop as well ("consumed here, drawn or counted"), and the
+     *         drain's drawn accounting believed it, so a dropped group was counted as drawn (drawpath
+     *         audit DP-12)
      */
     private boolean celtium$drawParticleGroupFallback(ImmediateGroup group, VulkanDynamicMesh mesh,
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
@@ -25069,7 +25122,7 @@ this.frameBufferOpen = false;
         int recordIndex = celtium$recordForDirectDraw(push);
         if (recordIndex < 0 || mesh == null || mesh.indexCount() <= 0) {
             this.batchDroppedDraws++;
-            return true;
+            return false;
         }
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -25178,7 +25231,9 @@ this.frameBufferOpen = false;
      * too - or whose mesh is empty, is counted in the route census' dropped counter and
      * not drawn: never drawn with a wrong binding, and never silently.
      *
-     * @return always true: the group is consumed here, drawn or counted
+     * @return true only when the draw was issued; false when the group was dropped (and counted) -
+     *         see {@link #celtium$drawParticleGroupFallback} for why the drop no longer reports
+     *         success (drawpath audit DP-12)
      */
     private boolean celtium$drawGroupDirect(ImmediateGroup group, VulkanDynamicMesh mesh,
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
@@ -25187,7 +25242,7 @@ this.frameBufferOpen = false;
         if (twin == null || twin.handle == 0L || recordIndex < 0 || mesh == null
                 || mesh.indexCount() <= 0) {
             this.batchDroppedDraws++;
-            return true;
+            return false;
         }
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -25198,6 +25253,29 @@ this.frameBufferOpen = false;
         java.util.Arrays.fill(this.immediateBindCache, -1L);
         celtium$noteTwinDraw(twin.family, variantStart);
         return true;
+    }
+
+    /**
+     * The non-quad emitter's delegation to the direct draw, counted in the census's third and
+     * fourth columns: a delegation that issued its draw is {@code delegated}; one the direct
+     * draw dropped is {@code dropped}, the same column the emitter's own record refusal lands
+     * in. With offered and emitted this closes the per-mode identity structurally -
+     * offered = emitted + delegated + dropped - instead of leaving the delegation share as an
+     * unnamed difference (the STRIP 42 of the completion legs; drawpath audit DP-12).
+     *
+     * @return whatever the direct draw returned: true only when the draw was issued
+     */
+    private boolean celtium$delegateNonQuadToDirect(ImmediateGroup group, VulkanDynamicMesh mesh,
+            PreparedImmediate prepared, java.nio.ByteBuffer push) {
+        boolean drew = celtium$drawGroupDirect(group, mesh, prepared, push);
+        if (group.drawMode >= 0 && group.drawMode < this.nonQuadDelegatedByMode.length) {
+            if (drew) {
+                this.nonQuadDelegatedByMode[group.drawMode]++;
+            } else {
+                this.nonQuadDroppedByMode[group.drawMode]++;
+            }
+        }
+        return drew;
     }
 
     /**
@@ -25216,7 +25294,10 @@ this.frameBufferOpen = false;
      * issued through the mesh's buffers instead of the ring. The open batch segment has
      * already been flushed by the caller, so the staged bytes are read by this draw alone.
      *
-     * @return always true: the group is consumed here, drawn or counted
+     * @return true only when a draw was issued - by the emitter itself or by the direct-draw
+     *         delegation; false when the group was dropped (and counted). See
+     *         {@link #celtium$drawParticleGroupFallback} for why the drop no longer reports
+     *         success (drawpath audit DP-12)
      */
     private boolean celtium$emitNonQuadGroup(ImmediateGroup group, VulkanDynamicMesh mesh,
             PreparedImmediate prepared, java.nio.ByteBuffer push) {
@@ -25224,7 +25305,7 @@ this.frameBufferOpen = false;
         if (twin == null || twin.handle == 0L || this.batchRing == null || mesh == null
                 || mesh.vertexAddress() == 0L || mesh.layout() == null
                 || mesh.layout().stride <= 0 || mesh.vertexCount() <= 0) {
-            return celtium$drawGroupDirect(group, mesh, prepared, push);
+            return celtium$delegateNonQuadToDirect(group, mesh, prepared, push);
         }
         if (this.nonQuadEmitter == null || this.nonQuadEmitterRing != this.batchRing) {
             this.nonQuadEmitter =
@@ -25237,12 +25318,15 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.batch.NonQuadImmediateEmitter.Emission emission =
                 this.nonQuadEmitter.stage(vertices, mesh.vertexCount(), stride, group.drawMode);
         if (emission == null) {
-            return celtium$drawGroupDirect(group, mesh, prepared, push);
+            return celtium$delegateNonQuadToDirect(group, mesh, prepared, push);
         }
         int recordIndex = celtium$recordForDirectDraw(push);
         if (recordIndex < 0) {
             this.batchDroppedDraws++;
-            return true;
+            if (group.drawMode >= 0 && group.drawMode < this.nonQuadDroppedByMode.length) {
+                this.nonQuadDroppedByMode[group.drawMode]++;
+            }
+            return false;
         }
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         long ringBuffer = this.context.celtium$frameLinearRing().buffer(this.frameSlot);
@@ -25992,6 +26076,10 @@ this.frameBufferOpen = false;
                 // scripts/cpu-contract/immediate_group_stack_scope_check.py.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 boolean batchCaptured = false;
+                // Set inside the draw block below once the route is known: whether any route actually
+                // drew this group. The accounting after the block gates the drawn counters on it, so a
+                // group a fallback dropped is not counted as drawn (drawpath audit DP-12).
+                boolean groupDrew = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPrepared");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
@@ -26100,7 +26188,14 @@ this.frameBufferOpen = false;
                         // its draw records later, at the segment's flush, under the segment's own accounting.
                         org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
-                    if (skyGroup) {
+                    // The three routes that draw a group: captured into a segment (the draw records at the
+                    // segment's flush), drawn by a twin fallback, or drawn by a mod program's own Draw form
+                    // in the branch above. A group none of them drew was dropped by a fallback and counted
+                    // in batchDroppedDraws; the sky census here and the drawn accounting after this block
+                    // both gate on this, so the drop is not also counted as a draw (drawpath audit DP-12).
+                    groupDrew = batchCaptured || fallbackDrawn
+                            || pipeline instanceof VulkanModProgramPipeline.Draw;
+                    if (skyGroup && groupDrew) {
                         // Reached only after the draw was issued (indirect or direct), so the suffix is the fact the
                         // offer census could not supply.
                         if (SKY_CENSUS) {
@@ -26226,25 +26321,32 @@ this.frameBufferOpen = false;
                 if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
                 int batches = group.batches;
-                this.immediateStatistics.addImmediateRecordedBatches(batches);
-                if (target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches += batches;
-                this.immediateStatistics.noteImmediateGroupsDrawn();
-                if (group.target != this.targetRegistry.mainIdentity()) {
-                    // offTargetDrawn was declared and printed but never incremented - a counter that can only read
-                    // zero, which is the inverse of "a missing counter is not a missing draw": here it invited
-                    // "nothing off-target was drawn" from a number that could never move. It counts the groups whose
-                    // target is not the main identity as they are drawn, which is what its name says.
-                    this.targetStatistics.noteOffTargetDrawn();
+                if (groupDrew) {
+                    // The drawn accounting, gated on the draw having happened (drawpath audit DP-12): these
+                    // counters used to run unconditionally, and because the twin fallbacks reported success
+                    // on a drop, a group the records ring refused was counted as recorded and drawn here -
+                    // the loss was visible only in batchDroppedDraws, on a census line no default leg reads.
+                    // The flushed count below stays outside the gate: the group was flushed either way.
+                    this.immediateStatistics.addImmediateRecordedBatches(batches);
+                    if (target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches += batches;
+                    this.immediateStatistics.noteImmediateGroupsDrawn();
+                    if (group.target != this.targetRegistry.mainIdentity()) {
+                        // offTargetDrawn was declared and printed but never incremented - a counter that can only read
+                        // zero, which is the inverse of "a missing counter is not a missing draw": here it invited
+                        // "nothing off-target was drawn" from a number that could never move. It counts the groups whose
+                        // target is not the main identity as they are drawn, which is what its name says.
+                        this.targetStatistics.noteOffTargetDrawn();
+                    }
+                    celtium$noteGroupDrawnAtSite(group.batches);
+                    if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
+                        // Batches, not groups: acceptedByFormat counts batches, so counting groups here would compare a
+                        // group against a batch and read as "38,123 accepted, 1,358 drawn" for formats whose batches merge
+                        // by the hundred. The unit is stated once and the two rows are subtracted by whoever reads them.
+                        this.drawnByFormat[group.formatId] += batches;
+                    }
                 }
                 this.immediateStatistics.noteImmediateGroupsFlushed();
                 this.frameDrawn++;
-                celtium$noteGroupDrawnAtSite(group.batches);
-                if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
-                    // Batches, not groups: acceptedByFormat counts batches, so counting groups here would compare a
-                    // group against a batch and read as "38,123 accepted, 1,358 drawn" for formats whose batches merge
-                    // by the hundred. The unit is stated once and the two rows are subtracted by whoever reads them.
-                    this.drawnByFormat[group.formatId] += batches;
-                }
                 if ((DRAW_SITE_ENABLED || ENQ_ALL_GROUPS) && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
                         && (DRAW_SITE_FORMAT < 0 || DRAW_SITE_FORMAT == group.formatId)
                         && this.frameId >= DRAW_SITE_MIN_FRAME

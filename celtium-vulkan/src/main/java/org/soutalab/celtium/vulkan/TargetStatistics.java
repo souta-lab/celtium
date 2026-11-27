@@ -10,6 +10,12 @@ package org.soutalab.celtium.vulkan;
  * Counters whose owner already exists are read from that owner and are not duplicated: the pair framebuffers, the
  * clear decisions and the identity census belong to {@link RenderTargetRegistry}, and the publication counters to
  * {@link PublishedFrameTextures}.
+ * <p>
+ * Three counters were removed by the drawpath audit (DP-09, and the X-1 reader table): {@code offTargetRefusals}
+ * (never incremented; its VERIFY print duplicated the live by-reason key of the same name),
+ * {@code unflushedTargetPassFailures} (no such event exists - an unflushed target's loss is the BH-15 drop above),
+ * and {@code windowFlushDroppedBatches} (the flush seats retain their batches since task-60, so the drop seat no
+ * longer exists; {@code windowFlushRetainedBatches} is the live counterpart).
  */
 public final class TargetStatistics {
 
@@ -20,17 +26,14 @@ public final class TargetStatistics {
     /** Batches accepted for an off-target target - the one that is evidence. */
     private int offTargetAccepted;
     private int offTargetCopiedBack;
-    private int offTargetRefusals;
     private int drainedOtherTargetPasses;
     private int unflushedTargetGroupsDropped;
-    private int unflushedTargetPassFailures;
     /**
      * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
      * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
      */
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
-    private int windowFlushDroppedBatches;
     private int windowFlushRetainedBatches;
     private int compositePresentRefusals;
     private int splashCanvasInvalidations;
@@ -121,21 +124,6 @@ public final class TargetStatistics {
         return this.offTargetCopiedBack;
     }
 
-    /** Records one offTargetRefusals. */
-    void noteOffTargetRefusals() {
-        this.offTargetRefusals++;
-    }
-
-    /** Sets offTargetRefusals. */
-    void setOffTargetRefusals(int value) {
-        this.offTargetRefusals = value;
-    }
-
-    /** {@return offTargetRefusals}. */
-    int offTargetRefusals() {
-        return this.offTargetRefusals;
-    }
-
     /** Records one drainedOtherTargetPasses. */
     void noteDrainedOtherTargetPasses() {
         this.drainedOtherTargetPasses++;
@@ -166,21 +154,6 @@ public final class TargetStatistics {
         return this.unflushedTargetGroupsDropped;
     }
 
-    /** Records one unflushedTargetPassFailures. */
-    void noteUnflushedTargetPassFailures() {
-        this.unflushedTargetPassFailures++;
-    }
-
-    /** Sets unflushedTargetPassFailures. */
-    void setUnflushedTargetPassFailures(int value) {
-        this.unflushedTargetPassFailures = value;
-    }
-
-    /** {@return unflushedTargetPassFailures}. */
-    int unflushedTargetPassFailures() {
-        return this.unflushedTargetPassFailures;
-    }
-
     /** Records one windowFlushFailures. */
     void noteWindowFlushFailures() {
         this.windowFlushFailures++;
@@ -209,21 +182,6 @@ public final class TargetStatistics {
     /** {@return windowFlushFailureFrame}. */
     long windowFlushFailureFrame() {
         return this.windowFlushFailureFrame;
-    }
-
-    /** Records one windowFlushDroppedBatches. */
-    void noteWindowFlushDroppedBatches() {
-        this.windowFlushDroppedBatches++;
-    }
-
-    /** Sets windowFlushDroppedBatches. */
-    void setWindowFlushDroppedBatches(int value) {
-        this.windowFlushDroppedBatches = value;
-    }
-
-    /** {@return windowFlushDroppedBatches}. */
-    int windowFlushDroppedBatches() {
-        return this.windowFlushDroppedBatches;
     }
 
     /** Records one windowFlushRetainedBatches. */

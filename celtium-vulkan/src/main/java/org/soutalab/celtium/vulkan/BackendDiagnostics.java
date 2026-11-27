@@ -139,14 +139,19 @@ final class BackendDiagnostics {
 
     /**
      * The non-quad emitter census (R-23 strip/fan occurrence census): how many non-quad groups the
-     * drain offered the emitter, by GL mode, and how many of them the emitter itself drew - the
-     * difference fell back to the direct draw inside the emitter (or was refused a record, which
-     * {@code batchDroppedDraws} counts). Zero modes are omitted; the field prints unconditionally,
-     * so a scene with no non-quad groups reads as two empty lists rather than a missing field.
+     * drain offered the emitter, by GL mode, and what became of them - drawn by the emitter itself
+     * (emitted), delegated to the direct draw and drawn there (delegated), or drawn by neither
+     * route (dropped). The four columns close the per-mode identity structurally
+     * (offered = emitted + delegated + dropped); the delegation used to be an unnamed difference
+     * between the first two (drawpath audit DP-12). Zero modes are omitted; the field prints
+     * unconditionally, so a scene with no non-quad groups reads as empty lists rather than a
+     * missing field.
      */
     private String nonQuadByModeSummary() {
         return "offered=" + nonQuadModeCounts(b.nonQuadOfferedByMode)
-                + " emitted=" + nonQuadModeCounts(b.nonQuadEmittedByMode);
+                + " emitted=" + nonQuadModeCounts(b.nonQuadEmittedByMode)
+                + " delegated=" + nonQuadModeCounts(b.nonQuadDelegatedByMode)
+                + " dropped=" + nonQuadModeCounts(b.nonQuadDroppedByMode);
     }
 
     private static String nonQuadModeCounts(long[] counts) {
@@ -229,6 +234,15 @@ final class BackendDiagnostics {
                 + " frameRing=[" + frameRingSummary() + "]"
                 + " recordsStore=[" + recordsStoreSummary() + "]"
                 + " celtium/nonQuadByMode[" + nonQuadByModeSummary() + "]"
+                // The batch route's two loss counters, promoted from the GROUP_CENSUS-gated route line
+                // (drawpath audit DP-12): the X-1 reader table showed no leg script reads the route line,
+                // so on a default leg a dropped draw was counted nowhere a reader looks. Beside them, the
+                // offer funnel's aggregate refusal count (DP-01) - the per-format refusal detail lives in
+                // the Forge layer and prints only under diagnostics, so this total is the always-readable
+                // half of that pair.
+                + " batchDroppedDraws=" + b.batchDroppedDraws
+                + " batchDiscardedSegments=" + b.batchDiscardedSegments
+                + " offerRefusals=" + b.offerRefusals
                 + " frameArenaFallbackGroups=" + b.submissionStatistics.frameArenaFallbackGroups()
                 + " frameSlots=" + b.FRAME_SLOTS + " frameSlotReuseWaits=" + b.scheduler.slotReuseWaits()
                 + " slotPolls=" + b.scheduler.slotPolls() + " slotPollConfirms=" + b.scheduler.slotPollConfirms()
@@ -267,10 +281,6 @@ final class BackendDiagnostics {
                 + " unflushedTargetDropTargets=[" + b.unflushedTargetDropSummary() + "]"
                 + " drainedOtherTargetPasses=" + b.targetStatistics.drainedOtherTargetPasses()
                 + " flushEntries=[" + flushEntrySummary() + "]"
-                + " unflushedTargetPassFailures=" + b.targetStatistics.unflushedTargetPassFailures()
-                + " lastUnflushedTargetFailure=" + (b.lastUnflushedTargetFailure == null ? "none"
-                        : b.lastUnflushedTargetFailure.replace(' ', '_').substring(0,
-                                Math.min(120, b.lastUnflushedTargetFailure.length())))
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + b.gpuStalled
                 + " deviceWaitToken=" + b.submissionStatistics.deviceWaitToken()
@@ -279,7 +289,6 @@ final class BackendDiagnostics {
                 + " stallOrigin=" + (b.submissionStatistics.stallOrigin() == null ? "none" : b.submissionStatistics.stallOrigin().replace(' ', '_'))
                 + " windowFlushFailures=" + b.targetStatistics.windowFlushFailures()
                 + " windowFlushFailureFrame=" + b.targetStatistics.windowFlushFailureFrame()
-                + " windowFlushDroppedBatches=" + b.targetStatistics.windowFlushDroppedBatches()
                 + " groupViewportSets=" + b.immediateStatistics.groupViewportSets()
                 + " stateSkipsViewport=" + b.immediateStatistics.stateSkipsViewport()
                 + " stateSkipsScissor=" + b.immediateStatistics.stateSkipsScissor()
@@ -506,6 +515,10 @@ final class BackendDiagnostics {
                 + " drawsWithoutCommandBuffer=" + b.immediateStatistics.drawsWithoutCommandBuffer()
                 + " offTargetRefusals=" + (b.offTargetRefusalsByReason.isEmpty()
                         ? "none" : b.offTargetRefusalsByReason.toString())
+                // Off-target passes whose routing failed and were redirected into the frame image
+                // instead (drawpath audit DP-33): the pass still draws, into a different image, so
+                // without this count the redirect was visible only in the last failure's text.
+                + " offTargetRedirects=" + b.offTargetRedirects
                 + " offTargetOffered=" + b.targetStatistics.offTargetOffered() + " offTargetAccepted=" + b.targetStatistics.offTargetAccepted()
                 + " offTargetDrawn=" + b.targetStatistics.offTargetDrawn() + " offTargetCopiedBack=" + b.targetStatistics.offTargetCopiedBack()
                 + " outsideWorldPassAccepted=" + b.targetStatistics.outsideWorldPassAccepted() + " outsideWorldPassRefusals=" + b.targetStatistics.outsideWorldPassRefusals() + " compositePresentRefusals=" + b.targetStatistics.compositePresentRefusals()
@@ -651,9 +664,21 @@ final class BackendDiagnostics {
                 + " immediateMaxGroupVertices=" + b.immediateStatistics.immediateMaxGroupVertices()
                 + " immediateRefusal=" + b.celtium$refusalText().replace(' ', '_')
                 + " snapshotCaptures=" + b.immediateStatistics.snapshotCaptures() + " snapshotServed=" + b.immediateStatistics.snapshotServedCaptures() + " outsideWorldPassRefusals=" + b.targetStatistics.outsideWorldPassRefusals()
-                + " offTargetRefusals=" + b.targetStatistics.offTargetRefusals()
                 + " textureRefusalsBeforeAccept=" + b.textureStats.textureRefusalsBeforeAccept()
                 + " postAcceptDroppedGroups=" + b.immediateStatistics.postAcceptDroppedGroups()
+                // The post-accept loss aggregate (drawpath audit DP-10): the loss counters are scattered
+                // across three statistics owners, so no single key let a reader gate on "nothing accepted
+                // was lost". The members: postAcceptDroppedGroups (ordering-flush replacement drops),
+                // orderingFlushDroppedBatches, stalledGeometryDroppedBatches, unflushedTargetGroupsDropped,
+                // staleGroupRefusals and immediateGroupsDiscarded. Each member counts in its own unit
+                // (groups or batches, as its seat defines them); the aggregate is a zero gate - it is read
+                // as "== 0", where the units cannot mislead.
+                + " totalPostAcceptDrops=" + (b.immediateStatistics.postAcceptDroppedGroups()
+                        + b.immediateStatistics.orderingFlushDroppedBatches()
+                        + b.submissionStatistics.stalledGeometryDroppedBatches()
+                        + b.targetStatistics.unflushedTargetGroupsDropped()
+                        + b.immediateStatistics.staleGroupRefusals()
+                        + b.immediateStatistics.immediateGroupsDiscarded())
                 + " particleDescriptorRefusals=" + b.immediateStatistics.particleDescriptorRefusals()
                 + " gpuStalled=" + b.gpuStalled + " stalledStops=" + b.submissionStatistics.stalledStops()
                 + " publishedFrameTexturesCreated=" + b.publishedTextures.created()
@@ -731,9 +756,9 @@ final class BackendDiagnostics {
                 + " passBoundaryFlushes=" + b.immediateStatistics.passBoundaryFlushes() + " matrixDiagnostics=" + b.MATRIX_DIAGNOSTICS
                 // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
                 // than from a hand-written list: the list stopped at 9 and hid POSITION_NORMAL's own entry, which is
-                // the same shape as the counters that hid ids 6..10 before. droppedByFormat stays for whichever sites
-                // increment it; it is empty today, and printing every id is what says so rather than a list that
-                // stops at 5.
+                // the same shape as the counters that hid ids 6..10 before. droppedByFormat is incremented at the
+                // one post-accept drop seat (the ordering flush's framebuffer-replacement drop, DP-10); printing
+                // every id is what says which formats lost batches rather than a list that stops at 5.
                 // The group lifecycle at the end of the run: what the queue did with what it accepted.
                 // immediateGroupsFlushed is incremented beside immediateGroupsDrawn, so both count groups drawn -
                 // the key was called immediateFlushes until round 49, which read as a window count and was not one:
