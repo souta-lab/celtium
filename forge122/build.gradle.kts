@@ -6,7 +6,9 @@ import org.soutalab.celtium.gradle.remapper.ReobfuscateCodeAndMixinsTask
 
 plugins {
     id("com.gtnewhorizons.retrofuturagradle")
-    id("com.gradleup.shadow")
+    // Versioned here since the buildSrc tree that used to put the Shadow plugin on the build classpath was
+    // retired with the LWJGL service layer (S1-b); 9.6.1 is the version that classpath carried.
+    id("com.gradleup.shadow") version "9.6.1"
     id("celtium-remapper")
     id("maven-publish")
 }
