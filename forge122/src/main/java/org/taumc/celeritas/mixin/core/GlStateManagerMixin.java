@@ -189,6 +189,21 @@ public abstract class GlStateManagerMixin {
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthMask(mask);
     }
 
+    @Inject(method = "func_179089_o", at = @At("HEAD"), require = 0)
+    private static void celtium$enableCull(CallbackInfo info) {
+        celtium$lane2().setCullEnabled(true);
+    }
+
+    @Inject(method = "func_179129_p", at = @At("HEAD"), require = 0)
+    private static void celtium$disableCull(CallbackInfo info) {
+        celtium$lane2().setCullEnabled(false);
+    }
+
+    @Inject(method = "func_179107_e", at = @At("HEAD"), require = 0)
+    private static void celtium$cullFace(int face, CallbackInfo info) {
+        celtium$lane2().setCullFace(face);
+    }
+
     @Inject(method = "func_179097_i", at = @At("HEAD"), require = 0)
     private static void celtium$disableDepth(CallbackInfo info) {
         celtium$lane2().setDepthTestEnabled(false);
