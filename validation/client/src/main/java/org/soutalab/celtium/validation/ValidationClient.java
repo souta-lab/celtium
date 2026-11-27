@@ -10655,7 +10655,7 @@ public final class ValidationClient {
         }
         for (Object row : (java.util.List<?>) rows) {
             Object entry = celtium$tourInvoke(row, "entry");
-            if (entry != null && nameKey.equals(celtium$tourInvoke(entry, "nameKey"))) {
+            if (entry != null && nameKey.equals(celtium$tourInvoke(entry, "getNameKey"))) {
                 return row;
             }
         }
@@ -10676,7 +10676,7 @@ public final class ValidationClient {
         java.util.List<String> names = new java.util.ArrayList<String>();
         for (Object row : (java.util.List<?>) rows) {
             Object entry = celtium$tourInvoke(row, "entry");
-            names.add(entry == null ? "?" : String.valueOf(celtium$tourInvoke(entry, "nameKey")));
+            names.add(entry == null ? "?" : String.valueOf(celtium$tourInvoke(entry, "getNameKey")));
         }
         return String.join(", ", names);
     }
