@@ -8566,7 +8566,7 @@ public final class ValidationClient {
 
     /** Name-based form of {@link #celtium$isVideoSettingsScreen}, for callers that already have the class name. */
     private static boolean celtium$isVideoSettingsScreenName(String name) {
-        return "GuiVideoSettings".equals(name) || "CeleritasVideoOptionsScreen".equals(name);
+        return "GuiVideoSettings".equals(name) || "CeltiumVideoSettingsScreen".equals(name);
     }
 
     private static String celtium$screenName(Minecraft mc) {
