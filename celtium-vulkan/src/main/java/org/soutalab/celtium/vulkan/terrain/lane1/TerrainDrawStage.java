@@ -38,44 +38,7 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     public record DrawCommand(int vertexCount, int firstQuad, int sectionSlot, int layer, boolean general) {
     }
 
-    // TEMP G1 PROBE21: the last recorded pass's commands + visible set, for readback.
-    private volatile List<DrawCommand> lastCommands = List.of();
-    private volatile List<SectionDesc> lastVisible = List.of();
 
-    /** TEMP G1 PROBE21: commands issued for two sections in the last pass, resolved by coords. */
-    public String probeCommandDump(TerrainSectionStore store) {
-        StringBuilder out = new StringBuilder("cmdDump visible=" + lastVisible.size()
-                + " cmds=" + lastCommands.size());
-        java.util.List<SectionDesc> descs = store.descriptors();
-        int printed = 0;
-        for (DrawCommand c : lastCommands) {
-            if (c.sectionSlot() < 0 || c.sectionSlot() >= descs.size()) {
-                out.append(" BADSLOT").append(c.sectionSlot());
-                continue;
-            }
-            SectionDesc d = descs.get(c.sectionSlot());
-            // Expected firstQuad from the desc + the section's own layer-0 range.
-            TerrainSectionStore.LayerRange[] ranges = store.layerRangesRef(
-                    d.sectionX(), d.sectionY(), d.sectionZ());
-            if (ranges == null) {
-                out.append(" NORANGE");
-                continue;
-            }
-            TerrainSectionStore.LayerRange r = ranges[0];
-            int expected = c.general()
-                    ? (int) (d.generalSlabOffset() / 64L) + r.generalQuadOffset()
-                    : (int) (d.axisSlabOffset() / 16L) + r.axisQuadOffset();
-            if (expected != c.firstQuad() && printed < 20) {
-                printed++;
-                out.append(" MISMATCH ").append(c.general() ? 'G' : 'A')
-                        .append('[').append(d.sectionX()).append(',').append(d.sectionY())
-                        .append(',').append(d.sectionZ()).append("] fq=").append(c.firstQuad())
-                        .append(" expected=").append(expected);
-            }
-        }
-        out.append(" mismatchesPrinted=").append(printed);
-        return out.toString();
-    }
 
     /** Receives one pass's draw commands against the pass's command stream. */
     @FunctionalInterface
@@ -184,8 +147,6 @@ public final class TerrainDrawStage implements PackTerrainDriver {
             commands.addAll(generalCommands);
         }
         if (layer == 0 && !kind.isShadow()) {
-            lastCommands = List.copyOf(commands);
-            lastVisible = cachedVisible;
         }
         cmd.beginRendering(targets);
         try {
