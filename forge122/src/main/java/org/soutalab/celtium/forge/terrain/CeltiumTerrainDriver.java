@@ -69,6 +69,9 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> dirty = new HashSet<>();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
     private final Set<Long> awaitingLight = new HashSet<>();
+    // TEMP G1 PROBE15 state.
+    static final java.util.Set<Long> RELIT = new java.util.HashSet<>();
+
     // TEMP G1 PROBE13 counters.
     static final java.util.concurrent.atomic.AtomicLong DRAIN_SKY15 =
             new java.util.concurrent.atomic.AtomicLong();
@@ -366,6 +369,18 @@ public final class CeltiumTerrainDriver {
                 }
                 if (chunk.isLightPopulated()) {
                     populatedChunks.add(net.minecraft.util.math.ChunkPos.asLong(chunk.x, chunk.z));
+                }
+                // TEMP G1 PROBE15: run the light propagation vanilla would have run for
+                // this chunk, once per chunk per world. The fixture's stored arrays are a
+                // binary cast (15 in the open, 0 in shadow, no gradient) on both the
+                // client and the integrated server; if propagation fills the gradient,
+                // the seat is that nothing ever ran it here.
+                if (RELIT.add(net.minecraft.util.math.ChunkPos.asLong(chunk.x, chunk.z))) {
+                    try {
+                        chunk.checkLight();
+                    } catch (Throwable ignored) {
+                        // Experiment only.
+                    }
                 }
                 ExtendedBlockStorage[] storages = chunk.getBlockStorageArray();
                 for (int y = 0; y < storages.length; y++) {
