@@ -44,13 +44,17 @@ public final class SlabRegion {
         return free;
     }
 
-    /** Allocates {@code sizeBytes} aligned to {@code alignment}; returns the offset, or -1 when no run fits. */
+    /**
+     * Allocates {@code sizeBytes} aligned to {@code alignment}; returns the offset, or -1 when
+     * no run fits. The alignment need not be a power of two: the general slab's record stride is
+     * 80 since the GeneralQuad UV extension, and section ranges must start on a record boundary.
+     */
     public long allocate(long sizeBytes, long alignment) {
         if (sizeBytes <= 0L) {
             throw new IllegalArgumentException("sizeBytes must be positive, was " + sizeBytes);
         }
-        if (alignment < 1L || (alignment & (alignment - 1L)) != 0L) {
-            throw new IllegalArgumentException("alignment must be a power of two, was " + alignment);
+        if (alignment < 1L) {
+            throw new IllegalArgumentException("alignment must be positive, was " + alignment);
         }
         for (int i = 0; i < freeRuns.size(); i++) {
             long[] run = freeRuns.get(i);
@@ -117,7 +121,8 @@ public final class SlabRegion {
         freeRuns.add(i, new long[]{offset, size});
     }
 
+    /** Rounds {@code value} up to a multiple of {@code alignment} (the division form: any positive alignment). */
     private static long alignUp(long value, long alignment) {
-        return (value + alignment - 1L) & ~(alignment - 1L);
+        return ((value + alignment - 1L) / alignment) * alignment;
     }
 }

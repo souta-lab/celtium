@@ -18,6 +18,19 @@ class SlabRegionTest {
     }
 
     @Test
+    void nonPowerOfTwoAlignmentLandsOnRecordBoundaries() {
+        // The general slab's record stride is 80 (GeneralQuad with UVs): ranges must start on
+        // multiples of 80 even when the free run does not.
+        SlabRegion region = new SlabRegion(1024);
+        long a = region.allocate(100, 16);
+        assertEquals(0L, a);
+        long b = region.allocate(80, 80);
+        assertEquals(160L, b);
+        long c = region.allocate(160, 80);
+        assertEquals(240L, c);
+    }
+
+    @Test
     void deferredFreeBecomesReusableOnlyAfterCollection() {
         SlabRegion region = new SlabRegion(256);
         long a = region.allocate(256, 16);
