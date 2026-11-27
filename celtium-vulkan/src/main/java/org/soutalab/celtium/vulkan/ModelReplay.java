@@ -11,8 +11,37 @@ import static org.lwjgl.vulkan.VK10.*;
 final class ModelReplay {
     private final VulkanTerrainGpuBackend b;
 
+    // -- interface 2 receptacle (S3-a item 5) --------------------------------------
+    // While a pack stage is active, replayed model draws belong to the stage's
+    // gbuffers/shadow programs; the engine only holds the target and resolves through
+    // it at draw time. With no target set nothing consults the field, so the native
+    // replay path pays exactly nothing for the receptacle.
+
+    private org.soutalab.celtium.core.shader.NonTerrainPackTarget packTarget;
+
     ModelReplay(VulkanTerrainGpuBackend backend) {
         this.b = backend;
+    }
+
+    /** Sets the active pack target, or {@code null} when no pack stage is active. */
+    void celtium$setPackTarget(org.soutalab.celtium.core.shader.NonTerrainPackTarget target) {
+        this.packTarget = target;
+    }
+
+    org.soutalab.celtium.core.shader.NonTerrainPackTarget celtium$packTarget() {
+        return this.packTarget;
+    }
+
+    /**
+     * The pipeline a pack program resolves to for replayed draws: the target's handle,
+     * {@code NO_PIPELINE} for a program the stage omits, or
+     * {@link org.soutalab.celtium.vulkan.batch.ImmediateBatcher#PACK_NATIVE} with no pack.
+     */
+    long celtium$packPipeline(String programName) {
+        org.soutalab.celtium.core.shader.NonTerrainPackTarget target = this.packTarget;
+        return target == null
+                ? org.soutalab.celtium.vulkan.batch.ImmediateBatcher.PACK_NATIVE
+                : target.pipelineHandle(programName);
     }
 
     /**

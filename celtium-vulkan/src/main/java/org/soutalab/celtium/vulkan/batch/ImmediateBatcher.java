@@ -3,6 +3,8 @@ package org.soutalab.celtium.vulkan.batch;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
+import org.soutalab.celtium.core.shader.NonTerrainPackTarget;
+
 /**
  * Deferred capture of immediate-mode quad draws (new-architecture design section 2.2, replacing
  * the per-draw command recording of the old immediate pipelines and the CPU index expansion of
@@ -43,6 +45,9 @@ public final class ImmediateBatcher {
     private int droppedCaptures;
     private int[] sortOrder;
     private int[] sortScratch;
+    private long[] rankPrimary;
+    private long[] rankSecondary;
+    private final int[] sortBuckets = new int[256];
 
     /** Starts a frame on the given ring (its current slot receives this frame's copies). */
     public void beginFrame(StagingRing stagingRing) {
@@ -134,6 +139,38 @@ public final class ImmediateBatcher {
         return this.droppedCaptures;
     }
 
+    // -- interface 2 receptacle (S3-a item 5) --------------------------------------
+    //
+    // While a pack stage is active the executor draws this batcher's plan through the
+    // stage's pipelines; the batcher itself only holds the target. Capture and endFrame
+    // never read the field, so with no pack active the lane pays exactly nothing for the
+    // receptacle - the zero-tax passthrough the plan requires - and with a pack active the
+    // resolution happens once per plan entry at record time, not per captured draw.
+
+    /** {@link #packPipeline(String)} result when no pack target is active. */
+    public static final long PACK_NATIVE = -1L;
+
+    private NonTerrainPackTarget packTarget;
+
+    /** Sets the active pack target, or {@code null} when no pack stage is active. */
+    public void setPackTarget(NonTerrainPackTarget target) {
+        this.packTarget = target;
+    }
+
+    public NonTerrainPackTarget packTarget() {
+        return this.packTarget;
+    }
+
+    /**
+     * The pipeline a pack program resolves to for this batcher's draws: the active target's
+     * handle, {@link NonTerrainPackTarget#NO_PIPELINE} when the stage does not define the
+     * program (the draw is skipped), or {@link #PACK_NATIVE} when no pack is active.
+     */
+    public long packPipeline(String programName) {
+        NonTerrainPackTarget target = this.packTarget;
+        return target == null ? PACK_NATIVE : target.pipelineHandle(programName);
+    }
+
     /** Items captured so far this frame. */
     public int capturedItems() {
         return this.store.size();
@@ -151,8 +188,16 @@ public final class ImmediateBatcher {
         // Within a pass the opaque items go first in key order - forward rendering draws opaque
         // before translucent anyway - and the ordered items follow in capture sequence, which is
         // the only order their blending may observe. Cross-pass order belongs to the frame graph,
-        // not to this sort.
-        sortByRank(order, size, items);
+        // not to this sort. The rank is folded into the two radix keys (S3-a: the megabatch sort
+        // is a radix sort now, same order, no comparisons).
+        for (int i = 0; i < size; i++) {
+            long sortKey = items.sortKey(i);
+            boolean orderedItem = (items.flags(i) & DrawItemStore.FLAG_ORDERED) != 0;
+            this.rankPrimary[i] = DrawKeyRadixSort.primaryKey(sortKey, orderedItem);
+            this.rankSecondary[i] = DrawKeyRadixSort.secondaryKey(sortKey);
+        }
+        DrawKeyRadixSort.sort(order, this.rankPrimary, this.rankSecondary, size,
+                this.sortScratch, this.sortBuckets);
 
         int[] pipelineKeys = new int[size];
         int[] indexCounts = new int[size];
@@ -226,56 +271,9 @@ public final class ImmediateBatcher {
                     this.sortOrder == null ? 1024 : this.sortOrder.length * 2);
             this.sortOrder = new int[capacity];
             this.sortScratch = new int[capacity];
+            this.rankPrimary = new long[capacity];
+            this.rankSecondary = new long[capacity];
         }
         return this.sortOrder;
-    }
-
-    /**
-     * Stable bottom-up merge sort of {@code order[0..size)} by the {@link #endFrame()} rank.
-     * Stability is load-bearing in the same place it was for the object sort this replaces: a
-     * rank tie keeps capture order (in practice the rank is strict - the sort key's sequence
-     * field is the capture index - but the guarantee costs nothing here).
-     */
-    private void sortByRank(int[] order, int size, DrawItemStore items) {
-        int[] scratch = this.sortScratch;
-        for (int width = 1; width < size; width *= 2) {
-            for (int lo = 0; lo < size; lo += 2 * width) {
-                int mid = Math.min(lo + width, size);
-                int hi = Math.min(lo + 2 * width, size);
-                int i = lo;
-                int j = mid;
-                int k = lo;
-                while (i < mid && j < hi) {
-                    scratch[k++] = compareRank(items, order[i], order[j]) <= 0
-                            ? order[i++] : order[j++];
-                }
-                while (i < mid) {
-                    scratch[k++] = order[i++];
-                }
-                while (j < hi) {
-                    scratch[k++] = order[j++];
-                }
-            }
-            System.arraycopy(scratch, 0, order, 0, size);
-        }
-    }
-
-    /** The endFrame rank of two items: (pass, opaque before ordered, then key or sequence). */
-    private static int compareRank(DrawItemStore items, int a, int b) {
-        long keyA = items.sortKey(a);
-        long keyB = items.sortKey(b);
-        int byPass = Integer.compare(DrawSortKey.passId(keyA), DrawSortKey.passId(keyB));
-        if (byPass != 0) {
-            return byPass;
-        }
-        boolean aOrdered = (items.flags(a) & DrawItemStore.FLAG_ORDERED) != 0;
-        boolean bOrdered = (items.flags(b) & DrawItemStore.FLAG_ORDERED) != 0;
-        if (aOrdered != bOrdered) {
-            return aOrdered ? 1 : -1;
-        }
-        if (aOrdered) {
-            return Integer.compare(DrawSortKey.sequence(keyA), DrawSortKey.sequence(keyB));
-        }
-        return Long.compare(keyA, keyB);
     }
 }
