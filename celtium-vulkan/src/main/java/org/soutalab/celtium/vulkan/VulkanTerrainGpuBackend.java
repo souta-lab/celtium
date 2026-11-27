@@ -3650,6 +3650,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code CELTIUM_UNIT_BIND} lines, which is the reading that hid the per-glyph arrivals once already.
      */
     VulkanTextureRegistry textureRegistry;
+    /**
+     * The direct-GL converter's Vulkan sink and its attachment slab (S4): created once, with
+     * the one texture registry, at {@code CopyReadSide.celtium$registry()} and installed into
+     * the converter's executor there. The frame bridge that feeds it binds when the fixed
+     * four-stage core lands (S3-b integration).
+     */
+    VulkanDirectGlSink directGlSink;
+    org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab directGlAttachmentSlab;
     int pendingImmediateIndices;
     /**
      * Immediate geometry grouped by the projection/model-view pair it was built with.

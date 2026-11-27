@@ -976,6 +976,21 @@ final class CopyReadSide {
             // exists in the registry, so no registration can slip past the hook; a null binding
             // (device without array indexing, or the kill switch) leaves the hooks inert.
             this.backend.textureRegistry.setBindlessBinding(this.backend.context.bindlessBinding());
+            // S4: the direct-GL converter's sink is born with the one registry - its texture
+            // seat IS this registry, so a converter texture and a terrain texture can never be
+            // two mirrors of one name. Installed into the converter's executor here, once.
+            if (this.backend.directGlSink == null) {
+                int attachmentMemoryType = this.backend.context.memoryTypeIndex(0xFFFFFFFF,
+                        org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        "direct-GL converter attachments");
+                this.backend.directGlAttachmentSlab =
+                        new org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab(
+                                this.backend.context.device(), attachmentMemoryType);
+                this.backend.directGlSink = new VulkanDirectGlSink(this.backend.context,
+                        this.backend.textureRegistry, this.backend.directGlAttachmentSlab);
+                org.soutalab.celtium.glcompat.backend.DirectGlExecutor.EXECUTOR
+                        .setSink(this.backend.directGlSink);
+            }
         }
         return this.backend.textureRegistry;
     }
