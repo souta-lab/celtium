@@ -182,6 +182,49 @@ public final class CeltiumTerrainDriver {
                 try {
                     net.minecraft.world.World w = (net.minecraft.world.World) world;
                     StringBuilder raw = new StringBuilder("rawLight");
+                    // TEMP G1 PROBE11: snapshot face census vs vanilla getLightFor census,
+                    // same section (-4,4,3), same moment.
+                    try {
+                        WorldSectionSnapshot snap2 = new WorldSectionSnapshot();
+                        ForgeSectionScanner.fill(snap2, world, faceData, fluids, -4, 4, 3);
+                        long fTot = 0L;
+                        long fDark = 0L;
+                        long vTot = 0L;
+                        long vDark = 0L;
+                        net.minecraft.world.World w2 = (net.minecraft.world.World) world;
+                        for (int ly = 1; ly <= 16; ly++) {
+                            for (int lz = 1; lz <= 16; lz++) {
+                                for (int lx = 1; lx <= 16; lx++) {
+                                    int idx = WorldSectionSnapshot.index(lx, ly, lz);
+                                    if (snap2.stateAt(idx) == 0) {
+                                        continue;
+                                    }
+                                    for (int dir = 0; dir < 6; dir++) {
+                                        int nIdx = idx + WorldSectionSnapshot.offset(dir);
+                                        if (snap2.stateAt(nIdx) != 0) {
+                                            continue;
+                                        }
+                                        fTot++;
+                                        if (snap2.faceSkyLight(idx, dir) == 0) {
+                                            fDark++;
+                                        }
+                                        int wx = -64 + lx - 1 + TerrainDirs.DX[dir];
+                                        int wy = 64 + ly - 1 + TerrainDirs.DY[dir];
+                                        int wz = 48 + lz - 1 + TerrainDirs.DZ[dir];
+                                        vTot++;
+                                        if (w2.getLightFor(net.minecraft.world.EnumSkyBlock.SKY,
+                                                new net.minecraft.util.math.BlockPos(wx, wy, wz)) == 0) {
+                                            vDark++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        lines.add("faceCensus snapDark=" + fDark + "/" + fTot
+                                + " vanillaDark=" + vDark + "/" + vTot);
+                    } catch (Throwable t) {
+                        lines.add("faceCensus failed " + t);
+                    }
                     for (int dx : new int[]{0, -8, 1, -4}) {
                         net.minecraft.world.chunk.Chunk c =
                                 w.getChunk(sx + dx, dx == 1 ? -4 : dx == -4 ? 3 : sz);
