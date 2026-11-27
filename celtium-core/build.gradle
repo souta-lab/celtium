@@ -26,22 +26,6 @@ java {
     }
 }
 
-tasks.named('compileJava') {
-    options.release = 25
-    options.encoding = 'UTF-8'
-}
-tasks.named('compileTestJava') {
-    options.release = 25
-    options.encoding = 'UTF-8'
-}
-tasks.named('compileHarnessJava') {
-    options.release = 21
-    options.encoding = 'UTF-8'
-    javaCompiler = javaToolchains.compilerFor {
-        languageVersion = JavaLanguageVersion.of(21)
-    }
-}
-
 sourceSets {
     harness {
         java.srcDir 'src/harness/java'
@@ -50,6 +34,24 @@ sourceSets {
         // The moved harness tests exercise the harness source set's classes.
         compileClasspath += harness.output
         runtimeClasspath += harness.output
+    }
+}
+
+tasks.named('compileJava') {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+tasks.named('compileTestJava') {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+// Configured after the sourceSets block above: compileHarnessJava only exists once the harness
+// source set is declared, and tasks.named fails the evaluation when the name is not there yet.
+tasks.named('compileHarnessJava') {
+    options.release = 21
+    options.encoding = 'UTF-8'
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
