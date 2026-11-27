@@ -1,5 +1,5 @@
 pluginManagement {
-    includeBuild("../plugins/celeritas-mdg-plugin")
+    includeBuild("../plugins/celtium-remapper")
     repositories {
         gradlePluginPortal()
         mavenCentral()

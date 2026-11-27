@@ -1,5 +1,3 @@
-import org.embeddedt.embeddium.gradle.task.GenerateLWJGLAbstraction
-
 plugins {
     id 'java-library'
     id 'maven-publish'
@@ -22,51 +20,20 @@ repositories {
     mavenCentral()
 }
 
-def generatedSourcesDir = layout.buildDirectory.dir("generated/sources/lwjgl-abstraction/java")
-
-sourceSets {
-    lwjglCommon {
-        java.srcDir(generatedSourcesDir.map { it.dir("main") })
-    }
-    lwjgl3 {
-        java.srcDir(generatedSourcesDir.map { it.dir("lwjgl3") })
-        compileClasspath += main.compileClasspath
-        compileClasspath += lwjglCommon.output
-    }
-    main {
-        compileClasspath += lwjglCommon.output
-    }
-    test {
-        compileClasspath += lwjglCommon.output
-        runtimeClasspath += lwjglCommon.output
-    }
-}
-
-configurations {
-    // LWJGL 2's GL classes, read by the generator only: the generated GLxx wrappers keep the signatures both LWJGL
-    // generations share. Nothing of LWJGL 2 is compiled or shipped - Celtium runs on Cleanroom's LWJGL 3 alone.
-    lwjgl2Signatures
-}
-
-def generateAbstractionLayer = tasks.register("generateLWJGLAbstraction", GenerateLWJGLAbstraction) {
-    lwjgl2Classpath.from(configurations.named("lwjgl2Signatures"))
-    lwjgl3Classpath.from(configurations.named("lwjgl3CompileClasspath"))
-    outputDirectory.set(generatedSourcesDir)
-}
-
-tasks.named("compileLwjglCommonJava") {
-    dependsOn(generateAbstractionLayer)
-}
-
 dependencies {
     def lwjglVersion = "3.3.1"
-    def lwjgl2Version = "2.9.3"
 
-    lwjgl3CompileOnly(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
-    lwjgl3CompileOnly "org.lwjgl:lwjgl"
-    lwjgl3CompileOnly "org.lwjgl:lwjgl-opengl"
+    // LWJGL 3 is used directly (MemoryUtil, the GL classes, MemoryStack): the LWJGL service layer and its
+    // generated GLxx wrappers are retired. At runtime Cleanroom supplies LWJGL 3, so this stays compileOnly
+    // for main; tests exercise the memory seat for real and carry LWJGL plus its natives.
+    compileOnly(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
+    compileOnly "org.lwjgl:lwjgl"
+    compileOnly "org.lwjgl:lwjgl-opengl"
 
-    lwjgl2Signatures("org.lwjgl.lwjgl:lwjgl:$lwjgl2Version")
+    testImplementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
+    testImplementation "org.lwjgl:lwjgl"
+    testImplementation "org.lwjgl:lwjgl-opengl"
+    testRuntimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-linux"
 
     implementation "org.joml:joml:1.10.5"
     implementation "it.unimi.dsi:fastutil:7.1.0"
@@ -89,10 +56,6 @@ tasks.named('test', Test) {
 
     maxHeapSize = '1G'
 
-    // Tests have no GL context; this one records buffer calls instead (item 398, the test-harness shape
-    // upstream added with its batch-buffer recycling).
-    systemProperty 'celeritas.lwjglService', 'org.taumc.celeritas.lwjgl.FakeGlLWJGLService'
-
     testLogging {
         events "passed"
     }
@@ -106,17 +69,6 @@ publishing {
         }
     }
     repositories {
-        maven {
-            name = "taumcRepository"
-            url = uri("https://maven.taumc.org/releases")
-            credentials {
-                username = System.getenv("MAVEN_USERNAME")
-                password = System.getenv("MAVEN_SECRET")
-            }
-            authentication {
-                basic(BasicAuthentication)
-            }
-        }
         maven {
             name = "gtnh"
             url = uri("https://nexus.gtnewhorizons.com/repository/releases/")
@@ -132,29 +84,10 @@ jar {
     def repositoryRoot = rootProject.findProperty('celtium_repository_root') ?: rootProject.projectDir
     from(new File(repositoryRoot, "COPYING"))
     from(new File(repositoryRoot, "COPYING.LESSER"))
-    from(sourceSets.lwjglCommon.output)
-    from(sourceSets.lwjgl3.output)
     manifest {
         attributes([
                 "Lwjgl3ify-Aware": "true"
         ])
-    }
-}
-
-def extraSourceSets = [sourceSets.lwjglCommon]
-
-configurations {
-    apiElements
-    runtimeElements
-}
-
-extraSourceSets.each { srcSet ->
-    ["apiElements", "runtimeElements"].each { conf ->
-        configurations.getByName(conf).outgoing.variants.named("classes") {
-            artifact(srcSet.java.destinationDirectory) {
-                builtBy tasks.named(srcSet.compileJavaTaskName)
-            }
-        }
     }
 }
 

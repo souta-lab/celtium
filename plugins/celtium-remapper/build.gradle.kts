@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     implementation("net.fabricmc:tiny-remapper:0.11.0")
+    implementation("com.gradleup.shadow:shadow-gradle-plugin:9.6.1")
     implementation("net.fabricmc:mapping-io:0.7.1")
     implementation("net.fabricmc:mapping-io-extras:0.7.1")
 }
@@ -21,9 +22,9 @@ repositories {
 
 gradlePlugin {
     plugins {
-        register("embeddium-mdg-remapper") {
-            id = "embeddium-mdg-remapper"
-            implementationClass = "org.embeddedt.embeddium.gradle.mdg.remapper.MDGRemapperPlugin"
+        register("celtium-remapper") {
+            id = "celtium-remapper"
+            implementationClass = "org.soutalab.celtium.gradle.remapper.CeltiumRemapperPlugin"
         }
     }
 }

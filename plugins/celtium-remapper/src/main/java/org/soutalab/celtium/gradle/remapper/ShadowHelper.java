@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.gradle.build.conventions;
+package org.soutalab.celtium.gradle.remapper;
 
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar;
 import org.gradle.api.Project;
@@ -22,7 +22,7 @@ public class ShadowHelper {
             shadowJar.getConfigurations().set(List.of(project.getConfigurations().getByName("shadow")));
             shadowJar.from(project.zipTree(((Jar)project.getTasks().named(remapJarTaskName).get()).getArchiveFile()));
             shadowJar.getManifest().inheritFrom(((Jar)project.getTasks().getByName("jar")).getManifest());
-            shadowJar.relocate("org.joml", "org.embeddedt.embeddium.impl.shadow.joml");
+            shadowJar.relocate("org.joml", "org.soutalab.celtium.impl.shadow.joml");
             shadowJar.mergeServiceFiles();
 
             shadowJar.from("COPYING", "COPYING.LESSER", "README.md");

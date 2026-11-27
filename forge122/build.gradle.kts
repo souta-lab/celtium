@@ -1,17 +1,17 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.gtnewhorizons.retrofuturagradle.mcp.JSTTransformerTask
 import com.gtnewhorizons.retrofuturagradle.modutils.ModUtils
-import org.embeddedt.embeddium.gradle.build.conventions.ShadowHelper
-import org.embeddedt.embeddium.gradle.mdg.remapper.ReobfuscateCodeAndMixinsTask
+import org.soutalab.celtium.gradle.remapper.ShadowHelper
+import org.soutalab.celtium.gradle.remapper.ReobfuscateCodeAndMixinsTask
 
 plugins {
     id("com.gtnewhorizons.retrofuturagradle")
     id("com.gradleup.shadow")
-    id("embeddium-mdg-remapper")
+    id("celtium-remapper")
     id("maven-publish")
 }
 
-group = "org.embeddedt"
+group = "org.soutalab.celtium"
 version = rootProject.version
 
 java {
@@ -174,7 +174,7 @@ tasks.named("reobfJar").configure {
     enabled = false
 }
 
-tasks.register<ReobfuscateCodeAndMixinsTask>("celeritasRemapJar") {
+tasks.register<ReobfuscateCodeAndMixinsTask>("celtiumRemapJar") {
     tsrgMappings = mcpTasks.srgFile("mcp-srg.srg")
     deobfMinecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
     classpath = sourceSets.main.get().compileClasspath
@@ -184,7 +184,7 @@ tasks.register<ReobfuscateCodeAndMixinsTask>("celeritasRemapJar") {
     dependsOn(mcpTasks.taskGenerateForgeSrgMappings)
 }
 
-ShadowHelper.createShadowRemapJar(project, "celeritasRemapJar")
+ShadowHelper.createShadowRemapJar(project, "celtiumRemapJar")
 
 tasks.named<ShadowJar>("shadowRemapJar") {
     configurations.set(listOf(modEmbedDependencies))

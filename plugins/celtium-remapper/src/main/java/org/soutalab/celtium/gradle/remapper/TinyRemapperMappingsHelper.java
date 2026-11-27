@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.gradle.mdg.remapper;
+package org.soutalab.celtium.gradle.remapper;
 
 import net.fabricmc.mappingio.tree.MappingTree;
 import net.fabricmc.tinyremapper.IMappingProvider;

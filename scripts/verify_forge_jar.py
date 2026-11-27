@@ -66,10 +66,10 @@ def license_errors(jar, names, repository):
             errors.append(f"Missing entry: {entry} (the project's own licence text)")
 
     # (2) META-INF/LICENSE must be the JOML notice, because 113 relocated JOML classes are bundled under
-    # org/embeddedt/embeddium/impl/shadow/joml/. The relocation is why `grep org/joml` finds nothing: a check
+    # org/soutalab/celtium/impl/shadow/joml/. The relocation is why `grep org/joml` finds nothing: a check
     # that looked for the unrelocated package would have reported the jar clean and the licence wrong.
     joml_classes = [n for n in names
-                    if n.startswith("org/embeddedt/embeddium/impl/shadow/joml/") and not n.endswith("/")]
+                    if n.startswith("org/soutalab/celtium/impl/shadow/joml/") and not n.endswith("/")]
     notes["relocatedJomlClasses"] = len(joml_classes)
     if joml_classes:
         if "META-INF/LICENSE" not in names:
@@ -88,7 +88,7 @@ def license_errors(jar, names, repository):
     # either way, so a new dependency shows up as an uncovered package instead of as a silent addition.
     coverage = {
         "grondag/bitraster/": "licenses/bitraster-LICENSE",
-        "org/embeddedt/embeddium/impl/shadow/joml/": "META-INF/LICENSE",
+        "org/soutalab/celtium/impl/shadow/joml/": "META-INF/LICENSE",
         "org/lwjgl/vulkan/": "licenses/lwjgl-LICENSE",
         "org/lwjgl/util/shaderc/": "licenses/shaderc-LICENSE",
     }
@@ -157,7 +157,7 @@ def verify(path):
             "org/taumc/celeritas/CeleritasVintage.class",
             "org/taumc/celeritas/core/CeleritasLoadingPlugin.class",
             "org/soutalab/celtium/forge/CeltiumCommand.class",
-            "org/embeddedt/embeddium/impl/shadow/joml/Matrix4f.class",
+            "org/soutalab/celtium/impl/shadow/joml/Matrix4f.class",
         }
         for prefix, module in (("org/soutalab/celtium/vulkan/", "celtium-vulkan"),):
             sources = repository / module / "src/main/java" / prefix

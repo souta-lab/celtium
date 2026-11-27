@@ -1,4 +1,4 @@
-package org.embeddedt.embeddium.gradle.mdg.remapper;
+package org.soutalab.celtium.gradle.remapper;
 
 import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.extras.ClassAnalysisDescCompleter;
