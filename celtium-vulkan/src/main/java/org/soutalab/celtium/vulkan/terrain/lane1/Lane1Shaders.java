@@ -270,14 +270,10 @@ public final class Lane1Shaders {
                 // very sample path). fragLightMap carries (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges.
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
-                // TEMP G1 BISECT27: show the atlas mirror 1:1 (screen -> atlas UV).
+                // TEMP G1 BISECT28: left half = cell (26,13) centre, right half = cell (26,18).
                 {
-                    vec2 auv = gl_FragCoord.xy / vec2(1280.0, 720.0);
-                    vec3 atex = texture(atlas, auv).rgb;
-                    vec2 cellPos = auv * 32.0;
-                    vec2 f = abs(fract(cellPos) - 0.5);
-                    if (max(f.x, f.y) > 0.46) atex = vec3(1.0, 0.0, 1.0);
-                    outColor = vec4(atex, 1.0);
+                    vec2 cellToShow = gl_FragCoord.x < 640.0 ? vec2(26.5, 13.5) : vec2(26.5, 18.5);
+                    outColor = vec4(texture(atlas, cellToShow / 32.0).rgb, 1.0);
                     return;
                 }
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
