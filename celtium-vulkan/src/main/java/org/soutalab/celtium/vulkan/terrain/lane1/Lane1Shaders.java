@@ -264,8 +264,6 @@ public final class Lane1Shaders {
                 // inside it (a greedy-merged face repeats its sprite once per block).
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
                 vec4 texel = texture(atlas, uv);
-                // TEMP G1 BISECT5: show the sampled UV itself.
-                outColor = vec4(uv, 0.0, 1.0); return;
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);

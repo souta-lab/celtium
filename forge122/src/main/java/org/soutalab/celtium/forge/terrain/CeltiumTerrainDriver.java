@@ -102,6 +102,24 @@ public final class CeltiumTerrainDriver {
                 lines.add(diagnostics);
             }
         }
+        if (faceData != null) {
+            // TEMP G1 PROBE: ground-truth face cells for known blocks.
+            StringBuilder probe = new StringBuilder("cellsProbe atlasPx=" + atlasWidthPx());
+            net.minecraft.block.Block[] probeBlocks = {
+                    net.minecraft.init.Blocks.GRASS, net.minecraft.init.Blocks.DIRT,
+                    net.minecraft.init.Blocks.STONE, net.minecraft.init.Blocks.LEAVES,
+                    net.minecraft.init.Blocks.LOG, net.minecraft.init.Blocks.SAND};
+            for (net.minecraft.block.Block b : probeBlocks) {
+                net.minecraft.block.state.IBlockState st = b.getDefaultState();
+                int sid = net.minecraft.block.Block.BLOCK_STATE_IDS.get(st);
+                probe.append(' ').append(b.getRegistryName().getPath()).append("[id=").append(sid).append(']');
+                for (int d = 0; d < 6; d++) {
+                    int cell = faceData.faceCell(sid, d);
+                    probe.append(' ').append(cell & 0xFF).append(',').append((cell >> 8) & 0xFF);
+                }
+            }
+            lines.add(probe.toString());
+        }
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
                 + " pending=" + pending.size() + " dirty=" + dirty.size()
                 + " visible=" + visibleSectionCount);
