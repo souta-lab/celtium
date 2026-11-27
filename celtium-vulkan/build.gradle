@@ -93,6 +93,10 @@ dependencies {
     // Actinium's own bundling (the ANTLR runtime is named separately).
     compileOnly('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
     compileOnly 'org.antlr:antlr4-runtime:4.13.2'
+    // The converter's GTNHLib bytebuf fork annotates with JetBrains annotations; LWJGL
+    // carries them at runtime, so compileOnly suffices.
+    compileOnly 'org.jetbrains:annotations:24.1.0'
+    testImplementation 'org.jetbrains:annotations:24.1.0'
     testImplementation('org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH') { transitive = false }
     testImplementation 'org.antlr:antlr4-runtime:4.13.2'
     compileOnly 'com.google.code.gson:gson:2.10.1'
