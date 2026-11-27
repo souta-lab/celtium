@@ -169,10 +169,9 @@ dependencies {
     validationHarnessEmbed(project(":celtium-core", configuration = "harnessJar")) {
         isTransitive = false
     }
-    // The direct-GL converter's GLSL transformation library and its ANTLR 4 runtime
-    // (S4): the converter classes embedded above parse FFP shaders with them at
-    // runtime, so the two jars ship inside the mod jar, the way Actinium bundles
-    // them. Non-transitive on both, matching Actinium's shadowBundle declarations.
+    // The direct-GL converter and built-in shader pack interpreter use the GLSL
+    // transformation library and its ANTLR 4 runtime. Both jars ship inside the
+    // mod jar, non-transitive as in Actinium's shadowBundle declarations.
     modEmbedDependencies("org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH") {
         isTransitive = false
     }
@@ -180,10 +179,8 @@ dependencies {
         isTransitive = false
     }
     modEmbedDependencies("org.joml:joml:1.10.5")
-    // Built-in shader pack interpreter dependencies (v0.4.0 S5-a), relocated in shadowRemapJar below.
+    // The shader pack interpreter also uses jcpp, relocated in shadowRemapJar below.
     modEmbedDependencies("org.anarres:jcpp:1.4.14") { isTransitive = false }
-    modEmbedDependencies("org.antlr:antlr4-runtime:4.13.2") { isTransitive = false }
-    modEmbedDependencies("org.taumc:glsl-transformation-lib:0.2.0-32.g7dd88a4-GTNH") { isTransitive = false }
     implementation("org.joml:joml:1.10.5")
     implementation("zone.rong:mixinbooter:10.5")
     // LWJGL is a direct dependency now: the immediate path reads a ByteBuffer address with MemoryUtil instead of

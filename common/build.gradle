@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = "org.embeddedt.celeritas"
+group = "org.soutalab.celtium"
 // Pinned GTNH release; rootProject.version is upstream's tau-derived version.
 version = "2.5.12-GTNH"
 
@@ -70,7 +70,7 @@ tasks.named('test', Test) {
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifactId = 'celeritas-common'
+            artifactId = 'celtium-common'
             from components.java
         }
     }
