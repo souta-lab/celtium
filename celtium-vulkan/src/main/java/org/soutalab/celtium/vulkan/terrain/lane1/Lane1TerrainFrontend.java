@@ -175,7 +175,13 @@ public final class Lane1TerrainFrontend {
             refusedUploads++;
             return;
         }
-        store.upload(x, y, z, geometry, timeline);
+        try {
+            store.upload(x, y, z, geometry, timeline);
+        } catch (IllegalStateException cannotFit) {
+            // The store's contract is to throw when no region can fit the geometry; the
+            // frontend's contract is a refusal the driver can retry once space frees.
+            refusedUploads++;
+        }
     }
 
     public synchronized void removeSection(int x, int y, int z, long timeline) {
@@ -199,7 +205,12 @@ public final class Lane1TerrainFrontend {
     }
 
     public String diagnosticsSummary() {
-        return drawStage.diagnosticsSummary();
+        return drawStage.diagnosticsSummary()
+                + " sections=" + store.sectionCount()
+                + " axisUsed=" + store.axisUsedBytes()
+                + " generalUsed=" + store.generalUsedBytes()
+                + " auxUsed=" + store.auxUsedBytes()
+                + " refusedUploads=" + refusedUploads;
     }
 
     // ------------------------------------------------------------------

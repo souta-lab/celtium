@@ -294,8 +294,15 @@ public final class CeltiumTerrainDriver {
             try {
                 if (present.contains(k)) {
                     backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
-                    resident.add(k);
-                    uploads++;
+                    if (backend.celtium$lane1HasSection(keyX(k), keyY(k), keyZ(k))) {
+                        resident.add(k);
+                        uploads++;
+                    } else {
+                        // The store refused the upload (slab pressure): keep the section
+                        // dirty so it is rebuilt and retried once space frees, instead of
+                        // marking a residency that does not exist (a permanent hole).
+                        dirty.add(k);
+                    }
                 }
             } finally {
                 scheduler.releaseBuffers(buffers);
