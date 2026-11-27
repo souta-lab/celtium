@@ -373,46 +373,46 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                     .calloc(stack).sType$Default()
                     .polygonMode(polygonOf(key.polygonMode()))
                     .cullMode(cullOf(key.cullMode()))
-                    .frontFace(ext.frontFaceCcw ? VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE
+                    .frontFace(ext.frontFaceCcw() ? VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE
                             : VK10.VK_FRONT_FACE_CLOCKWISE)
                     .lineWidth(1.0f)
-                    .depthBiasEnable(ext.polygonOffsetFactor != 0.0f || ext.polygonOffsetUnits != 0.0f)
-                    .depthBiasConstantFactor(ext.polygonOffsetUnits)
-                    .depthBiasSlopeFactor(ext.polygonOffsetFactor);
+                    .depthBiasEnable(ext.polygonOffsetFactor() != 0.0f || ext.polygonOffsetUnits() != 0.0f)
+                    .depthBiasConstantFactor(ext.polygonOffsetUnits())
+                    .depthBiasSlopeFactor(ext.polygonOffsetFactor());
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo
                     .calloc(stack).sType$Default().rasterizationSamples(VK10.VK_SAMPLE_COUNT_1_BIT);
             org.lwjgl.vulkan.VkStencilOpState stencilFront = org.lwjgl.vulkan.VkStencilOpState
                     .calloc(stack)
-                    .failOp(ext.stencilFail).passOp(ext.stencilPass)
-                    .depthFailOp(ext.stencilDepthFail).compareOp(ext.stencilFunc)
-                    .compareMask(ext.stencilFuncMask).writeMask(ext.stencilWriteMask)
-                    .reference(ext.stencilRef);
+                    .failOp(ext.stencilFail()).passOp(ext.stencilPass())
+                    .depthFailOp(ext.stencilDepthFail()).compareOp(ext.stencilFunc())
+                    .compareMask(ext.stencilFuncMask()).writeMask(ext.stencilWriteMask())
+                    .reference(ext.stencilRef());
             org.lwjgl.vulkan.VkStencilOpState stencilBack = org.lwjgl.vulkan.VkStencilOpState
                     .calloc(stack)
-                    .failOp(ext.stencilFail).passOp(ext.stencilPass)
-                    .depthFailOp(ext.stencilDepthFail).compareOp(ext.stencilFunc)
-                    .compareMask(ext.stencilFuncMask).writeMask(ext.stencilWriteMask)
-                    .reference(ext.stencilRef);
+                    .failOp(ext.stencilFail()).passOp(ext.stencilPass())
+                    .depthFailOp(ext.stencilDepthFail()).compareOp(ext.stencilFunc())
+                    .compareMask(ext.stencilFuncMask()).writeMask(ext.stencilWriteMask())
+                    .reference(ext.stencilRef());
             VkPipelineDepthStencilStateCreateInfo depthStencil = VkPipelineDepthStencilStateCreateInfo
                     .calloc(stack).sType$Default()
                     .depthTestEnable(key.depthTestEnabled())
                     .depthWriteEnable(key.depthWriteEnabled())
-                    .depthCompareOp(ext.depthFunc)
+                    .depthCompareOp(ext.depthFunc())
                     .stencilTestEnable(key.stencilTestEnabled())
                     .front(stencilFront)
                     .back(stencilBack);
             VkPipelineColorBlendAttachmentState.Buffer attachment = null;
             VkPipelineColorBlendStateCreateInfo blending = VkPipelineColorBlendStateCreateInfo
                     .calloc(stack).sType$Default()
-                    .logicOpEnable(key.logicOpEnabled()).logicOp(ext.logicOp);
+                    .logicOpEnable(key.logicOpEnabled()).logicOp(ext.logicOp());
             if (colorFormat != VK10.VK_FORMAT_UNDEFINED) {
                 attachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 attachment.get(0)
                         .blendEnable(key.blendEnabled())
-                        .srcColorBlendFactor(ext.srcRgb).dstColorBlendFactor(ext.dstRgb)
-                        .colorBlendOp(ext.blendEquationRgb)
-                        .srcAlphaBlendFactor(ext.srcAlpha).dstAlphaBlendFactor(ext.dstAlpha)
-                        .alphaBlendOp(ext.blendEquationAlpha)
+                        .srcColorBlendFactor(ext.srcRgb()).dstColorBlendFactor(ext.dstRgb())
+                        .colorBlendOp(ext.blendEquationRgb())
+                        .srcAlphaBlendFactor(ext.srcAlpha()).dstAlphaBlendFactor(ext.dstAlpha())
+                        .alphaBlendOp(ext.blendEquationAlpha())
                         .colorWriteMask(key.colorWriteMask());
                 blending.pAttachments(attachment);
             }
