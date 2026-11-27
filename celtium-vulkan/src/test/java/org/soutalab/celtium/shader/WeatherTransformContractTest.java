@@ -89,30 +89,35 @@ class WeatherTransformContractTest {
                 "reflected input locations: " + locations);
 
         // The production compile path strips OpName/OpMemberName (performance optimization
-        // level), so the uniform contract is recovered by OFFSET: the layout authority
-        // (Std140UniformPacker, the same one the executor's UBO writer uses) places
-        // iris_WeatherParams0..3 at four offsets, and each of those offsets must exist as a
-        // member offset of the compiled module's uniform block struct.
+        // level), so the four weather uniforms cannot be recovered by name from a compiled
+        // module. The mechanical differential: compiling the same source with
+        // ShaderInstancing.NONE must yield a uniform block with exactly four fewer members
+        // (the iris_WeatherParams0..3 vec4s the WEATHER variant declares), and the layout
+        // authority must place all four params (the feed-side agreement is covered by
+        // PackWeatherFeedTest against this same layout).
         Std140UniformPacker packer = Std140UniformPacker.buildStandard(null, new ShaderFrameState());
-        Map<String, Integer> layoutOffsets = new java.util.HashMap<>();
-        for (var field : packer.layout().fields()) {
-            layoutOffsets.put(field.name(), field.offsetBytes());
-        }
-        SpirvReflection.DescriptorVariable ubo = vertex.descriptors().stream()
-                .filter(d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no uniform block in the weather vertex module"));
-        Set<Integer> memberOffsets = new java.util.HashSet<>(
-                vertex.structMemberOffsets().getOrDefault(ubo.pointeeTypeId(), Map.of()).values());
-        assertTrue(!memberOffsets.isEmpty(), "uniform block carries no member offsets");
         for (int i = 0; i < 4; i++) {
             String uniform = "iris_WeatherParams" + i;
-            Integer offset = layoutOffsets.get(uniform);
-            assertTrue(offset != null, "layout authority does not place " + uniform);
-            assertTrue(memberOffsets.contains(offset),
-                    "weather uniform " + uniform + " at layout offset " + offset
-                            + " not a member offset of the compiled block; members=" + memberOffsets);
+            assertTrue(packer.layout().fieldNamed(uniform).isPresent(),
+                    "layout authority does not place " + uniform);
         }
+        Map<PatchShaderType, String> plain = TransformPatcher.patchAttributes(
+                WEATHER_VSH, null, WEATHER_FSH, InputAvailability.ALL);
+        PackSpirvCompiler.CompiledProgram plainCompiled = PackSpirvCompiler.SHADERC.compileGraphics(
+                "gbuffers_weather", plain.get(PatchShaderType.VERTEX), plain.get(PatchShaderType.FRAGMENT), null);
+        SpirvReflection.ModuleInfo plainVertex = SpirvReflection.reflect(
+                plainCompiled.spirv().vertexWords());
+        assertEquals(uboMemberOffsets(vertex).size(), uboMemberOffsets(plainVertex).size() + 4,
+                "WEATHER variant must add exactly the four weather uniforms to the block");
+    }
+
+    private static Set<Integer> uboMemberOffsets(SpirvReflection.ModuleInfo module) {
+        SpirvReflection.DescriptorVariable ubo = module.descriptors().stream()
+                .filter(d -> d.kind() == SpirvReflection.DescriptorKind.UNIFORM_BUFFER)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no uniform block in module"));
+        return new java.util.HashSet<>(
+                module.structMemberOffsets().getOrDefault(ubo.pointeeTypeId(), Map.of()).values());
     }
 
     @Test
