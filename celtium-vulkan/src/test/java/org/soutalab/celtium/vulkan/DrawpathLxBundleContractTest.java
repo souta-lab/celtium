@@ -111,7 +111,7 @@ class DrawpathLxBundleContractTest {
         assertTrue(bridge.contains("this.borrowRefusals++"), "the borrow-closure seat counts");
         assertTrue(bridge.contains("this.unsupportedRefusals++"), "the supportsAll seat counts");
         assertTrue(bridge.contains("\"postChainGateRefusals=\" + this.gateRefusals")
-                        && bridge.contains("\"postChainUnsupportedRefusals=\" + this.unsupportedRefusals"),
+                        && bridge.contains("\" postChainUnsupportedRefusals=\" + this.unsupportedRefusals"),
                 "the census renders in the verify line's key shape");
     }
 
