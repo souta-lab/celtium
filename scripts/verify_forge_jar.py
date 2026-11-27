@@ -257,14 +257,17 @@ def verify(path):
                     continue
                 minor, major = struct.unpack(">HH", data[4:8])
                 class_versions[major] += 1
-                # The contract is the project's, not Java 8's. Celtium's own modules build at --release 21, so class
-                # major 65 is expected and allowed; what must not happen is a class from a later release (Java 22 is
-                # 66) or a preview class, because the game is only promised to run on the JDKs the plan names. The
-                # check used to demand 52 for every class, which reported the whole Vulkan package as broken while the
-                # README quoted "Java 8 bytecode" back at the reader - two documents agreeing on a contract the code
-                # had already left. If the release target changes, this number and the README change with it.
-                if major > 65 or minor == 65535:
-                    errors.append(f"Class is newer than the release-21 target: {name} ({major}.{minor})")
+                # The contract is the project's, not Java 8's. Since the v0.4.0 S1-a stage (design
+                # V040-FINAL-PLAN section 2.4) :celtium-vulkan and :celtium-core build at --release 25 while
+                # :forge122 stays at --release 21, so class majors 65 and 69 are both expected and allowed;
+                # what must not happen is a class from a later release (Java 26 is 70) or a preview class,
+                # because the game is only promised to run on the JDKs the plan names (the relauncher targets
+                # Java 25). The check used to demand 52 for every class, which reported the whole Vulkan
+                # package as broken while the README quoted "Java 8 bytecode" back at the reader - two
+                # documents agreeing on a contract the code had already left; the ceiling then moved 52 -> 65
+                # -> 69 as the release target moved. If the release target changes, this number changes with it.
+                if major > 69 or minor == 65535:
+                    errors.append(f"Class is newer than the release-25 target: {name} ({major}.{minor})")
 
     return {
         "jar": str(path),

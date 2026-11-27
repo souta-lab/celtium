@@ -24,7 +24,10 @@ import gv_leg as runner
 
 ROOT = Path(__file__).resolve().parents[2]
 READER = re.compile(r'HarnessConfig\.(?:bool|integer|longValue|string|path)\("([A-Za-z0-9_]+)"')
-RENDERER_MODULES = ("common", "celtium-vulkan", "forge122")
+# celtium-core joined the scan set in the v0.4.0 S1-a stage: the harness (and its legacy-key
+# readers in the harness tests) moved there from common, and a scan set that does not follow the
+# module layout reports those keys as reader-less.
+RENDERER_MODULES = ("common", "celtium-vulkan", "forge122", "celtium-core")
 
 
 def keys_in(module):
