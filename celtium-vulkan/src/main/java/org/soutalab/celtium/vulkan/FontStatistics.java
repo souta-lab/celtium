@@ -33,4 +33,9 @@ public final class FontStatistics {
         out.append(" fontQuadsAppended=").append(this.fontBatch.fontQuadsAppended());
         return out.toString();
     }
+
+    /** {@return the font retention breakdown for the verification line (DP-11)}. */
+    public String retentionSummary() {
+        return this.fontBatch.celtium$fontRetentionVerifySummary();
+    }
 }

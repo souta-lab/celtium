@@ -435,8 +435,14 @@ public final class FontBatch {
     private long retainedQuads;
     private long retainedDroppedRuns;
     private long retainedDroppedQuads;
+    private long retainedBoundaryDroppedRuns;
+    private long retainedBoundaryDroppedQuads;
+    private long retainedReofferedRuns;
+    private long retainedReofferedQuads;
     /** Bounded log for retained runs dropped at a frame boundary; see celtium$dropRetainedAtFrameBoundary. */
     private int retainedBoundaryLogs;
+    /** Bounded log for retained runs dropped due to cap overflow; see retain. */
+    private int retainedOverflowLogs;
 
     private FontRunState state;
     private RunSink sink;
@@ -978,6 +984,12 @@ public final class FontBatch {
         if (this.retained.size() >= MAX_RETAINED_RUNS || this.retainedBytes + bytes > MAX_RETAINED_BYTES) {
             this.retainedDroppedRuns++;
             this.retainedDroppedQuads += run.vertexCount / 4;
+            if (this.retainedOverflowLogs < 4) {
+                this.retainedOverflowLogs++;
+                System.out.println("[Celtium] CELTIUM_FONT_RETAINED_DROPPED reason=cap-exceeded"
+                        + " pendingRuns=" + this.retained.size() + " pendingBytes=" + this.retainedBytes
+                        + " runBytes=" + bytes);
+            }
             return;
         }
         ByteBuffer copy = org.lwjgl.system.MemoryUtil.memAlloc(bytes);
@@ -1008,6 +1020,8 @@ public final class FontBatch {
             org.lwjgl.system.MemoryUtil.memFree(run.vertices);
             this.retainedDroppedRuns++;
             this.retainedDroppedQuads += run.vertexCount / 4;
+            this.retainedBoundaryDroppedRuns++;
+            this.retainedBoundaryDroppedQuads += run.vertexCount / 4;
             dropped++;
         }
         if (this.retainedBoundaryLogs < 4) {
@@ -1044,6 +1058,8 @@ public final class FontBatch {
                 this.retained.addFirst(run);
                 return;
             }
+            this.retainedReofferedRuns++;
+            this.retainedReofferedQuads += run.vertexCount / 4;
             this.retainedBytes -= run.vertexCount * run.stride;
             org.lwjgl.system.MemoryUtil.memFree(run.vertices);
         }
@@ -1103,6 +1119,38 @@ public final class FontBatch {
                 + " retainedDroppedQuads=" + this.retainedDroppedQuads
                 + " fontFlushReentriesSuppressed=" + this.flushReentriesSuppressed
                 + " retainedOffersThrottled=" + this.retainedOffersThrottled;
+    }
+
+    /** {@return runs dropped from the retention queue at a frame boundary}. */
+    public long retainedBoundaryDroppedRuns() {
+        return this.retainedBoundaryDroppedRuns;
+    }
+
+    /** {@return quads dropped from the retention queue at a frame boundary}. */
+    public long retainedBoundaryDroppedQuads() {
+        return this.retainedBoundaryDroppedQuads;
+    }
+
+    /** {@return retained runs successfully re-offered to the sink}. */
+    public long retainedReofferedRuns() {
+        return this.retainedReofferedRuns;
+    }
+
+    /** {@return retained quads successfully re-offered to the sink}. */
+    public long retainedReofferedQuads() {
+        return this.retainedReofferedQuads;
+    }
+
+    /** {@return the retention breakdown exposed on the VERIFY line (DP-11)}. */
+    public String celtium$fontRetentionVerifySummary() {
+        return "fontRetainedRuns=" + this.retainedRuns
+                + " fontRetainedQuads=" + this.retainedQuads
+                + " fontRetainedDroppedRuns=" + this.retainedDroppedRuns
+                + " fontRetainedDroppedQuads=" + this.retainedDroppedQuads
+                + " fontRetainedBoundaryDroppedRuns=" + this.retainedBoundaryDroppedRuns
+                + " fontRetainedBoundaryDroppedQuads=" + this.retainedBoundaryDroppedQuads
+                + " fontRetainedReofferedRuns=" + this.retainedReofferedRuns
+                + " fontRetainedReofferedQuads=" + this.retainedReofferedQuads;
     }
 
     /**
