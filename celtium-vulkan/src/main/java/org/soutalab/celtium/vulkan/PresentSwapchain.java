@@ -435,6 +435,24 @@ final class PresentSwapchain {
             return;
         }
         target.borrowNextPresentImage(backend.context.presentEngine(), (int) (backend.frameId & 1L));
+        // The borrow's fatal verdict (DP-16): the call's boolean used to be the only output, so an
+        // out-of-date or lost-surface acquire latched nothing here - the rebuild the composed
+        // present's own acquire would have asked for was incidental, and a frame whose present was
+        // skip-gated after this dropped the verdict outright. The verdict is consumed on the spot and
+        // latched on the wrapper it names, through the wrapper's own recording, so the consumption at
+        // the end of the present body acts on it exactly as on the composed path's verdicts. A device
+        // loss goes through the context's loss funnel, once.
+        int borrowVerdict = target.celtium$takeBorrowAcquireVerdict();
+        if (borrowVerdict == org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR
+                && backend.swapchain != null) {
+            backend.swapchain.celtium$noteBorrowOutOfDate();
+        } else if (borrowVerdict == org.lwjgl.vulkan.KHRSurface.VK_ERROR_SURFACE_LOST_KHR
+                && backend.swapchain != null) {
+            backend.swapchain.celtium$noteBorrowSurfaceLost();
+        } else if (borrowVerdict == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST
+                && !backend.context.celtium$isDeviceLost()) {
+            backend.context.celtium$reportDeviceLost("the borrow acquire", borrowVerdict);
+        }
     }
 
     void runSwapchainProbe() {
@@ -664,6 +682,10 @@ final class PresentSwapchain {
     }
 
     private boolean celtium$presentFrameBody() {
+        // A device loss an earlier path routed into the context latches the backend's stall before this
+        // frame's gates read it (DP-17): the gates below key on the backend's own latch, not the
+        // context's fact, and without the sync a loss observed by a submit kept presenting.
+        backend.celtium$noteStalledOnDeviceLoss();
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
         backend.celtium$finishFrameBuffer();
@@ -690,7 +712,8 @@ final class PresentSwapchain {
                     + " drainFailures=" + backend.presentFlushFailures
                     + " drainUnfinished=" + backend.presentDrainUnfinished
                     + " waiting=" + backend.lastFrameReachedQueue + " lastSkip=[" + backend.presentSkipReason
-                    + "] lastResult=[" + backend.lastPresentResult + "] skipsByReason=[noTarget/stalled="
+                    + "] lastResult=[" + backend.lastPresentResult + "] skips=" + backend.presentSkips
+                    + " skipsByReason=[noTarget/stalled="
                     + backend.presentSkipsByReason[0] + " noSwapchain=" + backend.presentSkipsByReason[1]
                     + " noCompletedFrame=" + backend.presentSkipsByReason[2] + " targetUnavailable="
                     + backend.presentSkipsByReason[3] + "]");
@@ -775,6 +798,7 @@ final class PresentSwapchain {
                 backend.presentLagMore++;
             }
         }
+        boolean reached;
         try {
             if (!backend.ensureFrameTarget()) {
                 backend.presentSkipReason = "frame target not available";
@@ -874,7 +898,7 @@ final class PresentSwapchain {
             celtium$noteSwapPointImage(presentImageNanos);
             backend.presentAttempts++;
             backend.presentSkipReason = "presented";
-            boolean reached = backend.swapchain.lastPresentSucceeded();
+            reached = backend.swapchain.lastPresentSucceeded();
             if (reached) {
                 backend.framePresentedFromVulkan++;
                 // Attribute the dumps this present wrote to this presented frame. The fixture can only observe
@@ -908,23 +932,32 @@ final class PresentSwapchain {
             } else {
                 backend.presentFailures++;
             }
-            // R-06: the present attempt is complete - the drain, the frame-buffer finish and the present itself
-            // have all been submitted against the generation this frame borrowed - so the generation change the
-            // swapchain's verdicts asked for is consumed now, before the next frame's borrow is taken below.
-            // Consuming it at the head of this body instead dropped the generation under the live borrow, which
-            // is the ordering VUID-vkQueueSubmit-pCommandBuffers-00070 and the transition frame's
-            // VUID-vkCmdDrawIndexed-renderPass-02684 were measured on.
-            consumeSwapchainRebuild();
-            // The present released the frame's borrow on every path through presentDirect: borrow the
-            // next frame's image now, so the rendering that starts when this call returns attaches the
-            // swapchain image from its first pass.
-            celtium$ensureBorrowedFrameImage();
-            return reached;
         } catch (RuntimeException | LinkageError error) {
             backend.presentFailures++;
             backend.lastPresentResult = "present threw: " + error;
-            return false;
+            reached = false;
         }
+        // R-06: the present attempt is complete - the drain, the frame-buffer finish and the present itself
+        // have all been submitted against the generation this frame borrowed - so the generation change the
+        // swapchain's verdicts asked for is consumed now, before the next frame's borrow is taken below.
+        // Consuming it at the head of this body instead dropped the generation under the live borrow, which
+        // is the ordering VUID-vkQueueSubmit-pCommandBuffers-00070 and the transition frame's
+        // VUID-vkCmdDrawIndexed-renderPass-02684 were measured on.
+        // DP-18: this tail used to sit inside the try, so a present that threw skipped it entirely - the
+        // rebuild the failed present's own verdicts had asked for was never consumed (the stale
+        // generation stayed, and every later frame failed the same way) and no borrow was taken for the
+        // next frame. It runs after the catch now: the consumption is idempotent (a verdict whose
+        // swapchain is already gone consumes nothing) and the borrow ensure keeps its own gates, so the
+        // exception path takes the same shape as the return path.
+        consumeSwapchainRebuild();
+        // The present released the frame's borrow on every path through presentDirect: borrow the
+        // next frame's image now, so the rendering that starts when this call returns attaches the
+        // swapchain image from its first pass.
+        celtium$ensureBorrowedFrameImage();
+        // A device loss this attempt itself observed (DP-17, routed into the context by the swapchain)
+        // latches the backend's stall before the next frame records anything.
+        backend.celtium$noteStalledOnDeviceLoss();
+        return reached;
     }
 
     /**

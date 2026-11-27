@@ -554,6 +554,9 @@ final class BackendDiagnostics {
                 + " submitToFenceMs[p50/p95/worst=" + b.celtium$distribution(b.submitToFenceRing, b.submitToFenceRingCount) + "]"
                 + " swapPointDumpMillis=" + (b.presentSwapchain.swapPointDumpNanos / 1000000L)
                 + " swapPointPollMillis=" + (b.presentSwapchain.swapPointPollNanos / 1000000L)
+                // The swap point's swallowed exceptions (DP-14): a leg's completion gate reads this
+                // == 0, so a present path that threw its frames away cannot pass as a quiet run.
+                + " swapPointExceptions=" + VulkanTerrainGpuBackend.swapPointExceptions
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=native-owner"
                 // The lit ITEM family's fog: 0 lit-fog groups with a 256-byte block means the fix is compiled but never
