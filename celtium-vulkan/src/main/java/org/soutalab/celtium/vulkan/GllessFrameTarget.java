@@ -2487,6 +2487,73 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.context.endCommands(command, "initialize framebuffer before first sample");
     }
 
+    /**
+     * {@return whether the frame image has to be initialized before it is published for sampling}.
+     * <p>
+     * The pure half of {@link #initializeFrameImageForSampling()}, package-private and static so the
+     * rule is pinned without a device. The owned colour image needs its one-time bootstrap only in
+     * the one state where it has never been transitioned - its tracked layout is still
+     * {@code UNDEFINED} - and no present borrow is live. While a borrow is live the tracked layout
+     * describes the borrowed image rather than the owned one, and publication over a borrow is
+     * refused at the publication entry, so the owned image's turn never comes in that state; in
+     * every settled state the frame's own acquire has already moved the image, and a bootstrap
+     * would only add a submission.
+     */
+    static boolean celtium$frameImageSamplingInitNeeded(boolean liveBorrow, int trackedColorLayout) {
+        return !liveBorrow && trackedColorLayout == VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+
+    /**
+     * The frame image's counterpart of {@link #initializeChainPairForSampling(long)}.
+     * <p>
+     * The owned colour image is created in {@code UNDEFINED}, and its only initial transition used
+     * to be the frame's own acquire, recorded into a frame submission. A sampler can reach the
+     * image ahead of that submission: the publication this call precedes hands it to a post chain
+     * whose flush can submit first, and the descriptor - written against the published wrapper's
+     * standing {@code GENERAL} declaration - then samples an image no submitted command buffer has
+     * ever transitioned (VUID-vkCmdDraw-None-09600; one hit on the first frame a borrow bypass put
+     * main-colour sampling back on the owned image, after a borrow-only stretch had left it in
+     * {@code UNDEFINED} past the title screens). While frames borrow the swapchain image the owned
+     * image is never touched, so that state can persist long past the first frame.
+     * <p>
+     * The bootstrap completes before publication, in its own submission like the pair's: the
+     * initial transition in {@code Pair.recordAcquire}'s TOP_OF_PIPE form, then a clear so the
+     * sampled content is defined rather than whatever the allocation's memory held. Only the
+     * colour image is published, so only it is initialized; the depth's first transition stays with
+     * the frame's own acquire. The barrier and the clear name {@link #colorImage()} - which, the
+     * guard above having excluded a live borrow, answers the owned image - keeping the
+     * borrow-lifetime discipline the landed guard pins: no barrier or clear in this class names
+     * the owned image field behind a borrow. The game's own first clear still applies at the
+     * first attach; this writes no game state, it only makes the image legal to sample.
+     */
+    public void initializeFrameImageForSampling() {
+        checkAlive();
+        if (!celtium$frameImageSamplingInitNeeded(hasLivePresentBorrow(), this.colorImageLayout)) {
+            return;
+        }
+        VkCommandBuffer command = this.context.beginCommands();
+        int queueFamily = this.context.queueFamilyIndex();
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .image(colorImage())
+                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+            // The barrier above is the move, so this is where the tracked record of it belongs -
+            // the same placement Pair.recordAcquire keeps for its own record.
+            this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkClearColorValue color = VkClearColorValue.calloc(stack);
+            VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack)
+                    .aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            vkCmdClearColorImage(command, colorImage(), VK_IMAGE_LAYOUT_GENERAL, color, range);
+        }
+        this.context.endCommands(command, "initialize frame image before first sample");
+    }
+
     public void clearChainPair(long identity, VkCommandBuffer command) {
         Pair pair = existingChainPair(identity);
         if (pair != null) {

@@ -8516,6 +8516,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 return false;
             }
+            if (this.frameTarget instanceof GllessFrameTarget gllessTarget) {
+                // The owned image may never have been transitioned: while every frame borrowed it
+                // sat in UNDEFINED, and the first publication back on it would hand a sampler an
+                // image no submitted command buffer has moved out of its initial layout
+                // (VUID-vkCmdDraw-None-09600). The bootstrap completes inside the call, before the
+                // handles below are taken, and is a no-op in every settled state - the chain-pair
+                // route's initializeChainPairForSampling is the same shape one branch down.
+                gllessTarget.initializeFrameImageForSampling();
+            }
             image = this.frameTarget.colorImage();
             view = this.frameTarget.colorView();
         } else {
