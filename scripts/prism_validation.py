@@ -26,6 +26,7 @@ import urllib.request
 import uuid
 
 from headless_wayland import HeadlessWayland
+import loss_counter_gate
 
 
 #: Pack directories a caller may add to the isolated game dir. `mods`, `config`, `resourcepacks` and `saves` are
@@ -1025,6 +1026,21 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         outcome["validationClean"] = not messages
         if messages:
             outcome["validationFirstMessages"] = messages[:3]
+            if code == 0:
+                code = 1
+    # The loss-counter gate (drawpath audit X-1): the losses this run counted and no gate read -
+    # dropped groups, stalled submissions, present failures, native-pass refusals. The process
+    # console carries the renderer's lines whole; latest.log is the fallback seat. A gate problem
+    # is a real failure, so it takes the same precedence the validation messages take above.
+    gate_path = game / "validation-console.log"
+    if not gate_path.is_file():
+        gate_path = game / "logs/latest.log"
+    if gate_path.is_file():
+        loss_problems, loss_breakdown = loss_counter_gate.check(
+            gate_path.read_text(errors="ignore"))
+        outcome["lossCounters"] = loss_breakdown
+        if loss_problems:
+            outcome["lossCounterProblems"] = loss_problems
             if code == 0:
                 code = 1
     # Give real failures precedence over the inconclusive status (for example,

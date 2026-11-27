@@ -28,6 +28,8 @@ import sys
 import time
 import zlib
 
+import loss_counter_gate
+
 RENDERER = "celtium-forge-mc1.12.2-*.jar"
 FIXTURE = "celtium-validation-client-*.jar"
 UNCALIBRATED = "UNCALIBRATED_PRESENTED_IMAGE"
@@ -755,6 +757,13 @@ def postcheck(plan: Plan, harness_code: int) -> dict:
             problems.append("native device evidence does not establish the requested GPU")
         result["nativeDeviceName"] = name
         result["rendererKind"] = "opengl-reference" if plan.reference_renderer else "native-vulkan"
+        if not plan.reference_renderer:
+            # The loss-counter gate (drawpath audit X-1): the losses this run counted and no gate
+            # read - dropped groups, stalled submissions, present failures, native-pass refusals.
+            # A reference leg renders with GL, so the renderer's lines are not its evidence.
+            loss_problems, loss_breakdown = loss_counter_gate.check(console)
+            result["lossCounters"] = loss_breakdown
+            problems.extend(loss_problems)
         if not (plan.paths["game"] / "logs/latest.log").is_file():
             problems.append("the game validation log is missing")
         if type(fixture.get("sceneGuiStage")) is not bool:

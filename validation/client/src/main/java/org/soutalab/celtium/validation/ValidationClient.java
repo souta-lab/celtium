@@ -8069,16 +8069,34 @@ public final class ValidationClient {
                 int glDrawsCancelled = taken.find() ? Integer.parseInt(taken.group(1)) : -1;
                 report.addProperty("vulkanTerrainPasses", terrainPasses);
                 report.addProperty("glDrawsCancelled", glDrawsCancelled);
+                // The loss aggregate (drawpath audit X-1): the counters that count lost geometry sat
+                // on the summary unread, so a run could drop groups, stall the device and still
+                // verify. The aggregate rides the same debug block; its absence means the jar
+                // predates the reader wiring, which is a failure to prove, not a pass.
+                java.util.regex.Matcher loss = java.util.regex.Pattern
+                        .compile("lossAggregate=\\[[^\\]]*total=(\\d+)\\]").matcher(report.get("rendererDebug").toString());
+                java.util.regex.Matcher stalled = java.util.regex.Pattern
+                        .compile("gpuStalled=(\\w+)").matcher(report.get("rendererDebug").toString());
+                if (!loss.find()) {
+                    throw new IllegalStateException("the Vulkan backend published no loss aggregate");
+                }
+                long lossAggregateTotal = Long.parseLong(loss.group(1));
+                boolean gpuStalled = stalled.find() && Boolean.parseBoolean(stalled.group(1));
+                report.addProperty("lossAggregateTotal", lossAggregateTotal);
+                report.addProperty("gpuStalled", gpuStalled);
                 report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0
-                        && terrainPasses > 0 && glDrawsCancelled > 0);
+                        && terrainPasses > 0 && glDrawsCancelled > 0
+                        && lossAggregateTotal == 0 && !gpuStalled);
                 report.addProperty("modDrawTestFrames", testQuadFrames);
                 report.addProperty("modDrawBlockFrames", blockQuadFrames);
                 report.addProperty("vulkanPasses", passes);
                 report.addProperty("vulkanSkippedPasses", skipped);
                 report.addProperty("vulkanErrors", errors);
-                if (passes == 0 || skipped > 0 || errors > 0 || lastDraw == 0) {
+                if (passes == 0 || skipped > 0 || errors > 0 || lastDraw == 0
+                        || lossAggregateTotal > 0 || gpuStalled) {
                     throw new IllegalStateException("the Vulkan terrain backend did not render cleanly: passes="
-                            + passes + " skipped=" + skipped + " errors=" + errors + " lastDraw=" + lastDraw);
+                            + passes + " skipped=" + skipped + " errors=" + errors + " lastDraw=" + lastDraw
+                            + " lossAggregateTotal=" + lossAggregateTotal + " gpuStalled=" + gpuStalled);
                 }
             }
             JsonObject camera = new JsonObject();

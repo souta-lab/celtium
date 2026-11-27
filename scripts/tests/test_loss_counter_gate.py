@@ -1,0 +1,145 @@
+"""Positive and negative controls for the loss-counter gate (drawpath audit X-1).
+
+The synthetic logs are the gate's script-level positive controls: a nonzero aggregate, a
+stalled device, present failures, native-pass refusals and batch-route losses must each turn
+into a problem, a clean run must produce none, and evidence the log limiter cut must read as
+unproven rather than clean.
+"""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import loss_counter_gate
+
+
+def verify_line(**overrides):
+    parts = {
+        "lossAggregate": "[postAcceptDroppedGroups=0,orderingFlushFailures=0,"
+                         "orderingFlushDroppedBatches=0,stalledGeometryDrops=0,"
+                         "stalledGeometryDroppedBatches=0,unflushedTargetGroupsDropped=0,"
+                         "windowFlushFailures=0,staleGroupRefusals=0,total=0]",
+        "gpuStalled": "false",
+        "swapPointExceptions": "0",
+        "logLimitSuppressed": "0",
+    }
+    parts.update(overrides)
+    body = " ".join(f"{name}={value}" for name, value in parts.items())
+    return f"[Celtium] CELTIUM_VERIFY via=shutdown celtium/device[passes=3] {body}"
+
+
+CLEAN_LOG = "\n".join([
+    verify_line(),
+    "[Celtium] CELTIUM_PRESENT hookCalls=300 attempts=300 presented=299 failures=0 "
+    "drainFailures=0 drainUnfinished=0 skips=1",
+    "[Celtium] CELTIUM_NATIVE_PASS via=shutdown registered=4 compiled=4 compileRefusals=0 "
+    "executed=120 execRefusals=0 lastFailure=[none]",
+    "[Celtium] CELTIUM_BATCH_ROUTE captured=50 arrayCaptured=50 fallback=0 droppedDraws=0 "
+    "discardedSegments=0 batcherDropped=0",
+])
+
+
+class LossCounterGateTest(unittest.TestCase):
+    def test_clean_log_passes(self):
+        problems, breakdown = loss_counter_gate.check(CLEAN_LOG)
+        self.assertEqual([], problems)
+        self.assertEqual(0, breakdown["lossAggregateTotal"])
+        self.assertFalse(breakdown["gpuStalled"])
+        self.assertEqual(1, breakdown["presentSkips"])
+
+    def test_nonzero_aggregate_fails(self):
+        log = verify_line(lossAggregate="[postAcceptDroppedGroups=2,orderingFlushFailures=0,"
+                                        "orderingFlushDroppedBatches=0,stalledGeometryDrops=0,"
+                                        "stalledGeometryDroppedBatches=0,"
+                                        "unflushedTargetGroupsDropped=0,windowFlushFailures=0,"
+                                        "staleGroupRefusals=0,total=2]")
+        problems, breakdown = loss_counter_gate.check(log)
+        self.assertEqual(2, breakdown["lossAggregateTotal"])
+        self.assertTrue(any("loss aggregate is nonzero" in p for p in problems))
+
+    def test_gpu_stalled_fails(self):
+        problems, _ = loss_counter_gate.check(verify_line(gpuStalled="true"))
+        self.assertTrue(any("gpuStalled=true" in p for p in problems))
+
+    def test_swap_point_exceptions_fail(self):
+        problems, _ = loss_counter_gate.check(verify_line(swapPointExceptions="3"))
+        self.assertTrue(any("swapPointExceptions=3" in p for p in problems))
+
+    def test_present_failures_fail_but_skips_do_not(self):
+        log = "\n".join([
+            verify_line(),
+            "[Celtium] CELTIUM_PRESENT hookCalls=300 attempts=300 presented=290 failures=2 "
+            "drainFailures=1 drainUnfinished=0 skips=9",
+        ])
+        problems, breakdown = loss_counter_gate.check(log)
+        self.assertTrue(any("present failures" in p for p in problems))
+        self.assertTrue(any("present drain failures" in p for p in problems))
+        self.assertFalse(any("skips" in p for p in problems))
+        self.assertEqual(9, breakdown["presentSkips"])
+
+    def test_native_pass_refusals_fail(self):
+        log = "\n".join([
+            verify_line(),
+            "[Celtium] CELTIUM_NATIVE_PASS via=shutdown registered=4 compiled=3 "
+            "compileRefusals=1 executed=90 execRefusals=2 lastFailure=[bloom: state]",
+        ])
+        problems, _ = loss_counter_gate.check(log)
+        self.assertTrue(any("compileRefusals=1" in p for p in problems))
+        self.assertTrue(any("execRefusals=2" in p for p in problems))
+
+    def test_batch_route_losses_fail(self):
+        log = "\n".join([
+            verify_line(),
+            "[Celtium] CELTIUM_BATCH_ROUTE captured=50 arrayCaptured=48 fallback=2 "
+            "droppedDraws=5 discardedSegments=1 batcherDropped=0",
+        ])
+        problems, breakdown = loss_counter_gate.check(log)
+        self.assertTrue(any("droppedDraws=5" in p for p in problems))
+        self.assertTrue(any("discardedSegments=1" in p for p in problems))
+        self.assertEqual(5, breakdown["batchDroppedDraws"])
+
+    def test_batch_keys_on_the_verify_line_fail(self):
+        line = verify_line() + " batchDroppedDraws=4 batchDiscardedSegments=0"
+        problems, _ = loss_counter_gate.check(line)
+        self.assertTrue(any("batchDroppedDraws=4" in p for p in problems))
+
+    def test_missing_verify_line_is_unproven(self):
+        problems, breakdown = loss_counter_gate.check("some other log\n")
+        self.assertTrue(any("unproven" in p for p in problems))
+        self.assertFalse(breakdown["verifyLine"])
+
+    def test_verify_line_without_aggregate_is_unproven(self):
+        problems, _ = loss_counter_gate.check(
+            "[Celtium] CELTIUM_VERIFY via=shutdown celtium/device[passes=3] gpuStalled=false")
+        self.assertTrue(any("no lossAggregate" in p for p in problems))
+
+    def test_suppressed_verify_tag_is_unproven(self):
+        log = verify_line(logLimitSuppressed="17",
+                          logLimitSuppressedByTag="[CELTIUM_VERIFY=9,CELTIUM_PRESENT=8]")
+        problems, breakdown = loss_counter_gate.check(log)
+        self.assertTrue(breakdown["verifySuppressed"])
+        self.assertTrue(any("unproven" in p for p in problems))
+
+    def test_log_limit_line_naming_verify_is_unproven(self):
+        log = "\n".join([
+            verify_line(),
+            "[Celtium] CELTIUM_LOG_LIMIT suppressed 25 lines in 2 tags after 16 each "
+            "(-Dceltium.debug.periodicLogs=true prints all): CELTIUM_VERIFY=20 CELTIUM_FONT=5",
+        ])
+        problems, breakdown = loss_counter_gate.check(log)
+        self.assertTrue(breakdown["verifySuppressed"])
+        self.assertEqual(25, breakdown["logLimitSuppressed"])
+        self.assertTrue(any("unproven" in p for p in problems))
+
+    def test_last_verify_line_wins(self):
+        log = "\n".join([
+            verify_line(gpuStalled="true"),
+            verify_line(),
+        ])
+        problems, _ = loss_counter_gate.check(log)
+        self.assertEqual([], problems)
+
+
+if __name__ == "__main__":
+    unittest.main()
