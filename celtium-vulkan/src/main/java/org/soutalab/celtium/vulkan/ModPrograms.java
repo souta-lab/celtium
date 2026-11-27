@@ -267,6 +267,18 @@ final class ModPrograms {
                 drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 11);
             }
         }
+        if (b.mainColorSampledBorrowClosedFrame == b.frameId && !like.celtium$colorBlend().blend()
+                && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
+            // Borrow closure, second half (blackness fix A): on the frame the backend refused to publish
+            // the frame image over a live borrow, this frame's sampling chain was refused at its main
+            // inputs, so its intermediate targets hold only their cleared content - and a blend-off pass
+            // into main would composite that cleared black over the world the frame already drew. Refuse
+            // this one frame's pass; from the next frame the borrow is bypassed on the backend's
+            // main-sampled latch and the chain samples the frame's own image.
+            return celtium$modFailure(programId, "the frame's colour publication was refused over a"
+                    + " borrowed present image this frame (borrow closure), so the blend-off pass into"
+                    + " the game's framebuffer is refused for this frame only");
+        }
         if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
                 && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
             return celtium$modFailure(programId, "a blend-off pass into the game's framebuffer and "

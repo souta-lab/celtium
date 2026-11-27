@@ -8348,6 +8348,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         long image;
         long view;
         if ("frame-image".equals(route)) {
+            // Main-colour sampling (blackness fix A): this route hands the frame's own colour image out
+            // as a sampler input, so note the demand on the latch the borrow decision reads. While the
+            // frame target holds a live present borrow, refuse this one publication instead of handing
+            // out the borrowed image: it was created without SAMPLED usage, so publishing it puts an
+            // unsampleable image into sampler descriptors (VUID-VkWriteDescriptorSet-descriptorType-00337)
+            // and the sampling chain composites undefined content over the world it sampled. The refusal
+            // is the borrow closure PostChainBridge applies to a main-reading chain over a live borrow,
+            // placed at the one entry both sampling paths share - prepareImmediateUncached and
+            // ModPrograms.celtium$modSamplerTexture both resolve through here - and it lasts one frame:
+            // from the next frame the borrow is bypassed on the latch above and this route publishes the
+            // target's own SAMPLED image.
+            this.mainColorSampled = true;
+            if (this.frameTarget instanceof GllessFrameTarget gllessTarget
+                    && gllessTarget.hasLivePresentBorrow()) {
+                this.mainColorSampledBorrowClosedFrame = this.frameId;
+                if (this.fboPublishRefusalLogs < 16) {
+                    this.fboPublishRefusalLogs++;
+                    System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                            + " reason=borrow-live identity=0x" + Long.toHexString(identity)
+                            + " (the frame samples its own colour over a borrowed present image;"
+                            + " publication refused for this frame, borrows bypass from the next)");
+                }
+                return false;
+            }
             if (this.frameTarget == null) {
                 if (this.fboPublishRefusalLogs < 16) {
                     this.fboPublishRefusalLogs++;
@@ -23103,6 +23127,29 @@ this.frameBufferOpen = false;
 
     /** The post-process chain executor, created lazily the first frame a chain group actually renders. */
     VulkanPostChain postChain;
+
+    /**
+     * Whether anything has asked to sample the frame's own colour image through the {@code "frame-image"}
+     * publication route this session (a mod program's main input, an immediate batch bound to the main
+     * framebuffer's colour name). The borrowed present image is created without SAMPLED usage, so a frame
+     * that samples the frame colour cannot hold a borrow: {@code PresentSwapchain} bypasses the borrow
+     * while this latch stands, under the same existence rule the post-chain borrow condition applies to
+     * its executor - a main-sampling chain that ran once is live machinery whose passes recur while its
+     * feature is on (GTCEu's bloom samples main every frame, through {@code ModPrograms}, which the
+     * post-chain condition never sees). A scene that never samples its frame colour never sets the latch
+     * and keeps the direct present.
+     */
+    boolean mainColorSampled;
+
+    /**
+     * The frame whose {@code "frame-image"} publication was refused because the frame target held a live
+     * present borrow, or {@link Long#MIN_VALUE} when no frame has been closed. The refusal keeps the
+     * borrowed (non-SAMPLED) image out of every sampler descriptor; {@code ModPrograms} reads this to
+     * refuse, for that one frame only, the blend-off pass into main that would otherwise composite the
+     * refused chain's cleared intermediate over the world (the borrow closure's second half, the shape
+     * {@code PostChainBridge} applies to a main-reading chain over a live borrow).
+     */
+    long mainColorSampledBorrowClosedFrame = Long.MIN_VALUE;
 
     /**
      * {@return whether a collected pass list can run natively this frame}.

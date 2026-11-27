@@ -415,6 +415,19 @@ final class PresentSwapchain {
             celtium$noteBorrowBypass("readback");
             return;
         }
+        // 4. The frame's own colour has been sampled through the "frame-image" publication route (a mod
+        //    program's main input, or an immediate batch bound to the main colour name). Condition 2
+        //    cannot see the measured case: GTCEu's bloom chain runs through ModPrograms, not ShaderGroup,
+        //    so no post chain is ever adopted while the chain samples main every frame. The sampling side
+        //    notes the demand on the backend when the frame image is published (or refused), and while
+        //    the latch stands the frame keeps its own SAMPLED image and takes the composed present. The
+        //    one frame the demand first arrives on can still hold a borrow taken before it existed; that
+        //    frame is closed at the publication entry instead (the backend refuses the one publication,
+        //    and ModPrograms refuses that frame's blend-off pass into main).
+        if (backend.mainColorSampled) {
+            celtium$noteBorrowBypass("main-sampled");
+            return;
+        }
         if (backend.swapchain != null && backend.context.presentEngine().borrowAbandoned()) {
             releaseSwapchainForRebuild();
         }
