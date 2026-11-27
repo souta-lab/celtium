@@ -151,6 +151,13 @@ jobs:
         run: >-
           ./gradlew -p build-1122 :forge122:test --console=plain --stacktrace
           "-Pglslang_validator=$(command -v glslangValidator)"
+      # The celtium-remapper build plugin (S6-1 / D-97 clean-room reimplementation) is an included build
+      # under build-1122's pluginManagement, not a project of build-1122 itself, so none of the
+      # :...:test steps above ever execute its JUnit suite (ReobfuscateCodeAndMixinsTaskTest):
+      # written but never run in CI, the same trap as item 338 (audit #17 F-1). The plugin's build is
+      # self-contained, so run it directly through its own project directory.
+      - name: Test celtium-remapper plugin
+        run: ./gradlew -p plugins/celtium-remapper test --console=plain --stacktrace
       # These contracts require full Git history and compiled celtium-vulkan classes.
       # Keep them after the real Forge build, not in the isolated probe job.
       - name: Test compiled swapchain arguments and initializer preservation
