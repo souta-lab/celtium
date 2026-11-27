@@ -295,6 +295,47 @@ final class TerrainEngineAHost {
     }
 
     /**
+     * Executor health for {@code CELTIUM_VERIFY} (drawpath audit DP-04/DP-05): how many
+     * executors exist, how many are permanently disabled (with their pass names), the
+     * total armed slabs skipped for slab capacity, and the residency gate's current
+     * head-of-line blockage. A disabled executor falls its whole pass back to the legacy
+     * route, so until this summary existed the only trace was the single line printed at
+     * disable time - a leg that started later, or a log that scrolled past it, could not
+     * tell a disabled executor from a healthy one. All four quantities are zero in a
+     * healthy run, which is the shape the leg gates read.
+     */
+    String engineHealthSummary() {
+        int disabledCount = 0;
+        int packDisabledCount = 0;
+        long slabSkips = 0L;
+        StringBuilder names = new StringBuilder();
+        for (Map.Entry<TerrainRenderPass, TerrainEngineA> entry : this.engines.entrySet()) {
+            slabSkips += entry.getValue().slabCapacitySkips();
+            if (entry.getValue().disabled()) {
+                disabledCount++;
+                if (names.length() > 0) {
+                    names.append(',');
+                }
+                names.append(entry.getKey().name());
+            }
+        }
+        for (Map.Entry<TerrainRenderPass, TerrainPackEngine> entry : this.packEngines.entrySet()) {
+            if (entry.getValue().disabled()) {
+                packDisabledCount++;
+                if (names.length() > 0) {
+                    names.append(',');
+                }
+                names.append("pack:").append(entry.getKey().name());
+            }
+        }
+        return "engines=" + this.engines.size() + " disabled=" + disabledCount
+                + " packEngines=" + this.packEngines.size() + " packDisabled=" + packDisabledCount
+                + " slabCapacitySkips=" + slabSkips
+                + " headOfLineBlocked=" + this.residencyGate.headOfLineBlocked()
+                + " disabledPasses=[" + names + "]";
+    }
+
+    /**
      * The GPU buffer of one pack slab (keyed by desc slab id), created lazily
      * at its arena's slab size. The pack engines upload through its mapping
      * and bind it as the vertex buffer; the host owns it and deletes it after

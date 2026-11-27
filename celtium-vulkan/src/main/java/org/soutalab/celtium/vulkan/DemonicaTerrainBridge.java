@@ -12,6 +12,15 @@ import java.lang.reflect.Method;
  * Keeps {@code celtium-vulkan} free of any compile-time dependency on Demonica while allowing
  * {@link VulkanTerrainGpuBackend} to obtain the active shader pack's {@code gbuffers_terrain} /
  * {@code gbuffers_water} / {@code shadow} program and let Iris push its uniforms, samplers, and MRT FBO.
+ * <p>
+ * Failure visibility (drawpath audit DP-06): the boolean answers stay - the callers need an
+ * answer either way - but a failure is no longer collapsed into the same silent {@code false} /
+ * {@code null} as a genuine negative. A guest class that is simply absent
+ * ({@link ClassNotFoundException}) is a vanilla run and is not a failure. Anything else - the
+ * class is present but its method is gone or changed shape, a linkage error, or an invocation
+ * that throws - is a bridge failure: it is counted, the first one is printed, and the latest is
+ * retained in {@link #failureSummary()} for {@code CELTIUM_VERIFY}, so "the shadow stage is not
+ * being rendered" can be told apart from "the bridge that would know is broken".
  */
 final class DemonicaTerrainBridge {
     private static volatile boolean resolved;
@@ -19,7 +28,73 @@ final class DemonicaTerrainBridge {
     private static volatile boolean shadowResolved;
     private static Method shadowMethod;
 
+    // The guest class names, held in fields so a test can point the bridge at a stub guest
+    // (see celtium$resetForTests). Production code never rewrites them.
+    private static String shadowStateClassName = "net.coderbot.iris.shadows.ShadowRenderingState";
+    private static String shaderTerrainClassName = "com.demonica.celeritas.terrain.ShaderTerrain";
+
+    private static long resolveFailures;
+    private static long invokeFailures;
+    private static String lastFailure;
+    private static boolean failurePrinted;
+
     private DemonicaTerrainBridge() {
+    }
+
+    /** Bridge resolution failures: the guest class exists but could not be bound. */
+    static synchronized long resolveFailures() {
+        return resolveFailures;
+    }
+
+    /** Bridge invocation failures: a bound guest method threw when called. */
+    static synchronized long invokeFailures() {
+        return invokeFailures;
+    }
+
+    /** The failure counters and the latest failure's seat, for {@code CELTIUM_VERIFY}. */
+    static synchronized String failureSummary() {
+        return "resolveFailures=" + resolveFailures + " invokeFailures=" + invokeFailures
+                + " lastFailure=" + (lastFailure == null ? "none" : lastFailure.replace(' ', '_'));
+    }
+
+    private static synchronized void noteResolveFailure(String seat, Throwable error) {
+        if (error instanceof ClassNotFoundException) {
+            // The guest is not installed: a vanilla run, not a bridge failure.
+            return;
+        }
+        resolveFailures++;
+        noteFailureLocked(seat, error);
+    }
+
+    private static synchronized void noteInvokeFailure(String seat, Throwable error) {
+        invokeFailures++;
+        noteFailureLocked(seat, error);
+    }
+
+    private static void noteFailureLocked(String seat, Throwable error) {
+        Throwable cause = error instanceof java.lang.reflect.InvocationTargetException
+                && error.getCause() != null ? error.getCause() : error;
+        lastFailure = seat + ": " + cause.getClass().getSimpleName()
+                + (cause.getMessage() == null ? "" : ": " + cause.getMessage());
+        if (!failurePrinted) {
+            failurePrinted = true;
+            System.out.println("[Celtium] CELTIUM_DEMONICA_BRIDGE_FAILED seat=" + seat
+                    + " reason=" + lastFailure);
+        }
+    }
+
+    /** Test seam: restores the production guest names and clears the latches and counters. */
+    static synchronized void celtium$resetForTests(String shadowClassName, String terrainClassName) {
+        shadowStateClassName = shadowClassName;
+        shaderTerrainClassName = terrainClassName;
+        resolved = false;
+        packProgramMethod = null;
+        shadowResolved = false;
+        shadowMethod = null;
+        resolveFailures = 0L;
+        invokeFailures = 0L;
+        lastFailure = null;
+        failurePrinted = false;
     }
 
     /**
@@ -37,7 +112,8 @@ final class DemonicaTerrainBridge {
         }
         try {
             return Boolean.TRUE.equals(method.invoke(null));
-        } catch (Throwable ignored) {
+        } catch (Throwable error) {
+            noteInvokeFailure("shadow-state", error);
             return false;
         }
     }
@@ -49,10 +125,11 @@ final class DemonicaTerrainBridge {
         synchronized (DemonicaTerrainBridge.class) {
             if (!shadowResolved) {
                 try {
-                    Class<?> cls = Class.forName("net.coderbot.iris.shadows.ShadowRenderingState", false,
+                    Class<?> cls = Class.forName(shadowStateClassName, false,
                             DemonicaTerrainBridge.class.getClassLoader());
                     shadowMethod = cls.getMethod("areShadowsCurrentlyBeingRendered");
-                } catch (Throwable ignored) {
+                } catch (Throwable error) {
+                    noteResolveFailure("shadow-state", error);
                     shadowMethod = null;
                 }
                 shadowResolved = true;
@@ -73,7 +150,8 @@ final class DemonicaTerrainBridge {
         }
         try {
             return (GlProgram<? extends ChunkShaderInterface>) method.invoke(null, pass, configuration);
-        } catch (Throwable ignored) {
+        } catch (Throwable error) {
+            noteInvokeFailure("pack-program", error);
             return null;
         }
     }
@@ -85,11 +163,12 @@ final class DemonicaTerrainBridge {
         synchronized (DemonicaTerrainBridge.class) {
             if (!resolved) {
                 try {
-                    Class<?> cls = Class.forName("com.demonica.celeritas.terrain.ShaderTerrain", false,
+                    Class<?> cls = Class.forName(shaderTerrainClassName, false,
                             DemonicaTerrainBridge.class.getClassLoader());
                     packProgramMethod = cls.getMethod("packProgram",
                             TerrainRenderPass.class, RenderPassConfiguration.class);
-                } catch (Throwable ignored) {
+                } catch (Throwable error) {
+                    noteResolveFailure("pack-program", error);
                     packProgramMethod = null;
                 }
                 resolved = true;

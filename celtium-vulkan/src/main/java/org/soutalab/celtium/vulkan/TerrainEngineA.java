@@ -76,6 +76,8 @@ final class TerrainEngineA {
     private long pipelineLayout;
     private long pipeline;
     private boolean disabled;
+    /** Armed slabs skipped because the device-side slab could not materialize (DP-04). */
+    private long slabCapacitySkips;
 
     // The resident GPU images of the store (desc table, factor bases) and the
     // factor / sorted arenas are the host's, shared by every pass (R-15): this
@@ -149,6 +151,11 @@ final class TerrainEngineA {
 
     boolean disabled() {
         return this.disabled;
+    }
+
+    /** Armed slabs skipped so far because the device-side slab could not materialize. */
+    long slabCapacitySkips() {
+        return this.slabCapacitySkips;
     }
 
     /**
@@ -641,6 +648,11 @@ final class TerrainEngineA {
                     // draw, nothing is disabled, and a later frame retries the
                     // materialization (the slab stays uncreated, so the host
                     // accessor re-attempts it on the next armed frame).
+                    // Counted (drawpath audit DP-04): the skip is per-frame and
+                    // self-healing, but an uncounted skip is indistinguishable
+                    // from a slab that drew - the host's health summary carries
+                    // the total into CELTIUM_VERIFY.
+                    this.slabCapacitySkips++;
                     continue;
                 }
                 vertexBuffers.put(0, slab.buffer());

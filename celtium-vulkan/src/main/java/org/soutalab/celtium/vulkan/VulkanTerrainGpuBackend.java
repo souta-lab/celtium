@@ -561,7 +561,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
-    private long packTerrainSkippedRegions;
+    /** Package-private (not private) so BackendDiagnostics can carry it into CELTIUM_VERIFY (DP-36). */
+    long packTerrainSkippedRegions;
+    /**
+     * Every pack terrain refusal, counted at the report seat (drawpath audit DP-36):
+     * unlike {@link #packTerrainRefusedLogs}, which caps the printed lines at 24, this
+     * total is unbounded and is what {@code CELTIUM_VERIFY} carries, so a leg can gate
+     * on refusals it never saw printed.
+     */
+    long packTerrainRefused;
     /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
@@ -793,6 +801,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int atlasGlId = -1;
     int lightmapGlId = -1;
     long atlasRefreshCountdown;
+    /**
+     * Atlas mirror re-supplies that failed and entered the 400-frame backoff (drawpath
+     * audit DP-04): while the atlas is unestablished, every terrain pass skips until the
+     * backoff expires, so the number of times the backoff was entered belongs in
+     * {@code CELTIUM_VERIFY} rather than only in the record line of the moment.
+     */
+    long atlasRefreshFailures;
     long lightmapRefreshCountdown;
 
     private long commandPool;
@@ -20351,6 +20366,7 @@ this.frameBufferOpen = false;
     }
 
     private void celtium$reportPackTerrainRefused(TerrainRenderPass pass, int programId, String reason) {
+        this.packTerrainRefused++;
         if (this.packTerrainRefusedLogs < 24) {
             this.packTerrainRefusedLogs++;
             System.out.println("[Celtium] CELTIUM_PACK_TERRAIN_REFUSED pass=" + pass.name()
