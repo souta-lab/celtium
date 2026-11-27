@@ -267,8 +267,8 @@ public final class Lane1Shaders {
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
-                // TEMP G1 BISECT2: R/G = cell coords, B = local U fraction.
-                outColor = vec4(fragCell / 32.0, fract(fragLocalUv.x), 1.0); return;
+                // TEMP G1 BISECT3: show the bound atlas image itself, mapped to the screen.
+                outColor = vec4(texture(atlas, gl_FragCoord.xy / vec2(1280.0, 720.0)).rgb, 1.0); return;
                 if (fog.fogMode != 0) {
                     float dist = length(fragWorldPos - fog.fogCameraPos);
                     float factor;
