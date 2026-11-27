@@ -7,7 +7,7 @@ import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 
 import java.util.Map;
 
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 
 // This code is a terrible hack to get around the fact that we are so incredibly memory bound, and that we
 // have no control over memory layout. The chunk rendering code spends an astronomical amount of time chasing
@@ -78,33 +78,33 @@ public class SectionRenderDataUnsafe {
 
             @Override
             public int getVertexOffset(long ptr, int facing) {
-                return LWJGL.memGetInt(pVertexOffset(ptr, facing));
+                return MemoryUtil.memGetInt(pVertexOffset(ptr, facing));
             }
 
             @Override
             public int getElementCount(long ptr, int facing, ChunkPrimitiveType primitiveType) {
-                return LWJGL.memGetInt(pElementCount(ptr, facing));
+                return MemoryUtil.memGetInt(pElementCount(ptr, facing));
             }
 
             @Override
             public int getIndexOffset(long ptr, int facing) {
-                return LWJGL.memGetInt(pIndexOffset(ptr, facing));
+                return MemoryUtil.memGetInt(pIndexOffset(ptr, facing));
             }
 
             @Override
             public int getRunVertexEnd(long ptr, int lastFacing, ChunkPrimitiveType primitiveType) {
-                return LWJGL.memGetInt(pVertexOffset(ptr, lastFacing))
-                        + verticesForElements(LWJGL.memGetInt(pElementCount(ptr, lastFacing)), primitiveType);
+                return MemoryUtil.memGetInt(pVertexOffset(ptr, lastFacing))
+                        + verticesForElements(MemoryUtil.memGetInt(pElementCount(ptr, lastFacing)), primitiveType);
             }
 
             @Override
             public int getSliceMask(long heap, int index) {
-                return LWJGL.memGetInt(this.heapPointer(heap, index));
+                return MemoryUtil.memGetInt(this.heapPointer(heap, index));
             }
 
             @Override
             protected void setSliceMask(long heap, int index, int value) {
-                LWJGL.memPutInt(this.heapPointer(heap, index), value);
+                MemoryUtil.memPutInt(this.heapPointer(heap, index), value);
             }
 
             @Override
@@ -116,9 +116,9 @@ public class SectionRenderDataUnsafe {
                     int vertexCount = vertexCountOf(ranges, facing);
                     int elementCount = elementsForVertices(vertexCount, primitiveType);
 
-                    LWJGL.memPutInt(pVertexOffset(ptr, facing), vertexOffset);
-                    LWJGL.memPutInt(pElementCount(ptr, facing), elementCount);
-                    LWJGL.memPutInt(pIndexOffset(ptr, facing), indexOffset);
+                    MemoryUtil.memPutInt(pVertexOffset(ptr, facing), vertexOffset);
+                    MemoryUtil.memPutInt(pElementCount(ptr, facing), elementCount);
+                    MemoryUtil.memPutInt(pIndexOffset(ptr, facing), indexOffset);
 
                     if (vertexCount > 0) {
                         sliceMask |= 1 << facing;
@@ -134,18 +134,18 @@ public class SectionRenderDataUnsafe {
             @Override
             public void writeIndexOffsets(long ptr, int indexOffset, ChunkPrimitiveType primitiveType) {
                 for (int facing = 0; facing < NUM_FACINGS; facing++) {
-                    LWJGL.memPutInt(pIndexOffset(ptr, facing), indexOffset);
-                    indexOffset += LWJGL.memGetInt(pElementCount(ptr, facing)) * 4;
+                    MemoryUtil.memPutInt(pIndexOffset(ptr, facing), indexOffset);
+                    indexOffset += MemoryUtil.memGetInt(pElementCount(ptr, facing)) * 4;
                 }
             }
 
             @Override
             public void rebase(long ptr, int vertexOffset, int indexOffset, ChunkPrimitiveType primitiveType) {
                 for (int facing = 0; facing < NUM_FACINGS; facing++) {
-                    LWJGL.memPutInt(pVertexOffset(ptr, facing), vertexOffset);
-                    LWJGL.memPutInt(pIndexOffset(ptr, facing), indexOffset);
+                    MemoryUtil.memPutInt(pVertexOffset(ptr, facing), vertexOffset);
+                    MemoryUtil.memPutInt(pIndexOffset(ptr, facing), indexOffset);
 
-                    int elementCount = LWJGL.memGetInt(pElementCount(ptr, facing));
+                    int elementCount = MemoryUtil.memGetInt(pElementCount(ptr, facing));
                     vertexOffset += verticesForElements(elementCount, primitiveType);
                     indexOffset += elementCount * 4;
                 }
@@ -182,23 +182,23 @@ public class SectionRenderDataUnsafe {
 
             @Override
             public int getSliceMask(long heap, int index) {
-                return LWJGL.memGetByte(heap + index) & 0xFF;
+                return MemoryUtil.memGetByte(heap + index) & 0xFF;
             }
 
             @Override
             protected void setSliceMask(long heap, int index, int value) {
-                LWJGL.memPutByte(heap + index, (byte) value);
+                MemoryUtil.memPutByte(heap + index, (byte) value);
             }
 
             @Override
             public int getVertexOffset(long ptr, int facing) {
-                return LWJGL.memGetInt(pPost(ptr, facing));
+                return MemoryUtil.memGetInt(pPost(ptr, facing));
             }
 
             @Override
             public int getElementCount(long ptr, int facing, ChunkPrimitiveType primitiveType) {
-                int start = LWJGL.memGetInt(pPost(ptr, facing));
-                int end = LWJGL.memGetInt(pPost(ptr, facing + 1));
+                int start = MemoryUtil.memGetInt(pPost(ptr, facing));
+                int end = MemoryUtil.memGetInt(pPost(ptr, facing + 1));
 
                 return elementsForVertices(end - start, primitiveType);
             }
@@ -211,7 +211,7 @@ public class SectionRenderDataUnsafe {
 
             @Override
             public int getRunVertexEnd(long ptr, int lastFacing, ChunkPrimitiveType primitiveType) {
-                return LWJGL.memGetInt(pPost(ptr, lastFacing + 1));
+                return MemoryUtil.memGetInt(pPost(ptr, lastFacing + 1));
             }
 
             @Override
@@ -222,7 +222,7 @@ public class SectionRenderDataUnsafe {
                 for (int facing = 0; facing < NUM_FACINGS; facing++) {
                     int vertexCount = vertexCountOf(ranges, facing);
 
-                    LWJGL.memPutInt(pPost(ptr, facing), vertexOffset);
+                    MemoryUtil.memPutInt(pPost(ptr, facing), vertexOffset);
 
                     if (vertexCount > 0) {
                         sliceMask |= 1 << facing;
@@ -231,7 +231,7 @@ public class SectionRenderDataUnsafe {
                     vertexOffset += vertexCount;
                 }
 
-                LWJGL.memPutInt(pPost(ptr, NUM_FACINGS), vertexOffset);
+                MemoryUtil.memPutInt(pPost(ptr, NUM_FACINGS), vertexOffset);
 
                 return sliceMask;
             }
@@ -243,7 +243,7 @@ public class SectionRenderDataUnsafe {
 
             @Override
             public void rebase(long ptr, int vertexOffset, int indexOffset, ChunkPrimitiveType primitiveType) {
-                int delta = vertexOffset - LWJGL.memGetInt(pPost(ptr, 0));
+                int delta = vertexOffset - MemoryUtil.memGetInt(pPost(ptr, 0));
 
                 if (delta == 0) {
                     return;
@@ -251,7 +251,7 @@ public class SectionRenderDataUnsafe {
 
                 for (int post = 0; post < NUM_POSTS; post++) {
                     long pPost = pPost(ptr, post);
-                    LWJGL.memPutInt(pPost, LWJGL.memGetInt(pPost) + delta);
+                    MemoryUtil.memPutInt(pPost, MemoryUtil.memGetInt(pPost) + delta);
                 }
             }
 
@@ -321,17 +321,17 @@ public class SectionRenderDataUnsafe {
 
         public final long allocateHeap() {
             long size = this.getHeaderSize() + (RenderRegion.REGION_SIZE * this.getStride());
-            long pointer = LWJGL.nmemAlignedAlloc(64, size);
+            long pointer = MemoryUtil.nmemAlignedAlloc(64, size);
 
             if (pointer != 0) {
-                LWJGL.memSet(pointer, 0, size);
+                MemoryUtil.memSet(pointer, 0, size);
             }
 
             return pointer;
         }
 
         public final void freeHeap(long pointer) {
-            LWJGL.nmemAlignedFree(pointer);
+            MemoryUtil.nmemAlignedFree(pointer);
         }
 
         public final long heapPointer(long ptr, int index) {
@@ -359,7 +359,7 @@ public class SectionRenderDataUnsafe {
          */
         public final void clearRow(long heap, int index) {
             this.setSliceMask(heap, index, 0);
-            LWJGL.memSet(this.heapPointer(heap, index), 0x0, this.getStride());
+            MemoryUtil.memSet(this.heapPointer(heap, index), 0x0, this.getStride());
         }
 
         private static int vertexCountOf(Map<ModelQuadFacing, VertexRange> ranges, int facing) {

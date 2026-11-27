@@ -6,7 +6,7 @@ import org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.material.Material;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 
 import java.util.Map;
 
@@ -110,10 +110,10 @@ public class TerrainVertex16 implements ChunkVertexType {
                 int word2 = ((u >>> TEXTURE_LOW_BITS) & 0xFFFF)
                         | (((v >>> TEXTURE_LOW_BITS) & 0xFFFF) << 16);
 
-                LWJGL.memPutInt(ptr + 0, word0);
-                LWJGL.memPutInt(ptr + 4, word1);
-                LWJGL.memPutInt(ptr + 8, word2);
-                LWJGL.memPutInt(ptr + 12, vertex.color);
+                MemoryUtil.memPutInt(ptr + 0, word0);
+                MemoryUtil.memPutInt(ptr + 4, word1);
+                MemoryUtil.memPutInt(ptr + 8, word2);
+                MemoryUtil.memPutInt(ptr + 12, vertex.color);
 
                 return ptr + STRIDE;
             }

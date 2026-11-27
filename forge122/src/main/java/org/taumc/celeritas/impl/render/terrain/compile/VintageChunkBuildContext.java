@@ -28,7 +28,7 @@ import org.taumc.celeritas.impl.world.WorldSlice;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 
 public class VintageChunkBuildContext extends ChunkBuildContext {
     /**
@@ -169,22 +169,22 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
     private void copyBlockData(ByteBuffer source, ChunkBuildBuffers buffers, Material material) {
         int vsize = BLOCK_VERTEX_FORMAT_SIZE;
         int numQuads = source.limit() / (vsize * 4);
-        long ptr = LWJGL.memAddress(source);
+        long ptr = MemoryUtil.memAddress(source);
         var quad = ChunkVertexEncoder.Vertex.uninitializedQuad();
         var animatedSpritesList = ((MinecraftBuiltRenderSectionData<TextureAtlasSprite, TileEntity>)buffers.getSectionContextBundle()).animatedSprites;
         for(int q = 0; q < numQuads; q++) {
             float uSum = 0, vSum = 0;
             for(int v = 0; v < 4; v++) {
                 var vertex = quad[v];
-                vertex.x = LWJGL.memGetFloat(ptr);
-                vertex.y = LWJGL.memGetFloat(ptr + 4);
-                vertex.z = LWJGL.memGetFloat(ptr + 8);
-                vertex.color = LWJGL.memGetInt(ptr + 12);
-                vertex.u = LWJGL.memGetFloat(ptr + 16);
-                vertex.v = LWJGL.memGetFloat(ptr + 20);
+                vertex.x = MemoryUtil.memGetFloat(ptr);
+                vertex.y = MemoryUtil.memGetFloat(ptr + 4);
+                vertex.z = MemoryUtil.memGetFloat(ptr + 8);
+                vertex.color = MemoryUtil.memGetInt(ptr + 12);
+                vertex.u = MemoryUtil.memGetFloat(ptr + 16);
+                vertex.v = MemoryUtil.memGetFloat(ptr + 20);
                 uSum += vertex.u;
                 vSum += vertex.v;
-                vertex.light = LWJGL.memGetInt(ptr + 24);
+                vertex.light = MemoryUtil.memGetInt(ptr + 24);
                 ptr += vsize;
             }
             TextureAtlasSprite sprite = this.textureAtlas.celeritas$findFromUV(uSum * 0.25f, vSum * 0.25f);

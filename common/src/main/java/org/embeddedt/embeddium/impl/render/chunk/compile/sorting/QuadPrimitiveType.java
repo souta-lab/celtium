@@ -4,7 +4,7 @@ import org.embeddedt.embeddium.impl.render.chunk.sorting.PartitionTree;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.TranslucentSorter;
 import org.jetbrains.annotations.Nullable;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 
@@ -42,7 +42,7 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
         if(indexBuffer.capacity() < minimumRequiredBufferSize) {
             throw new IllegalStateException("Given index buffer has length " + indexBuffer.capacity() + " but we need " + minimumRequiredBufferSize);
         }
-        long ptr = LWJGL.memAddress(indexBuffer);
+        long ptr = MemoryUtil.memAddress(indexBuffer);
 
         if (this.triangulating) {
             for (int primitiveIndex = 0; primitiveIndex < numPrimitives; primitiveIndex++) {
@@ -58,21 +58,21 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
     private static void writeTriangulatedPrimitive(long ptr, int primitiveIndex, int quad) {
         long offset = ptr + (long) primitiveIndex * 24L;
         int vertexOffset = quad * VERTICES_PER_PRIMITIVE;
-        LWJGL.memPutInt(offset, vertexOffset);
-        LWJGL.memPutInt(offset + 4, vertexOffset + 1);
-        LWJGL.memPutInt(offset + 8, vertexOffset + 2);
-        LWJGL.memPutInt(offset + 12, vertexOffset + 2);
-        LWJGL.memPutInt(offset + 16, vertexOffset + 3);
-        LWJGL.memPutInt(offset + 20, vertexOffset);
+        MemoryUtil.memPutInt(offset, vertexOffset);
+        MemoryUtil.memPutInt(offset + 4, vertexOffset + 1);
+        MemoryUtil.memPutInt(offset + 8, vertexOffset + 2);
+        MemoryUtil.memPutInt(offset + 12, vertexOffset + 2);
+        MemoryUtil.memPutInt(offset + 16, vertexOffset + 3);
+        MemoryUtil.memPutInt(offset + 20, vertexOffset);
     }
 
     private static void writeDirectPrimitive(long ptr, int primitiveIndex, int quad) {
         long offset = ptr + (long) primitiveIndex * 16L;
         int vertexOffset = quad * VERTICES_PER_PRIMITIVE;
-        LWJGL.memPutInt(offset, vertexOffset);
-        LWJGL.memPutInt(offset + 4, vertexOffset + 1);
-        LWJGL.memPutInt(offset + 8, vertexOffset + 2);
-        LWJGL.memPutInt(offset + 12, vertexOffset + 3);
+        MemoryUtil.memPutInt(offset, vertexOffset);
+        MemoryUtil.memPutInt(offset + 4, vertexOffset + 1);
+        MemoryUtil.memPutInt(offset + 8, vertexOffset + 2);
+        MemoryUtil.memPutInt(offset + 12, vertexOffset + 3);
     }
 
     private void generateIndexBuffer(ByteBuffer indexBuffer, int[] primitiveMapping) {
@@ -80,7 +80,7 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
         if(indexBuffer.capacity() != bufferSize) {
             throw new IllegalStateException("Given index buffer has length " + indexBuffer.capacity() + " but we expected " + bufferSize);
         }
-        long ptr = LWJGL.memAddress(indexBuffer);
+        long ptr = MemoryUtil.memAddress(indexBuffer);
 
         if (this.triangulating) {
             for (int primitiveIndex = 0; primitiveIndex < primitiveMapping.length; primitiveIndex++) {
@@ -130,7 +130,7 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
                 throw new IllegalStateException(String.format("Mismatched SortState (%d) vs given quad count (%d)", tree.quadCount(), quadCount));
             }
 
-            var sink = new BufferSink(LWJGL.memAddress(indexBuffer));
+            var sink = new BufferSink(MemoryUtil.memAddress(indexBuffer));
             tree.order(x, y, z, sink);
 
             if (sink.primitiveIndex != quadCount) {

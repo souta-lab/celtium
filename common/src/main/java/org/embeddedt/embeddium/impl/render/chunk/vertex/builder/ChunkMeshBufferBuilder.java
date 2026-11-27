@@ -5,7 +5,7 @@ import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncode
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.TranslucentQuadRecorder;
 import org.jetbrains.annotations.Nullable;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 
 public class ChunkMeshBufferBuilder {
@@ -72,7 +72,7 @@ public class ChunkMeshBufferBuilder {
             this.grow(vertexSize);
         }
 
-        long ptr = LWJGL.memAddress(this.buffer, vertexStart);
+        long ptr = (MemoryUtil.memAddress(this.buffer) + vertexStart);
 
         if (this.analyzer != null) {
             for (ChunkVertexEncoder.Vertex vertex : vertices) {
@@ -137,7 +137,7 @@ public class ChunkMeshBufferBuilder {
         // Ensure we allocate at least initialCapacity bytes
         newCapacity = Math.max(newCapacity, this.initialCapacity);
 
-        this.buffer = LWJGL.memRealloc(this.buffer, newCapacity);
+        this.buffer = MemoryUtil.memRealloc(this.buffer, newCapacity);
         this.capacity = newCapacity;
     }
 
@@ -174,7 +174,7 @@ public class ChunkMeshBufferBuilder {
 
     public void destroy() {
         if (this.buffer != null) {
-            LWJGL.memFree(this.buffer);
+            MemoryUtil.memFree(this.buffer);
         }
 
         this.buffer = null;
@@ -192,7 +192,7 @@ public class ChunkMeshBufferBuilder {
             throw new IllegalStateException("No vertex data in buffer");
         }
 
-        return LWJGL.memSlice(this.buffer, 0, this.stride * this.count);
+        return MemoryUtil.memSlice(this.buffer, 0, this.stride * this.count);
     }
 
     public int count() {

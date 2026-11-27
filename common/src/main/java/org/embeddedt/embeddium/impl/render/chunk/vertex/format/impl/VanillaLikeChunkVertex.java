@@ -5,7 +5,7 @@ import org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.material.Material;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
+import org.lwjgl.system.MemoryUtil;
 
 /**
  * This vertex format is less performant and uses more VRAM than {@link CompactChunkVertex}, but should be completely
@@ -53,9 +53,9 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
     @Override
     public ChunkVertexEncoder createEncoder() {
         return (ptr, material, vertex, sectionIndex) -> {
-            LWJGL.memPutFloat(ptr + 0, vertex.x);
-            LWJGL.memPutFloat(ptr + 4, vertex.y);
-            LWJGL.memPutFloat(ptr + 8, vertex.z);
+            MemoryUtil.memPutFloat(ptr + 0, vertex.x);
+            MemoryUtil.memPutFloat(ptr + 4, vertex.y);
+            MemoryUtil.memPutFloat(ptr + 8, vertex.z);
             if (LIGHT_DIAGNOSTICS) {
                 // The int is Minecraft's 0xAABBGGRR packing, so in little-endian memory the bytes are R,G,B,A - which is
                 // exactly what VK_FORMAT_R8G8B8A8_UNORM reads. Decoding it the other way round labels A as "r" and R as "a",
@@ -80,17 +80,17 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
                     System.out.println(text);
                 }
             }
-            LWJGL.memPutInt(ptr + 12, vertex.color);
-            LWJGL.memPutFloat(ptr + 16, encodeTexture(vertex.u));
-            LWJGL.memPutFloat(ptr + 20, encodeTexture(vertex.v));
+            MemoryUtil.memPutInt(ptr + 12, vertex.color);
+            MemoryUtil.memPutFloat(ptr + 16, encodeTexture(vertex.u));
+            MemoryUtil.memPutFloat(ptr + 20, encodeTexture(vertex.v));
             if (LIGHT_DIAGNOSTICS && lightSamplesPrinted < 8) {
                 lightSamplesPrinted++;
                 System.out.println("[Celtium] CELTIUM_VERTEX_LIGHT format=vanillalike raw=" + vertex.light
                         + " block=" + (vertex.light & 0xFF) + " sky=" + ((vertex.light >> 16) & 0xFF)
                         + " encoded=" + encodeLight(vertex.light));
             }
-            LWJGL.memPutInt(ptr + 24, (encodeDrawParameters(material, sectionIndex) << 0) | (encodeLight(vertex.light) << 16));
-            LWJGL.memPutInt(ptr + 28, vertex.rdhFactor);
+            MemoryUtil.memPutInt(ptr + 24, (encodeDrawParameters(material, sectionIndex) << 0) | (encodeLight(vertex.light) << 16));
+            MemoryUtil.memPutInt(ptr + 28, vertex.rdhFactor);
 
             return ptr + STRIDE;
         };

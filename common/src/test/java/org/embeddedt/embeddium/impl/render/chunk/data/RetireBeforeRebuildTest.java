@@ -1,5 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.data;
 
+import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.QuadPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage.BatchCacheParams;
@@ -7,29 +8,28 @@ import org.embeddedt.embeddium.impl.render.chunk.multidraw.CachedBatch;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.taumc.celeritas.lwjgl.FakeGlLWJGLService;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 
 /**
  * The retire-before-rebuild ordering at the storage the renderers actually call, run without a GL context
- * through {@link FakeGlLWJGLService} (item 398). This is the shape of upstream's
- * {@code BatchBufferRecyclingTest}: upstream drove {@code DefaultChunkRenderer.getRegionBatch} and read
- * the fake's buffer log to prove a rebuilt batch reuses the retired batch's GL buffer name. Celtium takes
- * the harness and the ordering, not the recycling - its batches own no GL buffer - so what is proved here
- * is the ordering itself (the stale batch is already deleted when the replacement is created, and the
- * replacement is stored under the same key), plus the premise of the refusal: creating and deleting a
- * batch through the fake records no GL buffer calls at all.
+ * (item 398). This is the shape of upstream's {@code BatchBufferRecyclingTest}: upstream drove
+ * {@code DefaultChunkRenderer.getRegionBatch} and read a fake GL service's buffer log to prove a rebuilt
+ * batch reuses the retired batch's GL buffer name. Celtium takes the harness and the ordering, not the
+ * recycling - its batches own no GL buffer - so what is proved here is the ordering itself (the stale batch
+ * is already deleted when the replacement is created, and the replacement is stored under the same key),
+ * plus the premise of the refusal: creating and deleting a batch records no GL buffer calls at all, because
+ * the batch's storage is plain CPU memory.
  * <p>
- * The storage can only be constructed in a test at all because the harness exists: its heap is allocated
- * through the LWJGL service ({@code SectionRenderDataUnsafe}), which the fake serves from Unsafe memory.
+ * The storage can only be constructed in a test at all because its heap is allocated through
+ * {@code org.lwjgl.system.MemoryUtil} ({@code SectionRenderDataUnsafe}), which serves native memory with
+ * no GL context and no service layer in between.
  */
 class RetireBeforeRebuildTest {
     private static final BatchCacheParams PARAMS =
@@ -58,7 +58,6 @@ class RetireBeforeRebuildTest {
 
     @BeforeEach
     void setUp() {
-        FakeGlLWJGLService.reset();
         this.storage = new SectionRenderDataStorage(QuadPrimitiveType.TRIANGULATED, false, 1);
     }
 
@@ -68,11 +67,20 @@ class RetireBeforeRebuildTest {
     }
 
     @Test
-    void theTestLwjglServiceIsTheFake() {
-        // Guards the harness wiring itself: if the -Dceleritas.lwjglService property or the lwjglCommon
-        // test classpath entry is lost, the storage above cannot be built and every test here fails in
-        // setUp - this assertion names the reason instead of leaving a class-loading stack trace.
-        assertEquals("FakeGlLWJGLService", LWJGL.toString());
+    void nativeBufferRoundTripsWithoutAGlContext() {
+        // Guards the harness premise itself: if the MemoryUtil memory seat the storage heap and the
+        // native buffers are built on stopped working without a GL context, every test here would fail
+        // in setUp - this assertion names the reason instead of leaving an allocation stack trace.
+        ByteBuffer src = ByteBuffer.allocateDirect(4);
+        src.putInt(0, 0x11223344);
+
+        NativeBuffer buffer = NativeBuffer.copy(src);
+        try {
+            assertEquals(4, buffer.getLength());
+            assertEquals(0x11223344, buffer.getDirectBuffer().getInt(0));
+        } finally {
+            buffer.free();
+        }
     }
 
     @Test
@@ -107,11 +115,13 @@ class RetireBeforeRebuildTest {
     }
 
     @Test
-    void aBatchCreatedThroughTheFakeOwnsNoGlBuffer() {
+    void aBatchCreatedDirectlyOwnsNoGlBuffer() {
         // DirectMultiDrawBatch is the default batch factory's product: its commands live in CPU memory
-        // served by the LWJGL service, its upload is a no-op, and deleting it frees memory only. No GL
-        // buffer name is ever generated - which is why upstream's buffer recycling has nothing to recycle
-        // in celtium, and only its ordering and harness were taken (item 337 audit, item 398).
+        // served by MemoryUtil, its upload is a no-op, and deleting it frees memory only. No GL buffer
+        // name is ever generated - which is why upstream's buffer recycling has nothing to recycle
+        // in celtium, and only its ordering and harness were taken (item 337 audit, item 398). Where the
+        // harness once proved this from a fake service's call log, it is now structural: the batch class
+        // issues no GL calls at all, so the cycle below runs with no GL context present.
         DirectMultiDrawBatch batch = new DirectMultiDrawBatch(4);
         batch.appendDrawCommand(0, 6, 0L);
         batch.mergeIntoLastCommand(6);
@@ -119,8 +129,5 @@ class RetireBeforeRebuildTest {
         assertEquals(12, batch.getIndexBufferSize());
         batch.upload(null);
         batch.delete();
-
-        assertTrue(FakeGlLWJGLService.LOG.isEmpty(),
-                "no GL buffer calls expected, got: " + FakeGlLWJGLService.LOG);
     }
 }
