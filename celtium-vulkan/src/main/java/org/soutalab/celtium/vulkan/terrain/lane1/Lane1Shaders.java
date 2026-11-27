@@ -267,6 +267,9 @@ public final class Lane1Shaders {
                 if (texel.a < fog.alphaCutoff) discard;
                 vec3 light = texture(lightMap, fragLightMap).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
+                // TEMP G1 BISECT: left half shows the light value, right half the raw texel.
+                if (gl_FragCoord.x < 640.0) { outColor = vec4(light, 1.0); return; }
+                outColor = vec4(texel.rgb, 1.0); return;
                 if (fog.fogMode != 0) {
                     float dist = length(fragWorldPos - fog.fogCameraPos);
                     float factor;
