@@ -173,11 +173,16 @@ dependencies {
 
 // Release 21, not Java 8 with newer syntax: the mod runs on Cleanroom only, whose JVM is 21+, and the Vulkan module it
 // embeds was already release 21. The Java 8 API ceiling only cost the code the platform's own library.
+// Since the v0.4.0 S1-a stage the embedded :celtium-vulkan jar is release 25 (class file 69), which a
+// 21 compiler's class reader refuses outright ("wrong version 69.0, should be 65.0") - so the compiler
+// is the 25 toolchain while options.release stays 21: a 25 javac under --release 21 still emits 65
+// bytecode against the 21 API ceiling and reads the 69 classes on the classpath (measured on the
+// agera gate). The output contract of this module does not move; only the reader widened.
 tasks.named<JavaCompile>("compileJava") {
     options.release = 21
 
     javaCompiler = javaToolchains.compilerFor {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
@@ -313,7 +318,8 @@ dependencies {
 }
 tasks.named<JavaCompile>(validation.compileJavaTaskName) {
     options.release = 21
-    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+    // 25 compiler for the same reason as compileJava above: the classpath carries release-25 classes.
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
 }
 val validationJar = tasks.register<Jar>("validationJar") {
     from(validation.output)
@@ -363,16 +369,17 @@ dependencies {
 tasks.named<JavaCompile>("compileTestJava") {
     options.release = 21
     javaCompiler = javaToolchains.compilerFor {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 // The test classes are release 21 like the main ones, but a Test task launches on the
 // project toolchain (Java 8, kept for RFG) unless told otherwise - an 8 JVM cannot load
-// class file 65.0 and the suite dies before running a single test. Launch the tests on
-// the same 21 the compiler targets, the way the compile tasks above already pin it.
+// class file 65.0 and the suite dies before running a single test. The launcher is 25
+// since S1-a: the suite's classpath reaches the release-25 :celtium-vulkan classes
+// through the main source set, and a 21 JVM cannot load class file 69 either.
 tasks.named<Test>("test") {
     javaLauncher.set(javaToolchains.launcherFor {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     })
 }
 tasks.withType<Test>().configureEach {
