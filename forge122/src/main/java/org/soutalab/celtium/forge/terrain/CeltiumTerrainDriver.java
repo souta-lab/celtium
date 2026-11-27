@@ -69,6 +69,11 @@ public final class CeltiumTerrainDriver {
     private final Set<Long> dirty = new HashSet<>();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
     private final Set<Long> awaitingLight = new HashSet<>();
+    // TEMP G1 PROBE6 counters.
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_AXIS_TOTAL =
+            new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DRAIN_AXIS_DARK =
+            new java.util.concurrent.atomic.AtomicLong();
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -219,6 +224,8 @@ public final class CeltiumTerrainDriver {
                 lines.add("lightProbe failed: " + t);
             }
         }
+        lines.add("drainCensus axisTotal=" + DRAIN_AXIS_TOTAL.get()
+                + " axisDark=" + DRAIN_AXIS_DARK.get());
         lines.add("fillCensus total=" + ForgeSectionScanner.FILLS_TOTAL.get()
                 + " centerUnpopulated=" + ForgeSectionScanner.FILLS_CENTER_UNPOPULATED.get());
         lines.add("driver resident=" + resident.size() + " present=" + present.size()
@@ -518,6 +525,16 @@ public final class CeltiumTerrainDriver {
             MeshBuffers buffers = future.getNow(null);
             if (buffers == null) {
                 continue;
+            }
+            // TEMP G1 PROBE6: census of the geometry as it arrives at drain time.
+            for (int layer = 0; layer < 3; layer++) {
+                for (org.soutalab.celtium.core.geometry.PackedAxisQuad q
+                        : buffers.axisLayerList(layer)) {
+                    DRAIN_AXIS_TOTAL.incrementAndGet();
+                    if (q.skyLight() == 0 && q.blockLight() == 0) {
+                        DRAIN_AXIS_DARK.incrementAndGet();
+                    }
+                }
             }
             long k = entry.getKey();
             try {

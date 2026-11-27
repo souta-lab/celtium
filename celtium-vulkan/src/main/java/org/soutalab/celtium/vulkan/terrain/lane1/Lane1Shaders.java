@@ -267,13 +267,6 @@ public final class Lane1Shaders {
             void main() {
                 // Per-block tiling: the cell selects the sprite, the face-local coordinate wraps
                 // inside it (a greedy-merged face repeats its sprite once per block).
-                // TEMP G1 BISECT19: R = slot parity, G = sky, B = (slot/2) parity.
-                {
-                    vec2 lm = clamp(fragLightMap, 0.0, 1.0);
-                    outColor = vec4(float(fragSection & 255) / 255.0, lm.y,
-                            float((fragSection >> 8) & 255) / 255.0, 1.0);
-                    return;
-                }
                 vec2 uv = (fragCell + fract(fragLocalUv)) / max(fog.atlasCellsAcross, 1.0);
                 // The texture mirrors are stored row-flipped against the GL UV convention
                 // (measured at Gate G1: unflipped samples read the mirrored rows for both
