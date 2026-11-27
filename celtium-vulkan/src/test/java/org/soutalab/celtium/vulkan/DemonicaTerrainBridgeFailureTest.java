@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import net.coderbot.iris.shadows.ShadowRenderingState;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkMeshFormats;
+import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.junit.jupiter.api.AfterEach;
@@ -58,7 +58,7 @@ class DemonicaTerrainBridgeFailureTest {
                     @Override public void clear() { }
                 })
                 .vertexType(ChunkMeshFormats.COMPACT)
-                .primitiveType(org.embeddedt.embeddium.impl.render.chunk.QuadPrimitiveType.TRIANGULATED)
+                .primitiveType(org.embeddedt.embeddium.impl.render.chunk.compile.sorting.QuadPrimitiveType.TRIANGULATED)
                 .build();
     }
 
