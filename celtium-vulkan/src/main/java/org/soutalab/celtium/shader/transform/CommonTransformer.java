@@ -99,8 +99,7 @@ public class CommonTransformer {
 			distances[plane] = "dot(actinium_ClipPlane[" + plane + "], _cp_ep)";
 		}
 		StringBuilder clip = new StringBuilder("{ vec4 _cp_ep = iris_ModelViewMatrix * iris_Vertex; ");
-		clip.append("// native gl_ClipDistance
-");
+		clip.append("// native gl_ClipDistance\n");
 		return clip.append('}').toString();
 	}
 

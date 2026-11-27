@@ -108,7 +108,10 @@ class AttributeTransformer {
 					init.append(" iris_MultiTexCoord1 = vec4(iris_InstLightmap, 0.0, 1.0);");
 					assignMidTexCoord(transformer, init, "vec4((iris_InstUv.x + iris_InstUv.z) * 0.5, (iris_InstUv.y + iris_InstUv.w) * 0.5, 0.0, 1.0)");
 				} else if (weatherVertex) {
-					init.append("";
+					// The weather prologue is not emitted yet: what iris_WeatherParams0..3 carry is
+					// defined by the executor's weather feed (S5-b), and inventing the semantics here
+					// would fix a contract the feed does not know. The declared inputs and the mutable
+					// attribute globals are already in place (CoreTransformHelper#injectWeatherInputs).
 					assignMidTexCoord(transformer, init, "vec4(0.5, 0.5, 0.0, 1.0)");
 				} else {
 					init.append("iris_ModelViewMatrix = ").append("mat4(1.0)").append(';');
