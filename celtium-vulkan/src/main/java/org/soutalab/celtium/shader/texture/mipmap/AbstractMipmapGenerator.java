@@ -1,16 +1,16 @@
 package org.soutalab.celtium.shader.texture.mipmap;
 
-import com.gtnewhorizons.angelica.compat.mojang.NativeImage;
+
 
 public abstract class AbstractMipmapGenerator implements CustomMipmapGenerator {
 	@Override
-	public NativeImage[] generateMipLevels(NativeImage image, int mipLevel) {
-		NativeImage[] images = new NativeImage[mipLevel + 1];
+	public PixelImage[] generateMipLevels(PixelImage image, int mipLevel) {
+		PixelImage[] images = new PixelImage[mipLevel + 1];
 		images[0] = image;
 		if (mipLevel > 0) {
 			for (int level = 1; level <= mipLevel; ++level) {
-				NativeImage prevMipmap = images[level - 1];
-				NativeImage mipmap = new NativeImage(prevMipmap.getWidth() >> 1, prevMipmap.getHeight() >> 1, false);
+				PixelImage prevMipmap = images[level - 1];
+				PixelImage mipmap = new PixelImage(prevMipmap.getWidth() >> 1, prevMipmap.getHeight() >> 1, false);
 				int width = mipmap.getWidth();
 				int height = mipmap.getHeight();
 				for (int x = 0; x < width; ++x) {

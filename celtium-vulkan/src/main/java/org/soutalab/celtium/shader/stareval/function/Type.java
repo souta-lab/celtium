@@ -3,8 +3,8 @@ package org.soutalab.celtium.shader.stareval.function;
 import org.soutalab.celtium.shader.stareval.expression.ConstantExpression;
 import org.soutalab.celtium.shader.stareval.function.TypedFunction.Parameter;
 import org.soutalab.celtium.shader.model.UniformType;
-import net.coderbot.iris.parsing.MatrixType;
-import net.coderbot.iris.parsing.VectorType;
+import org.soutalab.celtium.shader.parsing.MatrixType;
+import org.soutalab.celtium.shader.parsing.VectorType;
 
 public abstract class Type {
 	public static final Boolean Boolean = new Boolean();

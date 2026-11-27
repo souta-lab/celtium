@@ -1,5 +1,5 @@
 package org.soutalab.celtium.shader.texture.mipmap;
-import com.gtnewhorizons.angelica.compat.mojang.NativeImage;
+
 
 public class ChannelMipmapGenerator extends AbstractMipmapGenerator {
 	protected final BlendFunction redFunc;
@@ -16,11 +16,11 @@ public class ChannelMipmapGenerator extends AbstractMipmapGenerator {
 
 	@Override
 	public int blend(int c0, int c1, int c2, int c3) {
-		return NativeImage.combine(
-				alphaFunc.blend(NativeImage.getA(c0), NativeImage.getA(c1), NativeImage.getA(c2), NativeImage.getA(c3)),
-				blueFunc.blend(NativeImage.getB(c0), NativeImage.getB(c1), NativeImage.getB(c2), NativeImage.getB(c3)),
-				greenFunc.blend(NativeImage.getG(c0), NativeImage.getG(c1), NativeImage.getG(c2), NativeImage.getG(c3)),
-				redFunc.blend(NativeImage.getR(c0), NativeImage.getR(c1), NativeImage.getR(c2), NativeImage.getR(c3))
+		return PixelImage.combine(
+				alphaFunc.blend(PixelImage.getA(c0), PixelImage.getA(c1), PixelImage.getA(c2), PixelImage.getA(c3)),
+				blueFunc.blend(PixelImage.getB(c0), PixelImage.getB(c1), PixelImage.getB(c2), PixelImage.getB(c3)),
+				greenFunc.blend(PixelImage.getG(c0), PixelImage.getG(c1), PixelImage.getG(c2), PixelImage.getG(c3)),
+				redFunc.blend(PixelImage.getR(c0), PixelImage.getR(c1), PixelImage.getR(c2), PixelImage.getR(c3))
 		);
 	}
 

@@ -3,7 +3,6 @@ package org.soutalab.celtium.shader.shaderpack;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
 import org.soutalab.celtium.shader.model.AlphaTestOverride;
 import org.soutalab.celtium.shader.model.BlendModeOverride;
 import org.soutalab.celtium.shader.model.BufferBlendInformation;

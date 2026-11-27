@@ -1,6 +1,6 @@
 package org.soutalab.celtium.shader.parsing;
 
-import net.coderbot.iris.uniforms.SystemTimeUniforms;
+import org.soutalab.celtium.shader.uniforms.SystemTimeUniforms;
 
 /**
  * An implementation of basic exponential smoothing that converts a sequence of unsmoothed values into a sequence of

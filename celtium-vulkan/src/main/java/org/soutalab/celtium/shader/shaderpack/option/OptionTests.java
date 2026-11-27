@@ -1,7 +1,6 @@
 package org.soutalab.celtium.shader.shaderpack.option;
 
 import com.google.common.collect.ImmutableList;
-import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,6 +8,14 @@ import java.nio.file.Paths;
 import java.util.List;
 
 public class OptionTests {
+	private static String leftPad(String text, int size) {
+		return text.length() >= size ? text : " ".repeat(size - text.length()) + text;
+	}
+
+	private static String rightPad(String text, int size) {
+		return text.length() >= size ? text : text + " ".repeat(size - text.length());
+	}
+
 	public static void main(String[] args) throws IOException  {
 		List<String> lines = Files.readAllLines(Paths.get("run/shaderpacks/Sildurs Vibrant Shaders v1.29 Medium/shaders/shaders.settings"));
 
@@ -27,9 +34,9 @@ public class OptionTests {
 			String type = option.getType() == OptionType.CONST ? " Const" : "Define";
 
 			System.out.println(
-					"[" + StringUtils.leftPad(Integer.toString(index + 1), 4, ' ') + "] " + type + " | " +
-							StringUtils.rightPad(option.getName(), 32, ' ') + " | " +
-							StringUtils.leftPad(Boolean.toString(option.getDefaultValue()), 5, ' ') +
+					"[" + leftPad(Integer.toString(index + 1), 4) + "] " + type + " | " +
+							rightPad(option.getName(), 32) + " | " +
+							leftPad(Boolean.toString(option.getDefaultValue()), 5) +
 							" | " + option.getComment().orElse(""));
 		});
 
@@ -47,9 +54,9 @@ public class OptionTests {
 			String type = option.getType() == OptionType.CONST ? " Const" : "Define";
 
 			System.out.println(
-					"[" + StringUtils.leftPad(Integer.toString(index + 1), 4, ' ') + "] | " + type + " | " +
-							StringUtils.rightPad(option.getName(), 32, ' ') + " | " +
-							StringUtils.leftPad(option.getDefaultValue(), 8, ' ') +
+					"[" + leftPad(Integer.toString(index + 1), 4) + "] | " + type + " | " +
+							rightPad(option.getName(), 32) + " | " +
+							leftPad(option.getDefaultValue(), 8) +
 							" | " + option.getAllowedValues());
 			System.out.println("       " + option.getComment().orElse("(no comment)"));
 		});
@@ -57,7 +64,7 @@ public class OptionTests {
 		System.out.println("Diagnostics:");
 		source.getDiagnostics().forEach((index, diagnostic) -> {
 			System.out.println(
-					"[" + StringUtils.leftPad(Integer.toString(index + 1), 4, ' ') + "] " +
+					"[" + leftPad(Integer.toString(index + 1), 4) + "] " +
 					diagnostic);
 		});
 

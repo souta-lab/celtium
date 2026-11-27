@@ -1,6 +1,6 @@
 package org.soutalab.celtium.shader.parsing;
 
-import kroppeb.stareval.function.Type;
+import org.soutalab.celtium.shader.stareval.function.Type;
 import org.joml.Matrix2f;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;

@@ -1,7 +1,6 @@
 package org.soutalab.celtium.shader.shaderpack.materialmap;
 
 import org.soutalab.celtium.shader.ShaderLogger;
-import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -209,7 +208,7 @@ public final class PropertiesTokenizer {
 	}
 
 	private static boolean startsWithNumeric(String segment) {
-		return !segment.isEmpty() && StringUtils.isNumeric(segment.substring(0, 1));
+		return !segment.isEmpty() && Character.isDigit(segment.charAt(0));
 	}
 
 	private static ParsedBlockIdentifier splitBaseEntry(String entry, String baseEntry, Map<String, NbtValue> nbtProperties) {

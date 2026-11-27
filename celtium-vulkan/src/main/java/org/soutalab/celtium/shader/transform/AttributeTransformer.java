@@ -1,6 +1,6 @@
 package org.soutalab.celtium.shader.transform;
 
-import org.soutalab.celtium.shader.model.ProgramCreator;
+
 import org.soutalab.celtium.shader.model.ShaderType;
 import org.soutalab.celtium.shader.transform.parameter.AttributeParameters;
 import org.taumc.glsl.Transformer;
@@ -142,7 +142,7 @@ class AttributeTransformer {
 				throw new IllegalStateException("Unsupported at_tangent type token " + tangentType + " for the cube instanced variant");
 			}
 			transformer.removeVariable("at_tangent");
-			transformer.injectVariable("layout(location = " + ProgramCreator.AT_TANGENT + ") in vec4 iris_CubeTangent;");
+			transformer.injectVariable("layout(location = " + GlslTransformHelpers.LOC_TANGENT + ") in vec4 iris_CubeTangent;");
 			transformer.injectVariable(name + " at_tangent;");
 			init.append(" at_tangent = (iris_CubeTangent * (1.0 - 2.0 * iris_cubeMirror))").append(swizzle(tangentType)).append(';');
 		}

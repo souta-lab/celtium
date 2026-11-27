@@ -1,8 +1,8 @@
 package org.soutalab.celtium.shader.parsing;
 
-import kroppeb.stareval.parser.BinaryOp;
-import kroppeb.stareval.parser.ParserOptions;
-import kroppeb.stareval.parser.UnaryOp;
+import org.soutalab.celtium.shader.stareval.parser.BinaryOp;
+import org.soutalab.celtium.shader.stareval.parser.ParserOptions;
+import org.soutalab.celtium.shader.stareval.parser.UnaryOp;
 
 public class IrisOptions {
 	public static final ParserOptions options;

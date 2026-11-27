@@ -1,11 +1,11 @@
 package org.soutalab.celtium.shader.parsing;
 
-import kroppeb.stareval.Util;
-import kroppeb.stareval.expression.Expression;
-import kroppeb.stareval.function.AbstractTypedFunction;
-import kroppeb.stareval.function.FunctionContext;
-import kroppeb.stareval.function.FunctionReturn;
-import kroppeb.stareval.function.Type;
+import org.soutalab.celtium.shader.stareval.Util;
+import org.soutalab.celtium.shader.stareval.expression.Expression;
+import org.soutalab.celtium.shader.stareval.function.AbstractTypedFunction;
+import org.soutalab.celtium.shader.stareval.function.FunctionContext;
+import org.soutalab.celtium.shader.stareval.function.FunctionReturn;
+import org.soutalab.celtium.shader.stareval.function.Type;
 
 import java.util.Arrays;
 

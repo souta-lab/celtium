@@ -1,7 +1,5 @@
 package org.soutalab.celtium.shader.shaderpack;
 
-import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
-import it.unimi.dsi.fastutil.floats.FloatConsumer;
 import org.soutalab.celtium.shader.ShaderLogger;
 import org.soutalab.celtium.shader.ShaderLogger;
 import org.joml.Vector2f;

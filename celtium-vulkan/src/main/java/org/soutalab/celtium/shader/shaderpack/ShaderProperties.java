@@ -1,7 +1,6 @@
 package org.soutalab.celtium.shader.shaderpack;
 
 import org.soutalab.celtium.shader.model.GlBlendState;
-import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2BooleanMap;

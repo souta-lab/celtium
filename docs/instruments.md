@@ -335,7 +335,7 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.shader.debug` | `Boolean.getBoolean` | [ShaderLogger.java:14](<../celtium-vulkan/src/main/java/org/soutalab/celtium/shader/ShaderLogger.java#L14>) |
-| `celtium.shader.dumpPropertiesDir` | `System.getProperty` | [ShaderProperties.java:133](<../celtium-vulkan/src/main/java/org/soutalab/celtium/shader/shaderpack/ShaderProperties.java#L133>) |
+| `celtium.shader.dumpPropertiesDir` | `System.getProperty` | [ShaderProperties.java:132](<../celtium-vulkan/src/main/java/org/soutalab/celtium/shader/shaderpack/ShaderProperties.java#L132>) |
 
 <a id="group-celtium-shaderc"></a>
 ## `celtium.shaderc.*`

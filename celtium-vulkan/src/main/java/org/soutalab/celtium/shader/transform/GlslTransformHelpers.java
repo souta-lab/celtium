@@ -29,6 +29,7 @@ public final class GlslTransformHelpers {
     public static final int LOC_LIGHTMAP_UV = 3;
     public static final int LOC_NORMAL = 4;
     public static final int LOC_ENTITY_IDS = 10;
+    public static final int LOC_TANGENT = 13;
 
     /** Legacy GLSL 120 texture lookup functions -> GLSL 330+ core names. */
     public static final Map<String, String> TEXTURE_RENAMES = Map.ofEntries(

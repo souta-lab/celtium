@@ -1,6 +1,5 @@
 package org.soutalab.celtium.shader.shaderpack.error;
 
-import org.apache.commons.lang3.StringUtils;
 
 public class RusticError {
 	private final String severity;
@@ -49,7 +48,7 @@ public class RusticError {
 			+ " --> " + file + ":" + lineNumber + "\n"
 			+ "  |\n"
 			+ "  | " + badLine + "\n"
-			+ "  | " + StringUtils.repeat('^', badLine.length()) + " " + detailMessage + "\n"
+			+ "  | " + "^".repeat(badLine.length()) + " " + detailMessage + "\n"
 			+ "  |";
 	}
 }
