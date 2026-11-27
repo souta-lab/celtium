@@ -161,6 +161,27 @@ public final class CeltiumTerrainDriver {
                 lines.add("lightProbe section=" + sx + "," + sy + "," + sz
                         + " sky15=" + sky15 + " skyMid=" + skyMid + " sky0=" + sky0
                         + " blockPos=" + blockPos + " nonAir=" + nonAir);
+                // TEMP G1 PROBE3: mesh the same snapshot here and count the emitted light.
+                MeshBuffers buffers = new MeshBuffers();
+                new SectionMesher().mesh(snap, faceData, MesherOptions.PACK_OFF, buffers);
+                StringBuilder meshProbe = new StringBuilder("meshProbe");
+                for (int layer = 0; layer < 3; layer++) {
+                    java.util.List<org.soutalab.celtium.core.geometry.PackedAxisQuad> quads =
+                            buffers.axisLayerList(layer);
+                    int qSky15 = 0, qSky0 = 0;
+                    for (org.soutalab.celtium.core.geometry.PackedAxisQuad q : quads) {
+                        if (q.skyLight() >= 15) { qSky15++; } else if (q.skyLight() == 0) { qSky0++; }
+                    }
+                    meshProbe.append(" L").append(layer).append(": n=").append(quads.size())
+                            .append(" sky15=").append(qSky15).append(" sky0=").append(qSky0);
+                    if (!quads.isEmpty()) {
+                        org.soutalab.celtium.core.geometry.PackedAxisQuad q0 = quads.get(0);
+                        meshProbe.append(" first=[cell ").append(q0.cellU()).append(',')
+                                .append(q0.cellV()).append(" sky ").append(q0.skyLight())
+                                .append(" block ").append(q0.blockLight()).append(']');
+                    }
+                }
+                lines.add(meshProbe.toString());
             } catch (Throwable t) {
                 lines.add("lightProbe failed: " + t);
             }
