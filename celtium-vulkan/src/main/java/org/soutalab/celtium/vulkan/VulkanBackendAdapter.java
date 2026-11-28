@@ -397,11 +397,19 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
             // consume (the CPU visible-set scan is the fallback the frontend keeps when the
             // dispatch does not arm). Bracketed by the stage's G0 timestamp pair (G2-30).
             this.lane1CullDispatchedFrame = this.frameCoordinator.frameId;
-            int cullSlot = this.funnel.celtium$beginNamedPassTimestamp();
+            // K3's barrier term (G2-31): the frontend's barrier-bearing recording under one
+            // name - this seat's cull preparation and the HiZ seat's transitions file spans
+            // under the same name, and the readback sums a name's slots into its frame total.
+            int barrierSlot = this.funnel.celtium$beginNamedPassTimestamp();
             try {
-                frontend.recordCullDispatch(this.frameCoordinator.commandBuffer, this.frameCoordinator.frameSlot);
+                int cullSlot = this.funnel.celtium$beginNamedPassTimestamp();
+                try {
+                    frontend.recordCullDispatch(this.frameCoordinator.commandBuffer, this.frameCoordinator.frameSlot);
+                } finally {
+                    this.funnel.celtium$closeNamedPassTimestamp(cullSlot, "S1_cull_lightgrid");
+                }
             } finally {
-                this.funnel.celtium$closeNamedPassTimestamp(cullSlot, "S1_cull_lightgrid");
+                this.funnel.celtium$closeNamedPassTimestamp(barrierSlot, "lane1_barriers");
             }
         }
         this.funnel.celtium$preflushBeforeTerrain();

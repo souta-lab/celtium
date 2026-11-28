@@ -587,6 +587,7 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
                     VK10.VK_ACCESS_SHADER_READ_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT);
             VK10.vkCmdPipelineBarrier(commandBuffer, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, null, reset, null);
+            org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
 
             HiZImage source = pyramid != null && pyramid.built ? pyramid : dummyDepth;
             source.toGeneral(commandBuffer, stack);
@@ -626,6 +627,7 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
                     VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
             VK10.vkCmdPipelineBarrier(commandBuffer, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, null, ready, null);
+            org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
         }
         indirectCommandBuffer = commandBuffer.address();
         indirectSlot = slot;
@@ -732,6 +734,7 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
                 .srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
         barrier.subresourceRange().set(aspect, 0, levels, 0, 1);
         VK10.vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, null, null, barriers);
+        org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
     }
 
     private void ensureCullResources(int slot) {

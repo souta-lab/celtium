@@ -1665,11 +1665,18 @@ public void setLastFrameReachedQueue(boolean reached) {
                 || this.owner.lane1 == null) {
             return;
         }
-        int slot = this.funnel.celtium$beginNamedPassTimestamp();
+        // K3's barrier term (G2-31): the HiZ transitions file under the same name as the
+        // cull seat's span; the readback sums a name's slots into its frame total.
+        int barrierSlot = this.funnel.celtium$beginNamedPassTimestamp();
         try {
-            this.owner.lane1.recordHiZBuild(this.commandBuffer, this.funnel.frameTarget, this.frameSlot);
+            int slot = this.funnel.celtium$beginNamedPassTimestamp();
+            try {
+                this.owner.lane1.recordHiZBuild(this.commandBuffer, this.funnel.frameTarget, this.frameSlot);
+            } finally {
+                this.funnel.celtium$closeNamedPassTimestamp(slot, "S3_hiz");
+            }
         } finally {
-            this.funnel.celtium$closeNamedPassTimestamp(slot, "S3_hiz");
+            this.funnel.celtium$closeNamedPassTimestamp(barrierSlot, "lane1_barriers");
         }
     }
 

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -14,6 +15,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * a changed byte changes the value - it is an internal change detector, nothing more).
  */
 class CeltiumTerrainDriverTest {
+
+    @Test
+    void setupStatsDrainLineReportsTheWindowAndResets() {
+        CeltiumTerrainDriver.SetupStats stats = new CeltiumTerrainDriver.SetupStats();
+        assertNull(stats.drainLine(0L, 0L), "no frames counted: no line");
+        stats.noteFrame(true, 3, 2, 1, 10, 4);
+        stats.noteFrame(false, 5, 1, 0, 20, 6);
+        stats.noteMarkArea(7);
+        stats.noteMarkArea(0);
+        stats.noteTerrainUpdateAll();
+        String line = stats.drainLine(11L, 2_500_000L);
+        assertTrue(line.contains("frames=2"), line);
+        assertTrue(line.contains("tickFrames=1"), line);
+        assertTrue(line.contains("snapshots=8"), line);
+        assertTrue(line.contains("snapshotsMax=5"), line);
+        assertTrue(line.contains("dirtyAvg=15"), line);
+        assertTrue(line.contains("dirtyMax=20"), line);
+        assertTrue(line.contains("pendingAvg=5"), line);
+        assertTrue(line.contains("uploads=3"), line);
+        assertTrue(line.contains("uploadsMax=2"), line);
+        assertTrue(line.contains("refusedUploads=1"), line);
+        assertTrue(line.contains("markAreaCalls=2"), line);
+        assertTrue(line.contains("markAreaAdded=7"), line);
+        assertTrue(line.contains("terrainUpdateAllCalls=1"), line);
+        assertTrue(line.contains("tintCells=11"), line);
+        assertTrue(line.contains("tintMs=2.500"), line);
+        assertNull(stats.drainLine(0L, 0L), "the drain reset the window");
+    }
 
     @Test
     void tickGateAdvancesOnlyWhenTheWorldTimeChanges() {

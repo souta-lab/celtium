@@ -302,6 +302,7 @@ public final class FramePassTimings {
     private static final long[] currentTopLevel = new long[TOP_LEVEL.length];
     private static final long[] currentInside = new long[INSIDE.length];
     private static long lastReportedFrames;
+    private static long reportWindows;
 
     /**
      * The thread the bracket tables belong to: the one that opens the frame and tick contexts (the client
@@ -350,6 +351,21 @@ public final class FramePassTimings {
      * no-switch behaviour.
      */
     private static volatile boolean PASS_SPLIT_ENABLED;
+
+    /** {@return whether the pass split itself is on} (the harness's {@code passSplit}). */
+    public static boolean passSplitEnabled() {
+        return PASS_SPLIT_ENABLED;
+    }
+
+    /**
+     * {@return how many 200-frame report windows {@link #maybeReport()} has closed so far}.
+     * Windowed companions that print on this cadence (the Lane 1 setup statistics) poll this
+     * count and drain their own accumulators when it moves, which keeps their line beside
+     * the split's line for the same window without a second timer.
+     */
+    public static long reportWindows() {
+        return reportWindows;
+    }
 
     /** {@return whether the instrument should measure at all}. */
     public static boolean enabled() {
@@ -887,6 +903,7 @@ public final class FramePassTimings {
         if (written < 200 || written - lastReportedFrames < 200) return;
         long windowFrames = written - lastReportedFrames;
         lastReportedFrames = written;
+        reportWindows++;
         System.out.println("[Celtium] CELTIUM_FRAME_PASS_SPLIT " + summary());
         // Item 695 (E2): the gl-draw window census rides the same cadence, on the same terms.
         GlDrawWindowCensus.reportWindow(windowFrames);

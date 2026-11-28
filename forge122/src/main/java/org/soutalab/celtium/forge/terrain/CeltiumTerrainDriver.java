@@ -89,6 +89,17 @@ public final class CeltiumTerrainDriver {
     /** setupTerrain calls so far; the refusal cooldown's clock. */
     private long frameCounter;
 
+    /** The G2-30 setup-statistics window; fed only while the pass split is on. */
+    private final SetupStats setupStats = new SetupStats();
+    /** The pass-split report window the setup statistics last drained beside. */
+    private long lastStatsWindow;
+    /** Whether the current frame's setup work feeds {@link #setupStats}. */
+    private boolean statsActive;
+    /** This frame's snapshot / upload / refusal counts, filled by the sub-steps. */
+    private int frameSnapshots;
+    private int frameUploads;
+    private int frameRefusals;
+
     public CeltiumTerrainDriver() {
         instance = this;
     }
@@ -164,6 +175,92 @@ public final class CeltiumTerrainDriver {
         }
     }
 
+    /**
+     * The window counters behind {@code CELTIUM_LANE1_SETUP_STATS} (G2-30's added
+     * instruments): primitive counts the driver feeds only while the pass split is on,
+     * drained into one line per pass-split report window. The line is the observation
+     * seat for the P0 fixes - {@code markArea*} for the block-area expansion,
+     * {@code terrainUpdateAllCalls} for the vanilla notification path,
+     * {@code refusedUploads} for the slab completion currency - and {@code tint*} carries
+     * the scanner's tint share, accumulated there without brackets.
+     */
+    static final class SetupStats {
+        private long frames;
+        private long tickFrames;
+        private long snapshots;
+        private long snapshotsMax;
+        private long dirtySum;
+        private long dirtyMax;
+        private long pendingSum;
+        private long uploads;
+        private long uploadsMax;
+        private long refusedUploads;
+        private long markAreaCalls;
+        private long markAreaAdded;
+        private long terrainUpdateAllCalls;
+
+        void noteFrame(boolean tick, int frameSnapshots, int frameUploads, int frameRefusals,
+                       int dirtySize, int pendingSize) {
+            frames++;
+            if (tick) {
+                tickFrames++;
+            }
+            snapshots += frameSnapshots;
+            snapshotsMax = Math.max(snapshotsMax, frameSnapshots);
+            dirtySum += dirtySize;
+            dirtyMax = Math.max(dirtyMax, dirtySize);
+            pendingSum += pendingSize;
+            uploads += frameUploads;
+            uploadsMax = Math.max(uploadsMax, frameUploads);
+            refusedUploads += frameRefusals;
+        }
+
+        void noteMarkArea(int added) {
+            markAreaCalls++;
+            markAreaAdded += added;
+        }
+
+        void noteTerrainUpdateAll() {
+            terrainUpdateAllCalls++;
+        }
+
+        /** {@return the window's one line, resetting every counter}; null when no frame was counted. */
+        String drainLine(long tintCells, long tintNanos) {
+            if (frames == 0L) {
+                return null;
+            }
+            String line = "frames=" + frames
+                    + " tickFrames=" + tickFrames
+                    + " snapshots=" + snapshots
+                    + " snapshotsMax=" + snapshotsMax
+                    + " dirtyAvg=" + (dirtySum / frames)
+                    + " dirtyMax=" + dirtyMax
+                    + " pendingAvg=" + (pendingSum / frames)
+                    + " uploads=" + uploads
+                    + " uploadsMax=" + uploadsMax
+                    + " refusedUploads=" + refusedUploads
+                    + " markAreaCalls=" + markAreaCalls
+                    + " markAreaAdded=" + markAreaAdded
+                    + " terrainUpdateAllCalls=" + terrainUpdateAllCalls
+                    + " tintCells=" + tintCells
+                    + " tintMs=" + String.format(java.util.Locale.ROOT, "%.3f", tintNanos / 1_000_000.0);
+            frames = 0L;
+            tickFrames = 0L;
+            snapshots = 0L;
+            snapshotsMax = 0L;
+            dirtySum = 0L;
+            dirtyMax = 0L;
+            pendingSum = 0L;
+            uploads = 0L;
+            uploadsMax = 0L;
+            refusedUploads = 0L;
+            markAreaCalls = 0L;
+            markAreaAdded = 0L;
+            terrainUpdateAllCalls = 0L;
+            return line;
+        }
+    }
+
     // ------------------------------------------------------------------
     // Lifecycle (RenderGlobalMixin seats)
     // ------------------------------------------------------------------
@@ -198,21 +295,29 @@ public final class CeltiumTerrainDriver {
     }
 
     public void scheduleTerrainUpdate() {
+        if (org.soutalab.celtium.vulkan.FramePassTimings.passSplitEnabled()) {
+            setupStats.noteTerrainUpdateAll();
+        }
         dirty.addAll(resident);
     }
 
     public void scheduleRebuildForBlockArea(int minX, int minY, int minZ,
                                             int maxX, int maxY, int maxZ, boolean important) {
+        boolean stats = org.soutalab.celtium.vulkan.FramePassTimings.passSplitEnabled();
+        int added = 0;
         // The border sections are included: a face on the boundary can change either side.
         for (int x = (minX >> 4) - 1; x <= (maxX >> 4) + 1; x++) {
             for (int y = Math.max(0, (minY >> 4) - 1); y <= Math.min(15, (maxY >> 4) + 1); y++) {
                 for (int z = (minZ >> 4) - 1; z <= (maxZ >> 4) + 1; z++) {
                     long k = key(x, y, z);
-                    if (present.contains(k)) {
-                        dirty.add(k);
+                    if (present.contains(k) && dirty.add(k)) {
+                        added++;
                     }
                 }
             }
+        }
+        if (stats) {
+            setupStats.noteMarkArea(added);
         }
     }
 
@@ -257,19 +362,56 @@ public final class CeltiumTerrainDriver {
         if (world == null) {
             return;
         }
+        // The setup statistics print on the pass split's own report cadence: when its
+        // closed-window count moves, the accumulated window drains beside its line.
+        long windows = org.soutalab.celtium.vulkan.FramePassTimings.reportWindows();
+        if (windows != lastStatsWindow) {
+            lastStatsWindow = windows;
+            String line = setupStats.drainLine(ForgeSectionScanner.drainTintCells(),
+                    ForgeSectionScanner.drainTintNanos());
+            if (line != null) {
+                System.out.println("[Celtium] CELTIUM_LANE1_SETUP_STATS " + line);
+            }
+        }
+        statsActive = org.soutalab.celtium.vulkan.FramePassTimings.passSplitEnabled();
+        frameSnapshots = 0;
+        frameUploads = 0;
+        frameRefusals = 0;
         ensureBuildSide();
         // Per-tick bookkeeping: the loaded-set diff, the light promotion and the fingerprint
         // sweep only have new information when a client tick lands, so they run on tick
         // boundaries instead of re-scanning the whole resident set every render frame.
         // Drains and build scheduling stay per-frame (they are budgeted and event-shaped).
-        if (tickGate.advance(world.getTotalWorldTime())) {
-            diffLoadedSections();
-            promoteAwaitingLight();
-            sweepLightFingerprints();
+        // The st* brackets are the G2-30 rewiring of the pass split's dead slots onto these
+        // real boundaries: inclusive and report-only, they never steer the work.
+        boolean tick = tickGate.advance(world.getTotalWorldTime());
+        if (tick) {
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("stEvents");
+            try {
+                diffLoadedSections();
+                promoteAwaitingLight();
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("stEvents");
+            }
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("stUpdate");
+            try {
+                sweepLightFingerprints();
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("stUpdate");
+            }
         }
-        drainFinishedBuilds();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("stUpload");
+        try {
+            drainFinishedBuilds();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("stUpload");
+        }
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
+        if (statsActive) {
+            setupStats.noteFrame(tick, frameSnapshots, frameUploads, frameRefusals,
+                    dirty.size(), pending.size());
+        }
     }
 
     private void ensureBuildSide() {
@@ -524,9 +666,13 @@ public final class CeltiumTerrainDriver {
             return;
         }
         // Nearest first, so the view fills in around the camera instead of at the horizon.
+        // The copy and the sort are stPrepare's seat: every frame pays for all of dirty,
+        // boxed, before a single build is scheduled.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("stPrepare");
         List<Long> queue = new ArrayList<>(dirty);
         queue.sort((a, b) -> Double.compare(distanceSq(a, cameraX, cameraY, cameraZ),
                 distanceSq(b, cameraX, cameraY, cameraZ)));
+        org.soutalab.celtium.vulkan.FramePassTimings.end("stPrepare");
         int snapshots = 0;
         for (long k : queue) {
             if (pending.size() >= MAX_PENDING_BUILDS || snapshots >= MAX_SNAPSHOTS_PER_FRAME) {
@@ -546,7 +692,13 @@ public final class CeltiumTerrainDriver {
             // returned to the pool (the pre-pool code dropped it the same way). Once the
             // build is handed off, the future's completion - success, failure, or the
             // cancellation an unload triggers - returns the snapshot to the pool.
-            ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
+            // The scan is stAsync's seat: the per-section world read the build waits on.
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("stAsync");
+            try {
+                ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("stAsync");
+            }
             lightFingerprints.put(k, lightFingerprint(sx, sy, sz));
             if (!populatedChunks.contains(net.minecraft.util.math.ChunkPos.asLong(sx, sz))) {
                 // The chunk's light is not populated yet: this mesh will carry zero light.
@@ -561,6 +713,7 @@ public final class CeltiumTerrainDriver {
             future.whenComplete((buffers, error) -> scheduler.releaseSnapshot(snapshot));
             pending.put(k, future);
         }
+        frameSnapshots = snapshots;
     }
 
     private static double distanceSq(long k, double cameraX, double cameraY, double cameraZ) {
@@ -608,12 +761,14 @@ public final class CeltiumTerrainDriver {
                         // rebuild-every-frame churn (Gate G1 measured 8,146 refusals).
                         dirty.add(k);
                         starvedUntil.put(k, frameCounter + 30L);
+                        frameRefusals++;
                     }
                 }
             } finally {
                 scheduler.releaseBuffers(buffers);
             }
         }
+        frameUploads = uploads;
     }
 
     /**

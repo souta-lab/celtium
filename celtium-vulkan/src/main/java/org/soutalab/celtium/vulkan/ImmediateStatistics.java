@@ -2037,7 +2037,8 @@ public final class ImmediateStatistics {
     /**
      * {@return a one-line per-batch timing breakdown for the summary}, empty when no batch timing was recorded.
      * <p>
-     * The five counters behind it are written only with {@code -Dceltium.vulkan.batchTimings=true}; the totals divided by the
+     * The five counters behind it are written only with the batchTimings instrument on (the harness
+     * file's {@code batchTimings=true} or {@code -Dceltium.vulkan.batchTimings=true}); the totals divided by the
      * offer count are what says whether a batch costs its state capture, its key, its program query or its preparation.
      */
     String batchTimingSummary() {

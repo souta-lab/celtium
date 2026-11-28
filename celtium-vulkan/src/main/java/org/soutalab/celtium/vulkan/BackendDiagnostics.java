@@ -248,10 +248,10 @@ final class BackendDiagnostics {
                 + " actualFlushMillis=" + (funnel.immediateStatistics.actualFlushNanos() / 1000000L)
                 + " actualFlushWorstMillis=" + (funnel.immediateStatistics.actualFlushWorstNanos() / 1000000L)
                 + " actualFlushCpuMillis=" + (funnel.immediateStatistics.actualFlushCpuNanos() / 1000000L)
-                // Where a batch's time goes, per batch, with -Dceltium.vulkan.batchTimings=true. The counters existed but
-                // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
-                // the preparation" had no answer in a run.
-                + (funnel.BATCH_TIMINGS ? funnel.immediateStatistics.batchTimingSummary() + funnel.offerStageNanosSummary() : "")
+                // Where a batch's time goes, per batch (the batchTimings instrument). Printed
+                // unconditionally: both summaries are empty when nothing was timed, so a run
+                // that never enabled the counters shows no bracket rather than a missing one.
+                + funnel.immediateStatistics.batchTimingSummary() + funnel.offerStageNanosSummary()
                 // "off" rather than "0/0": the per-frame hash is opt-in, and a counter that can only read zero would
                 // invite "no two frames were identical" from a number that was never measured.
                 + " identicalFrameSignatures=" + (funnel.FRAME_SIGNATURE

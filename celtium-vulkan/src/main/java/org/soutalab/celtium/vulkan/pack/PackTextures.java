@@ -289,6 +289,7 @@ final class PackTextures implements AutoCloseable {
                             .baseArrayLayer(0).layerCount(1);
                     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+                    org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
 
                     long bufferOffset = 0L;
                     for (int level = 0; level < finalLevels.size(); level++) {
@@ -318,6 +319,7 @@ final class PackTextures implements AutoCloseable {
                             .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
                     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
+                    org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
                 }
             });
         } finally {

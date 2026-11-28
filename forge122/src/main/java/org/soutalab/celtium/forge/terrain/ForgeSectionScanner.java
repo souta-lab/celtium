@@ -22,6 +22,27 @@ public final class ForgeSectionScanner {
     private ForgeSectionScanner() {
     }
 
+    // The resolveTint share of the scan (G2-30's added instruments): fill accumulates the
+    // tint resolutions of one section into locals and publishes them here at the end, so
+    // the cell loop pays two clock reads per tinted cell and no bracket calls at all. The
+    // driver drains both totals when it prints its setup-statistics window.
+    private static long tintNanosTotal;
+    private static long tintCellsTotal;
+
+    /** {@return the tint-resolution nanoseconds accumulated since the last drain}, resetting the total. */
+    static long drainTintNanos() {
+        long value = tintNanosTotal;
+        tintNanosTotal = 0L;
+        return value;
+    }
+
+    /** {@return the tinted cells resolved since the last drain}, resetting the total. */
+    static long drainTintCells() {
+        long value = tintCellsTotal;
+        tintCellsTotal = 0L;
+        return value;
+    }
+
     public static void fill(WorldSectionSnapshot snapshot, IBlockAccess world,
                             ForgeBlockFaceData table, FluidloggedProbe fluids,
                             int sectionX, int sectionY, int sectionZ) {
@@ -72,6 +93,8 @@ public final class ForgeSectionScanner {
             }
         }
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        long tintNanos = 0L;
+        long tintCells = 0L;
         int baseX = sectionX * 16 - 1;
         int baseY = sectionY * 16 - 1;
         int baseZ = sectionZ * 16 - 1;
@@ -120,7 +143,10 @@ public final class ForgeSectionScanner {
                     int tint = WorldSectionSnapshot.NO_TINT;
                     if (table.stateUsesTint(id)) {
                         pos.setPos(wx, wy, wz);
+                        long tintStart = System.nanoTime();
                         tint = resolveTint(world, pos, state);
+                        tintNanos += System.nanoTime() - tintStart;
+                        tintCells++;
                     }
                     snapshot.setCell(index, id, blockLight, skyLight, tint);
                     snapshot.setNeighborBrightness(index, state.useNeighborBrightness());
@@ -151,6 +177,8 @@ public final class ForgeSectionScanner {
                 }
             }
         }
+        tintNanosTotal += tintNanos;
+        tintCellsTotal += tintCells;
     }
 
     /**

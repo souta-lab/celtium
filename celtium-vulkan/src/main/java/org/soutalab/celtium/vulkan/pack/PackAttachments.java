@@ -362,6 +362,7 @@ final class PackAttachments implements AutoCloseable {
             vkCmdPipelineBarrier(cmd,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     0, null, null, barriers);
+            org.soutalab.celtium.vulkan.BackendCallCounters.noteBarrier();
         }
         image.layout = newLayout;
     }

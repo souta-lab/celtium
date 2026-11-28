@@ -4197,11 +4197,13 @@ public final class Lane2ImmediateRecorder {
      * Whether the per-batch/per-group {@code System.nanoTime()} deltas the immediateStatistics *Nanos counters take
      * are read at all. The investigation added one nanoTime pair per stage of the batch-accept path - matrix copy,
      * state capture, state key, program query, preflight, clone, group create, append - eight-to-ten clock reads on a
-     * ~3600-batch frame ≈ 1.3-1.9 ms/frame spent measuring, not drawing. Off by default
-     * ({@code -Dceltium.vulkan.batchTimings=true} or a diagnostics run re-enables); with it off the counters read 0,
-     * which the reports already treat as a missing measurement.
+     * ~3600-batch frame ≈ 1.3-1.9 ms/frame spent measuring, not drawing. Off by default; a diagnostics run
+     * re-enables it. It is a member of the permanent instrument set, so the switch resolves through
+     * {@link HarnessConfig} like the pass split's: the harness file's {@code batchTimings=true} reaches it, and
+     * the legacy {@code -Dceltium.vulkan.batchTimings=true} spelling resolves through the same call. With it off
+     * the counters read 0, which the reports already treat as a missing measurement.
      */
-    public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
+    public static final boolean BATCH_TIMINGS = HarnessConfig.bool("batchTimings", false)
             || VulkanDiagnostics.enabled();
 
 
@@ -4275,13 +4277,17 @@ public final class Lane2ImmediateRecorder {
     /** {@return the per-offer-stage average nanoseconds, for the batch-timing summary}. */
     String offerStageNanosSummary() {
         StringBuilder text = new StringBuilder(" offerStages[nanosPerReached");
+        boolean any = false;
         for (int stage = 1; stage < this.offerStageDeltas.length; stage++) {
             long[] entry = this.offerStageDeltas[stage];
             if (entry[1] > 0L) {
                 text.append(" s").append(stage).append('=').append(entry[0] / entry[1]);
+                any = true;
             }
         }
-        return text.append(']').toString();
+        // Empty when no offer was timed, in the batchTimingSummary convention: the diagnostics
+        // line prints this unconditionally now, and an empty bracket would read as a measurement.
+        return any ? text.append(']').toString() : "";
     }
 
 
