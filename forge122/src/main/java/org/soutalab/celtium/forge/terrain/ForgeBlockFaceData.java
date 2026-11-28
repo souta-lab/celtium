@@ -235,10 +235,28 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         } catch (Throwable ignored) {
             // State-derived answers only; a block that needs a real world keeps the defaults.
         }
-        t.fullCube[id] = opaque && fullBox;
+        boolean opaqueCube = opaque && fullBox;
+        IBakedModel model = modelFor(state);
+        // Axis-path eligibility (NEON-G1-DEPTH-RULING section 3.2 Step 3, honouring the
+        // NEON-UV-RULING section 5.3 routing invariant): leaves and glass-like blocks
+        // are never opaque cubes, so the opaque test alone routed them to the general
+        // pool and D-57 leaf culling, same-state correction, the 16B axis form and
+        // greedy merging never fired for them. A full-box leaves/breakable state whose
+        // model is exactly one full-face axis-aligned full-sprite quad per facing is
+        // axis-expressible and joins the axis path; anything with partial UVs, several
+        // quads per face or off-plane geometry stays in the general pool. Occlusion
+        // and side-solidity keep the opaque-cube seed below - leaves occlude only
+        // once applySolidify surrounds them (the mesher sets those bits itself).
+        boolean fullCube = opaqueCube;
+        if (!fullCube && fullBox && model != null
+                && (block instanceof BlockLeaves || block instanceof BlockBreakable)
+                && modelIsFullCubeFaces(model, state)) {
+            fullCube = true;
+        }
+        t.fullCube[id] = fullCube;
         for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
             EnumFacing facing = EnumFacing.VALUES[dir];
-            boolean occ = t.fullCube[id];
+            boolean occ = opaqueCube;
             boolean solid = false;
             try {
                 if (!occ) {
@@ -249,10 +267,9 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             } catch (Throwable ignored) {
             }
             t.occludes[id * 6 + dir] = occ;
-            t.sideSolid[id * 6 + dir] = solid || t.fullCube[id];
+            t.sideSolid[id * 6 + dir] = solid || opaqueCube;
         }
 
-        IBakedModel model = modelFor(state);
         if (model == null) {
             return;
         }
@@ -440,6 +457,101 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         } catch (Throwable ignored) {
         }
         return TerrainLayer.SOLID.ordinal();
+    }
+
+    /** Whether the model is exactly one full-face axis-aligned full-sprite quad per facing. */
+    private static boolean modelIsFullCubeFaces(IBakedModel model, IBlockState state) {
+        for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
+            List<BakedQuad> quads = safeQuads(model, state, EnumFacing.VALUES[dir]);
+            if (quads.size() != 1 || !quadIsFullFace(quads.get(0), dir)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether one quad is the full face of the unit cube on its facing's plane, sampling
+     * its whole sprite with the sprite's U driven by the face's U axis alone and V by the
+     * V axis alone (either direction per axis) - the only shape the axis path reproduces
+     * exactly. Partial UVs, rotated UVs and off-plane corners all fail.
+     */
+    private static boolean quadIsFullFace(BakedQuad quad, int dir) {
+        final float eps = 1.0e-4f;
+        int[] vertexData = quad.getVertexData();
+        VertexFormat format = quad.getFormat();
+        int positionOffset = -1;
+        int uvOffset = -1;
+        int strideInts = format.getIntegerSize();
+        int elementByteOffset = 0;
+        for (VertexFormatElement element : format.getElements()) {
+            if (element.getUsage() == VertexFormatElement.EnumUsage.POSITION
+                    && element.getType() == VertexFormatElement.EnumType.FLOAT) {
+                positionOffset = elementByteOffset / 4;
+            }
+            if (element.getUsage() == VertexFormatElement.EnumUsage.UV
+                    && element.getType() == VertexFormatElement.EnumType.FLOAT) {
+                uvOffset = elementByteOffset / 4;
+            }
+            elementByteOffset += element.getSize();
+        }
+        if (positionOffset < 0 || uvOffset < 0 || vertexData.length < strideInts * 4) {
+            return false;
+        }
+        TextureAtlasSprite sprite = quad.getSprite();
+        if (sprite == null) {
+            return false;
+        }
+        int axis = TerrainDirs.AXIS[dir];
+        int uAxis = TerrainDirs.uAxis(dir);
+        int vAxis = TerrainDirs.vAxis(dir);
+        float plane = TerrainDirs.NEGATIVE[dir] ? 0.0f : 1.0f;
+        float[] uByA = {Float.NaN, Float.NaN};
+        float[] vByB = {Float.NaN, Float.NaN};
+        boolean[][] seen = new boolean[2][2];
+        for (int corner = 0; corner < 4; corner++) {
+            int base = corner * strideInts;
+            float[] pos = {
+                    Float.intBitsToFloat(vertexData[base + positionOffset]),
+                    Float.intBitsToFloat(vertexData[base + positionOffset + 1]),
+                    Float.intBitsToFloat(vertexData[base + positionOffset + 2])};
+            if (Math.abs(pos[axis] - plane) > eps) {
+                return false;
+            }
+            int a = Math.round(pos[uAxis]);
+            int b = Math.round(pos[vAxis]);
+            if (a < 0 || a > 1 || b < 0 || b > 1
+                    || Math.abs(pos[uAxis] - a) > eps || Math.abs(pos[vAxis] - b) > eps) {
+                return false;
+            }
+            float u = Float.intBitsToFloat(vertexData[base + uvOffset]);
+            float v = Float.intBitsToFloat(vertexData[base + uvOffset + 1]);
+            if (!Float.isNaN(uByA[a]) && Math.abs(uByA[a] - u) > eps) {
+                return false;
+            }
+            if (!Float.isNaN(vByB[b]) && Math.abs(vByB[b] - v) > eps) {
+                return false;
+            }
+            uByA[a] = u;
+            vByB[b] = v;
+            seen[a][b] = true;
+        }
+        for (int a = 0; a < 2; a++) {
+            for (int b = 0; b < 2; b++) {
+                if (!seen[a][b]) {
+                    return false;
+                }
+            }
+        }
+        boolean uEdges = Math.abs(uByA[0] - sprite.getMinU()) <= eps
+                && Math.abs(uByA[1] - sprite.getMaxU()) <= eps
+                || Math.abs(uByA[0] - sprite.getMaxU()) <= eps
+                && Math.abs(uByA[1] - sprite.getMinU()) <= eps;
+        boolean vEdges = Math.abs(vByB[0] - sprite.getMinV()) <= eps
+                && Math.abs(vByB[1] - sprite.getMaxV()) <= eps
+                || Math.abs(vByB[0] - sprite.getMaxV()) <= eps
+                && Math.abs(vByB[1] - sprite.getMinV()) <= eps;
+        return uEdges && vEdges;
     }
 
     /** The atlas sprite vanilla's fluid renderer would use for this liquid state. */

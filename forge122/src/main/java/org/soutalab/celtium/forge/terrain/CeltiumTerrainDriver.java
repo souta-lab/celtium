@@ -526,9 +526,15 @@ public final class CeltiumTerrainDriver {
 
     /** The renderBlockLayer seat: one backend draw for the vanilla layers, nothing for others. */
     public void drawChunkLayer(BlockRenderLayer layer, double cameraX, double cameraY, double cameraZ) {
+        // Celtium has a single cutout layer (the mesher does not split mipped from
+        // unmipped), and vanilla issues both CUTOUT_MIPPED and CUTOUT calls every
+        // frame (premise verified via the CELTIUM_BLOCKLAYER log), so the cutout
+        // layer is drawn on the CUTOUT_MIPPED call only - mapping both calls to it
+        // drew every cutout quad twice (NEON-G1-DEPTH-RULING section 1.4).
         int ordinal = switch (layer) {
             case SOLID -> 0;
-            case CUTOUT, CUTOUT_MIPPED -> 1;
+            case CUTOUT_MIPPED -> 1;
+            case CUTOUT -> -1;
             case TRANSLUCENT -> 2;
             default -> -1;
         };
