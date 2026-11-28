@@ -1401,9 +1401,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return base + " drawCalls=" + this.lane1DrawCalls + " guardCmd=" + this.lane1GuardCmd
                 + " guardStall=" + this.lane1GuardStall + " guardTarget=" + this.lane1GuardTarget
                 + " guardPass=" + this.lane1GuardPass + " guardViews=" + this.lane1GuardViews
-                + " recordPass=" + this.lane1RecordPasses
-                + " tempDepthClearPre=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.tempDepthClearPre
-                + " tempDepthClearPost=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.tempDepthClearPost;
+                + " recordPass=" + this.lane1RecordPasses;
     }
 
     private long lane1DrawCalls;
@@ -1511,10 +1509,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         this.commandBuffer, renderPass, this.frameSlot,
                         this.atlasTexture.view(), this.lightmapTexture.view(),
                         this.atlasTexture.width() / 16.0f);
-                if (layerOrdinal == 0) {
-                    // TEMP G1 Step 2 diagnostic: SOLID layer drawn in this frame window.
-                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.tempNoteSolidDrawn();
-                }
             } finally {
                 vkCmdEndRenderPass(this.commandBuffer);
                 this.commandState.endPass();
@@ -1531,9 +1525,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private void celtium$lane1PrepareFrame(
             org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend,
             float[] projection, float[] modelView, double cameraX, double cameraY, double cameraZ) {
-        // TEMP G1 Step 2 diagnostic (NEON-G1-DEPTH-RULING section 3.2): per-frame window
-        // for the depth-clear counters in GlsmFrontend. Strip after the G1 run.
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.tempFrameReset();
         // The shadow JOML's buffer read goes through Unsafe and needs a direct buffer; the
         // driver's matrices arrive as heap float[], so they are set element-wise instead
         // (column-major, the same order the array carries). FloatBuffer.wrap on a heap
