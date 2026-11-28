@@ -12761,6 +12761,7 @@ public final class ValidationClient {
             report.addProperty("pictureFrameDeltaUnadjusted_" + stage, Integer.valueOf(evaluation.unadjustedDelta));
             report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(evaluation.delta));
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));
+            report.addProperty("picturePreWorldPresented_" + stage, Integer.valueOf(evaluation.preWorldPresented));
             report.addProperty("pictureFrameScope_" + stage, "world window " + (celtium$worldStarts + 1) + ": the"
                     + " picture's frame " + evidence.presentedFrame + " is " + evaluation.presentedInWorld
                     + " presents into this world (presented counter " + evaluation.window.presentedStart
@@ -12773,13 +12774,15 @@ public final class ValidationClient {
                             ? ", anchored after pre-first-present zero window at frame "
                                     + celtium$frameTracker.lastZeroPresentedWorldFrame()
                             : "")
-                    + "); the whole-run delta is " + wholeRunDelta);
+                    + "); " + evaluation.preWorldPresented + " presents happened before world entry and are"
+                    + " counted outside this window; the whole-run delta is " + wholeRunDelta);
             if (!evaluation.passed) {
                 failures.add("the picture for " + where + " is the frame the renderer presented at "
                         + evidence.presentedFrame + ", which is " + evaluation.delta + " away from the "
                         + evaluation.expectedPresented + " expected presents (" + evaluation.framesInWorld
                         + " world frames minus " + evaluation.skipsInWindow + " skipped presents; unadjusted delta "
                         + evaluation.unadjustedDelta + ", whole-run delta " + wholeRunDelta
+                        + ", pre-world presents outside the window " + evaluation.preWorldPresented
                         + "): the frame in the file is not the frame the capture is about");
             }
         }

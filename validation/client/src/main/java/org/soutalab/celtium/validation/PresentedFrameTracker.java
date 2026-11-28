@@ -4,7 +4,9 @@ package org.soutalab.celtium.validation;
  * Tracks the active presented-frame window across world entry, pre-first-present skips,
  * counter restarts, and backend identity changes so the validation fixture compares
  * presented-frame counts within the active window instead of falsely failing when early
- * world frames do not present.
+ * world frames do not present. The window starts at world entry: presents the renderer
+ * made before the first world frame are counted separately (see
+ * {@link #preWorldPresentedFrames()}) and never folded into the window's expectation.
  */
 final class PresentedFrameTracker {
 
@@ -58,6 +60,7 @@ final class PresentedFrameTracker {
         final int expectedPresented;
         final int unadjustedDelta;
         final int delta;
+        final int preWorldPresented;
         final boolean passed;
         final boolean usedPreFirstPresentAnchor;
         final boolean restartAfterCapture;
@@ -65,7 +68,8 @@ final class PresentedFrameTracker {
 
         VerdictEvaluation(int presentedInWorld, int framesInWorld, int skipsInWindow,
                 int attemptsInWindow, int failedAttemptsInWindow, int expectedPresented,
-                int unadjustedDelta, int delta, boolean passed, boolean usedPreFirstPresentAnchor,
+                int unadjustedDelta, int delta, int preWorldPresented, boolean passed,
+                boolean usedPreFirstPresentAnchor,
                 boolean restartAfterCapture, WindowSnapshot window) {
             this.presentedInWorld = presentedInWorld;
             this.framesInWorld = framesInWorld;
@@ -75,6 +79,7 @@ final class PresentedFrameTracker {
             this.expectedPresented = expectedPresented;
             this.unadjustedDelta = unadjustedDelta;
             this.delta = delta;
+            this.preWorldPresented = preWorldPresented;
             this.passed = passed;
             this.usedPreFirstPresentAnchor = usedPreFirstPresentAnchor;
             this.restartAfterCapture = restartAfterCapture;
@@ -83,6 +88,7 @@ final class PresentedFrameTracker {
     }
 
     private boolean initialized;
+    private int preWorldPresentedFrames;
     private WindowSnapshot currentWindow;
     private WindowSnapshot previousWindow;
     private int lastPresentedSample = -1;
@@ -103,8 +109,16 @@ final class PresentedFrameTracker {
             this.initialized = true;
             this.firstBackendIdentity = backendIdentity;
             this.lastNonZeroBackendIdentity = backendIdentity;
-            // Keep presentedStart=0 on the initial world so an un-reset pre-world counter still trips the check.
-            this.currentWindow = new WindowSnapshot(0, 0, nonNegative(skipsNow),
+            // The verdict window starts at world entry (the first world frame). Presents the renderer made
+            // before it - title and loading screens - are not presents of this world, so the initial window
+            // starts at the counter's value here instead of zero. Folding them into the window made the delta
+            // depend on how many frames the loading screens happened to present (measured +6/+7 across two
+            // runs of the same scene), which is not a property of the world under test. The count is not
+            // silently dropped either: it is kept as preWorldPresentedFrames and reported on its own line
+            // beside every verdict. The dump's identity does not rest on this count - it is bound per stage
+            // by the request-counter +1 observation in the fixture.
+            this.preWorldPresentedFrames = presentedNow > 0 ? presentedNow : 0;
+            this.currentWindow = new WindowSnapshot(0, this.preWorldPresentedFrames, nonNegative(skipsNow),
                     nonNegative(attemptsNow), nonNegative(hookCallsNow), backendIdentity);
             this.previousWindow = this.currentWindow;
             this.lastBackendIdentity = backendIdentity;
@@ -227,7 +241,8 @@ final class PresentedFrameTracker {
         int deltaAfterSkips = presentedInWorld - expectedAfterSkips;
         if (Math.abs(deltaAfterSkips) <= 1) {
             return new VerdictEvaluation(presentedInWorld, framesInWorld, skipsInWindow, attemptsInWindow,
-                    failedAttemptsInWindow, expectedAfterSkips, unadjustedDelta, deltaAfterSkips, true, false,
+                    failedAttemptsInWindow, expectedAfterSkips, unadjustedDelta, deltaAfterSkips,
+                    this.preWorldPresentedFrames, true, false,
                     restartAfterCapture, window);
         }
 
@@ -248,18 +263,25 @@ final class PresentedFrameTracker {
             int deltaSinceFirst = presentedInWorld - expectedSinceFirst;
             if (Math.abs(deltaSinceFirst) <= 1) {
                 return new VerdictEvaluation(presentedInWorld, framesInWorld, skipsInWindow, attemptsInWindow,
-                        failedAttemptsInWindow, expectedSinceFirst, unadjustedDelta, deltaSinceFirst, true, true,
+                        failedAttemptsInWindow, expectedSinceFirst, unadjustedDelta, deltaSinceFirst,
+                        this.preWorldPresentedFrames, true, true,
                         restartAfterCapture, window);
             }
         }
 
         return new VerdictEvaluation(presentedInWorld, framesInWorld, skipsInWindow, attemptsInWindow,
-                failedAttemptsInWindow, expectedAfterSkips, unadjustedDelta, deltaAfterSkips, false, false,
+                failedAttemptsInWindow, expectedAfterSkips, unadjustedDelta, deltaAfterSkips,
+                this.preWorldPresentedFrames, false, false,
                 restartAfterCapture, window);
     }
 
     int firstPresentedWorldFrame() {
         return this.firstPresentedWorldFrame;
+    }
+
+    /** Presents the renderer made before world entry, counted outside every verdict window. */
+    int preWorldPresentedFrames() {
+        return this.preWorldPresentedFrames;
     }
 
     int lastZeroPresentedWorldFrame() {
