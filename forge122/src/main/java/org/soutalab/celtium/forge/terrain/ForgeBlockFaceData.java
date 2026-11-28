@@ -256,6 +256,26 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (model == null) {
             return;
         }
+        if (state.getMaterial().isLiquid()) {
+            // Vanilla never renders fluids through baked models (BlockFluidRenderer
+            // tessellates them from texture-map sprites fetched by name); a liquid
+            // state's model only offers the missing sprite (measured in the Gate G1
+            // Step 2 separation run: VanillaModelWrapper quads are all "missingno").
+            // Resolve the fluid's own sprites the same way vanilla does and record
+            // them as the face textures: still on the horizontal faces, flowing on
+            // the sides. The fullCube branch below (never taken by liquids) would
+            // overwrite these with model sprites, which stays authoritative there.
+            TextureAtlasSprite still = fluidSprite(state, true);
+            TextureAtlasSprite flow = fluidSprite(state, false);
+            for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
+                TextureAtlasSprite sprite = dir == TerrainDirs.UP || dir == TerrainDirs.DOWN
+                        ? still : flow;
+                if (sprite != null) {
+                    t.faceTexture[id * 6 + dir] = sprites.indexFor(sprite);
+                    t.faceCell[id * 6 + dir] = sprites.cellFor(sprite);
+                }
+            }
+        }
         if (t.fullCube[id]) {
             t.generalOffset[id] = meta.size() / 3;
             int written = 0;
@@ -418,6 +438,36 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         } catch (Throwable ignored) {
         }
         return TerrainLayer.SOLID.ordinal();
+    }
+
+    /** The atlas sprite vanilla's fluid renderer would use for this liquid state. */
+    private static TextureAtlasSprite fluidSprite(IBlockState state, boolean still) {
+        String name = null;
+        Block block = state.getBlock();
+        if (block instanceof net.minecraftforge.fluids.IFluidBlock fluidBlock
+                && fluidBlock.getFluid() != null) {
+            net.minecraft.util.ResourceLocation loc = still
+                    ? fluidBlock.getFluid().getStill() : fluidBlock.getFluid().getFlowing();
+            if (loc != null) {
+                name = loc.toString();
+            }
+        }
+        if (name == null) {
+            Material material = state.getMaterial();
+            if (material == Material.WATER) {
+                name = still ? "minecraft:blocks/water_still" : "minecraft:blocks/water_flow";
+            } else if (material == Material.LAVA) {
+                name = still ? "minecraft:blocks/lava_still" : "minecraft:blocks/lava_flow";
+            }
+        }
+        if (name == null) {
+            return null;
+        }
+        try {
+            return Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite(name);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static IBakedModel modelFor(IBlockState state) {
