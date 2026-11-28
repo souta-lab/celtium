@@ -683,6 +683,43 @@ public final class GLSMDraws {
             }
         }
 
+    /**
+     * The pointer form of {@code glCallLists}: decodes every GL name type at the caller's
+     * address, including the 2/3/4-byte forms where each byte is one list offset, and calls
+     * each name against the current list base. Shared by the capture entry's dispatch and
+     * the transformer hint doors (E4-b2 ruling: display lists have this one seat).
+     */
+    public static void glCallLists(int count, int type, long address) {
+        if (count <= 0 || address == 0L) {
+            return;
+        }
+        if (type == 0x1407 || type == 0x1408 || type == 0x1409) { // GL_2_BYTES / GL_3_BYTES / GL_4_BYTES
+            int group = type - 0x1405;
+            for (int index = 0; index < count; index++) {
+                for (int byteIndex = 0; byteIndex < group; byteIndex++) {
+                    int offset = org.lwjgl.system.MemoryUtil.memGetByte(
+                            address + (long) index * group + byteIndex) & 0xFF;
+                    glCallList(ctx().listBase + offset);
+                }
+            }
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            int offset;
+            switch (type) {
+                case 0x1400: offset = org.lwjgl.system.MemoryUtil.memGetByte(address + i); break; // GL_BYTE
+                case 0x1401: offset = org.lwjgl.system.MemoryUtil.memGetByte(address + i) & 0xFF; break; // GL_UNSIGNED_BYTE
+                case 0x1402: offset = org.lwjgl.system.MemoryUtil.memGetShort(address + (long) i * 2L); break; // GL_SHORT
+                case 0x1403: offset = org.lwjgl.system.MemoryUtil.memGetShort(address + (long) i * 2L) & 0xFFFF; break;
+                case 0x1404: // GL_INT
+                case 0x1405: offset = org.lwjgl.system.MemoryUtil.memGetInt(address + (long) i * 4L); break; // GL_UNSIGNED_INT
+                case 0x1406: offset = (int) org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) i * 4L); break; // GL_FLOAT
+                default: return;
+            }
+            glCallList(ctx().listBase + offset);
+        }
+    }
+
     public static void glListBase(int base) {
         rejectExitCapture();
             ctx().listBase = base;

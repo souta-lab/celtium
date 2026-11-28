@@ -13,6 +13,7 @@ import org.lwjgl.system.FunctionProvider;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.glcompat.DisplayListManager;
 import org.soutalab.celtium.glcompat.DirectGlDispatcher;
+import org.soutalab.celtium.glcompat.backend.DirectGlExecutor;
 import org.soutalab.celtium.glcompat.GLSMAttribStack;
 import org.soutalab.celtium.glcompat.GLSMBlend;
 import org.soutalab.celtium.glcompat.GLSMBuffers;
@@ -798,6 +799,9 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return 0L;
             case SEM_NEW_LIST:
                 GLSMDraws.glNewList((int) c[0], (int) c[1]);
+                if (c[0] > 0) {
+                    VulkanModelQuadCapture.listCompileStarted((int) c[0]);
+                }
                 return 0L;
             case SEM_END_LIST:
                 GLSMDraws.glEndList();
@@ -1527,6 +1531,522 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
+    /** Reads a byte range out of a buffer mirror into the caller's address (bound form). */
+    public static void readBufferRoute(int target, long offset, long size, long out) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            readBuffer(entry.boundBuffer(target), offset, size, out);
+        }
+    }
+
+    /** The DSA spelling of the buffer readback. */
+    public static void readNamedBufferRoute(int name, long offset, long size, long out) {
+        readBuffer(name, offset, size, out);
+    }
+
+    private static void readBuffer(int name, long offset, long size, long out) {
+        if (name == 0 || out == 0L || offset < 0L || size <= 0L) {
+            return;
+        }
+        ByteBuffer view;
+        long capacity;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : GlsmBufferState.current().storage(name);
+            if (view == null) {
+                return;
+            }
+            capacity = nativeBuffer != null ? view.capacity()
+                    : BufferStorageRecord.current().logicalSizeOf(name, view.capacity());
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (BufferStorageRecord.mapRangeOffset(offset, size, capacity) < 0L) {
+            return;
+        }
+        MemoryUtil.memCopy(MemoryUtil.memAddress(view) + offset, out, size);
+    }
+
+    /** Copies a byte range between the two bound buffer mirrors. */
+    public static void copyBufferRoute(int readTarget, int writeTarget, long readOffset, long writeOffset, long size) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            copyBuffer(entry.boundBuffer(readTarget), entry.boundBuffer(writeTarget), readOffset, writeOffset, size);
+        }
+    }
+
+    /** The DSA spelling of the buffer copy. */
+    public static void copyNamedBufferRoute(int readBuffer, int writeBuffer, long readOffset, long writeOffset,
+            long size) {
+        copyBuffer(readBuffer, writeBuffer, readOffset, writeOffset, size);
+    }
+
+    private static void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size) {
+        if (readName == 0 || writeName == 0 || readOffset < 0L || writeOffset < 0L || size <= 0L) {
+            return;
+        }
+        ByteBuffer source;
+        long readCapacity;
+        try {
+            NativeGeometryBuffer nativeRead = NativeGeometryBuffer.find(readName);
+            source = nativeRead != null ? nativeRead.compatibilityView() : GlsmBufferState.current().storage(readName);
+            if (source == null) {
+                return;
+            }
+            readCapacity = nativeRead != null ? source.capacity()
+                    : BufferStorageRecord.current().logicalSizeOf(readName, source.capacity());
+        } catch (RuntimeException error) {
+            return;
+        }
+        if (BufferStorageRecord.mapRangeOffset(readOffset, size, readCapacity) < 0L) {
+            return;
+        }
+        ByteBuffer slice = source.duplicate();
+        slice.position((int) readOffset);
+        slice.limit((int) (readOffset + size));
+        slice = slice.slice();
+        try {
+            NativeGeometryBuffer nativeWrite = NativeGeometryBuffer.find(writeName);
+            if (nativeWrite != null) {
+                if (BufferStorageRecord.mapRangeOffset(writeOffset, size, nativeWrite.byteSize()) >= 0L) {
+                    nativeWrite.write(writeOffset, slice);
+                }
+                return;
+            }
+            ByteBuffer destination = GlsmBufferState.current().storage(writeName);
+            if (destination != null && BufferStorageRecord.mapRangeOffset(writeOffset, size,
+                    BufferStorageRecord.current().logicalSizeOf(writeName, destination.capacity())) >= 0L) {
+                ByteBuffer out = destination.duplicate();
+                out.position((int) writeOffset);
+                out.put(slice);
+            }
+        } catch (RuntimeException ignored) {
+            // A closed or mapped destination keeps its previous content, as the GL copy would have refused.
+        }
+    }
+
+    /** The transformer's {@code glBufferSubData} route, against the bound buffer. */
+    public static void bufferSubDataRoute(int target, long offset, long size, long data) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.bufferSubDataFor(entry.boundBuffer(target), offset, size, data);
+        }
+    }
+
+    /** The DSA spelling of the sub-data mirror write. */
+    public static void namedBufferSubDataRoute(int name, long offset, long size, long data) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.bufferSubDataFor(name, offset, size, data);
+        }
+    }
+
+    /**
+     * {@code glDelete*} array names from the transformer's route. The dispatcher's delete path
+     * already knows each family; the name is normalised to the core spelling it matches.
+     */
+    public static void deleteObjects(String name, int count, long names) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || count <= 0 || names == 0L) {
+            return;
+        }
+        int bounded = Math.min(count, 1 << 16);
+        entry.delete(new GlFn(coreDeleteName(name), R_VOID, new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_PTR}, SEM_DELETE),
+                new long[] {bounded, names});
+    }
+
+    /** {@code glDeleteProgram/glDeleteShader} from the transformer's route. */
+    public static void deleteObject(String name, int object) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null) {
+            return;
+        }
+        entry.delete(new GlFn(coreDeleteName(name), R_VOID, new byte[] {GlFunctionTable.A_INT}, SEM_DELETE),
+                new long[] {object});
+    }
+
+    private static String coreDeleteName(String name) {
+        String core = name.startsWith("ngl") ? name.substring(1) : name;
+        if (core.endsWith("EXT") || core.endsWith("ARB")) {
+            core = core.substring(0, core.length() - 3);
+        }
+        return core;
+    }
+
+    /** {@code glDeleteLists} from the transformer's route. */
+    public static void deleteListsRoute(int first, int range) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null && first > 0 && range > 0) {
+            entry.deleteListsRange(first, range);
+            DirectGlDispatcher.enterLane3();
+            try {
+                GLSMDraws.glDeleteLists(first, range);
+            } finally {
+                DirectGlDispatcher.exitLane3();
+            }
+        }
+    }
+
+    /** The int-returning texture-parameter query, bound or named. */
+    public static int getTextureParameterInt(int targetOrName, int pname, boolean named) {
+        if (named) {
+            return textureParameterValue(targetOrName, pname);
+        }
+        int textureName = 0;
+        if (!isProxyTarget(targetOrName)) {
+            int bound = NativeTextureBindings.current().boundTexture(targetOrName);
+            textureName = bound < 0 ? 0 : bound;
+        }
+        return textureParameterValue(textureName, pname);
+    }
+
+    /** GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing. */
+    public static boolean isProxyTarget(int target) {
+        return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
+    }
+
+    /** {@code glGetTextureLevelParameteriv/i64v}: the DSA spelling of the recorded level extent. */
+    public static void getTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
+        if (out == 0L) {
+            return;
+        }
+        long value = 0L;
+        int[] extent = texture > 0 ? VulkanTextureRegistry.captureStore().texLevels()
+                .get(CaptureUploadContext.texLevelKey(texture, level)) : null;
+        if (extent != null) {
+            if (pname == 0x1000) {
+                value = extent[0]; // GL_TEXTURE_WIDTH
+            } else if (pname == 0x1001) {
+                value = extent[1]; // GL_TEXTURE_HEIGHT
+            } else if (pname == 0x1003) {
+                value = extent[2]; // GL_TEXTURE_INTERNAL_FORMAT
+            }
+        }
+        if (wide) {
+            MemoryUtil.memPutLong(out, value);
+        } else {
+            MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
+    /**
+     * The answer for a shader/program status query. LINK_STATUS and VALIDATE_STATUS answer
+     * the executor's recorded link truth for a program it knows; an id with no recorded link
+     * keeps the default true, and COMPILE_STATUS is always true: compilation here happens at
+     * link, per program, so no per-shader result exists when a caller asks.
+     */
+    public static int shaderProgramQueryAnswer(int object, int pname) {
+        if (GLSMPrograms.glIsProgram(object)) {
+            return GLSMPrograms.glGetProgrami(object, pname);
+        }
+        if (GLSMPrograms.glIsShader(object)) {
+            return GLSMPrograms.glGetShaderi(object, pname);
+        }
+        if (pname == 0x8B82 || pname == 0x8B83) { // GL_LINK_STATUS / GL_VALIDATE_STATUS
+            return 1;
+        }
+        if (pname == 0x8B84) { // GL_INFO_LOG_LENGTH
+            return 0;
+        }
+        return pname == 0x8B81 ? 1 : 0; // GL_COMPILE_STATUS
+    }
+
+    /** {@code glShaderObjectParameter*} from the transformer's route. */
+    public static void shaderObjectParameter(int object, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        MemoryUtil.memPutInt(out, shaderProgramQueryAnswer(object, pname));
+    }
+
+    /**
+     * {@code glGetFramebufferAttachmentParameteriv} (and its named form): a colour attachment
+     * the game itself reported is answered with its texture, from the attachment table.
+     */
+    public static void framebufferAttachmentParameter(boolean named, int framebufferOrTarget, int attachment,
+            int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        MemoryUtil.memPutInt(out, framebufferAttachmentAnswer(named, framebufferOrTarget, attachment, pname));
+    }
+
+    private static int framebufferAttachmentAnswer(boolean named, int framebufferOrTarget, int attachment,
+            int pname) {
+        int framebuffer = named ? framebufferOrTarget
+                : (framebufferOrTarget == 0x8CA8 ? FramebufferBindings.current().readFramebuffer()
+                        : FramebufferBindings.current().drawFramebuffer());
+        int slot = colorAttachmentSlot(attachment);
+        int colorTexture = 0;
+        if (framebuffer != 0 && slot >= 0) {
+            colorTexture = FramebufferAttachmentTable.current().colorSlot(framebuffer, slot);
+        }
+        boolean colorAttached = colorTexture != 0;
+        if (pname == 0x8CD0) { // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE
+            return colorAttached ? 0x1702 : 0; // GL_TEXTURE / GL_NONE
+        }
+        if (pname == 0x8CD1) { // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME
+            return colorAttached ? colorTexture : 0;
+        }
+        return 0;
+    }
+
+    /** The bound texture's recorded level-0 extent answer for a level query name, or 0. */
+    public static int texLevelSize(int target, int level, int pname) {
+        if (target != 0x0DE1 || level != 0) { // GL_TEXTURE_2D
+            return 0;
+        }
+        int[] extent = VulkanTextureRegistry.captureStore()
+                .textureExtent(NativeTextureBindings.current().texture2d());
+        return extent == null ? 0
+                : org.soutalab.celtium.vulkan.TextureLevelAnswer.answer(extent[0], extent[1], pname);
+    }
+
+    /** One recorded attribute answer, from the bound VAO's per-attribute record. */
+    private static int vertexAttribAnswer(int index, int pname) {
+        if (index < 0 || index >= GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            return 0;
+        }
+        GlsmClientArrayState.VaoAttrib attrib = GlsmClientArrayState.current().boundAttribs()[index];
+        switch (pname) {
+            case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED
+                return attrib.enabled || (index == 0 && (GlsmEnableState.current().enabled(0x8074)
+                        || GlsmEnableState.current().enabled(0x8622))) ? 1 : 0;
+            case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
+                return attrib.size;
+            case 0x8624: // GL_VERTEX_ATTRIB_ARRAY_STRIDE
+                return attrib.stride;
+            case 0x8625: // GL_VERTEX_ATTRIB_ARRAY_TYPE
+                return attrib.type;
+            case 0x889F: // GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING
+                return attrib.buffer;
+            case 0x886A: // GL_VERTEX_ATTRIB_ARRAY_NORMALIZED
+                return attrib.normalized ? 1 : 0;
+            case 0x88FD: // GL_VERTEX_ATTRIB_ARRAY_INTEGER
+                return attrib.integer ? 1 : 0;
+            default:
+                return 0;
+        }
+    }
+
+    /** {@code glGetVertexAttribfv/dv} from the transformer's route. */
+    public static void getVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
+        if (out == 0L) {
+            return;
+        }
+        int value = vertexAttribAnswer(index, pname);
+        if (asDouble) {
+            MemoryUtil.memPutDouble(out, value);
+        } else {
+            MemoryUtil.memPutFloat(out, value);
+        }
+    }
+
+    /** {@code glGetVertexAttribPointerv} from the transformer's route. */
+    public static void getVertexAttribPointer(int index, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        long value = pname == 0x8645 && index >= 0 && index < GlsmClientArrayState.MAX_VERTEX_ATTRIBS
+                ? GlsmClientArrayState.current().boundAttribs()[index].offset : 0L;
+        MemoryUtil.memPutLong(out, value);
+    }
+
+    /** {@code glGetVertexAttribiv} from the transformer's route. */
+    public static void getVertexAttribiv(int index, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        MemoryUtil.memPutInt(out, vertexAttribAnswer(index, pname));
+    }
+
+    /** {@code glClearBufferfv} from the transformer's route: colour or depth, with the caller's value. */
+    public static void clearBufferfvRoute(int buffer, int drawBuffer, long value) {
+        if (DirectGlDispatcher.inLane3()) {
+            if (value != 0L && (buffer == 0x1800 || buffer == 0x1801)) { // GL_COLOR or GL_DEPTH
+                DirectGlExecutor.EXECUTOR.clearBufferfv(buffer, drawBuffer,
+                        MemoryUtil.memFloatBuffer(value, buffer == 0x1800 ? 4 : 1));
+            }
+            return;
+        }
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || value == 0L) {
+            return;
+        }
+        if (buffer == 0x1800) { // GL_COLOR
+            float red = MemoryUtil.memGetFloat(value);
+            float green = MemoryUtil.memGetFloat(value + 4L);
+            float blue = MemoryUtil.memGetFloat(value + 8L);
+            float alpha = MemoryUtil.memGetFloat(value + 12L);
+            FramebufferClearState clear = FramebufferClearState.current();
+            float oldRed = clear.red(), oldGreen = clear.green(), oldBlue = clear.blue(), oldAlpha = clear.alpha();
+            try {
+                clear.clearColor(red, green, blue, alpha);
+                entry.recordClear(0x4000);
+            } finally {
+                clear.clearColor(oldRed, oldGreen, oldBlue, oldAlpha);
+            }
+        } else if (buffer == 0x1801) { // GL_DEPTH
+            double depth = MemoryUtil.memGetFloat(value);
+            FramebufferClearState clear = FramebufferClearState.current();
+            double old = clear.depth();
+            try {
+                clear.clearDepth(depth);
+                entry.recordClear(0x0100);
+            } finally {
+                clear.clearDepth(old);
+            }
+        }
+    }
+
+    /** {@code glClearBufferiv} from the transformer's route. */
+    public static void clearBufferivRoute(int buffer, int drawBuffer, long value) {
+        if (DirectGlDispatcher.inLane3()) {
+            if (value != 0L && buffer == 0x1802) { // GL_STENCIL
+                DirectGlExecutor.EXECUTOR.clearBufferiv(buffer, drawBuffer,
+                        MemoryUtil.memIntBuffer(value, 1));
+            }
+            return;
+        }
+        clearBufferfvRoute(buffer, drawBuffer, value);
+    }
+
+    /** {@code glClearBufferuiv} from the transformer's route. */
+    public static void clearBufferuivRoute(int buffer, int drawBuffer, long value) {
+        if (!DirectGlDispatcher.inLane3()) {
+            clearBufferfvRoute(buffer, drawBuffer, value);
+        }
+        // Lane 3's framebuffer colors are normalized, so it has no unsigned integer color target.
+    }
+
+    /** {@code glClearBufferfi} from the transformer's route: the depth/stencil pair clear. */
+    public static void clearBufferfiRoute(int buffer, int drawBuffer, float depth, int stencil) {
+        if (DirectGlDispatcher.inLane3()) {
+            DirectGlExecutor.EXECUTOR.clearBufferfi(buffer, drawBuffer, depth, stencil);
+            return;
+        }
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
+            return;
+        }
+        FramebufferClearState clear = FramebufferClearState.current();
+        double old = clear.depth();
+        try {
+            clear.clearDepth(depth);
+            entry.recordClear(0x4100);
+        } finally {
+            clear.clearDepth(old);
+        }
+    }
+
+    /** The transformer's {@code glListBase} route: the converter's single list seat. */
+    public static void listBaseRoute(int base) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glListBase(base);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glCallLists} route, shared with the dispatch's SEM_CALL_LISTS. */
+    public static void callListsRoute(int count, int type, long lists) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glCallLists(count, type, lists);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glDrawArrays} route. */
+    public static void drawArraysRoute(int mode, int first, int count) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glDrawArrays(mode, first, count);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glDrawElements} route. */
+    public static void drawElementsRoute(int mode, int count, int type, long indices) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glDrawElements(mode, count, type, indices);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glDrawElementsBaseVertex} route. */
+    public static void drawElementsBaseVertexRoute(int mode, int count, int type, long indices, int baseVertex) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glDrawElementsBaseVertex(mode, count, type, indices, baseVertex);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glMultiDrawArrays} route: the two native arrays read out here. */
+    public static void multiDrawArraysRoute(int mode, long firsts, long counts, int drawcount) {
+        if (firsts == 0L || counts == 0L || drawcount <= 0) {
+            return;
+        }
+        int bounded = Math.min(drawcount, 1 << 16);
+        int[] firstValues = new int[bounded];
+        int[] countValues = new int[bounded];
+        for (int i = 0; i < bounded; i++) {
+            firstValues[i] = MemoryUtil.memGetInt(firsts + (long) i * 4L);
+            countValues[i] = MemoryUtil.memGetInt(counts + (long) i * 4L);
+        }
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glMultiDrawArrays(mode, firstValues, countValues);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glMultiDrawElements} route: one indexed draw per element. */
+    public static void multiDrawElementsRoute(int mode, long counts, int type, long indices, int drawcount) {
+        if (counts == 0L || indices == 0L || drawcount <= 0) {
+            return;
+        }
+        int bounded = Math.min(drawcount, 1 << 16);
+        DirectGlDispatcher.enterLane3();
+        try {
+            for (int i = 0; i < bounded; i++) {
+                int count = MemoryUtil.memGetInt(counts + (long) i * 4L);
+                long pointer = MemoryUtil.memGetLong(indices + (long) i * 8L);
+                GLSMDraws.glDrawElements(mode, count, type, pointer);
+            }
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glDrawArraysInstanced} route. */
+    public static void drawArraysInstancedRoute(int mode, int first, int count, int instanceCount) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glDrawArraysInstanced(mode, first, count, instanceCount);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
+    /** The transformer's {@code glDrawElementsInstanced} route. */
+    public static void drawElementsInstancedRoute(int mode, int count, int type, long indices, int instanceCount) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMDraws.glDrawElementsInstanced(mode, count, type, indices, instanceCount);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+    }
+
     /** The transformer's {@code glReadPixels} route. */
     public static void readPixels(int x, int y, int width, int height, int format, int type, long address) {
         DirectGlCaptureEntry entry = installed;
@@ -1818,7 +2338,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         snapshot.viewportY = FramebufferViewportState.current().y();
         snapshot.viewportWidth = FramebufferViewportState.current().width();
         snapshot.viewportHeight = FramebufferViewportState.current().height();
-        snapshot.listBase = GlsmDisplayListLedger.current().listBase();
+        snapshot.listBase = GLStateManager.getListBase();
         snapshot.activeTextureUnit = NativeTextureBindings.current().activeUnit();
         snapshot.texture2d = NativeTextureBindings.current().texture2d();
         // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
@@ -1949,7 +2469,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             restored |= LegacyAttribSnapshot.VIEWPORT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
-            GlsmDisplayListLedger.current().listBase(snapshot.listBase);
+            GLSMDraws.glListBase(snapshot.listBase);
             restored |= LegacyAttribSnapshot.LIST_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.TEXTURE_BIT)) {
@@ -2351,11 +2871,14 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     }
 
     private void statusAnswer(GlFn fn, long[] c) {
-        if (fn.name.equals("glGetFramebufferAttachmentParameteriv")) {
-            // (target, attachment, pname, params*) - the one status row whose out slot is c[3].
+        if (fn.name.equals("glGetFramebufferAttachmentParameteriv")
+                || fn.name.equals("glGetNamedFramebufferAttachmentParameteriv")) {
+            // (target-or-fbo, attachment, pname, params*) - the one status row whose out slot is c[3].
+            // Answered from the attachment table, as the shipped stub answered it: a colour
+            // attachment the game itself reported reads back with its texture.
             if (c[3] != 0L) {
-                MemoryUtil.memPutInt(c[3], GLSMFramebuffer.glGetFramebufferAttachmentParameteri(
-                        (int) c[0], (int) c[1], (int) c[2]));
+                MemoryUtil.memPutInt(c[3], framebufferAttachmentAnswer(
+                        fn.name.startsWith("glGetNamed"), (int) c[0], (int) c[1], (int) c[2]));
             }
             return;
         }
@@ -3123,23 +3646,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     }
 
     private void callLists(long[] c) {
-        int n = (int) c[0];
-        int type = (int) c[1];
-        long ptr = c[2];
-        if (ptr == 0L || n <= 0) {
-            return;
-        }
-        switch (type) {
-            case 0x1403: /* GL_UNSIGNED_SHORT */
-                GLSMDraws.glCallLists(MemoryUtil.memShortBuffer(ptr, n));
-                break;
-            case 0x1401: /* GL_UNSIGNED_BYTE */
-                GLSMDraws.glCallLists(MemoryUtil.memByteBuffer(ptr, n));
-                break;
-            default:
-                GLSMDraws.glCallLists(MemoryUtil.memIntBuffer(ptr, n));
-                break;
-        }
+        GLSMDraws.glCallLists((int) c[0], (int) c[1], c[2]);
     }
 
     private void vertexPointer(GlFn fn, long[] c) {

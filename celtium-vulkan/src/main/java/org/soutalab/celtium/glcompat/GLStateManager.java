@@ -1626,7 +1626,11 @@ public class GLStateManager {
         final boolean perfDebugEnabled = GLSMPerfDebug.isEnabled();
         final long perfStart = perfDebugEnabled ? GLSMPerfDebug.begin(GLSMPerfDebug.Stage.GL_PREPARE_CLIENT_ARRAYS) : 0L;
         final VAOManager vaos = ctx().vaos;
-        if (ShaderManager.isEnabled() && vaos.hasAnyClientSideEnabledAttrib()) {
+        // E4-b2 ruling: the upload is gated on client arrays actually being enabled, not on
+        // the FFP shader-emulation flag - celtium's normal execution (FFP included) draws
+        // through client-memory arrays (the VertexBuffer shape), and with the flag off the
+        // old gate dropped every one of those draws in DirectGlRuntime.assembleDraw.
+        if (vaos.hasAnyClientSideEnabledAttrib()) {
             vaos.uploadClientArraysToVBO(first, count);
         }
         if (perfDebugEnabled) {

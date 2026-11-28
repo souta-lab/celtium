@@ -32,7 +32,7 @@ def main():
     require('the early path has no mode property to opt out of',
             'System.getProperty' not in plugin)
     require('the early path installs the stub',
-            'GlsmFrontend.install()' in plugin)
+            'DirectGlCaptureEntry.install()' in plugin)
     # A call, not a mention: the method's javadoc explains why the hint cannot be set here.
     require('the early path does NOT call glfwWindowHint before init',
             'glfwWindowHint(' not in plugin)
@@ -69,9 +69,12 @@ def main():
     # built without a current context aborted the JVM in native code, which no catch can survive, so the stub now
     # answers the methods themselves. The property and the early install are what this check is about, and those are
     # unchanged - what follows asserts the mechanism that exists rather than the one that was abandoned.
-    stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java').read_text(encoding='utf-8')
+    # The stub's seat moved in E4-b2: the capture entry in glcompat.capture is the process GL
+    # function source now, and the monolith it replaces retires in E4-c - so this reads the
+    # entry, whose install() builds the provider and hands it to LWJGL via GL.create.
+    stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java').read_text(encoding='utf-8')
     require('the stub still installs itself as the process GL function source',
-            'install()' in stub and 'FunctionProvider' in stub)
+            'install()' in stub and 'FunctionProvider' in stub and 'GL.create(' in stub)
     transformer_path = ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java'
     require('the native-replacement transformer is present', transformer_path.exists())
     native = transformer_path.read_text(encoding='utf-8')

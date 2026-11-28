@@ -41,12 +41,23 @@ class CeltiumGllessSurfaceNoopTest {
         }
     }
 
+    /**
+     * An instanced draw is served by the converter route, not dropped and counted: the E4-b2 decoder
+     * ruling routes the instanced forms to the same-name GLSMDraws methods, and only a non-zero base
+     * instance keeps the narrowing count (pinned by the test below). Pinned on the hint's source for
+     * the same reason as that test: the route lands in the converter's decoder, whose classes this
+     * module's test classpath cannot load.
+     */
     @Test
-    void anInstancedDrawWithAnotherCountIsCountedByName() {
-        CeltiumGllessHint.glDrawArraysInstanced(4, 0, 3, 5);
-        String summary = CeltiumGllessHint.unsupportedInstancedSummary();
-        assertTrue(summary.contains("glDrawArraysInstanced/count="),
-                "the dropped instanced draw is named with its count, got: " + summary);
+    void anInstancedDrawIsServedByTheConverterRouteNotCounted() throws IOException {
+        String hint = Files.readString(findRepoFile(
+                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java"));
+        assertTrue(hint.contains("DirectGlCaptureEntry.drawArraysInstancedRoute(mode, first, count, instanceCount)"),
+                "the arrays form forwards to the capture entry's instanced route");
+        assertTrue(hint.contains("DirectGlCaptureEntry.drawElementsInstancedRoute(mode, count, type, indices, instanceCount)"),
+                "the elements form forwards to the capture entry's instanced route");
+        assertTrue(!hint.contains("noteUnsupportedInstanced(\"glDrawArraysInstanced\", \"count\")"),
+                "a served instanced draw is no longer counted as a dropped one");
     }
 
     @Test
