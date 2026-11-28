@@ -63,7 +63,7 @@ public final class ModPushConstantLimit {
     }
 
     /** Test-only: forget the noted device, so the no-device fallback can be asserted in the same JVM. */
-    static void forgetDeviceForTest() {
+    public static void forgetDeviceForTest() {
         synchronized (ModPushConstantLimit.class) {
             deviceNoted = false;
             deviceLimit = 0;
