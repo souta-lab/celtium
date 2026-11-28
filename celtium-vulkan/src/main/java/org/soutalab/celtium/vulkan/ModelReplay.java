@@ -135,12 +135,14 @@ final class ModelReplay {
             mesh = b.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
-            if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.hasRecordedList(listId)) {
-                // No model quads were captured for this list, but the stub recorded its commands - a Tessellator draw
-                // compiled into the list, which is how a mod's skybox or sky dome is built. The GL replay that follows
-                // this false return draws the recorded geometry, so this is not a missing mesh and must not be counted
-                // as one: measured on ATM3 (leg r125-atm3-amd), Astral Sorcery's skybox lists were reported as
-                // CELTIUM_MODEL_MISSING eight times while the recorded replay drew them.
+            if (org.soutalab.celtium.core.state.RecordedListProbes.current().hasRecordedList(listId)) {
+                // No model quads were captured for this list, but the capture layer recorded its commands - a
+                // Tessellator draw compiled into the list, which is how a mod's skybox or sky dome is built. The GL
+                // replay that follows this false return draws the recorded geometry, so this is not a missing mesh
+                // and must not be counted as one: measured on ATM3 (leg r125-atm3-amd), Astral Sorcery's skybox
+                // lists were reported as CELTIUM_MODEL_MISSING eight times while the recorded replay drew them.
+                // The recorded-list store itself stays behind the RecordedListProbe boundary (E5 seat C, Neon E4
+                // ruling 2026-11-28): this class reads neither the capture package nor the converter.
                 b.modelRecordedReplayCalls++;
                 if (b.modelRecordedReplayLogs < 4) {
                     b.modelRecordedReplayLogs++;

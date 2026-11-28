@@ -11,8 +11,9 @@ package org.soutalab.celtium.vulkan;
  * The capture is deliberately a measurement first: it records what the quads contain (vertices, texture coordinates and
  * the plane the normal is derived from) and how many arrive, without changing a single pixel of the rendering.
  * <p>
- * The geometry's identity is read from GL rather than assumed: the list being compiled and the bound texture both come
- * from the state the GL-less stub records when the game calls {@code glNewList} and {@code glBindTexture}. Under a real
+ * The geometry's identity is read from GL rather than assumed: the list being compiled comes from the shared
+ * register, the list being executed from the recorded-list probe boundary, and the bound texture from the state
+ * the GL-less stub records when the game calls {@code glBindTexture}. Under a real
  * context the capture behaves exactly as before. A quad whose list or texture cannot be established, and a quad whose
  * four vertices carry no area, are refused with a named reason and counted instead of being filed under an id no replay
  * can find.
@@ -174,13 +175,16 @@ public final class VulkanModelQuadCapture {
     public static synchronized void quad(int count, float[] xs, float[] ys, float[] zs, float[] us, float[] vs,
             float nx, float ny, float nz) {
         celtium$noteSourceOnce();
-        int listId = org.soutalab.celtium.vulkan.gl.GlsmFrontend.compilingList();
+        // The list being compiled is fixed-function state and is read from the shared register
+        // (G2-07 ruling; the register's compiling id is published by both list-opening systems).
+        int listId = org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().compilingListId();
         if (listId <= 0) {
             // GL_LIST_INDEX names the list under construction and the spec keeps it at 0 while one is being executed.
             // A compiled model is drawn by glCallList, so its quads arrive with the query answering 0 while a list is
-            // in fact executing - which is how every model in the game came to be refused with `list=0`. The stub
-            // knows which list it is replaying; ask it, and keep the compile-side answer for the compile side.
-            listId = org.soutalab.celtium.vulkan.gl.GlsmFrontend.executingList();
+            // in fact executing - which is how every model in the game came to be refused with `list=0`. The recorded
+            // store knows which list it is replaying; ask it through the RecordedListProbe boundary (E5 seat C), and
+            // keep the compile-side answer for the compile side.
+            listId = org.soutalab.celtium.core.state.RecordedListProbes.current().executingListId();
         }
         int texture = UNKNOWN;
         if (listId <= 0) {
