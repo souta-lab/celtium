@@ -6,6 +6,7 @@ import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
 import org.soutalab.celtium.vulkan.FramebufferBindings;
 
 import org.soutalab.celtium.glcompat.capture.GlContextTerms;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 import org.soutalab.celtium.glcompat.capture.GlsmStringState;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import java.nio.ByteBuffer;
@@ -544,7 +545,7 @@ final class GlStateQueries {
         return true;
     }
 
-    static void getInts(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
+    static void getInts(GlsmFrontend stub, int pname, long out, GlFn fn) {
         if (out == 0L) {
             return;
         }
@@ -606,7 +607,7 @@ final class GlStateQueries {
         memPutInt(out, value);
     }
 
-    static void getLongs(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
+    static void getLongs(GlsmFrontend stub, int pname, long out, GlFn fn) {
         if (out != 0L) {
             memPutLong(out, 0L);
         }
@@ -620,7 +621,7 @@ final class GlStateQueries {
      * transform built from it was garbage. Matrices read the renderer's live state mirror (identity only before a
      * backend exists); scalar and vector queries write exactly the number of components implied by their pname.
      */
-    static void getFloats(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
+    static void getFloats(GlsmFrontend stub, int pname, long out, GlFn fn) {
         getFloats(stub, pname, out, "glGetDoublev".equals(fn.name));
     }
 
@@ -863,7 +864,7 @@ final class GlStateQueries {
         }
     }
 
-    static void getBooleans(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
+    static void getBooleans(GlsmFrontend stub, int pname, long out, GlFn fn) {
         if (out == 0L) {
             return;
         }

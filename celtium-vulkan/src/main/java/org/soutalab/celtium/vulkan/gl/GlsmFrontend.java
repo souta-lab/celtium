@@ -8,7 +8,9 @@ import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
 import org.soutalab.celtium.vulkan.FramebufferBindings;
 
 import org.soutalab.celtium.glcompat.capture.ClientArrayRange;
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
 import org.soutalab.celtium.glcompat.capture.DispatchThreadGate;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 import org.soutalab.celtium.glcompat.capture.GlContextTerms;
 import org.soutalab.celtium.glcompat.capture.GlFunctionTable;
 import org.soutalab.celtium.glcompat.capture.GlTrampolines;
@@ -74,11 +76,13 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
  */
 public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtium.vulkan.TextureUploadContext {
 
-    /** C return types. Java-side only - the trampoline marshals them into the libffi result slot. */
-    public static final byte R_VOID = 0;
-    public static final byte R_INT = 1;
-    public static final byte R_LONG = 2;
-    public static final byte R_PTR = 3;
+    /** C return types. Java-side only - the trampoline marshals them into the libffi result slot.
+     * The encoding's home is {@link DirectGlCaptureEntry} since E4-b2; these aliases keep the
+     * stub's own rows and readers on the same values. */
+    public static final byte R_VOID = DirectGlCaptureEntry.R_VOID;
+    public static final byte R_INT = DirectGlCaptureEntry.R_INT;
+    public static final byte R_LONG = DirectGlCaptureEntry.R_LONG;
+    public static final byte R_PTR = DirectGlCaptureEntry.R_PTR;
 
     /**
      * Argument types as they arrive at the trampoline: the encoding is {@link GlFunctionTable}'s since
@@ -92,142 +96,111 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     public static final byte A_UINT = GlFunctionTable.A_UINT;
 
     // Semantics ids - what dispatch() does with the call. The enum keeps the table lines short.
-    public static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
-    public static final int SEM_GEN = 1;             // object-name allocation: returns the next id
-    public static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
-    public static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
-    public static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
-    public static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
-    public static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
-    public static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
-    public static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
-    public static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
-    public static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
-    public static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
-    public static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
-    public static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
+    public static final int SEM_NOOP = DirectGlCaptureEntry.SEM_NOOP;            // record only - state the Vulkan side owns or nobody reads
+    public static final int SEM_GEN = DirectGlCaptureEntry.SEM_GEN;             // object-name allocation: returns the next id
+    public static final int SEM_GET_ERROR = DirectGlCaptureEntry.SEM_GET_ERROR;       // always GL_NO_ERROR - nothing the stub does can raise one
+    public static final int SEM_GET_STRING = DirectGlCaptureEntry.SEM_GET_STRING;      // arg0 pname -> interned ascii
+    public static final int SEM_IS_ENABLED = DirectGlCaptureEntry.SEM_IS_ENABLED;      // arg0 cap -> recorded enable bit
+    public static final int SEM_ENABLE = DirectGlCaptureEntry.SEM_ENABLE;          // arg0 cap -> set enable bit
+    public static final int SEM_DISABLE = DirectGlCaptureEntry.SEM_DISABLE;         // arg0 cap -> clear enable bit
+    public static final int SEM_GET_INTEGERV = DirectGlCaptureEntry.SEM_GET_INTEGERV;    // arg0 pname, arg1 out[] -> plausible ints
+    public static final int SEM_GET_FLOATV = DirectGlCaptureEntry.SEM_GET_FLOATV;      // arg0 pname, arg1 out[] -> plausible floats
+    public static final int SEM_GET_BOOLEANV = DirectGlCaptureEntry.SEM_GET_BOOLEANV;    // arg0 pname, arg1 out[] -> plausible bytes
+    public static final int SEM_IS_OBJECT = DirectGlCaptureEntry.SEM_IS_OBJECT;      // arg0 id -> whether the table generated it
+    public static final int SEM_DELETE = DirectGlCaptureEntry.SEM_DELETE;         // id list -> retire names (reissue is the same counter-free)
+    public static final int SEM_GET_STRINGI = DirectGlCaptureEntry.SEM_GET_STRINGI;    // pname, index -> extension string
+    public static final int SEM_GET_INTEGER64V = DirectGlCaptureEntry.SEM_GET_INTEGER64V; // pname, out64[] -> plausible longs
     // GAP-SEM-1 (b): SEM_ROUTE (id 14) removed - zero function-table rows ever targeted it.
-    public static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
-    public static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
-    public static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
-    public static final int SEM_MAP = 18;            // ptr return: the named buffer's storage
-    public static final int SEM_UNMAP = 19;          // byte return: true, buffer contents already live
-    public static final int SEM_BUFFER_DATA = 20;    // (target,size,data,usage) -> size bytes of storage
-    public static final int SEM_STATUS = 21;         // (obj,pname,out[]) -> successful-answer queries
-    public static final int SEM_INFO_LOG = 22;       // (obj,bufSize,len*,log) -> empty string
-    public static final int SEM_BIND_BUFFER = 23;    // (target,name) -> binding record for map/data
-    public static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
-    public static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
-    public static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
-    public static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
-    public static final int SEM_FOG_I = 71;
-    public static final int SEM_FOG_F = 72;
-    public static final int SEM_FOG_FV = 73;
-    public static final int SEM_FOG_IV = 74;
-    public static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
-    public static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
-    public static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
-    public static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
-    public static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
-    public static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
-    public static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
-    public static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
-    public static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
-    public static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
-    public static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
-    public static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
-    public static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
-    public static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
-    public static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
-    public static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
-    public static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
-    public static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
-    public static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
-    public static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
-    public static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
-    public static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
-    public static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
-    public static final int SEM_END_LIST = 36;        // () -> compilation finished
-    public static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
-    public static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
-    public static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
-    public static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
-    public static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
-    public static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
-    public static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
-    public static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
-    private static final int SEM_COMPILED_ARRAYS = -2;
-    private static final Fn COMPILED_ARRAYS = new Fn("compiledClientArrays", R_VOID, new byte[0], SEM_COMPILED_ARRAYS);
+    public static final int SEM_ZERO = DirectGlCaptureEntry.SEM_ZERO;           // int return: 0 - valid-but-empty answers (uniform loc etc)
+    public static final int SEM_FBO_COMPLETE = DirectGlCaptureEntry.SEM_FBO_COMPLETE;   // int return: GL_FRAMEBUFFER_COMPLETE
+    public static final int SEM_SIGNALED = DirectGlCaptureEntry.SEM_SIGNALED;       // int return: GL_ALREADY_SIGNALED
+    public static final int SEM_MAP = DirectGlCaptureEntry.SEM_MAP;            // ptr return: the named buffer's storage
+    public static final int SEM_UNMAP = DirectGlCaptureEntry.SEM_UNMAP;          // byte return: true, buffer contents already live
+    public static final int SEM_BUFFER_DATA = DirectGlCaptureEntry.SEM_BUFFER_DATA;    // (target,size,data,usage) -> size bytes of storage
+    public static final int SEM_STATUS = DirectGlCaptureEntry.SEM_STATUS;         // (obj,pname,out[]) -> successful-answer queries
+    public static final int SEM_INFO_LOG = DirectGlCaptureEntry.SEM_INFO_LOG;       // (obj,bufSize,len*,log) -> empty string
+    public static final int SEM_BIND_BUFFER = DirectGlCaptureEntry.SEM_BIND_BUFFER;    // (target,name) -> binding record for map/data
+    public static final int SEM_BIND_TEXTURE = DirectGlCaptureEntry.SEM_BIND_TEXTURE;   // (target,name) -> texture binding record
+    public static final int SEM_ACTIVE_TEXTURE = DirectGlCaptureEntry.SEM_ACTIVE_TEXTURE; // (unit) -> texture unit selector record
+    public static final int SEM_TEXIMAGE = DirectGlCaptureEntry.SEM_TEXIMAGE;       // (target,level,internal,w,h,...) -> size record per bound
+    public static final int SEM_VIEWPORT = DirectGlCaptureEntry.SEM_VIEWPORT;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    public static final int SEM_FOG_I = DirectGlCaptureEntry.SEM_FOG_I;
+    public static final int SEM_FOG_F = DirectGlCaptureEntry.SEM_FOG_F;
+    public static final int SEM_FOG_FV = DirectGlCaptureEntry.SEM_FOG_FV;
+    public static final int SEM_FOG_IV = DirectGlCaptureEntry.SEM_FOG_IV;
+    public static final int SEM_TEX_ENV_I = DirectGlCaptureEntry.SEM_TEX_ENV_I;      // (target,pname,param) -> texture-env int, per active unit
+    public static final int SEM_TEX_ENV_F = DirectGlCaptureEntry.SEM_TEX_ENV_F;      // (target,pname,param) -> texture-env float
+    public static final int SEM_TEX_ENV_FV = DirectGlCaptureEntry.SEM_TEX_ENV_FV;     // (target,pname,values) -> texture-env float array
+    public static final int SEM_GET_TEX_ENV_I = DirectGlCaptureEntry.SEM_GET_TEX_ENV_I;  // (target,pname,out) -> the recorded int
+    public static final int SEM_GET_TEX_ENV_FV = DirectGlCaptureEntry.SEM_GET_TEX_ENV_FV; // (target,pname,out) -> the recorded floats
+    public static final int SEM_COPY_TEX_IMAGE = DirectGlCaptureEntry.SEM_COPY_TEX_IMAGE;    // copy from the bound read framebuffer into a texture level
+    public static final int SEM_COPY_TEX_SUB_IMAGE = DirectGlCaptureEntry.SEM_COPY_TEX_SUB_IMAGE; // the same, into a sub-rectangle
+    public static final int SEM_BLIT_FRAMEBUFFER = DirectGlCaptureEntry.SEM_BLIT_FRAMEBUFFER;  // framebuffer-to-framebuffer blit (the depth bit is served)
+    public static final int SEM_COPY_IMAGE_SUB_DATA = DirectGlCaptureEntry.SEM_COPY_IMAGE_SUB_DATA; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
+    public static final int SEM_TEX_PARAM_I = DirectGlCaptureEntry.SEM_TEX_PARAM_I;     // (target,pname,param) -> texture parameter of the bound texture
+    public static final int SEM_TEX_PARAM_IV = DirectGlCaptureEntry.SEM_TEX_PARAM_IV;    // (target,pname,values) -> the same, from an array
+    public static final int SEM_TEX_PARAM_I_DSA = DirectGlCaptureEntry.SEM_TEX_PARAM_I_DSA; // (texture,pname,param) -> the same, texture named directly
+    public static final int SEM_TEX_PARAM_IV_DSA = DirectGlCaptureEntry.SEM_TEX_PARAM_IV_DSA; // (texture,pname,values) -> the same, from an array
+    public static final int SEM_MULT_MATRIX = DirectGlCaptureEntry.SEM_MULT_MATRIX;     // (matrix) -> multiply the active matrix of the mirror
+    public static final int SEM_MATRIX_MODE = DirectGlCaptureEntry.SEM_MATRIX_MODE;     // (mode) -> which stack glMultMatrix* multiplies
+    public static final int SEM_BIND_FRAMEBUFFER = DirectGlCaptureEntry.SEM_BIND_FRAMEBUFFER; // (target,name) -> framebuffer binding record
+    public static final int SEM_CLEAR = DirectGlCaptureEntry.SEM_CLEAR;          // (mask) -> pending clear of the owned frame image
+    public static final int SEM_CLEAR_COLOR = DirectGlCaptureEntry.SEM_CLEAR_COLOR;    // (r,g,b,a) -> the colour glClear will use
+    public static final int SEM_CLEAR_DEPTH = DirectGlCaptureEntry.SEM_CLEAR_DEPTH;    // (d) -> the depth glClear will use
+    public static final int SEM_BUFFER_SUBDATA = DirectGlCaptureEntry.SEM_BUFFER_SUBDATA; // (target,offset,size,data) -> into the recorded storage
+    public static final int SEM_LINE_WIDTH = DirectGlCaptureEntry.SEM_LINE_WIDTH;      // (w) -> recorded raster line width
+    public static final int SEM_USE_PROGRAM = DirectGlCaptureEntry.SEM_USE_PROGRAM;     // (program) -> recorded current program
+    public static final int SEM_NEW_LIST = DirectGlCaptureEntry.SEM_NEW_LIST;        // (list,mode) -> the list being compiled
+    public static final int SEM_END_LIST = DirectGlCaptureEntry.SEM_END_LIST;        // () -> compilation finished
+    public static final int SEM_CALL_LIST = DirectGlCaptureEntry.SEM_CALL_LIST;       // (list) -> recorded for the display-list census
+    public static final int SEM_BIND_VERTEX_ARRAY = DirectGlCaptureEntry.SEM_BIND_VERTEX_ARRAY; // (vao) -> recorded vertex array binding
+    public static final int SEM_TEXIMAGE_PIXELS = DirectGlCaptureEntry.SEM_TEXIMAGE_PIXELS; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
+    public static final int SEM_TEXSUBIMAGE = DirectGlCaptureEntry.SEM_TEXSUBIMAGE;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
+    public static final int SEM_COMPRESSED_TEXIMAGE = DirectGlCaptureEntry.SEM_COMPRESSED_TEXIMAGE; // (target,level,internal,w,h,border,size,data) -> extent only
+    public static final int SEM_PIXEL_STORE = DirectGlCaptureEntry.SEM_PIXEL_STORE;     // (pname,value) -> the unpack state upload conversion needs
+    public static final int SEM_VERTEX_POINTER = DirectGlCaptureEntry.SEM_VERTEX_POINTER;  // (size,type,stride,offset) -> how to read the bound array buffer
+    public static final int SEM_DRAW_ARRAYS = DirectGlCaptureEntry.SEM_DRAW_ARRAYS;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    private static final int SEM_COMPILED_ARRAYS = DirectGlCaptureEntry.SEM_COMPILED_ARRAYS;
+    private static final GlFn COMPILED_ARRAYS = new GlFn("compiledClientArrays", R_VOID, new byte[0], SEM_COMPILED_ARRAYS);
     // Step 1 of the loading-screen unit: glBegin/glEnd leave the generic no-op table so the *site* that opens a
     // legacy immediate-mode run can be proven rather than counted. Forge's SplashProgress draws the loading screen
     // with glBegin(GL_QUADS) (SplashProgress.java:294/:353/:416) straight through GL11, which under the GL-less
     // window reached SEM_NOOP and drew nothing; the no-op census showed glVertex3f=152460/glBegin=38115/glEnd=38115
     // but a count is not a site. This step only names the callers; the vertex recording and the submit are the next
     // two steps, each landing on its own.
-    public static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
-    public static final int SEM_END = 69;             // () -> the site that closes it
-    public static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
-    public static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
-    public static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
-    public static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
-    public static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
-    public static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
-    public static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
-    public static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
-    public static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
-    public static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
-    public static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
-    public static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
-    public static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
-
-    /** One function-table row: name, return type, arg types, semantics. */
-    public static final class Fn {
-        public final String name;
-        final byte ret;
-        final byte[] args;
-        final int semantics;
-        /**
-         * Whether this is one of the DSA {@code *Named*} entry points, whose first argument is the object name rather
-         * than a target whose binding is used.
-         * <p>
-         * Decided once, here: the buffer-data, sub-data and map entry points used to ask
-         * {@code fn.name.contains("NamedBuffer")} on every call, and vanilla uploads through them for every entity and
-         * tile entity batch - the profile put {@code String.contains} at 2.1% of the warm window's samples inside
-         * block-entity rendering.
-         */
-        final boolean namedObject;
-        /** Per-function arrival count, under {@link #FN_CENSUS}: the distribution of the trampoline's producers. */
-        long calls;
-
-        Fn(String name, byte ret, byte[] args, int semantics) {
-            this.name = name;
-            this.ret = ret;
-            this.args = args;
-            this.semantics = semantics;
-            this.namedObject = name.contains("Named");
-        }
-    }
+    public static final int SEM_BEGIN = DirectGlCaptureEntry.SEM_BEGIN;           // (mode) -> the site that opens an immediate-mode run
+    public static final int SEM_END = DirectGlCaptureEntry.SEM_END;             // () -> the site that closes it
+    public static final int SEM_READ_PIXELS = DirectGlCaptureEntry.SEM_READ_PIXELS;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
+    public static final int SEM_SCISSOR = DirectGlCaptureEntry.SEM_SCISSOR;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
+    public static final int SEM_CULL_FACE = DirectGlCaptureEntry.SEM_CULL_FACE;       // arg0 = the face GL will cull
+    public static final int SEM_FRONT_FACE = DirectGlCaptureEntry.SEM_FRONT_FACE;      // arg0 = the winding GL calls front
+    public static final int SEM_POLYGON_OFFSET = DirectGlCaptureEntry.SEM_POLYGON_OFFSET;  // (factor, units) as float bits -> the depth bias GL wants
+    public static final int SEM_COLOR_MASK = DirectGlCaptureEntry.SEM_COLOR_MASK;      // (r,g,b,a) -> which channels the draw may write (BH-10)
+    public static final int SEM_BLEND_FUNC = DirectGlCaptureEntry.SEM_BLEND_FUNC;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
+    public static final int SEM_BLEND_FUNC_SEPARATE = DirectGlCaptureEntry.SEM_BLEND_FUNC_SEPARATE; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
+    public static final int SEM_BLEND_EQUATION = DirectGlCaptureEntry.SEM_BLEND_EQUATION;  // (mode) -> both blend equations
+    public static final int SEM_BLEND_EQUATION_SEPARATE = DirectGlCaptureEntry.SEM_BLEND_EQUATION_SEPARATE; // (rgbMode, alphaMode) -> the two equations
+    public static final int SEM_LIST_BASE = DirectGlCaptureEntry.SEM_LIST_BASE;      // (base) -> the offset glCallLists adds to every name
+    public static final int SEM_CALL_LISTS = DirectGlCaptureEntry.SEM_CALL_LISTS;     // (count, type, address) -> execute a run of display lists
+    public static final int SEM_BIND_IMAGE_TEXTURE = DirectGlCaptureEntry.SEM_BIND_IMAGE_TEXTURE; // full GL image-unit tuple -> native ledger
 
     /** Shared by every unresolved name: the dispatch path must not allocate an empty array per unknown symbol. */
     private static final byte[] EMPTY_ARGS = new byte[0];
-    private static final List<Fn> TABLE = new ArrayList<>();
-    private static final Map<String, Integer> IDS = new HashMap<>();
+    /**
+     * The function table itself lives on {@link DirectGlCaptureEntry} since E4-b2 (the entry
+     * absorbed the table, the {@code fn()} factory and the row type {@code GlFn}); these two
+     * fields keep this stub's dispatch and its tests reading the same rows until E4-c.
+     */
+    private static final List<GlFn> TABLE = DirectGlCaptureEntry.table();
+    private static final Map<String, Integer> IDS = DirectGlCaptureEntry.ids();
 
-    public static Fn fn(String name, byte ret, int semantics, byte... args) {
-        Fn fn = new Fn(name, ret, args, semantics);
-        TABLE.add(fn);
-        return fn;
-    }
-
-    static {
-        GlFunctionTable.registerAll();
-        for (int i = 0; i < TABLE.size(); i++) {
-            IDS.putIfAbsent(TABLE.get(i).name, Integer.valueOf(i));
-        }
+    /** Delegates to the capture entry's factory; kept so this class's older callers compile unchanged. */
+    public static GlFn fn(String name, byte ret, int semantics, byte... args) {
+        return DirectGlCaptureEntry.fn(name, ret, semantics, args);
     }
 
     /* The registration methods that used to sit here (registerNamesAndQueries and its three
-       siblings) live in GlFunctionTable, which the static block above calls. */
+       siblings) live in GlFunctionTable, which the capture entry's static block calls. */
 
     // ---- runtime state ---------------------------------------------------------------
 
@@ -420,7 +393,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * @param args    the argument copy that will be stored; the pointer slot is rewritten here
      * @return the owned buffer, or null when the command carries no payload this class can size
      */
-    private java.nio.ByteBuffer captureListPayload(Fn fn, long[] args) {
+    private java.nio.ByteBuffer captureListPayload(GlFn fn, long[] args) {
         int pointerIndex;
         long bytes;
         switch (fn.semantics) {
@@ -1662,7 +1635,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         // The count is caller data and the loop reads the name array with it; a bogus one walks past the block. The
         // cap matches glCallLists': far above any legitimate delete batch, small enough to bound a corrupt one.
         int bounded = Math.min(count, 1 << 16);
-        stub.delete(new Fn(coreDeleteName(name), R_VOID, new byte[] {A_INT, A_PTR}, SEM_DELETE),
+        stub.delete(new GlFn(coreDeleteName(name), R_VOID, new byte[] {A_INT, A_PTR}, SEM_DELETE),
                 new long[] {bounded, names});
     }
 
@@ -1672,7 +1645,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         if (stub == null) {
             return;
         }
-        stub.delete(new Fn(coreDeleteName(name), R_VOID, new byte[] {A_INT}, SEM_DELETE),
+        stub.delete(new GlFn(coreDeleteName(name), R_VOID, new byte[] {A_INT}, SEM_DELETE),
                 new long[] {object});
     }
 
@@ -3990,7 +3963,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         if (stub == null || out == 0L) {
             return;
         }
-        stub.status(new Fn(named ? "glGetNamedFramebufferAttachmentParameteriv"
+        stub.status(new GlFn(named ? "glGetNamedFramebufferAttachmentParameteriv"
                         : "glGetFramebufferAttachmentParameteriv", R_VOID,
                         new byte[] {A_INT, A_INT, A_INT, A_PTR}, SEM_STATUS),
                 new long[] {framebufferOrTarget, attachment, pname, out});
@@ -4530,7 +4503,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         if (functionId < 0) {
             return 0L;
         }
-        Fn fn = TABLE.get(functionId);
+        GlFn fn = TABLE.get(functionId);
         long[] c = dispatchArgsScratch();
         for (int i = 0; i < fn.args.length && i < GlTrampolines.SLOTS; i++) {
             long slot = MemoryUtil.memGetAddress(args + (long) i * org.lwjgl.system.Pointer.POINTER_SIZE);
@@ -4621,7 +4594,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
 
     /**
      * {@code -Dceltium.debug.fnCensus=true}: count arrivals per table entry and print the top producers at exit.
-     * The per-call cost is one field increment on the Fn the dispatch already resolved - the question "which
+     * The per-call cost is one field increment on the GlFn the dispatch already resolved - the question "which
      * functions make up the tens of thousands of trampoline calls per frame" has never had a counted answer.
      */
     private static final boolean FN_CENSUS = Boolean.getBoolean("celtium.debug.fnCensus");
@@ -4686,7 +4659,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * the state tables, and the gate is released on every exit path, including the guarded body's own failure
      * handling.
      */
-    private long dispatchArgs(Fn fn, long[] c) {
+    private long dispatchArgs(GlFn fn, long[] c) {
         Thread self = Thread.currentThread();
         if (this.dispatchGate.enter(self) == DispatchThreadGate.REFUSED) {
             celtium$noteForeignDispatch(fn == null ? "<unresolved>" : fn.name, self,
@@ -4711,7 +4684,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * The snapshot is three field reads plus two list sizes, and only while a list is open - with no list open
      * there is nothing a failed call can leave half-recorded, and the wrapper costs the reads alone.
      */
-    private long dispatchArgsGuarded(Fn fn, long[] c) {
+    private long dispatchArgsGuarded(GlFn fn, long[] c) {
         List<Object[]> openAtEntry = this.openList;
         int openSize = openAtEntry == null ? -1 : openAtEntry.size();
         int payloadsSize = openAtEntry == null || this.openListPayloads == null ? -1 : this.openListPayloads.size();
@@ -4734,7 +4707,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * are not rolled back, and neither is a compilation that was closed or replaced during the call (the
      * identity check): rolling those back would resurrect state the delimiters already settled.
      */
-    private void celtium$rollbackFailedCompile(Fn fn, List<Object[]> openAtEntry, int openSize, int payloadsSize,
+    private void celtium$rollbackFailedCompile(GlFn fn, List<Object[]> openAtEntry, int openSize, int payloadsSize,
             int geometrySize, long legacyRunBytesAtEntry) {
         if (openAtEntry == null || this.openList != openAtEntry) {
             return;
@@ -4774,10 +4747,10 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
     /**
-     * The dispatch with the table entry already looked up - the legacy entry needs the {@link Fn} for its arg-count
+     * The dispatch with the table entry already looked up - the legacy entry needs the {@link GlFn} for its arg-count
      * loop, so resolving it twice per call paid a second map probe on every GL call.
      */
-    private long dispatchArgsBody(Fn fn, long[] c) {
+    private long dispatchArgsBody(GlFn fn, long[] c) {
         if (TRACE && this.dispatchCount.incrementAndGet() < TRACE_LIMIT) {
             System.out.println("[GLSTUB] #" + this.dispatchCount.get() + " " + fn.name
                     + " (" + Long.toHexString(c[0]) + "," + Long.toHexString(c[1]) + "," + Long.toHexString(c[2])
@@ -5569,7 +5542,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     /** {@return whether {@code name} is registered in the table as a no-op entry point}. */
     public static boolean isNoopEntryPoint(String name) {
         for (int i = 0; i < TABLE.size(); i++) {
-            Fn fn = TABLE.get(i);
+            GlFn fn = TABLE.get(i);
             if (fn.semantics == SEM_NOOP && fn.name.equals(name)) {
                 return true;
             }
@@ -5775,7 +5748,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * {@code ForgeHooksClientMixin}) and {@code GluProjectionMixin} for the frustum - and this counter is what says a
      * raw call arrived without one. Do not turn this back into an application without removing the other owner.
      */
-    private void celtium$noteMatrixMultiplyArrival(Fn fn) {
+    private void celtium$noteMatrixMultiplyArrival(GlFn fn) {
         MATRIX_MULTIPLY_ARRIVALS.incrementAndGet();
         if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
                 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
@@ -5787,7 +5760,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
 
-    private long generate(Fn fn, long[] c) {
+    private long generate(GlFn fn, long[] c) {
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
             // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
             // glGenLists is the one caller that asks for a *contiguous range*: it returns n such that n .. n+range-1
@@ -5834,7 +5807,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         return 0L;
     }
 
-    private static int lastPointerArg(Fn fn) {
+    private static int lastPointerArg(GlFn fn) {
         for (int i = fn.args.length - 1; i >= 0; i--) {
             if (fn.args[i] == A_PTR) {
                 return i;
@@ -5844,7 +5817,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
     /** The count before the out array: the last int arg before the out pointer, or 1 when there is none. */
-    private static int countFromArgs(Fn fn, long[] c, int outIndex) {
+    private static int countFromArgs(GlFn fn, long[] c, int outIndex) {
         for (int i = outIndex - 1; i >= 0; i--) {
             if (fn.args[i] == A_INT || fn.args[i] == A_UINT) {
                 return (int) c[i];
@@ -5853,7 +5826,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         return 1;
     }
 
-    private void delete(Fn fn, long[] c) {
+    private void delete(GlFn fn, long[] c) {
         boolean textures = "glDeleteTextures".equals(fn.name);
         if (fn.args.length == 2 && fn.args[0] == A_INT && fn.args[1] == A_PTR) {
             int count = (int) c[0];
@@ -6075,15 +6048,15 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         return GlStateQueries.celtium$getIntegers(pname, out);
     }
 
-    private void getInts(int pname, long out, Fn fn) {
+    private void getInts(int pname, long out, GlFn fn) {
         GlStateQueries.getInts(this, pname, out, fn);
     }
 
-    private void getLongs(int pname, long out, Fn fn) {
+    private void getLongs(int pname, long out, GlFn fn) {
         GlStateQueries.getLongs(this, pname, out, fn);
     }
 
-    private void getFloats(int pname, long out, Fn fn) {
+    private void getFloats(int pname, long out, GlFn fn) {
         GlStateQueries.getFloats(this, pname, out, fn);
     }
 
@@ -6106,7 +6079,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         GlStateQueries.getFloats(this, pname, out, asDouble);
     }
 
-    private void getBooleans(int pname, long out, Fn fn) {
+    private void getBooleans(int pname, long out, GlFn fn) {
         GlStateQueries.getBooleans(this, pname, out, fn);
     }
 
@@ -6157,7 +6130,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
     /** Pixel/semantic routing - the layer the texture path plugs into; the body lives in {@link GlStateQueries}. */
-    // GAP-SEM-1 (b): route(Fn, long[]) removed together with SEM_ROUTE.
+    // GAP-SEM-1 (b): route(GlFn, long[]) removed together with SEM_ROUTE.
     // ---- texture image extents: what glGetTexLevelParameter answers from ---------------------------------
 
     /** GL_FRAMEBUFFER (0x8D40) binds both slots; GL_DRAW/READ_FRAMEBUFFER (0x8CA9/0x8CA8) bind one each. */
@@ -6646,7 +6619,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
     /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
-    private void bufferSubData(Fn fn, long[] c) {
+    private void bufferSubData(GlFn fn, long[] c) {
         bufferSubDataFor(bufferFor(fn, c), c[1], c[2], c[3]);
     }
 
@@ -6693,7 +6666,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     public static final int GL_BGRA = 0x80E1;
 
     /** The tex-image producer the dispatch case lands on; see {@link TextureCaptureStore}. */
-    private void texImagePixels(Fn fn, long[] c) {
+    private void texImagePixels(GlFn fn, long[] c) {
         this.textureCaptures.texImagePixels(this, fn.name, c);
     }
 
@@ -6846,11 +6819,11 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
                 : GlsmBufferState.current().bound(target);
     }
 
-    private int bufferFor(Fn fn, long[] c) {
+    private int bufferFor(GlFn fn, long[] c) {
         return fn.namedObject ? (int) c[0] : boundBuffer((int) c[0]);
     }
 
-    private void bufferData(Fn fn, long[] c) {
+    private void bufferData(GlFn fn, long[] c) {
         bufferDataFor(bufferFor(fn, c), c[1], c[2]);
     }
 
@@ -6878,7 +6851,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         return stub.bufferStorage.census();
     }
 
-    private long mapBuffer(Fn fn, long[] c) {
+    private long mapBuffer(GlFn fn, long[] c) {
         boolean range = fn.args.length == 4;
         return this.bufferStorage.mapBufferFor(bufferFor(fn, c), range, range ? c[1] : 0L, range ? c[2] : 0L, range ? c[3] : 0L);
     }
@@ -6973,7 +6946,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     }
 
     /** The first element of an array-valued texture parameter: every scalar pname this record carries is one wide. */
-    private static int celtium$firstParamValue(Fn fn, long values) {
+    private static int celtium$firstParamValue(GlFn fn, long values) {
         if (values == 0L) {
             return 0;
         }
@@ -7059,16 +7032,16 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * the top twenty so a leg's log names the trampoline's producers without a page of output.
      */
     private static String fnCensusSummary() {
-        List<Fn> sorted = new ArrayList<>(TABLE);
+        List<GlFn> sorted = new ArrayList<>(TABLE);
         sorted.sort((a, b) -> Long.compare(b.calls, a.calls));
         StringBuilder text = new StringBuilder(512);
         long total = 0L;
-        for (Fn fn : TABLE) {
+        for (GlFn fn : TABLE) {
             total += fn.calls;
         }
         text.append("total=").append(total).append(' ');
         int shown = 0;
-        for (Fn fn : sorted) {
+        for (GlFn fn : sorted) {
             if (fn.calls == 0L || shown >= 20) {
                 break;
             }
@@ -8695,7 +8668,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
                         replayLegacyRun((CompiledLegacyRun) call[1]);
                         continue;
                     }
-                    Fn command = (Fn) call[0];
+                    GlFn command = (GlFn) call[0];
                     if (command.semantics == SEM_COMPILED_ARRAYS) replayCompiledArrays((long[]) call[1]);
                     else dispatchArgs(command, (long[]) call[1]);
                 }
@@ -9155,7 +9128,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * Successful-state queries: every out slot the function writes gets a plausible value. Shader/program status
      * queries answer "compiled"/"linked" so the game's program checks pass; everything else answers 0.
      */
-    private void status(Fn fn, long[] c) {
+    private void status(GlFn fn, long[] c) {
         int outIndex = lastPointerArg(fn);
         if (outIndex < 0) {
             return;
@@ -9252,7 +9225,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * The length out-arg gets the characters written. The other SEM_INFO_LOG names (shader source,
      * resource names) keep the empty answer; only the three log functions carry a log.
      */
-    private void infoLog(Fn fn, long[] c) {
+    private void infoLog(GlFn fn, long[] c) {
         int last = lastPointerArg(fn);
         if (last < 0) {
             return;
