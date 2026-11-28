@@ -1356,11 +1356,264 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     }
 
     @Override
+    public void setBlendEnabled(boolean enabled) {
+        this.funnel.setBlendEnabled(enabled);
+    }
+
+    @Override
+    public void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
+        this.funnel.setBlendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
+    }
+
+    @Override
+    public void blendEquation(int rgbEquation, int alphaEquation) {
+        this.funnel.blendEquation(rgbEquation, alphaEquation);
+    }
+
+    @Override
+    public void colorMask(int mask) {
+        this.funnel.colorMask(mask);
+    }
+
     public boolean celtium$depthWritesLive() {
         return this.funnel.celtium$depthWritesLive();
     }
 
     @Override
+    public void setDepthMask(boolean mask) {
+        this.funnel.setDepthMask(mask);
+    }
+
+    @Override
+    public void setDepthTest(boolean enabled) {
+        this.funnel.setDepthTest(enabled);
+    }
+
+    @Override
+    public void setAlphaFunc(int glFunc, float reference) {
+        this.funnel.setAlphaFunc(glFunc, reference);
+    }
+
+    @Override
+    public void setAlphaTestEnabled(boolean enabled) {
+        this.funnel.setAlphaTestEnabled(enabled);
+    }
+
+    @Override
+    public void setLightingEnabled(boolean enabled) {
+        this.funnel.setLightingEnabled(enabled);
+    }
+
+    @Override
+    public void setLightmapUnitEnabled(boolean enabled) {
+        this.funnel.setLightmapUnitEnabled(enabled);
+    }
+
+    @Override
+    public void setLightEnabled(int index, boolean enabled) {
+        this.funnel.setLightEnabled(index, enabled);
+    }
+
+    @Override
+    public void setLightPosition(int index, float x, float y, float z) {
+        this.funnel.setLightPosition(index, x, y, z);
+    }
+
+    @Override
+    public void setLightDiffuse(int index, float red, float green, float blue) {
+        this.funnel.setLightDiffuse(index, red, green, blue);
+    }
+
+    @Override
+    public void setLightAmbient(float red, float green, float blue) {
+        this.funnel.setLightAmbient(red, green, blue);
+    }
+
+    @Override
+    public void setShadeModel(int glMode) {
+        this.funnel.setShadeModel(glMode);
+    }
+
+    @Override
+    public void setFogEnabled(boolean enabled) {
+        this.funnel.setFogEnabled(enabled);
+    }
+
+    @Override
+    public void setFogMode(int glMode) {
+        this.funnel.setFogMode(glMode);
+    }
+
+    @Override
+    public void setFogDensity(float density) {
+        this.funnel.setFogDensity(density);
+    }
+
+    @Override
+    public void setFogStart(float start) {
+        this.funnel.setFogStart(start);
+    }
+
+    @Override
+    public void setFogEnd(float end) {
+        this.funnel.setFogEnd(end);
+    }
+
+    @Override
+    public void setFogColor(float red, float green, float blue) {
+        this.funnel.setFogColor(red, green, blue);
+    }
+
+    @Override
+    public void setFogRadial(boolean radial) {
+        this.funnel.setFogRadial(radial);
+    }
+
+    @Override
+    public boolean immediateFogAvailable() {
+        return this.funnel.immediateFogAvailable();
+    }
+
+    @Override
+    public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height) {
+        this.funnel.announceDynamicTexture(glTextureId, pixels, width, height);
+    }
+
+    @Override
+    public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
+        this.funnel.announceTextureUpload(glTextureId, image);
+    }
+
+    @Override
+    public void beginAnimationUploads(int glTextureId) {
+        this.funnel.beginAnimationUploads(glTextureId);
+    }
+
+    @Override
+    public void endAnimationUploads() {
+        this.funnel.endAnimationUploads();
+    }
+
+    @Override
+    public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
+        this.funnel.announceAnimatedUpload(data, width, height, x, y);
+    }
+
+    @Override
+    public void invalidateTexture(int glTextureId) {
+        this.funnel.invalidateTexture(glTextureId);
+    }
+
+    @Override
+    public void invalidateBoundTexture() {
+        this.funnel.invalidateBoundTexture();
+    }
+
+    @Override
+    public void setTexture2dEnabled(boolean enabled) {
+        this.funnel.setTexture2dEnabled(enabled);
+    }
+
+    @Override
+    public void bindTexture(int glTextureId) {
+        this.funnel.bindTexture(glTextureId);
+    }
+
+    @Override
+    public boolean skipUnchangedBind(int glTextureId) {
+        return this.funnel.skipUnchangedBind(glTextureId);
+    }
+
+    @Override
+    public void setColor(float red, float green, float blue, float alpha) {
+        this.funnel.setColor(red, green, blue, alpha);
+    }
+
+    @Override
+    public void matrixMode(int glMode) {
+        this.funnel.matrixMode(glMode);
+    }
+
+    @Override
+    public void loadIdentity() {
+        this.funnel.loadIdentity();
+    }
+
+    @Override
+    public void ortho(double left, double right, double bottom, double top, double near, double far) {
+        this.funnel.ortho(left, right, bottom, top, near, far);
+    }
+
+    @Override
+    public void translate(double x, double y, double z) {
+        this.funnel.translate(x, y, z);
+    }
+
+    @Override
+    public void rotate(float angle, float x, float y, float z) {
+        this.funnel.rotate(angle, x, y, z);
+    }
+
+    @Override
+    public void scale(float x, float y, float z) {
+        this.funnel.scale(x, y, z);
+    }
+
+    @Override
+    public void activeTextureUnit(int unit) {
+        this.funnel.activeTextureUnit(unit);
+    }
+
+    @Override
+    public void depthFunc(int func) {
+        this.funnel.depthFunc(func);
+    }
+
+    @Override
+    public void perspective(float fovDegrees, float aspect, float near, float far) {
+        this.funnel.perspective(fovDegrees, aspect, near, far);
+    }
+
+    @Override
+    public boolean mirrorGluPerspective(float fovDegrees, float aspect, float near, float far) {
+        return this.funnel.mirrorGluPerspective(fovDegrees, aspect, near, far);
+    }
+
+    @Override
+    public void frustum(double left, double right, double bottom, double top, double near, double far) {
+        this.funnel.frustum(left, right, bottom, top, near, far);
+    }
+
+    @Override
+    public void multiplyMatrix(java.nio.FloatBuffer buffer) {
+        this.funnel.multiplyMatrix(buffer);
+    }
+
+    @Override
+    public void pushMatrix() {
+        this.funnel.pushMatrix();
+    }
+
+    @Override
+    public void popMatrix() {
+        this.funnel.popMatrix();
+    }
+
+    @Override
+    /**
+     * Seeds the mirrored projection and modelview from OpenGL once, at the moment the world camera is fully applied.
+     * <p>
+     * The earlier seed ran at the first comparison, which is a moment when GL itself holds the identity - the first batch
+     * of a frame is offered during a pass like the GUI's, after that pass reset both stacks - so it copied the wrong
+     * moment rather than the wrong matrix. The camera setup is the right moment: {@code func_78479_a} has by then applied
+     * the nausea wobble, {@code orientCamera}'s rotations and its interpolated eye-position translation, and nothing later
+     * in the frame resets the stack until the next pass. It is one read, not two per batch, and it happens before the
+     * comparison counters move, so they still measure tracking rather than the copy.
+     */
+    public void seedMirrorFromCameraSetup() {
+        this.funnel.seedMirrorFromCameraSetup();
+    }
+
     public boolean celtium$isGpuStalled() {
         return this.frameCoordinator.celtium$isGpuStalled();
     }
@@ -1371,23 +1624,100 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     }
 
     @Override
+    public void flushBeforeClear(int mask) {
+        this.funnel.flushBeforeClear(mask);
+    }
+
+    @Override
+    public void blendFunc(int sourceFactor, int destinationFactor) {
+        this.funnel.blendFunc(sourceFactor, destinationFactor);
+    }
+
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
-        this.funnel.celtium$rawAttachmentTextureDeleted();
+        this.funnel.celtium$rawAttachmentTextureDeleted(framebuffer);
     }
 
-    @Override
     public void celtium$rawTextureDeleted(int texture) {
-        this.funnel.celtium$rawTextureDeleted();
+        this.funnel.celtium$rawTextureDeleted(texture);
     }
 
     @Override
+    public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
+        this.funnel.bindFramebufferColorTexture(framebufferIdentity, colorTexture, width, height);
+    }
+
+    @Override
+    public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        this.funnel.bindFramebuffer(targetIdentity, isMain);
+    }
+
+    @Override
+    public void viewport(int x, int y, int width, int height) {
+        this.funnel.viewport(x, y, width, height);
+    }
+
     public void celtium$frameBoundary() {
         this.funnel.celtium$frameBoundary();
     }
 
     @Override
+    public void beginWorldPass() {
+        this.funnel.beginWorldPass();
+    }
+
+    @Override
+    public void endWorldPass() {
+        this.funnel.endWorldPass();
+    }
+
+    @Override
+    public void captureWorldSnapshot() {
+        this.funnel.captureWorldSnapshot();
+    }
+
+    @Override
+    public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
+        this.funnel.applyDerivedProjection(fovDegrees, aspect, near, far);
+    }
+
+    @Override
+    public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                        int vertexCount, int drawMode) {
+        return this.funnel.submitImmediateBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode);
+    }
+
+    @Override
+    public boolean fixedFunctionLightingEnabled() {
+        return this.funnel.fixedFunctionLightingEnabled();
+    }
+
+    @Override
+    public boolean acceptsRetainedGeometry() {
+        return this.funnel.acceptsRetainedGeometry();
+    }
+
+    @Override
+    public boolean submitRetainedGeometry(Object geometry, int drawMode) {
+        return this.funnel.submitRetainedGeometry(geometry, drawMode);
+    }
+
+    @Override
+    public boolean texture2dEnabled() {
+        return this.funnel.texture2dEnabled();
+    }
+
     public void celtium$flushPendingAtFrameBoundary() {
         this.frameCoordinator.celtium$flushPendingAtFrameBoundary();
+    }
+
+    @Override
+    public String getTransferQueueDebugString() {
+        return this.funnel.getTransferQueueDebugString();
+    }
+
+    @Override
+    public void updateTimings() {
+        this.frameCoordinator.updateTimings();
     }
 
 }

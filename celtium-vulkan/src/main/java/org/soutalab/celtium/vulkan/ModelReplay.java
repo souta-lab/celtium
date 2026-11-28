@@ -94,19 +94,19 @@ final class ModelReplay {
             // The limit is asked first, as on the layer path below: with the add first, the dedupe set kept
             // growing after the lines were spent - one entry per (list, target) per world, never cleared (audit F2).
             if (b.modelOffTargetLogs < b.MODEL_OFFTARGET_LOG_LIMIT
-                    && b.seatOwner.modelOffTargetLogged.add(listId + "@" + callTarget)) {
+                    && b.owner.modelOffTargetLogged.add(listId + "@" + callTarget)) {
                 b.modelOffTargetLogs++;
-                VulkanDynamicMesh looked = b.seatOwner.modelGeometry.meshFor(listId);
+                VulkanDynamicMesh looked = b.owner.modelGeometry.meshFor(listId);
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
                         + " target=" + callTarget + " main=" + b.targetRegistry.mainIdentity()
                         + " modelDraw=" + b.MODEL_DRAW + " frameTargetKnown=" + b.targetRegistry.targetKnown()
-                        + " meshes=" + (b.seatOwner.modelGeometry.modelMeshes() == null ? -1 : b.seatOwner.modelGeometry.modelMeshes().size())
+                        + " meshes=" + (b.owner.modelGeometry.modelMeshes() == null ? -1 : b.owner.modelGeometry.modelMeshes().size())
                         + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
             }
             if ((b.modelOffTargetCalls == 1 || b.modelOffTargetCalls % 32 == 0) && VulkanDiagnostics.enabled()) {
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + b.modelOffTargetCalls
                         + " drawn=" + b.modelOffTargetDraws
-                        + " missingMeshes=" + b.seatOwner.modelGeometry.modelMissingMeshes()
+                        + " missingMeshes=" + b.owner.modelGeometry.modelMissingMeshes()
                         + " refusals=" + b.modelDrawRefusals
                         + " lastRefusal=[" + b.modelLastRefusal + "]");
             }
@@ -117,11 +117,11 @@ final class ModelReplay {
         if (b.MODEL_ONLY_LIST != 0 && listId != b.MODEL_ONLY_LIST) {
             return false;
         }
-        VulkanDynamicMesh mesh = b.seatOwner.modelGeometry.meshFor(listId);
+        VulkanDynamicMesh mesh = b.owner.modelGeometry.meshFor(listId);
         if ((mesh == null || mesh.isEmpty()) && b.context != null
                 && VulkanModelQuadCapture.quadsForList(listId) > 0
                 && (b.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
-                    || b.seatOwner.modelGeometry.requestMissingCapturedListRebuild(
+                    || b.owner.modelGeometry.requestMissingCapturedListRebuild(
                             listId, VulkanModelQuadCapture.quadsForList(listId),
                             VulkanModelQuadCapture.captureVersion()))) {
             // The table is built at the frame's first terrain pass, and a model's own replay can come before the
@@ -134,7 +134,7 @@ final class ModelReplay {
             // the GPU table after a world switch, perform one bounded reconciliation
             // for that list and version rather than silently losing its first draws.
             b.celtium$buildModelMeshes();
-            mesh = b.seatOwner.modelGeometry.meshFor(listId);
+            mesh = b.owner.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
             if (org.soutalab.celtium.core.state.RecordedListProbes.current().hasRecordedList(listId)) {
@@ -158,13 +158,13 @@ final class ModelReplay {
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
             // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
             // into "list N, texture M, no mesh", which is the only form in which it can be fixed.
-            b.seatOwner.modelGeometry.noteMissingMesh();
-            if (b.seatOwner.modelGeometry.shouldLogMissingMesh(listId)) {
+            b.owner.modelGeometry.noteMissingMesh();
+            if (b.owner.modelGeometry.shouldLogMissingMesh(listId)) {
                 System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
                         + " capturedQuads=" + VulkanModelQuadCapture.quadsForList(listId)
                         + " captureVersion=" + VulkanModelQuadCapture.captureVersion()
                         + " cachedVersion=" + b.modelMeshBuiltCaptureVersion
-                        + " meshBuildFailure=" + b.seatOwner.modelGeometry.modelMeshFailure()
+                        + " meshBuildFailure=" + b.owner.modelGeometry.modelMeshFailure()
                         + " (no GPU mesh available; GL-less cannot replay this list)"
                         + " caller=" + celtium$gameCaller());
             }
@@ -218,7 +218,7 @@ final class ModelReplay {
             b.ensureUsableLightmap();
             // Resolved before the guard so a replay counts once either way: the light-map coordinate it samples and the
             // combine colour its record carries.
-            float[] lightCoord = b.seatOwner.celtium$lightmapForGroup();
+            float[] lightCoord = b.owner.celtium$lightmapForGroup();
             float[] combineColor = b.lighting.celtium$envCombineColor();
             // The whole replay, when it is the one this path resolved last time: measured need, leg r16b-model-growth-4k -
             // 2,509,753 replays in 112 frames and 781 ms in this path (311 ns a replay) while modelInstances reported 98
@@ -505,7 +505,7 @@ final class ModelReplay {
             return false;
         }
         if (b.textureRegistry == null) {
-            b.textureRegistry = b.seatOwner.celtium$registry();
+            b.textureRegistry = b.owner.celtium$registry();
         }
         VulkanGlTexture image = b.textureRegistry.get(texture);
         int textureIndex = image == null ? -1 : b.celtium$bindlessIndex(image, texture);
@@ -533,7 +533,7 @@ final class ModelReplay {
             created.beginFrame(b.frame.frameId);
         }
         VulkanModelInstances instances = b.modelInstances;
-        instances.syncPool(b.seatOwner.modelGeometry.modelMeshes());
+        instances.syncPool(b.owner.modelGeometry.modelMeshes());
         int listId = mesh.ownerList();
         if (!instances.hasList(listId)) {
             instances.noteMissing();
@@ -595,7 +595,7 @@ final class ModelReplay {
         if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frame.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
             // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
             // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.
-            float[] lm = b.seatOwner.celtium$lightmapForGroup();
+            float[] lm = b.owner.celtium$lightmapForGroup();
             System.out.println("[Celtium] CELTIUM_MODEL_LIGHT list=" + listId + " lit=" + state[8] + " t=["
                     + modelView[12] + "," + modelView[13] + "," + modelView[14] + "] params="
                     + (light == null ? "null" : java.util.Arrays.toString(light)) + " lightmap="
@@ -641,7 +641,7 @@ final class ModelReplay {
         probe.frameId = b.frame.frameId;
         probe.target = target;
         probe.pass = b;
-        probe.meshTable = b.seatOwner.modelGeometry.modelMeshes();
+        probe.meshTable = b.owner.modelGeometry.modelMeshes();
         probe.openGroup = b.openModelRunGroup;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
@@ -781,7 +781,7 @@ final class ModelReplay {
         }
         probe.lightValid = light != null;
         probe.lightCoordValid = lightCoord != null;
-        probe.meshTable = b.seatOwner.modelGeometry.modelMeshes();
+        probe.meshTable = b.owner.modelGeometry.modelMeshes();
         probe.openGroup = open;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
