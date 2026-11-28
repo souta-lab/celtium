@@ -50,7 +50,7 @@ class ForgetTextureCleanupTest {
                     GL_UNSIGNED_BYTE, MemoryUtil.memAddress(pixels));
 
             assertTrue(VulkanTextureRegistry.captureStore().textureParameterRecorded(25, GL_TEXTURE_WRAP_S));
-            assertEquals(16, VulkanTextureRegistry.captureStore().celtium$textureExtent(25)[0]);
+            assertEquals(16, VulkanTextureRegistry.captureStore().textureExtent(25)[0]);
 
             // Keep a second texture intact while forgetting texture 25.
             invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, 26);
@@ -60,7 +60,7 @@ class ForgetTextureCleanupTest {
 
             assertFalse(VulkanTextureRegistry.captureStore().textureParameterRecorded(25, GL_TEXTURE_WRAP_S),
                     "recorded texture parameter must be cleared on delete");
-            assertNull(VulkanTextureRegistry.captureStore().celtium$textureExtent(25),
+            assertNull(VulkanTextureRegistry.captureStore().textureExtent(25),
                     "level 0 extent must be cleared on delete");
 
             Map<?, ?> texLevels = org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore()
