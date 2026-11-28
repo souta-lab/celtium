@@ -52,16 +52,18 @@ public final class GlsmClientArrayState {
      * same record it saw in the stub.
      */
     public static final class VaoAttrib {
-        boolean enabled;
-        boolean pointerSet;
-        boolean normalized;
-        boolean integer;
+        // Public since the E4-b2 relocation: the record's readers (the frontend until E4-c, the capture
+        // entry and the Hint doors after it) no longer share this class's package.
+        public boolean enabled;
+        public boolean pointerSet;
+        public boolean normalized;
+        public boolean integer;
         /** GL's default attribute: size 4, float, tightly packed, null pointer, no buffer. */
-        int size = 4;
-        int type = 0x1406; // GL_FLOAT
-        int stride;
-        long offset;
-        int buffer;
+        public int size = 4;
+        public int type = 0x1406; // GL_FLOAT
+        public int stride;
+        public long offset;
+        public int buffer;
     }
 
     private static final GlsmClientArrayState CURRENT = new GlsmClientArrayState();
