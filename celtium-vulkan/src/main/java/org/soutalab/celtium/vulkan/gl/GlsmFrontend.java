@@ -4448,7 +4448,7 @@ public final class GlsmFrontend implements FunctionProvider {
     /** Whether the texture was allocated with a NULL data pointer; see {@link TextureCaptureStore}. */
     public static boolean textureAllocatedWithoutData(int textureName) {
         GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureAllocatedWithoutData(stub, textureName);
+        return stub != null && stub.textureCaptures.textureAllocatedWithoutData(textureName);
     }
 
     /** Whether the level exists but holds no game pixels; see {@link TextureCaptureStore}. */

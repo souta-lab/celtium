@@ -1055,7 +1055,7 @@ public final class TextureCaptureStore {
      * the mirror path reports it as deferred rather than as a rejection.
      */
     /** {@return whether the texture was allocated with a NULL data pointer and no data has arrived since}. */
-    public boolean textureAllocatedWithoutData(GlsmFrontend stub, int textureName) {
+    public boolean textureAllocatedWithoutData(int textureName) {
         return GlsmNameLedger.current().isNullAllocated(textureName);
     }
 
