@@ -1624,7 +1624,7 @@ public final class Lane2ImmediateRecorder {
     final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
 
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
-    final int[] acceptedByFormat = new int[8];
+    final int[] acceptedByFormat = new int[VulkanImmediateFormats.COUNT];
 
     /**
      * Non-quad groups the drain sent to the non-quad emitter, by GL primitive mode (0-7): the arrival
