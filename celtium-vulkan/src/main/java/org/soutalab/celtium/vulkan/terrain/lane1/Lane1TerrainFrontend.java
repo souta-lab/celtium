@@ -82,8 +82,8 @@ public final class Lane1TerrainFrontend {
     private static final long AUX_SLAB_BYTES = 32L * 1024L * 1024L;
     private static final int MAX_SECTIONS = 32768;
     private static final long DESC_BYTES = (long) MAX_SECTIONS * 48L;
-    /** DrawPush: mat4 (64) + vec4 cameraPos (64) + ivec4 gridOrigin (80) + lightCount/pads (96). */
-    private static final int PUSH_BYTES = 112;
+    /** DrawPush byte offsets: mat4 0, camera section 64, grid origin 80, metadata 96, camera fraction 112. */
+    private static final int PUSH_BYTES = 128;
     /** FogBlock: vec4 fogColor (0) + vec3 camera (16) + start (28) + end (32) + density (36) + mode (40) + cutoff (44). */
     private static final int FOG_BYTES = 64;
     /** Texture-cell table capacity: one uvec2 (cellU, cellV) per sprite texture index. */
@@ -131,9 +131,7 @@ public final class Lane1TerrainFrontend {
 
     // Per-frame state, written by prepareFrame and consumed by recordPass / push constants.
     private final float[] viewProj = new float[16];
-    private double camX;
-    private double camY;
-    private double camZ;
+    private CameraSection cameraSection;
     private int gridOriginX;
     private int gridOriginY;
     private int gridOriginZ;
@@ -263,20 +261,36 @@ public final class Lane1TerrainFrontend {
 
     /**
      * Publishes one frame's view state: the descriptor table, the dynamic-light grid and the fog
-     * blocks. {@code viewProj} is the final Vulkan projection x modelView with the translation
-     * column zeroed (the shader subtracts the camera position itself).
+     * blocks. The Vulkan view-projection and frustum planes both operate on positions
+     * relative to the supplied world origin.
      */
     public synchronized void prepareFrame(float[] viewProj16, double camX, double camY, double camZ,
                                           float[] frustumCoefficients, List<LightGridBuilder.PointLight> lights,
                                           float[] fogColorRgba, float fogStart, float fogEnd,
                                           float fogDensity, int fogMode, long frameId) {
+        prepareFrame(viewProj16, new CameraPose(camX, camY, camZ, 0.0f, 0.0f),
+                FrustumPlanes.of(frustumCoefficients), lights, fogColorRgba,
+                fogStart, fogEnd, fogDensity, fogMode, frameId);
+    }
+
+    /** Publishes the matching transform, origin and planes from the extractor. */
+    public synchronized void prepareFrame(FrustumExtractor.View view, List<LightGridBuilder.PointLight> lights,
+                                          float[] fogColorRgba, float fogStart, float fogEnd,
+                                          float fogDensity, int fogMode, long frameId) {
+        prepareFrame(view.viewProj(), view.origin(), view.planes(), lights, fogColorRgba,
+                fogStart, fogEnd, fogDensity, fogMode, frameId);
+    }
+
+    private void prepareFrame(float[] viewProj16, CameraPose origin, FrustumPlanes frustum,
+                              List<LightGridBuilder.PointLight> lights, float[] fogColorRgba,
+                              float fogStart, float fogEnd, float fogDensity, int fogMode, long frameId) {
         System.arraycopy(viewProj16, 0, this.viewProj, 0, 16);
-        this.camX = camX;
-        this.camY = camY;
-        this.camZ = camZ;
+        this.cameraSection = CameraSection.of(origin);
         this.frameId = frameId;
-        world.setMainView(new CameraPose(camX, camY, camZ, 0.0f, 0.0f),
-                FrustumPlanes.of(frustumCoefficients), frameId);
+        world.setMainView(origin, frustum, frameId);
+        double camX = origin.x();
+        double camY = origin.y();
+        double camZ = origin.z();
         // The descriptor block only changes when residency does; rewriting its ~140 KB
         // every frame was pure overhead in a steady view (Gate G1 profile).
         if (descStore != store || descGeneration != store.generation()) {
@@ -456,10 +470,9 @@ public final class Lane1TerrainFrontend {
     private void writePushConstants(ByteBuffer push) {
         FloatBuffer floats = push.asFloatBuffer();
         floats.put(viewProj, 0, 16);
-        floats.position(16);
-        floats.put((float) camX).put((float) camY).put((float) camZ).put(0.0f);
         IntBuffer ints = push.asIntBuffer();
-        ints.position(20);
+        ints.position(16);
+        ints.put(cameraSection.x()).put(cameraSection.y()).put(cameraSection.z()).put(0);
         ints.put(gridOriginX).put(gridOriginY).put(gridOriginZ).put(0);
         ints.position(24);
         ints.put(lightCount);
@@ -467,6 +480,8 @@ public final class Lane1TerrainFrontend {
         floats.put(atlasCellsAcross);
         ints.position(26);
         ints.put(textureCellCount).put(0);
+        floats.position(28);
+        floats.put(cameraSection.fracX()).put(cameraSection.fracY()).put(cameraSection.fracZ()).put(0.0f);
         push.position(0);
     }
 
