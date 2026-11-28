@@ -95,15 +95,14 @@ public abstract class FontRendererMixin {
     }
 
     /**
-     * {@return the texture bound to TEXTURE_2D on the active unit}, asking the installed GL stub directly rather than
-     * paying a trampoline round trip for a field it already holds - the per-string bind check below used to pay two
-     * FFI queries per drawString, which the fn census measured as the largest share of all glGetIntegerv arrivals.
-     * A real-GL build still gets the answer from GL, so the fallback is the call itself.
+     * {@return the texture bound to TEXTURE_2D on the active unit}, read from the shared register
+     * ({@code LightStateRegister.boundTextureId()}), which the GlStateManager bind hooks publish on every bind -
+     * the per-string bind check below used to pay two FFI queries per drawString, which the fn census measured
+     * as the largest share of all glGetIntegerv arrivals. Zero is the legitimate unbound value, so there is no
+     * query fallback (G2-07 ruling form, extended to this reader by the Neon E4 ruling 2026-11-28, E5 seat A).
      */
     private static int celtium$boundTexture2D() {
-        int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069);
-        return stub != Integer.MIN_VALUE ? stub
-                : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        return org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId();
     }
 
     /**
