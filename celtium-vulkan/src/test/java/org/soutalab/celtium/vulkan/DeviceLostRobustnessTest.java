@@ -33,15 +33,15 @@ class DeviceLostRobustnessTest {
     /** Only the device-loss report is absorbed; every other result keeps settleGpu's existing contract. */
     @Test
     void onlyDeviceLossIsAbsorbedByTheSettle() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_DEVICE_LOST),
+        assertTrue(FrameCoordinator.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_DEVICE_LOST),
                 "VK_ERROR_DEVICE_LOST (-4) is the report the reporter's teardown died on");
-        assertFalse(VulkanTerrainGpuBackend.celtium$settleReportsDeviceLoss(VK10.VK_SUCCESS),
+        assertFalse(FrameCoordinator.celtium$settleReportsDeviceLoss(VK10.VK_SUCCESS),
                 "success is not a failure to absorb (the settle does not consult the rule on success)");
-        assertFalse(VulkanTerrainGpuBackend.celtium$settleReportsDeviceLoss(VK10.VK_TIMEOUT),
+        assertFalse(FrameCoordinator.celtium$settleReportsDeviceLoss(VK10.VK_TIMEOUT),
                 "a timeout is a busy device, not a gone one: it keeps the throw");
-        assertFalse(VulkanTerrainGpuBackend.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_OUT_OF_DEVICE_MEMORY),
+        assertFalse(FrameCoordinator.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_OUT_OF_DEVICE_MEMORY),
                 "out-of-memory is a different failure with a live device: it keeps the throw");
-        assertFalse(VulkanTerrainGpuBackend.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_INITIALIZATION_FAILED),
+        assertFalse(FrameCoordinator.celtium$settleReportsDeviceLoss(VK10.VK_ERROR_INITIALIZATION_FAILED),
                 "an initialization failure is not a lost device: it keeps the throw");
     }
 
@@ -52,7 +52,7 @@ class DeviceLostRobustnessTest {
     @Test
     void theSettleConsultsTheRuleBeforeItsThrow() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java"));
         int settleStart = source.indexOf("private boolean settleGpu(String reason)");
         assertTrue(settleStart >= 0, "settleGpu is declared");
         String settle = source.substring(settleStart, settleStart + 6000);

@@ -24,14 +24,14 @@ class PendingIndicesAccountingTest {
 
     @Test
     void aCountedGroupIsSubtracted() {
-        assertEquals(900, VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(1000, false, 100),
+        assertEquals(900, Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(1000, false, 100),
                 "a group the accept path counted gives its indices back when it is drawn");
     }
 
     @Test
     void aModelRunIsNotSubtracted() {
         // The defect: the replay's indices were never added, so subtracting them drove the counter negative.
-        assertEquals(1000, VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(1000, true, 100),
+        assertEquals(1000, Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(1000, true, 100),
                 "a model-run group was never counted, so drawing it must leave the counter alone");
     }
 
@@ -39,7 +39,7 @@ class PendingIndicesAccountingTest {
     void aModelRunCannotDriveTheCounterNegative() {
         int pending = 0;
         for (int i = 0; i < 32; i++) {
-            pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, true, 99);
+            pending = Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(pending, true, 99);
         }
         assertEquals(0, pending, "32 model runs on an empty queue leave the bound where it was");
         assertTrue(pending >= 0, "and never below zero, which is what made the threshold unreachable");
@@ -49,7 +49,7 @@ class PendingIndicesAccountingTest {
     void anExemptRetainedGroupIsNotSubtracted() {
         // Flight A1: the accept path skipped this group's indices under the exemption, so the draw side must
         // skip them too - the same never-counted case as a model run, reached through the group's stamp.
-        assertEquals(1000, VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(1000, true, 100),
+        assertEquals(1000, Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(1000, true, 100),
                 "an exempt retained group was never counted, so drawing it must leave the counter alone");
     }
 
@@ -58,9 +58,9 @@ class PendingIndicesAccountingTest {
         int pending = 0;
         pending += 100; // a counted transient batch is accepted
         // an exempt retained batch is accepted: the accept path adds nothing for it
-        pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, true, 20_736);
+        pending = Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(pending, true, 20_736);
         assertEquals(100, pending, "the exempt draw leaves the counted remainder untouched");
-        pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, false, 100);
+        pending = Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(pending, false, 100);
         assertEquals(0, pending, "the counted draw then drains the counter exactly");
         assertTrue(pending >= 0, "and the interleaving never drove it negative");
     }
@@ -69,7 +69,7 @@ class PendingIndicesAccountingTest {
     void theCountedPathStillReachesZero() {
         int pending = 8192;
         while (pending > 0) {
-            pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, false, 64);
+            pending = Lane2ImmediateRecorder.celtium$pendingIndicesAfterDraw(pending, false, 64);
         }
         assertEquals(0, pending, "a queue of counted groups drains exactly");
     }

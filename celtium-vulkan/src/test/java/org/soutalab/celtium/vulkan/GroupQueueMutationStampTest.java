@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Every change to {@code immediateGroups} must advance {@code groupQueueMutation}, because that stamp is the only thing
- * that makes {@link VulkanTerrainGpuBackend#countGroupsForTarget(long)}'s cached answer valid.
+ * that makes {@link Lane2ImmediateRecorder#countGroupsForTarget(long)}'s cached answer valid.
  * <p>
  * Item 342's diagnosis names the paths that did not: the native framebuffer composite ({@code NativeFramebufferCompositor}),
  * both model replay paths ({@code ModelReplay}'s display-list replay and its instanced model run), and this backend's own
@@ -40,7 +40,7 @@ class GroupQueueMutationStampTest {
      */
     @Test
     void aQueuedCompositeInvalidatesACachedZero() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackend();
+        Lane2ImmediateRecorder backend = newBackend();
         backend.immediateGroups.add(group(OTHER_TARGET));
 
         // The flush asks about the bound target while only another target's group is queued: this caches 0.
@@ -55,7 +55,7 @@ class GroupQueueMutationStampTest {
     /** {@code ModelReplay}'s display-list replay add (one group per replayed quad list). */
     @Test
     void aQueuedDisplayListReplayInvalidatesACachedZero() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackend();
+        Lane2ImmediateRecorder backend = newBackend();
         backend.immediateGroups.add(group(OTHER_TARGET));
         assertEquals(0, backend.countGroupsForTarget(COMPOSITE_TARGET));
 
@@ -68,7 +68,7 @@ class GroupQueueMutationStampTest {
     /** {@code ModelReplay}'s instanced model-run add (the pack-scale candidate in item 342 §8). */
     @Test
     void aQueuedModelRunInvalidatesACachedZero() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackend();
+        Lane2ImmediateRecorder backend = newBackend();
         backend.immediateGroups.add(group(OTHER_TARGET));
         assertEquals(0, backend.countGroupsForTarget(COMPOSITE_TARGET));
 
@@ -85,7 +85,7 @@ class GroupQueueMutationStampTest {
      */
     @Test
     void theDiagnosisSequenceEndsWithTheGroupCounted() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackend();
+        Lane2ImmediateRecorder backend = newBackend();
         ImmediateGroup other = group(OTHER_TARGET);
         backend.immediateGroups.add(other);
         assertEquals(0, backend.countGroupsForTarget(COMPOSITE_TARGET));
@@ -108,7 +108,7 @@ class GroupQueueMutationStampTest {
      */
     @Test
     void theKeptOnlyRebuildStopsCountingTheGroupThatWasDrawn() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackend();
+        Lane2ImmediateRecorder backend = newBackend();
         ImmediateGroup composite = group(COMPOSITE_TARGET);
         ImmediateGroup other = group(OTHER_TARGET);
         backend.immediateGroups.add(composite);
@@ -124,19 +124,19 @@ class GroupQueueMutationStampTest {
                 "the rebuild must invalidate the count, or the next flush believes a drawn group is still queued");
     }
 
-    private static VulkanTerrainGpuBackend newBackend() throws Exception {
+    private static Lane2ImmediateRecorder newBackend() throws Exception {
         Unsafe unsafe = unsafe();
-        VulkanTerrainGpuBackend backend =
-                (VulkanTerrainGpuBackend) unsafe.allocateInstance(VulkanTerrainGpuBackend.class);
-        setField(VulkanTerrainGpuBackend.class, backend, "targetRegistry", new RenderTargetRegistry());
-        setField(VulkanTerrainGpuBackend.class, backend, "immediateStatistics", new ImmediateStatistics());
-        setField(VulkanTerrainGpuBackend.class, backend, "immediateGroups", new ArrayList<ImmediateGroup>());
-        setField(VulkanTerrainGpuBackend.class, backend, "keptImmediateGroups", new ArrayList<ImmediateGroup>());
+        Lane2ImmediateRecorder backend =
+                (Lane2ImmediateRecorder) unsafe.allocateInstance(Lane2ImmediateRecorder.class);
+        setField(Lane2ImmediateRecorder.class, backend, "targetRegistry", new RenderTargetRegistry());
+        setField(Lane2ImmediateRecorder.class, backend, "immediateStatistics", new ImmediateStatistics());
+        setField(Lane2ImmediateRecorder.class, backend, "immediateGroups", new ArrayList<ImmediateGroup>());
+        setField(Lane2ImmediateRecorder.class, backend, "keptImmediateGroups", new ArrayList<ImmediateGroup>());
         // allocateInstance skips the field initialisers, so the count cache starts at 0/0/0 here - a state the real
         // backend never has (its initialisers set MIN_VALUE / -1). Without this, a first ask about target 0 reads as a
         // cache hit on an uncomputed 0 and the rebuild scenario below fails for a reason production cannot produce.
-        setField(VulkanTerrainGpuBackend.class, backend, "cachedCountTarget", Long.valueOf(Long.MIN_VALUE));
-        setField(VulkanTerrainGpuBackend.class, backend, "cachedCountMutation", Long.valueOf(-1L));
+        setField(Lane2ImmediateRecorder.class, backend, "cachedCountTarget", Long.valueOf(Long.MIN_VALUE));
+        setField(Lane2ImmediateRecorder.class, backend, "cachedCountMutation", Long.valueOf(-1L));
         return backend;
     }
 

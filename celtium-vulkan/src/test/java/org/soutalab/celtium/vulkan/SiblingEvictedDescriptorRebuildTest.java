@@ -32,7 +32,7 @@ class SiblingEvictedDescriptorRebuildTest {
     }
 
     private static String backendSource() throws IOException {
-        return source("VulkanTerrainGpuBackend.java");
+        return source("Lane2ImmediateRecorder.java");
     }
 
     @Test

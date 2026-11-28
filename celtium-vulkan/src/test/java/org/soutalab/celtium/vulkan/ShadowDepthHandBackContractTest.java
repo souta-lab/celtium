@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the shadow §3.4 attach hand-back predicate in {@link VulkanTerrainGpuBackend}: a pass that attaches both a color
+ * Pins the shadow §3.4 attach hand-back predicate in {@link PresentSwapchain}: a pass that attaches both a color
  * target (or MRT tuple) and a borrowed shared depth image must hand back BOTH, while skipping unrelated published
  * images.
  */

@@ -27,21 +27,21 @@ class StandaloneTextureMaterializeTest {
     @Test
     void theAltTextureTupleMaterializes() {
         // No mirror, no attachment, no depth record, no game pixels, recorded 1x1 storage.
-        assertTrue(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertTrue(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, false, false, false, 1, 1),
                 "a standalone allocated texture with no supply route materializes");
     }
 
     @Test
     void aUsableMirrorIsLeftAlone() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 true, false, false, false, 1, 1),
                 "a name that already resolves to an image needs no materialization");
     }
 
     @Test
     void aColourAttachmentKeepsItsPublishRoute() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, true, false, false, 1280, 720),
                 "a framebuffer's colour attachment is supplied by publish/adopt, never shadowed");
     }
@@ -50,24 +50,24 @@ class StandaloneTextureMaterializeTest {
     void aDepthRecordKeepsItsPublicationRetry() {
         // The depthtex1 shape (item 537 wall (b1)): publication refused only because the layout is
         // unrecorded; the next prepare publishes. Materializing would draw an empty depth instead.
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, false, true, false, 1280, 720),
                 "a name with a depth record waits for its publication, it is not materialized");
     }
 
     @Test
     void gamePixelsKeepTheCaptureAsSupply() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, false, false, true, 256, 256),
                 "a level the game wrote into is filled from the capture, not from zeros");
     }
 
     @Test
     void noRecordedStorageCannotBeSized() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, false, false, false, 0, 0),
                 "no recorded extent, no mirror: the size would be a guess");
-        assertFalse(VulkanTerrainGpuBackend.celtium$standaloneTextureMaterializable(
+        assertFalse(Lane2ImmediateRecorder.celtium$standaloneTextureMaterializable(
                 false, false, false, false, 1280, 0),
                 "a half-recorded extent is no extent");
     }

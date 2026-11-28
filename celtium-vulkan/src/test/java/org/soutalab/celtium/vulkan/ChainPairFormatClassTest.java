@@ -85,14 +85,14 @@ class ChainPairFormatClassTest {
     // T2 / S4: the render-pass variant key separates (count, format) and nothing else.
     @Test
     void thePassVariantKeySeparatesCountAndFormat() {
-        long oneRgba8 = VulkanTerrainGpuBackend.celtium$chainPassKey(1, 37);
-        assertEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(1, 37), "the key is stable");
-        assertNotEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(2, 37),
+        long oneRgba8 = Lane2ImmediateRecorder.celtium$chainPassKey(1, 37);
+        assertEquals(oneRgba8, Lane2ImmediateRecorder.celtium$chainPassKey(1, 37), "the key is stable");
+        assertNotEquals(oneRgba8, Lane2ImmediateRecorder.celtium$chainPassKey(2, 37),
                 "the count is part of the key");
-        assertNotEquals(oneRgba8, VulkanTerrainGpuBackend.celtium$chainPassKey(1, 97),
+        assertNotEquals(oneRgba8, Lane2ImmediateRecorder.celtium$chainPassKey(1, 97),
                 "the format is part of the key");
-        assertNotEquals(VulkanTerrainGpuBackend.celtium$chainPassKey(2, 97),
-                VulkanTerrainGpuBackend.celtium$chainPassKey(1, 109),
+        assertNotEquals(Lane2ImmediateRecorder.celtium$chainPassKey(2, 97),
+                Lane2ImmediateRecorder.celtium$chainPassKey(1, 109),
                 "count and format do not trade places");
     }
 
@@ -100,26 +100,26 @@ class ChainPairFormatClassTest {
     @Test
     void thePipelineKeyFoldIsTheIdentityForTheDefaultClass() {
         long key = 0x1234_5678_9ABC_DEF0L;
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$pipelineKey(key, 0),
+        assertEquals(key, Lane2ImmediateRecorder.celtium$pipelineKey(key, 0),
                 "class 0 folds to the key itself, so every existing pipeline cache entry stays valid");
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        assertEquals(lineKey, VulkanTerrainGpuBackend.celtium$pipelineKey(lineKey, 0));
+        long lineKey = key | Lane2ImmediateRecorder.LINE_KEY_BIT;
+        assertEquals(lineKey, Lane2ImmediateRecorder.celtium$pipelineKey(lineKey, 0));
     }
 
     @Test
     void thePipelineKeyFoldSeparatesClassesAndKeepsTheLineBit() {
         long key = 0x1234_5678_9ABC_DEF0L;
-        long folded16 = VulkanTerrainGpuBackend.celtium$pipelineKey(key, 1);
-        long folded32 = VulkanTerrainGpuBackend.celtium$pipelineKey(key, 2);
+        long folded16 = Lane2ImmediateRecorder.celtium$pipelineKey(key, 1);
+        long folded32 = Lane2ImmediateRecorder.celtium$pipelineKey(key, 2);
         assertNotEquals(key, folded16);
         assertNotEquals(folded16, folded32, "two non-default classes must not share a pipeline entry");
-        assertEquals(folded16, VulkanTerrainGpuBackend.celtium$pipelineKey(key, 1), "the fold is stable");
+        assertEquals(folded16, Lane2ImmediateRecorder.celtium$pipelineKey(key, 1), "the fold is stable");
 
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        long foldedLine = VulkanTerrainGpuBackend.celtium$pipelineKey(lineKey, 1);
-        assertTrue((foldedLine & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0,
+        long lineKey = key | Lane2ImmediateRecorder.LINE_KEY_BIT;
+        long foldedLine = Lane2ImmediateRecorder.celtium$pipelineKey(lineKey, 1);
+        assertTrue((foldedLine & Lane2ImmediateRecorder.LINE_KEY_BIT) != 0,
                 "a line batch keeps its line bit through the fold");
-        assertEquals(0L, folded16 & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+        assertEquals(0L, folded16 & Lane2ImmediateRecorder.LINE_KEY_BIT,
                 "a non-line batch does not gain the line bit");
         assertNotEquals(foldedLine, folded16, "line and non-line batches of one class stay apart");
     }
@@ -127,36 +127,36 @@ class ChainPairFormatClassTest {
     // T5 / rule R8: the forced-class property parse.
     @Test
     void theForcedClassParsesNamesAndRefusesTheRest() {
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass(null));
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("default"));
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass(""));
+        assertNull(Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass(null));
+        assertNull(Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass("default"));
+        assertNull(Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass(""));
         assertEquals(TargetFormatClass.RGBA16_FLOAT,
-                VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("RGBA16_FLOAT"));
+                Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass("RGBA16_FLOAT"));
         assertEquals(TargetFormatClass.RGBA16_FLOAT,
-                VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("rgba16_float"),
+                Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass("rgba16_float"),
                 "the name is case-insensitive, like the other celtium properties");
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("DEPTH32_FLOAT"),
+        assertNull(Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass("DEPTH32_FLOAT"),
                 "a depth class is not a colour class: forcing one must not take effect");
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("not-a-class"));
+        assertNull(Lane2ImmediateRecorder.celtium$parseForcedTargetFormatClass("not-a-class"));
     }
 
     // QUEUE 395 section 5.1: the window path's pair class - the forced class reaches pairs no
     // registration junction resolves (a ShaderGroup group pair), while an unforced run follows the pair.
     @Test
     void theWindowPairClassFollowsThePairUnlessForced() {
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, Lane2ImmediateRecorder.celtium$windowPairClass(
                 null, false, TargetFormatClass.RGBA8_UNORM, null), "no forcing: the pair's class stands");
-        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, Lane2ImmediateRecorder.celtium$windowPairClass(
                 null, false, TargetFormatClass.RGBA16_FLOAT, null),
                 "no forcing: a junction-resolved non-default class is followed, not re-resolved");
-        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, Lane2ImmediateRecorder.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT), "forced: a group pair leaves the default class");
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, Lane2ImmediateRecorder.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA8_UNORM),
                 "forced but unusable on this device: the device check's fallback stands");
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, Lane2ImmediateRecorder.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT), "rule R1: a pinned identity is never forced");
     }
@@ -173,7 +173,7 @@ class ChainPairFormatClassTest {
         assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanColorFormat.pinnedOrRequested(
                 false, 0x881A, TargetFormatClass.BGRA8_UNORM),
                 "unpinned: the frame's class does not leak into a pair's own resolution");
-        assertEquals(TargetFormatClass.BGRA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.BGRA8_UNORM, Lane2ImmediateRecorder.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.BGRA8_UNORM),
                 "rule R1 on a BGRA frame: a pinned identity is never forced - it stays in the frame's class");

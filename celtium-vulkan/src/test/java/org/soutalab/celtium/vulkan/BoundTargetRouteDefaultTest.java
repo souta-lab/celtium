@@ -31,28 +31,28 @@ class BoundTargetRouteDefaultTest {
     /** Absent or affirmative values leave the route on: the default build routes. */
     @Test
     void theRouteIsOnUnlessTheValueReadsFalse() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled(null), "absent");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("true"), "explicit on");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled(""), "empty");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("0"),
+        assertTrue(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled(null), "absent");
+        assertTrue(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("true"), "explicit on");
+        assertTrue(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled(""), "empty");
+        assertTrue(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("0"),
                 "only the literal \"false\" opts out, the mod-programs rule");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("off"),
+        assertTrue(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("off"),
                 "only the literal \"false\" opts out, the mod-programs rule");
     }
 
     /** The opt-out is the literal value, case-insensitively. */
     @Test
     void theOptOutIsTheLiteralFalse() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("false"));
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("FALSE"));
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("False"));
+        assertFalse(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("false"));
+        assertFalse(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("FALSE"));
+        assertFalse(Lane2ImmediateRecorder.celtium$terrainToBoundTargetEnabled("False"));
     }
 
     /** The wiring: the field reads the property through the pure rule with "true" as the absent value. */
     @Test
     void theFieldReadsThePropertyThroughTheRule() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
         assertTrue(source.contains(
                         "celtium$terrainToBoundTargetEnabled(System.getProperty("
                                 + "\"celtium.vulkan.terrainToBoundTarget\", \"true\"))"),

@@ -23,7 +23,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class Stage5Stage3WiringTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
+    private static final String COORDINATOR =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
+    private static final String ADAPTER =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java";
     private static final String CONTEXT =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java";
     private static final String COPY_READ_SIDE =
@@ -97,7 +101,7 @@ class Stage5Stage3WiringTest {
                 "the model run binds the binding's set");
         assertFalse(replay.contains("celtium$registerTexture"), "the old registration entry is gone");
         assertFalse(replay.contains("b.textureArray"), "no backend texture array field is read");
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertFalse(backend.contains("celtium$registerTexture"), "the backend registration entry is gone");
         assertFalse(backend.contains("VulkanTextureArray"), "the backend names the deleted class nowhere");
         assertFalse(Files.exists(findRepoRoot().resolve(
@@ -108,7 +112,7 @@ class Stage5Stage3WiringTest {
     /** Section 3.5: releases advance from the frame loop's completion gate, on the merged currency. */
     @Test
     void releasesAdvanceFromTheSlotWaitSuccessExits() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertEquals(4, occurrences(backend, "celtium$drainBindlessReleases()"),
                 "one definition and a call at each of waitForSlot's three success exits");
         int helper = backend.indexOf("private void celtium$drainBindlessReleases()");
@@ -122,7 +126,7 @@ class Stage5Stage3WiringTest {
     /** Section 3.2: the indirect run's store is the unified store, selected per window. */
     @Test
     void recordsStoreIsTheUnifiedStore() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("InstanceDataStore.create(this.context)"),
                 "the store is created through the unified store's factory");
         assertTrue(backend.contains("this.drawRecords.selectSlot(this.frameSlot)"),

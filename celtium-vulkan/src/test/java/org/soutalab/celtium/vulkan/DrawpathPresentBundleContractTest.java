@@ -29,7 +29,11 @@ class DrawpathPresentBundleContractTest {
     private static final String FRAME_TARGET_SOURCE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java";
     private static final String BACKEND_SOURCE =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
+    private static final String COORDINATOR =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
+    private static final String ADAPTER =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java";
     private static final String MIXIN_SOURCE =
             "forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java";
 
@@ -111,7 +115,7 @@ class DrawpathPresentBundleContractTest {
     /** The backend syncs its stall latch from the context's loss fact, at the present body's edges. */
     @Test
     void theStallLatchSyncsFromTheContextLossFact() throws IOException {
-        String backend = readRepoFile(BACKEND_SOURCE);
+        String backend = readRepoFile(BACKEND_SOURCE) + readRepoFile(COORDINATOR) + readRepoFile(ADAPTER);
         assertTrue(backend.contains("void celtium$noteStalledOnDeviceLoss()"),
                 "the backend has the sync door");
         String door = region(backend, "void celtium$noteStalledOnDeviceLoss()",
@@ -147,7 +151,7 @@ class DrawpathPresentBundleContractTest {
         assertEquals(0, countOccurrences(body, "celtium$ensureBorrowedFrameImage();"),
                 "the present body no longer re-borrows: FP-1 moved the borrow to the frame head");
 
-        String backend = readRepoFile(BACKEND_SOURCE);
+        String backend = readRepoFile(BACKEND_SOURCE) + readRepoFile(COORDINATOR) + readRepoFile(ADAPTER);
         int begin = backend.indexOf("void beginCommands()");
         assertTrue(begin >= 0, "the frame's command begin exists");
         int headBorrow = backend.indexOf("this.presentSwapchain.celtium$ensureBorrowedFrameImage();", begin);

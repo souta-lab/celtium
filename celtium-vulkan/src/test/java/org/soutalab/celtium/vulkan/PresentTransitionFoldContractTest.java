@@ -25,7 +25,7 @@ class PresentTransitionFoldContractTest {
     private static final String SWAPCHAIN =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java";
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative));

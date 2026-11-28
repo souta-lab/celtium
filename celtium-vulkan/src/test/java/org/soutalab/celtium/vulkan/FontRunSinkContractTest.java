@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the backoff, the re-entry guard - live in {@link FontBatch} and carry behavioural tests of their
  * own ({@link FontRunRetentionTest}, {@link FontBatchRetainedOrderTest},
  * {@link FontBatchFlushOrderTest}). What those tests cannot see is the sink itself,
- * {@code VulkanTerrainGpuBackend.celtium$submitFontRun}: the batch retains a run only when the
+ * {@code Lane2ImmediateRecorder.celtium$submitFontRun}: the batch retains a run only when the
  * sink answers {@code false} or throws, so the whole retention side stands on this one method's
  * return value, and the state it borrows (texture unit, alpha test, matrices,
  * {@code matricesDirty}) has to come back exactly as it was or the next batch draws contaminated.
@@ -31,7 +31,7 @@ class FontRunSinkContractTest {
 
     private static String backendSource() throws IOException {
         return readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java");
     }
 
     private static String groupSource() throws IOException {
@@ -208,7 +208,7 @@ class FontRunSinkContractTest {
         int start = source.indexOf("celtium$setFontRunSink(new FontBatch.RunSink()");
         assertTrue(start >= 0, "the sink registration is located");
         assertTrue(source.substring(start, start + 500)
-                        .contains("return VulkanTerrainGpuBackend.this.celtium$submitFontRun(run);"),
+                        .contains("return Lane2ImmediateRecorder.this.celtium$submitFontRun(run);"),
                 "the registered RunSink delegates to the backend sink");
     }
 

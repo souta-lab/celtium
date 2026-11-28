@@ -28,23 +28,23 @@ class SupplyFailureMirrorDropTest {
 
     @Test
     void aMirrorCreatedByTheFailedSupplyAndStillUnfilledIsDropped() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$supplyFailureDropsMirror(false, false));
+        assertTrue(Lane2ImmediateRecorder.celtium$supplyFailureDropsMirror(false, false));
     }
 
     @Test
     void aPreExistingPartialMirrorStays() {
         // The entry was already there with partial content: completing or keeping it is its owner's business.
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyFailureDropsMirror(true, false));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyFailureDropsMirror(true, false));
     }
 
     @Test
     void aMirrorTheUploadFilledStays() {
         // The failure came after the content landed (a later step of the supply), so there is nothing to undo.
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyFailureDropsMirror(false, true));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyFailureDropsMirror(false, true));
     }
 
     @Test
     void aPreExistingCompleteMirrorStays() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyFailureDropsMirror(true, true));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyFailureDropsMirror(true, true));
     }
 }

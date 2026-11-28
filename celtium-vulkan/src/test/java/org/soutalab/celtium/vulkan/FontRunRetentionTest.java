@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * This test pins the half of the contract the batch owns, so a future sink that discards the result again is caught by
  * the build rather than by a picture: a refusing sink must leave the run in the queue with its bytes intact, and the
  * retry must hand the sink the same bytes. The backend half is the one-line return in
- * {@code VulkanTerrainGpuBackend.celtium$submitFontRun}, which no unit test can reach without a device; the leg reads
+ * {@code Lane2ImmediateRecorder.celtium$submitFontRun}, which no unit test can reach without a device; the leg reads
  * it through {@code CELTIUM_FONT_GLYPH_SUMMARY}'s {@code fontRunRefusals}.
  */
 class FontRunRetentionTest {

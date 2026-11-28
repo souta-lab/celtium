@@ -24,7 +24,7 @@ class LossAggregateReaderContractTest {
     private static final String DIAGNOSTICS =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java";
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String TARGET_STATISTICS =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TargetStatistics.java";
     private static final String IMMEDIATE_STATISTICS =

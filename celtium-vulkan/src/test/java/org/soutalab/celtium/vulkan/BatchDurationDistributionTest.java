@@ -42,11 +42,11 @@ class BatchDurationDistributionTest {
         buckets[bucketOf(300L)] = 98L;
         buckets[bucketOf(100_000L)] = 2L;
 
-        assertEquals(512L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 100L, 50),
+        assertEquals(512L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 100L, 50),
                 "the median is the 300 ns bucket's upper bound, not the mean the tail would produce");
-        assertEquals(512L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 100L, 95),
+        assertEquals(512L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 100L, 95),
                 "95 of 100 samples are still in the fast bucket");
-        assertEquals(131_072L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 100L, 99),
+        assertEquals(131_072L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 100L, 99),
                 "the tail is named by the bucket it is in, not by its own value");
     }
 
@@ -57,18 +57,18 @@ class BatchDurationDistributionTest {
         buckets[bucketOf(300L)] = 9_800L;
         buckets[bucketOf(100_000L)] = 200L;
 
-        assertEquals(512L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 10_000L, 50),
+        assertEquals(512L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 10_000L, 50),
                 "a 2% tail of 100 us stalls must not move the median");
-        assertEquals(131_072L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 10_000L, 99),
+        assertEquals(131_072L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 10_000L, 99),
                 "and it must not be hidden either: the 99th percentile names the stall's bucket");
     }
 
     @Test
     void anEmptyHistogramAnswersZeroRatherThanGuessing() {
         long[] buckets = new long[65];
-        assertEquals(0L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 0L, 50),
+        assertEquals(0L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 0L, 50),
                 "no samples is not a percentile");
-        assertEquals(0L, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 10L, 0),
+        assertEquals(0L, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 10L, 0),
                 "a zero percentile is not a question the histogram answers");
     }
 
@@ -76,8 +76,8 @@ class BatchDurationDistributionTest {
     void theLargestBucketDoesNotOverflowIntoANegativeBound() {
         long[] buckets = new long[65];
         buckets[63] = 1L;
-        assertEquals(Long.MAX_VALUE, VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 1L, 50),
+        assertEquals(Long.MAX_VALUE, Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 1L, 50),
                 "2^63 does not fit a positive long, so the bound saturates instead of going negative");
-        assertTrue(VulkanTerrainGpuBackend.celtium$batchDistPercentile(buckets, 1L, 50) > 0L);
+        assertTrue(Lane2ImmediateRecorder.celtium$batchDistPercentile(buckets, 1L, 50) > 0L);
     }
 }

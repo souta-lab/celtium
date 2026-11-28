@@ -22,15 +22,15 @@ class SwapPointExceptionNoteTest {
     /** An injected exception is counted, and the first one is reported to stderr with its seat. */
     @Test
     void anInjectedExceptionIsCountedAndReported() {
-        int savedCount = VulkanTerrainGpuBackend.swapPointExceptions;
+        int savedCount = VulkanBackendAdapter.swapPointExceptions;
         PrintStream savedErr = System.err;
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         try {
-            VulkanTerrainGpuBackend.swapPointExceptions = 0;
+            VulkanBackendAdapter.swapPointExceptions = 0;
             System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
-            VulkanTerrainGpuBackend.celtium$noteSwapPointException("present",
+            VulkanBackendAdapter.celtium$noteSwapPointException("present",
                     new RuntimeException("injected present failure"));
-            assertEquals(1, VulkanTerrainGpuBackend.swapPointExceptions,
+            assertEquals(1, VulkanBackendAdapter.swapPointExceptions,
                     "the note counts the swallowed exception");
             String reported = captured.toString(StandardCharsets.UTF_8);
             assertTrue(reported.contains("CELTIUM_SWAPPOINT_EXCEPTION"),
@@ -40,32 +40,32 @@ class SwapPointExceptionNoteTest {
                     "the report carries the exception: " + reported);
         } finally {
             System.setErr(savedErr);
-            VulkanTerrainGpuBackend.swapPointExceptions = savedCount;
+            VulkanBackendAdapter.swapPointExceptions = savedCount;
         }
     }
 
     /** Every note counts, including the ones the cadence does not report. */
     @Test
     void everyNoteCounts() {
-        int before = VulkanTerrainGpuBackend.swapPointExceptions;
-        VulkanTerrainGpuBackend.celtium$noteSwapPointException("swap",
+        int before = VulkanBackendAdapter.swapPointExceptions;
+        VulkanBackendAdapter.celtium$noteSwapPointException("swap",
                 new RuntimeException("injected swap failure"));
-        VulkanTerrainGpuBackend.celtium$noteSwapPointException("swap",
+        VulkanBackendAdapter.celtium$noteSwapPointException("swap",
                 new LinkageError("injected linkage failure"));
-        assertEquals(before + 2, VulkanTerrainGpuBackend.swapPointExceptions,
+        assertEquals(before + 2, VulkanBackendAdapter.swapPointExceptions,
                 "both catches' exceptions land on the one counter");
     }
 
     /** The report cadence: the first three, then every 300th - a start is named, a flood is not. */
     @Test
     void theReportCadenceIsBounded() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(1));
-        assertTrue(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(2));
-        assertTrue(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(3));
-        assertFalse(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(4));
-        assertFalse(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(299));
-        assertTrue(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(300));
-        assertFalse(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(301));
-        assertTrue(VulkanTerrainGpuBackend.celtium$swapPointExceptionReported(600));
+        assertTrue(VulkanBackendAdapter.celtium$swapPointExceptionReported(1));
+        assertTrue(VulkanBackendAdapter.celtium$swapPointExceptionReported(2));
+        assertTrue(VulkanBackendAdapter.celtium$swapPointExceptionReported(3));
+        assertFalse(VulkanBackendAdapter.celtium$swapPointExceptionReported(4));
+        assertFalse(VulkanBackendAdapter.celtium$swapPointExceptionReported(299));
+        assertTrue(VulkanBackendAdapter.celtium$swapPointExceptionReported(300));
+        assertFalse(VulkanBackendAdapter.celtium$swapPointExceptionReported(301));
+        assertTrue(VulkanBackendAdapter.celtium$swapPointExceptionReported(600));
     }
 }

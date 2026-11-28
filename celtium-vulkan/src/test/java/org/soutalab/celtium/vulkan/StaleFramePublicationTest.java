@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The rule that decides whether a published colour name's image has gone stale under it, and the wiring
  * that acts on the verdict (blackness fix B).
  * <p>
- * What the decision table proves is {@code VulkanTerrainGpuBackend.celtium$staleFramePublication}: a name published
+ * What the decision table proves is {@code Lane2ImmediateRecorder.celtium$staleFramePublication}: a name published
  * over the frame target's own colour image (no chain-pair owner, no depth record - the two records that
  * give a publication another liveness source) is stale exactly when the image it names is no longer
  * either live colour image the target holds. The measured failure this pins is the GTCEu bloom legs'
@@ -43,47 +43,47 @@ class StaleFramePublicationTest {
 
     @Test
     void publishedOverTheLiveFrameImageIsNotStale() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$staleFramePublication(FRAME, FRAME, OFF_TARGET,
+        assertFalse(Lane2ImmediateRecorder.celtium$staleFramePublication(FRAME, FRAME, OFF_TARGET,
                 Long.MIN_VALUE, 0L));
     }
 
     @Test
     void publishedOverTheLiveOffTargetImageIsNotStale() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$staleFramePublication(OFF_TARGET, FRAME, OFF_TARGET,
+        assertFalse(Lane2ImmediateRecorder.celtium$staleFramePublication(OFF_TARGET, FRAME, OFF_TARGET,
                 Long.MIN_VALUE, 0L));
     }
 
     @Test
     void publishedOverAnAlreadyPresentedBorrowIsStale() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
+        assertTrue(Lane2ImmediateRecorder.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
                 Long.MIN_VALUE, 0L),
                 "the borrow rotated: the name still stands for the previous swapchain image");
     }
 
     @Test
     void publishedOverABorrowTheBypassReplacedIsStale() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$staleFramePublication(OLD_BORROW, FRAME, FRAME,
+        assertTrue(Lane2ImmediateRecorder.celtium$staleFramePublication(OLD_BORROW, FRAME, FRAME,
                 Long.MIN_VALUE, 0L),
                 "the bypass swapped in the owned image, which is also the off-target image here");
     }
 
     @Test
     void anUnpublishedNameIsNotStale() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$staleFramePublication(0L, FRAME, OFF_TARGET,
+        assertFalse(Lane2ImmediateRecorder.celtium$staleFramePublication(0L, FRAME, OFF_TARGET,
                 Long.MIN_VALUE, 0L),
                 "no publication is the unpublished rule's case, not this one's");
     }
 
     @Test
     void aChainPairPublicationHasAnotherLivenessSource() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
+        assertFalse(Lane2ImmediateRecorder.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
                 PAIR_OWNER, 0L),
                 "a pair-owned name follows its pair's generation, not the frame image");
     }
 
     @Test
     void aDepthPublicationHasAnotherLivenessSource() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
+        assertFalse(Lane2ImmediateRecorder.celtium$staleFramePublication(OLD_BORROW, FRAME, OFF_TARGET,
                 Long.MIN_VALUE, DEPTH_KEY),
                 "a depth name follows the shared depth store's key, not the frame image");
     }
@@ -91,7 +91,7 @@ class StaleFramePublicationTest {
     // --- the wiring contracts ---
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String PRESENT =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java";
     private static String read(String repoRelative) throws IOException {

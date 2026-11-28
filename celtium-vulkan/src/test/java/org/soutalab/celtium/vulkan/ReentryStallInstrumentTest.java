@@ -49,7 +49,7 @@ class ReentryStallInstrumentTest {
     @Test
     void deleteSettledHeadIsBracketedBySegment() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java"));
         int settled = source.indexOf("private void celtium$deleteSettled() {");
         assertTrue(settled >= 0, "the release sequence is declared");
         String head = source.substring(settled, settled + 9000);

@@ -37,7 +37,7 @@ class ImmediateBranchPassKeyContractTest {
     private static final long CURRENT_PASS = 0xa600000000a6L;
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String CONTEXT =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java";
 
@@ -61,8 +61,8 @@ class ImmediateBranchPassKeyContractTest {
         long key = 123456789L;
         for (int format : new int[] {1, 2, 5}) {
             assertNotEquals(
-                    VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, PIPELINE_PASS),
-                    VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, CURRENT_PASS),
+                    Lane2ImmediateRecorder.celtium$immediateBranchKey(format, key, PIPELINE_PASS),
+                    Lane2ImmediateRecorder.celtium$immediateBranchKey(format, key, CURRENT_PASS),
                     "format " + format + ": the provisional window's entry must not read as the"
                             + " latched pass' entry");
         }
@@ -74,8 +74,8 @@ class ImmediateBranchPassKeyContractTest {
         long key = 987654321L;
         for (int format : new int[] {1, 2, 5}) {
             assertEquals(
-                    VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, CURRENT_PASS),
-                    VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, CURRENT_PASS));
+                    Lane2ImmediateRecorder.celtium$immediateBranchKey(format, key, CURRENT_PASS),
+                    Lane2ImmediateRecorder.celtium$immediateBranchKey(format, key, CURRENT_PASS));
         }
     }
 
@@ -83,8 +83,8 @@ class ImmediateBranchPassKeyContractTest {
     @Test
     void differentStatesStaySeparatedUnderOnePass() {
         assertNotEquals(
-                VulkanTerrainGpuBackend.celtium$immediateBranchKey(2, 111L, CURRENT_PASS),
-                VulkanTerrainGpuBackend.celtium$immediateBranchKey(2, 222L, CURRENT_PASS));
+                Lane2ImmediateRecorder.celtium$immediateBranchKey(2, 111L, CURRENT_PASS),
+                Lane2ImmediateRecorder.celtium$immediateBranchKey(2, 222L, CURRENT_PASS));
     }
 
     /**
@@ -93,12 +93,12 @@ class ImmediateBranchPassKeyContractTest {
      */
     @Test
     void theLineBitSurvivesThePassFold() {
-        long line = 424242L | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        long foldedLine = VulkanTerrainGpuBackend.celtium$immediateBranchKey(1, line, CURRENT_PASS);
-        assertTrue((foldedLine & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0,
+        long line = 424242L | Lane2ImmediateRecorder.LINE_KEY_BIT;
+        long foldedLine = Lane2ImmediateRecorder.celtium$immediateBranchKey(1, line, CURRENT_PASS);
+        assertTrue((foldedLine & Lane2ImmediateRecorder.LINE_KEY_BIT) != 0,
                 "a line batch's branch key keeps the line bit");
-        long foldedTriangle = VulkanTerrainGpuBackend.celtium$immediateBranchKey(1, 424242L, CURRENT_PASS);
-        assertFalse((foldedTriangle & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0,
+        long foldedTriangle = Lane2ImmediateRecorder.celtium$immediateBranchKey(1, 424242L, CURRENT_PASS);
+        assertFalse((foldedTriangle & Lane2ImmediateRecorder.LINE_KEY_BIT) != 0,
                 "a triangle batch's branch key never gains the line bit");
         assertNotEquals(foldedLine, foldedTriangle,
                 "the line and triangle entries stay separate under one pass");

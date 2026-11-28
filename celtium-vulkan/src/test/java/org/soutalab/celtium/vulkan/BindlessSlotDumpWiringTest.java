@@ -24,7 +24,7 @@ class BindlessSlotDumpWiringTest {
     private static final String REGISTRY =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java";
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String BINDING =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/bindless/BindlessTextureBinding.java";
     private static final String TEXTURE =

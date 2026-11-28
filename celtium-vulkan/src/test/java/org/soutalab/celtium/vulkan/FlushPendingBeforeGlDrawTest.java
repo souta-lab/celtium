@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link VulkanTerrainGpuBackend#flushPendingBeforeGlDraw()} must flush pre-closed groups in
+ * {@link Lane2ImmediateRecorder#flushPendingBeforeGlDraw()} must flush pre-closed groups in
  * {@code immediateGroups} even when no mesh, geometry lease, or font batch is currently open.
  * <p>
  * Callers such as retained submissions, model replay, and framebuffer compositing close/queue groups directly into
@@ -18,12 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FlushPendingBeforeGlDrawTest {
 
-    private static VulkanTerrainGpuBackend newBackendForFlushTest() throws Exception {
+    private static Lane2ImmediateRecorder newBackendForFlushTest() throws Exception {
         Field theUnsafe = Unsafe.class.getDeclaredField("theUnsafe");
         theUnsafe.setAccessible(true);
         Unsafe unsafe = (Unsafe) theUnsafe.get(null);
-        VulkanTerrainGpuBackend backend =
-                (VulkanTerrainGpuBackend) unsafe.allocateInstance(VulkanTerrainGpuBackend.class);
+        Lane2ImmediateRecorder backend =
+                (Lane2ImmediateRecorder) unsafe.allocateInstance(Lane2ImmediateRecorder.class);
 
         setField(backend, "targetRegistry", new RenderTargetRegistry());
         setField(backend, "immediateStatistics", new ImmediateStatistics());
@@ -37,14 +37,14 @@ class FlushPendingBeforeGlDrawTest {
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = VulkanTerrainGpuBackend.class.getDeclaredField(name);
+        Field field = Lane2ImmediateRecorder.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
 
     @Test
     void flushesQueuedGroupEvenWhenNoOpenMeshOrLeaseExists() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackendForFlushTest();
+        Lane2ImmediateRecorder backend = newBackendForFlushTest();
         backend.targetRegistry.noteReplacementAnnounced();
         ImmediateGroup queued = ImmediateGroup.obtain(
                 null, new float[16], new float[16], VulkanImmediateFormats.ITEM, 7, 11L, null, 0L);
@@ -65,7 +65,7 @@ class FlushPendingBeforeGlDrawTest {
 
     @Test
     void returnsWithoutWorkWhenNothingIsOpenAndQueueIsEmpty() throws Exception {
-        VulkanTerrainGpuBackend backend = newBackendForFlushTest();
+        Lane2ImmediateRecorder backend = newBackendForFlushTest();
         backend.targetRegistry.noteReplacementAnnounced();
 
         backend.flushPendingBeforeGlDraw();

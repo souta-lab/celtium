@@ -36,7 +36,7 @@ class Stage7BarrierWiringTest {
     // E4-c: the dispatch and its static entrances live in the capture entry now.
     private static final String FRONTEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java";
-    private static final String BACKEND = ROOT + "VulkanTerrainGpuBackend.java";
+    private static final String BACKEND = ROOT + "Lane2ImmediateRecorder.java";
     private static final String COPY_SIDE = ROOT + "CopyReadSide.java";
     private static final String COPY_SERVICE = ROOT + "TextureCopyService.java";
 

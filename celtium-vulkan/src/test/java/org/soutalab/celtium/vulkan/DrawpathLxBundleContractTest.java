@@ -24,7 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DrawpathLxBundleContractTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
+    private static final String COORDINATOR =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
+    private static final String ADAPTER =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java";
     private static final String DIAGNOSTICS =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java";
     private static final String COMPOSITOR =
@@ -67,7 +71,7 @@ class DrawpathLxBundleContractTest {
 
     @Test
     void theDeferredCommitSeatIsRetiredWithTheOldChain() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertEquals(0, count(backend, "celtium$settleDeferredCommit"),
                 "no finish path settles a deferred chain commit any more");
         assertEquals(0, count(backend, "this.postChainBridge"),
@@ -79,7 +83,7 @@ class DrawpathLxBundleContractTest {
         String mixin = read(SHADER_GROUP_MIXIN);
         assertTrue(mixin.contains("backend.celtium$noteChainInputFlushFailure(error)"),
                 "the mixin's catch hands the failure to the backend census");
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("public void celtium$noteChainInputFlushFailure(Throwable error)"),
                 "the backend counts and bounds-prints the failure");
         assertTrue(read(DIAGNOSTICS).contains("\" chainInputFlushFailures=\" + b.frameCoordinator.chainInputFlushFailures()"),
@@ -121,7 +125,7 @@ class DrawpathLxBundleContractTest {
                 "one helper definition and the four hint/probe catches");
         assertTrue(mixin.contains("celtium$noteHintFailure(\"bind size\", error)"));
         assertTrue(mixin.contains("celtium$noteHintFailure(\"adopt after bind\", error)"));
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("public void celtium$noteFramebufferHintFailure(String seat, Throwable error)"),
                 "the backend counts the failure with its seat's name");
         assertTrue(read(DIAGNOSTICS).contains("\" framebufferHintFailures=\" + b.framebufferHintFailures"),

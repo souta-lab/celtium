@@ -29,7 +29,7 @@ class CheckpointStampD1ContractTest {
     private static final String CONTEXT_SOURCE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java";
     private static final String BACKEND_SOURCE =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
 
     /** INV-1a: the store's one deferred-release call site is the checkpoint. */
 

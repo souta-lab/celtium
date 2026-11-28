@@ -20,19 +20,19 @@ class WindowPollDecisionTest {
 
     @Test
     void aQueuedSubmissionPolls() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$windowPollNeeded(FrameCoordinator.Submission.QUEUED),
+        assertTrue(Lane2ImmediateRecorder.celtium$windowPollNeeded(FrameCoordinator.Submission.QUEUED),
                 "the segment reached the queue, so its fence is new information");
     }
 
     @Test
     void aRecordedSubmissionDoesNotPoll() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$windowPollNeeded(FrameCoordinator.Submission.RECORDED),
+        assertFalse(Lane2ImmediateRecorder.celtium$windowPollNeeded(FrameCoordinator.Submission.RECORDED),
                 "the batched path put nothing on the queue; the next frame's begin polls instead");
     }
 
     @Test
     void aSkippedSubmissionDoesNotPoll() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$windowPollNeeded(FrameCoordinator.Submission.SKIPPED),
+        assertFalse(Lane2ImmediateRecorder.celtium$windowPollNeeded(FrameCoordinator.Submission.SKIPPED),
                 "a stalled device recorded nothing, so there is no fence to ask about");
     }
 
@@ -41,7 +41,7 @@ class WindowPollDecisionTest {
         // The rule is a total function of the enum: a new answer must be classified rather than defaulted into a poll
         // or into silence. This is the assertion that fails when the enum grows.
         for (FrameCoordinator.Submission submission : FrameCoordinator.Submission.values()) {
-            boolean polls = VulkanTerrainGpuBackend.celtium$windowPollNeeded(submission);
+            boolean polls = Lane2ImmediateRecorder.celtium$windowPollNeeded(submission);
             if (submission == FrameCoordinator.Submission.QUEUED) {
                 assertTrue(polls, submission + " must poll");
             } else {

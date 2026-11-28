@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FrameStatsRoutingWiringTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String REPORT =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java";
 
@@ -58,7 +58,7 @@ class FrameStatsRoutingWiringTest {
     void consumersStillGateOnTheSwitch() throws IOException {
         assertTrue(read(BACKEND).contains("if (!FRAME_STATS)"),
                 "the frame-boundary note still returns early while the switch is off");
-        assertTrue(read(REPORT).contains("VulkanTerrainGpuBackend.FRAME_STATS"),
+        assertTrue(read(REPORT).contains("Lane2ImmediateRecorder.FRAME_STATS"),
                 "the report still asks the same switch for its game-loop section");
     }
 

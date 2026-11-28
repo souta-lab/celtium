@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DrawpathBatchCountingWiringTest {
 
     private static final String ROOT = "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/";
-    private static final String BACKEND = ROOT + "VulkanTerrainGpuBackend.java";
+    private static final String BACKEND = ROOT + "Lane2ImmediateRecorder.java";
     private static final String DIAGNOSTICS = ROOT + "BackendDiagnostics.java";
     private static final String TARGET_STATISTICS = ROOT + "TargetStatistics.java";
 

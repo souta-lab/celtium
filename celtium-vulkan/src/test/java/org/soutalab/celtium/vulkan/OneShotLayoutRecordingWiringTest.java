@@ -16,7 +16,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
  * The one-shot command buffers' place in the shared-image layout discipline (audit N05), pinned as a source
  * contract plus the ledger behaviour it relies on.
  * <p>
- * The frame recording has always been token-bound: {@code VulkanTerrainGpuBackend.beginCommands} opens a
+ * The frame recording has always been token-bound: {@code FrameCoordinator.beginCommands} opens a
  * layout recording and {@code FrameCoordinator} commits it once the queue accepted the submission, so a
  * recorded transition is never mistaken for fact. {@code VulkanContext}'s one-shot buffers - the pool behind
  * texture copies and pair bootstrap operations - were not bound: no recording was opened for them, so every

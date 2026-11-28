@@ -96,7 +96,7 @@ class HudCensusTest {
         assertTrue(timings.contains("screenSectionActive()"), "the backend reads the screen bracket state");
         assertTrue(timings.contains("uiSectionActive()"), "the census reads both UI brackets as one section");
 
-        String backend = read(MAIN + "VulkanTerrainGpuBackend.java");
+        String backend = read(MAIN + "Lane2ImmediateRecorder.java");
         assertTrue(backend.contains("HudCensus.noteOffer"), "offers must be counted at the accept site");
         assertTrue(backend.contains("HudCensus.noteGroupClosed"), "closes must be counted at the close site");
         assertTrue(backend.contains("HudCensus.noteFlushCall"), "flush entries must be counted");

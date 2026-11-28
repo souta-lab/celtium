@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ImmediateMultiColorPassContractTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String HOST =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateRecordsPipelines.java";
     private static final String[] PIPELINE_CLASSES = {
@@ -40,27 +40,27 @@ class ImmediateMultiColorPassContractTest {
     @DisplayName("the colour fold is the identity at one colour, for plain and line keys alike")
     void colorFoldIsIdentityAtOneColor() {
         long key = 0x1234_5678_9ABL;
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 1));
-        assertEquals(key, VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 0),
+        long lineKey = key | Lane2ImmediateRecorder.LINE_KEY_BIT;
+        assertEquals(key, Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 1));
+        assertEquals(key, Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 0),
                 "an unrecorded count reads as one colour, never as a distinct key");
-        assertEquals(lineKey, VulkanTerrainGpuBackend.celtium$pipelineColorKey(lineKey, 1));
+        assertEquals(lineKey, Lane2ImmediateRecorder.celtium$pipelineColorKey(lineKey, 1));
     }
 
     @Test
     @DisplayName("the colour fold separates counts and keeps the line bit on its own side of the fold")
     void colorFoldSeparatesCountsAndPreservesTheLineBit() {
         long key = 0x1234_5678_9ABL;
-        long two = VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 2);
-        long three = VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 3);
+        long two = Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 2);
+        long three = Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 3);
         assertNotEquals(key, two, "a two-colour target must not share the one-colour key");
         assertNotEquals(two, three);
-        assertEquals(two, VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 2), "the fold is stable");
-        assertEquals(0L, two & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+        assertEquals(two, Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 2), "the fold is stable");
+        assertEquals(0L, two & Lane2ImmediateRecorder.LINE_KEY_BIT,
                 "the fold must not set the line flag on a triangle batch");
-        long lineKey = key | VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        long foldedLine = VulkanTerrainGpuBackend.celtium$pipelineColorKey(lineKey, 2);
-        assertEquals(VulkanTerrainGpuBackend.LINE_KEY_BIT, foldedLine & VulkanTerrainGpuBackend.LINE_KEY_BIT,
+        long lineKey = key | Lane2ImmediateRecorder.LINE_KEY_BIT;
+        long foldedLine = Lane2ImmediateRecorder.celtium$pipelineColorKey(lineKey, 2);
+        assertEquals(Lane2ImmediateRecorder.LINE_KEY_BIT, foldedLine & Lane2ImmediateRecorder.LINE_KEY_BIT,
                 "the fold must not clear the line flag on a line batch");
         assertNotEquals(two, foldedLine, "a line batch and a triangle batch stay apart at any count");
     }
@@ -69,10 +69,10 @@ class ImmediateMultiColorPassContractTest {
     @DisplayName("the colour fold composes with the class fold instead of replacing it")
     void colorFoldComposesWithTheClassFold() {
         long key = 0x1234_5678_9ABL;
-        long classOnly = VulkanTerrainGpuBackend.celtium$pipelineKey(key, 1);
-        long classAndColor = VulkanTerrainGpuBackend.celtium$pipelineColorKey(classOnly, 2);
+        long classOnly = Lane2ImmediateRecorder.celtium$pipelineKey(key, 1);
+        long classAndColor = Lane2ImmediateRecorder.celtium$pipelineColorKey(classOnly, 2);
         assertNotEquals(classOnly, classAndColor);
-        assertNotEquals(VulkanTerrainGpuBackend.celtium$pipelineColorKey(key, 2), classAndColor,
+        assertNotEquals(Lane2ImmediateRecorder.celtium$pipelineColorKey(key, 2), classAndColor,
                 "class and count are separate axes of the same key");
     }
 

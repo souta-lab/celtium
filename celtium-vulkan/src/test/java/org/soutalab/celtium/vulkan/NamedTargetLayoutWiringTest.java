@@ -52,7 +52,7 @@ class NamedTargetLayoutWiringTest {
 
     @Test
     void theBackendOpensTheRecordingWithTheForeignImageOne() throws IOException {
-        String backend = Files.readString(findRepoFile(MAIN + "VulkanTerrainGpuBackend.java"));
+        String backend = Files.readString(findRepoFile(MAIN + "FrameCoordinator.java"));
         int foreign = backend.indexOf("VulkanGlTexture.beginLayoutRecording(this.commandBuffer);");
         int named = backend.indexOf(
                 "this.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());");

@@ -21,34 +21,34 @@ class ModelStateSignatureTest {
         int[] signature = new int[ModelReplayFastPath.SIGNATURE];
         // GL's initial state as the mirror reports it: no blending, no alpha test, cull and depth on, depth write on,
         // GL_LEQUAL, no lighting, unit 0 MODULATE with a TEXTURE source, and the window (identity 0) bound.
-        signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = Lane2ImmediateState.BLEND_ONE;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_ADD;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = Lane2ImmediateState.BLEND_FUNC_ADD;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = Lane2ImmediateState.COLOR_CHANNEL_ALL;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.1f);
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_GREATER;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 1;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = 1;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = 1;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] = 515;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] = 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] = NativeTextureEnvironment.MODULATE;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] = 0x1702;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_SRC_ALPHA;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+        signature[Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA] = Lane2ImmediateState.BLEND_ONE;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+        signature[Lane2ImmediateRecorder.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_ADD;
+        signature[Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA] = Lane2ImmediateState.BLEND_FUNC_ADD;
+        signature[Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK] = Lane2ImmediateState.COLOR_CHANNEL_ALL;
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] = 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.1f);
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_GREATER;
+        signature[Lane2ImmediateRecorder.SIGNATURE_CULL] = 1;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST] = 1;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE] = 1;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC] = 515;
+        signature[Lane2ImmediateRecorder.SIGNATURE_LIGHTING] = 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_ENV_MODE] = NativeTextureEnvironment.MODULATE;
+        signature[Lane2ImmediateRecorder.SIGNATURE_ENV_RGB] = 0x1702;
+        signature[Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET] = 0;
         // The cull face and the winding GL starts with; the enable is above.
-        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_BACK;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CCW;
+        signature[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE] = VulkanCullState.GL_BACK;
+        signature[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CCW;
         return signature;
     }
 
     private static int[] state(int[] signature) {
         int[] state = new int[16];
-        VulkanTerrainGpuBackend.celtium$stateFromSignature(signature, state);
+        Lane2ImmediateRecorder.celtium$stateFromSignature(signature, state);
         return state;
     }
 
@@ -73,13 +73,13 @@ class ModelStateSignatureTest {
 
     @Test void theCullSlotCarriesTheFaceAndTheWinding() {
         int[] front = signature();
-        front[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT;
+        front[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT;
         assertEquals(VulkanCullState.FRONT, state(front)[5]);
         assertEquals(org.lwjgl.vulkan.VK10.VK_CULL_MODE_FRONT_BIT,
                 VulkanCullState.vkCullMode(state(front)[5]));
 
         int[] clockwise = signature();
-        clockwise[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
+        clockwise[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
         assertEquals(org.lwjgl.vulkan.VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE,
                 VulkanCullState.vkFrontFace(state(clockwise)[5]));
 
@@ -87,17 +87,17 @@ class ModelStateSignatureTest {
         // captured array must not, or a disabled-cull batch would split into pipelines that draw identically.
         int[] off = signature();
         int[] otherOff = signature();
-        off[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT_AND_BACK;
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
+        off[Lane2ImmediateRecorder.SIGNATURE_CULL] = 0;
+        otherOff[Lane2ImmediateRecorder.SIGNATURE_CULL] = 0;
+        otherOff[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE] = VulkanCullState.GL_FRONT_AND_BACK;
+        otherOff[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE] = VulkanCullState.GL_CW;
         assertEquals(VulkanCullState.NONE, state(off)[5]);
         assertEquals(state(off)[5], state(otherOff)[5]);
     }
 
     @Test void theWindowTargetMasksTheAlphaWrite() {
         int[] window = signature();
-        window[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 1;
+        window[Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET] = 1;
         int[] state = state(window);
         assertEquals(Lane2ImmediateState.COLOR_CHANNEL_ALL & ~0x8, state[11],
                 "the delivered frame has no alpha bits, so the write is masked there");
@@ -105,7 +105,7 @@ class ModelStateSignatureTest {
 
     @Test void theAlphaTestMovesAsOne() {
         int[] enabled = signature();
-        enabled[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 1;
+        enabled[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] = 1;
         int[] state = state(enabled);
         assertEquals(Float.floatToIntBits(0.1f), state[6], "the reference is captured as its own bits");
         assertEquals(Lane2ImmediateState.ALPHA_GREATER,
@@ -115,8 +115,8 @@ class ModelStateSignatureTest {
         // must not, or a batch with the test disabled would key itself by values it does not use.
         int[] off = signature();
         int[] otherOff = signature();
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.9f);
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_LESS;
+        otherOff[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.9f);
+        otherOff[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_LESS;
         assertEquals(0, state(off)[6], "the test is off, so no reference is captured");
         assertEquals(0, state(off)[14], "the test is off, so no function is captured");
         assertEquals(state(off)[6], state(otherOff)[6]);
@@ -125,10 +125,10 @@ class ModelStateSignatureTest {
 
     @Test void blendingTranslatesTheFactorsAndTheEquations() {
         int[] blend = signature();
-        blend[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 1;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_ONE;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ZERO;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_SUBTRACT;
+        blend[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 1;
+        blend[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_ONE;
+        blend[Lane2ImmediateRecorder.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ZERO;
+        blend[Lane2ImmediateRecorder.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_SUBTRACT;
         int[] state = state(blend);
         assertEquals(1, state[0]);
         assertEquals(org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE, state[1]);
@@ -143,82 +143,82 @@ class ModelStateSignatureTest {
         // comparison the guard pays for and a change it cannot see.
         int[] base = state(signature());
         int[] changes = {
-                VulkanTerrainGpuBackend.SIGNATURE_BLEND,
-                VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB,
-                VulkanTerrainGpuBackend.SIGNATURE_DST_RGB,
-                VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA,
-                VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA,
-                VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB,
-                VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA,
-                VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK,
-                VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST,
-                VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF,
-                VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC,
-                VulkanTerrainGpuBackend.SIGNATURE_CULL,
-                VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST,
-                VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE,
-                VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC,
-                VulkanTerrainGpuBackend.SIGNATURE_LIGHTING,
-                VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE,
-                VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB,
-                VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET,
-                VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE,
-                VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE,
+                Lane2ImmediateRecorder.SIGNATURE_BLEND,
+                Lane2ImmediateRecorder.SIGNATURE_SRC_RGB,
+                Lane2ImmediateRecorder.SIGNATURE_DST_RGB,
+                Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA,
+                Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA,
+                Lane2ImmediateRecorder.SIGNATURE_EQ_RGB,
+                Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA,
+                Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK,
+                Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST,
+                Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF,
+                Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC,
+                Lane2ImmediateRecorder.SIGNATURE_CULL,
+                Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST,
+                Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE,
+                Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC,
+                Lane2ImmediateRecorder.SIGNATURE_LIGHTING,
+                Lane2ImmediateRecorder.SIGNATURE_ENV_MODE,
+                Lane2ImmediateRecorder.SIGNATURE_ENV_RGB,
+                Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET,
+                Lane2ImmediateRecorder.SIGNATURE_CULL_FACE,
+                Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE,
         };
         // Each slot is driven by a change that is meaningful for it: enabling the term it belongs to, or moving the
         // value it carries. The alpha reference and function need the test on, the factors and equations blending on.
         for (int slot : changes) {
             int[] changed = signature();
             switch (slot) {
-                case VulkanTerrainGpuBackend.SIGNATURE_BLEND:
-                case VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB:
-                case VulkanTerrainGpuBackend.SIGNATURE_DST_RGB:
-                case VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA:
-                case VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA:
-                case VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB:
-                case VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA:
-                    if (slot != VulkanTerrainGpuBackend.SIGNATURE_BLEND) {
-                        changed[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 1;
+                case Lane2ImmediateRecorder.SIGNATURE_BLEND:
+                case Lane2ImmediateRecorder.SIGNATURE_SRC_RGB:
+                case Lane2ImmediateRecorder.SIGNATURE_DST_RGB:
+                case Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA:
+                case Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA:
+                case Lane2ImmediateRecorder.SIGNATURE_EQ_RGB:
+                case Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA:
+                    if (slot != Lane2ImmediateRecorder.SIGNATURE_BLEND) {
+                        changed[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 1;
                     }
                     changed[slot] = changed[slot] == Lane2ImmediateState.BLEND_ONE
                             ? Lane2ImmediateState.BLEND_DST_COLOR : Lane2ImmediateState.BLEND_ONE;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK:
+                case Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK:
                     changed[slot] = Lane2ImmediateState.COLOR_CHANNEL_ALL & ~0x8;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST:
-                case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF:
-                case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC:
-                    changed[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 1;
-                    if (slot == VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC) {
+                case Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST:
+                case Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF:
+                case Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC:
+                    changed[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] = 1;
+                    if (slot == Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC) {
                         changed[slot] = Lane2ImmediateState.ALPHA_LESS;
-                    } else if (slot == VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF) {
+                    } else if (slot == Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF) {
                         changed[slot] = Float.floatToIntBits(0.9f);
                     }
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_CULL:
-                case VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST:
-                case VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE:
-                case VulkanTerrainGpuBackend.SIGNATURE_LIGHTING:
-                case VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET:
+                case Lane2ImmediateRecorder.SIGNATURE_CULL:
+                case Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST:
+                case Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE:
+                case Lane2ImmediateRecorder.SIGNATURE_LIGHTING:
+                case Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET:
                     changed[slot] = changed[slot] == 0 ? 1 : 0;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC:
+                case Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC:
                     changed[slot] = Lane2ImmediateState.DEPTH_ALWAYS;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE:
+                case Lane2ImmediateRecorder.SIGNATURE_CULL_FACE:
                     // The cull enable is already on in the base signature, so moving the face has to move the state.
                     changed[slot] = VulkanCullState.GL_FRONT;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE:
+                case Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE:
                     changed[slot] = VulkanCullState.GL_CW;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE:
+                case Lane2ImmediateRecorder.SIGNATURE_ENV_MODE:
                     changed[slot] = NativeTextureEnvironment.COMBINE;
-                    changed[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] = 0x84E7;
+                    changed[Lane2ImmediateRecorder.SIGNATURE_ENV_RGB] = 0x84E7;
                     break;
-                case VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB:
-                    changed[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] = NativeTextureEnvironment.COMBINE;
+                case Lane2ImmediateRecorder.SIGNATURE_ENV_RGB:
+                    changed[Lane2ImmediateRecorder.SIGNATURE_ENV_MODE] = NativeTextureEnvironment.COMBINE;
                     changed[slot] = 0x84E7;
                     break;
                 default:
@@ -232,7 +232,7 @@ class ModelStateSignatureTest {
     @Test void theSameSignatureAlwaysMapsToTheSameState() {
         assertEquals(java.util.Arrays.toString(state(signature())), java.util.Arrays.toString(state(signature())));
         // The key is a pure function of the array, which is why a cached state and a cached key can be kept together.
-        assertEquals(VulkanTerrainGpuBackend.celtium$stateKey(VulkanImmediateFormats.ITEM, state(signature())),
-                VulkanTerrainGpuBackend.celtium$stateKey(VulkanImmediateFormats.ITEM, state(signature())));
+        assertEquals(Lane2ImmediateRecorder.celtium$stateKey(VulkanImmediateFormats.ITEM, state(signature())),
+                Lane2ImmediateRecorder.celtium$stateKey(VulkanImmediateFormats.ITEM, state(signature())));
     }
 }

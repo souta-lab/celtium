@@ -20,30 +20,30 @@ class TerrainShadowLookupTest {
     @Test
     void theLookupNeedsTheRouteAndACaptureFromThisFrame() {
         assertEquals("switch-off",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(false, true, 7L, 7L, 5, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(false, true, 7L, 7L, 5, true));
         assertEquals("route-off",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, false, 7L, 7L, 5, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, false, 7L, 7L, 5, true));
         // A capture from the previous frame names a matrix and a depth the current camera did not draw.
         assertEquals("no-capture-this-frame",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, true, 6L, 7L, 5, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, true, 6L, 7L, 5, true));
         assertEquals("no-capture-this-frame",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, true, Long.MIN_VALUE, 7L, 5, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, true, Long.MIN_VALUE, 7L, 5, true));
         assertEquals("no-depth-texture",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, true, 7L, 7L, 0, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, true, 7L, 7L, 0, true));
         assertEquals("depth-not-published",
-                VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, true, 7L, 7L, 5, false));
-        assertNull(VulkanTerrainGpuBackend.celtium$terrainShadowRefusal(true, true, 7L, 7L, 5, true));
+                Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, true, 7L, 7L, 5, false));
+        assertNull(Lane2ImmediateRecorder.celtium$terrainShadowRefusal(true, true, 7L, 7L, 5, true));
     }
 
     @Test
     void theDarknessPropertyIsClampedAndDefaulted() {
-        assertEquals(0.45f, VulkanTerrainGpuBackend.celtium$shadowDarkness(null));
-        assertEquals(0.45f, VulkanTerrainGpuBackend.celtium$shadowDarkness(" "));
-        assertEquals(0.45f, VulkanTerrainGpuBackend.celtium$shadowDarkness("dark"));
-        assertEquals(0.45f, VulkanTerrainGpuBackend.celtium$shadowDarkness("NaN"));
-        assertEquals(0.0f, VulkanTerrainGpuBackend.celtium$shadowDarkness("-1"));
-        assertEquals(1.0f, VulkanTerrainGpuBackend.celtium$shadowDarkness("3"));
-        assertEquals(0.6f, VulkanTerrainGpuBackend.celtium$shadowDarkness("0.6"));
+        assertEquals(0.45f, Lane2ImmediateRecorder.celtium$shadowDarkness(null));
+        assertEquals(0.45f, Lane2ImmediateRecorder.celtium$shadowDarkness(" "));
+        assertEquals(0.45f, Lane2ImmediateRecorder.celtium$shadowDarkness("dark"));
+        assertEquals(0.45f, Lane2ImmediateRecorder.celtium$shadowDarkness("NaN"));
+        assertEquals(0.0f, Lane2ImmediateRecorder.celtium$shadowDarkness("-1"));
+        assertEquals(1.0f, Lane2ImmediateRecorder.celtium$shadowDarkness("3"));
+        assertEquals(0.6f, Lane2ImmediateRecorder.celtium$shadowDarkness("0.6"));
     }
 
     @Test

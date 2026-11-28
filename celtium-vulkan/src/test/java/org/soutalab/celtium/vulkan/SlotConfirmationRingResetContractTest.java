@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SlotConfirmationRingResetContractTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative)).replace("\r\n", "\n");

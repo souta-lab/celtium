@@ -91,7 +91,7 @@ class HudP0FitWiringTest {
 
     @Test
     void theCloseSiteStampsTheGroupBesideTheCensusNote() throws IOException {
-        String backend = Files.readString(findRepoFile(MAIN + "VulkanTerrainGpuBackend.java"));
+        String backend = Files.readString(findRepoFile(MAIN + "Lane2ImmediateRecorder.java"));
         String close = methodSlice(backend, "private void closeCurrentImmediateGroupBody() {", 30000);
         int note = close.indexOf("celtium$noteHudP0Group();");
         assertTrue(note >= 0, "the census note still runs at the close site");
@@ -103,7 +103,7 @@ class HudP0FitWiringTest {
 
     @Test
     void theOrderingFlushPairsByProvenanceNotByTheLiveBracket() throws IOException {
-        String backend = Files.readString(findRepoFile(MAIN + "VulkanTerrainGpuBackend.java"));
+        String backend = Files.readString(findRepoFile(MAIN + "Lane2ImmediateRecorder.java"));
         String flush = methodSlice(backend, "void flushPendingBeforeGlDraw() {", 12000);
         assertFalse(flush.contains("HUD_P0_FRAMES > 0 && guiFlush ? System.nanoTime()"),
                 "the bracket-at-flush-time gate is the defect and must not come back");
@@ -117,7 +117,7 @@ class HudP0FitWiringTest {
 
     @Test
     void theSizeTriggeredWindowPairsItsGuiWindowsToo() throws IOException {
-        String backend = Files.readString(findRepoFile(MAIN + "VulkanTerrainGpuBackend.java"));
+        String backend = Files.readString(findRepoFile(MAIN + "Lane2ImmediateRecorder.java"));
         int at = backend.indexOf("this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES");
         assertTrue(at >= 0, "the size-triggered window still exists");
         String window = backend.substring(at, Math.min(backend.length(), at + 9000));

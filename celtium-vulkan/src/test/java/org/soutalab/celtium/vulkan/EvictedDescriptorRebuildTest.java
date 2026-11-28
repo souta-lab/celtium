@@ -31,7 +31,7 @@ class EvictedDescriptorRebuildTest {
 
     private static String backendSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
     }
 
     @Test

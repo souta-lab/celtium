@@ -32,17 +32,17 @@ class ChainPairMultiFramebufferTest {
 
     @Test
     void oneColourAsksStayOnTheLegacyEntry() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(0));
-        assertFalse(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(1),
+        assertFalse(Lane2ImmediateRecorder.celtium$chainPairMultiTarget(0));
+        assertFalse(Lane2ImmediateRecorder.celtium$chainPairMultiTarget(1),
                 "one colour target is the legacy chain pair's own shape");
     }
 
     @Test
     void multiColourAsksGoToTheMultiEntry() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(2),
+        assertTrue(Lane2ImmediateRecorder.celtium$chainPairMultiTarget(2),
                 "two colour targets need a three-attachment framebuffer");
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(3));
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(8), "the pack ledger's full width");
+        assertTrue(Lane2ImmediateRecorder.celtium$chainPairMultiTarget(3));
+        assertTrue(Lane2ImmediateRecorder.celtium$chainPairMultiTarget(8), "the pack ledger's full width");
     }
 
 
@@ -99,7 +99,7 @@ class ChainPairMultiFramebufferTest {
 
     private static String backendSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
     }
 
     private static String cacheSource() throws IOException {

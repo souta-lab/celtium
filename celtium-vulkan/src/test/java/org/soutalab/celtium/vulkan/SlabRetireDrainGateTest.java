@@ -89,7 +89,7 @@ class SlabRetireDrainGateTest {
     @Test
     void theGatedDrainIsDrivenFromTheFrameBoundary() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java"));
         assertTrue(source.contains("this.context.celtium$drainRetiredSlabBuffers();"),
                 "the frame boundary drives the gated slab drain");
         assertEquals(1, countOccurrences(source, "celtium$drainRetiredSlabBuffers()"),

@@ -15,7 +15,7 @@ class ImmediateStandardStateTest {
 
     @Test
     void alphaStandardStateCarriesTheLegacyBlendPairAndNoDepthWrite() {
-        int[] state = VulkanTerrainGpuBackend.celtium$immediateStandardState(
+        int[] state = Lane2ImmediateRecorder.celtium$immediateStandardState(
                 1, true, false, false, false);
         assertEquals(1, state[0]);
         assertEquals(VK10.VK_BLEND_FACTOR_SRC_ALPHA, state[1]);
@@ -30,7 +30,7 @@ class ImmediateStandardStateTest {
 
     @Test
     void opaqueStandardStateDisablesBlendAndWritesDepth() {
-        int[] state = VulkanTerrainGpuBackend.celtium$immediateStandardState(
+        int[] state = Lane2ImmediateRecorder.celtium$immediateStandardState(
                 0, true, true, false, false);
         assertEquals(0, state[0]);
         assertEquals(VK10.VK_BLEND_FACTOR_ZERO, state[1]);
@@ -40,7 +40,7 @@ class ImmediateStandardStateTest {
 
     @Test
     void additiveStandardStateUsesTheOneDestination() {
-        int[] state = VulkanTerrainGpuBackend.celtium$immediateStandardState(
+        int[] state = Lane2ImmediateRecorder.celtium$immediateStandardState(
                 2, true, false, false, false);
         assertEquals(1, state[0]);
         assertEquals(VK10.VK_BLEND_FACTOR_SRC_ALPHA, state[1]);
@@ -49,14 +49,14 @@ class ImmediateStandardStateTest {
 
     @Test
     void standardKeysSeparateFormatsAndTemplates() {
-        int[] alpha = VulkanTerrainGpuBackend.celtium$immediateStandardState(
+        int[] alpha = Lane2ImmediateRecorder.celtium$immediateStandardState(
                 1, true, false, false, false);
-        int[] opaque = VulkanTerrainGpuBackend.celtium$immediateStandardState(
+        int[] opaque = Lane2ImmediateRecorder.celtium$immediateStandardState(
                 0, true, true, false, false);
-        long texAlpha = VulkanTerrainGpuBackend.celtium$stateKey(2, alpha);
-        assertNotEquals(texAlpha, VulkanTerrainGpuBackend.celtium$stateKey(6, alpha));
-        assertNotEquals(texAlpha, VulkanTerrainGpuBackend.celtium$stateKey(2, opaque));
-        assertEquals(texAlpha, VulkanTerrainGpuBackend.celtium$stateKey(2, alpha.clone()));
+        long texAlpha = Lane2ImmediateRecorder.celtium$stateKey(2, alpha);
+        assertNotEquals(texAlpha, Lane2ImmediateRecorder.celtium$stateKey(6, alpha));
+        assertNotEquals(texAlpha, Lane2ImmediateRecorder.celtium$stateKey(2, opaque));
+        assertEquals(texAlpha, Lane2ImmediateRecorder.celtium$stateKey(2, alpha.clone()));
     }
 
     @Test
@@ -65,9 +65,9 @@ class ImmediateStandardStateTest {
         long pass = 0x350000000035L;
         long particle = key * 31L + ((long) VK10.VK_BLEND_FACTOR_SRC_ALPHA << 20)
                 + VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        assertEquals(passFold(particle, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(5, key, pass));
-        assertEquals(passFold(key, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(2, key, pass));
-        assertEquals(passFold(key, pass), VulkanTerrainGpuBackend.celtium$immediateBranchKey(1, key, pass));
+        assertEquals(passFold(particle, pass), Lane2ImmediateRecorder.celtium$immediateBranchKey(5, key, pass));
+        assertEquals(passFold(key, pass), Lane2ImmediateRecorder.celtium$immediateBranchKey(2, key, pass));
+        assertEquals(passFold(key, pass), Lane2ImmediateRecorder.celtium$immediateBranchKey(1, key, pass));
     }
 
     /** The pass fold of {@code celtium$immediateBranchKey}, restated: the mix, then the fold under the line bit. */
@@ -76,8 +76,8 @@ class ImmediateStandardStateTest {
         mix ^= mix >>> 33;
         mix *= 0xff51afd7ed558ccdL;
         mix ^= mix >>> 33;
-        long flag = branch & VulkanTerrainGpuBackend.LINE_KEY_BIT;
-        return ((branch & ~VulkanTerrainGpuBackend.LINE_KEY_BIT) * 31L + mix)
-                & ~VulkanTerrainGpuBackend.LINE_KEY_BIT | flag;
+        long flag = branch & Lane2ImmediateRecorder.LINE_KEY_BIT;
+        return ((branch & ~Lane2ImmediateRecorder.LINE_KEY_BIT) * 31L + mix)
+                & ~Lane2ImmediateRecorder.LINE_KEY_BIT | flag;
     }
 }

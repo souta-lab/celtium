@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FenceWaitFaultRetryContractTest {
 
     private static final String BACKEND_SOURCE =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
 
     private static final String FAULT_IF = "if (FENCE_WAIT_FAULT) {";
     private static final String FORGERY = "result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;";

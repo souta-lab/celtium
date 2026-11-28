@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The pass timings' switches are re-resolved at every frame open, so a touch that initialises
  * {@link FramePassTimings} before the harness configuration exists must not fix them for the JVM.
  * <p>
- * The touch this simulates is the one that broke the suite: {@code VulkanTerrainGpuBackend.flushPendingBeforeGlDraw}
+ * The touch this simulates is the one that broke the suite: {@code Lane2ImmediateRecorder.flushPendingBeforeGlDraw}
  * evaluates this class's section state as a call argument at its head, so a backend unit test initialises the class
  * with no harness properties set. While the resolution was taken only at class initialisation,
  * {@code PassTimingCoverageTest} then recorded nothing in the same JVM however it set its own properties

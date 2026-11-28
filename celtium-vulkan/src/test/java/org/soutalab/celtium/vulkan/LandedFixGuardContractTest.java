@@ -22,7 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LandedFixGuardContractTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
+    private static final String COORDINATOR =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
+    private static final String ADAPTER =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java";
     private static final String COPY_READ_SIDE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java";
     private static final String CONTEXT =
@@ -99,7 +103,7 @@ class LandedFixGuardContractTest {
      */
     @Test
     void theOffTargetFallbackRestoresTheWholePassState() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         // The anchor is the fallback's own assignment, found from its deferred-clear block: the
         // same `= null` line also appears at the plain path's default and at the off-target
         // attach, both before the fallback, and a bare indexOf anchors on the first of those -
@@ -154,7 +158,7 @@ class LandedFixGuardContractTest {
      */
     @Test
     void deleteDetachesTheRegistrationOnItsEarlyReturnsToo() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(count(backend, "celtium$detachRegistration();") >= 3,
                 "both early returns and the full delete path detach the registration");
     }

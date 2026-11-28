@@ -22,7 +22,7 @@ class DrawPathLmContractTest {
     @Test
     void dp22DrawModelRunDropsWithoutSuccessAccounting() throws IOException {
         String backend = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java");
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java");
         assertTrue(backend.contains("long modelRunDropped;"),
                 "backend declares the modelRunDropped counter");
 

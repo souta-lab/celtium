@@ -28,26 +28,26 @@ class SupplyWrapperReuseTest {
     @Test
     void aCompleteMirrorCannotBeReplacedByTheSupply() {
         // The refresh branch runs, and it uploads into the wrapper it was handed.
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyMayReplaceWrapper(42, true));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyMayReplaceWrapper(42, true));
     }
 
     @Test
     void aMissingMirrorCanBeCreated() {
         // No wrapper at all: celtium$supplyMirror may call imageFor, which replaces the name's wrapper.
-        assertTrue(VulkanTerrainGpuBackend.celtium$supplyMayReplaceWrapper(42, false));
+        assertTrue(Lane2ImmediateRecorder.celtium$supplyMayReplaceWrapper(42, false));
     }
 
     @Test
     void aPartialMirrorCanBeCompleted() {
         // A mirror that only ever received a patch has no full content, so the supply branch runs and may create.
-        assertTrue(VulkanTerrainGpuBackend.celtium$supplyMayReplaceWrapper(7, false));
+        assertTrue(Lane2ImmediateRecorder.celtium$supplyMayReplaceWrapper(7, false));
     }
 
     @Test
     void aTexturelessBatchHasNoWrapperToReplace() {
         // Name 0 is "no texture": the accept path resolved null and neither supply branch runs, so the answer is the
         // one it already holds whatever the completeness flag says.
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyMayReplaceWrapper(0, false));
-        assertFalse(VulkanTerrainGpuBackend.celtium$supplyMayReplaceWrapper(0, true));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyMayReplaceWrapper(0, false));
+        assertFalse(Lane2ImmediateRecorder.celtium$supplyMayReplaceWrapper(0, true));
     }
 }

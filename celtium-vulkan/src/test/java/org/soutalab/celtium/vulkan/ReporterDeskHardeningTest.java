@@ -110,7 +110,7 @@ class ReporterDeskHardeningTest {
     @Test
     void theBackendTeardownDetachesOnFailureAndRunsOnce() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java"));
         int delete = source.indexOf("    public void delete() {");
         assertTrue(delete >= 0, "delete() is declared");
         String deleteBody = source.substring(delete, delete + 7000);

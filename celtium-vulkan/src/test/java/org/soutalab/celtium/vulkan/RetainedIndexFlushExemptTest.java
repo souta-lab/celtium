@@ -32,7 +32,7 @@ class RetainedIndexFlushExemptTest {
 
     private static String backendSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
     }
 
     private static String groupSource() throws IOException {
@@ -52,7 +52,7 @@ class RetainedIndexFlushExemptTest {
 
     @Test
     void theSwitchDefaultsOff() throws Exception {
-        Field field = VulkanTerrainGpuBackend.class.getDeclaredField("RETAINED_INDEX_FLUSH_EXEMPT");
+        Field field = Lane2ImmediateRecorder.class.getDeclaredField("RETAINED_INDEX_FLUSH_EXEMPT");
         field.setAccessible(true);
         assertFalse(field.getBoolean(null),
                 "with the property unset the exemption is off and the accounting is the old one");
@@ -125,7 +125,7 @@ class RetainedIndexFlushExemptTest {
 
     @Test
     void aCountedGroupCountsTowardTheRecompute() throws Exception {
-        assertTrue(VulkanTerrainGpuBackend.celtium$countsTowardPendingIndices(group()),
+        assertTrue(Lane2ImmediateRecorder.celtium$countsTowardPendingIndices(group()),
                 "a plain group with a mesh is part of what the window still holds");
     }
 
@@ -133,7 +133,7 @@ class RetainedIndexFlushExemptTest {
     void anExemptGroupDoesNotCountTowardTheRecompute() throws Exception {
         ImmediateGroup group = group();
         group.indexFlushExempt = true;
-        assertFalse(VulkanTerrainGpuBackend.celtium$countsTowardPendingIndices(group),
+        assertFalse(Lane2ImmediateRecorder.celtium$countsTowardPendingIndices(group),
                 "an exempt retained group was never added, so the recompute must not recount it");
     }
 
@@ -141,7 +141,7 @@ class RetainedIndexFlushExemptTest {
     void aModelRunDoesNotCountTowardTheRecompute() throws Exception {
         ImmediateGroup group = group();
         group.modelRun = new VulkanModelInstances.Run(null, 0, 0L, 0L, 0L);
-        assertFalse(VulkanTerrainGpuBackend.celtium$countsTowardPendingIndices(group),
+        assertFalse(Lane2ImmediateRecorder.celtium$countsTowardPendingIndices(group),
                 "a model-run group stands outside the recompute, as it did before the predicate was extracted");
     }
 
@@ -149,7 +149,7 @@ class RetainedIndexFlushExemptTest {
     void aMeshlessGroupDoesNotCountTowardTheRecompute() throws Exception {
         ImmediateGroup group = group();
         group.mesh = null;
-        assertFalse(VulkanTerrainGpuBackend.celtium$countsTowardPendingIndices(group),
+        assertFalse(Lane2ImmediateRecorder.celtium$countsTowardPendingIndices(group),
                 "a group without a mesh has no indices to count");
     }
 

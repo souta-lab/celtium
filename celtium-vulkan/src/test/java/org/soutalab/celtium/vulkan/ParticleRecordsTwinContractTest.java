@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ParticleRecordsTwinContractTest {
 
     private static final String BACKEND =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
     private static final String HOST =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateRecordsPipelines.java";
     private static final String TWIN =
@@ -68,7 +68,7 @@ class ParticleRecordsTwinContractTest {
         assertEquals(28, VulkanImmediateParticleRecordsPipeline.VERTEX_BYTES,
                 "the twin's vertex width is the canonical particle stride");
         assertEquals(VulkanImmediateParticleRecordsPipeline.VERTEX_BYTES,
-                VulkanTerrainGpuBackend.celtium$expectedStride(VulkanImmediateFormats.PARTICLE),
+                Lane2ImmediateRecorder.celtium$expectedStride(VulkanImmediateFormats.PARTICLE),
                 "the accept path's stride answer for format 5 is the twin's width");
     }
 
@@ -175,20 +175,20 @@ class ParticleRecordsTwinContractTest {
     @Test
     @DisplayName("an opaque particle group (no blend, depth test on, depth writes on) is order-free")
     void opaqueParticleOrderIsFree() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$batchOrderFree(groupWithState(0, 1, 1)));
+        assertTrue(Lane2ImmediateRecorder.celtium$batchOrderFree(groupWithState(0, 1, 1)));
     }
 
     @Test
     @DisplayName("a blended particle group is not order-free and keeps its capture order")
     void blendedParticleOrderIsNotFree() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$batchOrderFree(groupWithState(1, 1, 1)));
+        assertFalse(Lane2ImmediateRecorder.celtium$batchOrderFree(groupWithState(1, 1, 1)));
     }
 
     @Test
     @DisplayName("a group that does not write depth is not order-free")
     void depthWriteOffIsNotFree() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$batchOrderFree(groupWithState(0, 1, 0)));
-        assertFalse(VulkanTerrainGpuBackend.celtium$batchOrderFree(groupWithState(0, 0, 1)),
+        assertFalse(Lane2ImmediateRecorder.celtium$batchOrderFree(groupWithState(0, 1, 0)));
+        assertFalse(Lane2ImmediateRecorder.celtium$batchOrderFree(groupWithState(0, 0, 1)),
                 "and neither is one that does not test depth");
     }
 

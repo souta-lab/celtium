@@ -79,9 +79,9 @@ class FrameTargetLifetimeTest {
      */
     @Test
     void aTargetIsOnlyReplacedAfterItsFramebuffersWereFreed() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$frameTargetReplaceable(true),
+        assertTrue(Lane2ImmediateRecorder.celtium$frameTargetReplaceable(true),
                 "the release landed: the old views are named by nothing and the target may be replaced");
-        assertFalse(VulkanTerrainGpuBackend.celtium$frameTargetReplaceable(false),
+        assertFalse(Lane2ImmediateRecorder.celtium$frameTargetReplaceable(false),
                 "the release was refused: the old target keeps drawing, and the recreation is retried on a later frame");
     }
 

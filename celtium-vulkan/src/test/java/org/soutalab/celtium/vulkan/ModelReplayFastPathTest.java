@@ -175,28 +175,28 @@ class ModelReplayFastPathTest {
         // slots through PipelineStateKey's packing, the residual slots raw. The window-target slot is not here -
         // it is a function of the target identity and has its own case below.
         int[] alternates = new int[ModelReplayFastPath.SIGNATURE];
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 770;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = 770;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = 768;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = 1;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = 0x8007;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = 0x8007;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = 11;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.25f);
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = 517;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] = 516;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] = 0;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] = 34160;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] = 0x84E7;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = 0x0404;
-        alternates[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = 0x0903;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = 770;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_DST_RGB] = 770;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA] = 768;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA] = 1;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_EQ_RGB] = 0x8007;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA] = 0x8007;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK] = 11;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.25f);
+        alternates[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC] = 517;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_CULL] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC] = 516;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_LIGHTING] = 0;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_ENV_MODE] = 34160;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_ENV_RGB] = 0x84E7;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE] = 0x0404;
+        alternates[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE] = 0x0903;
         for (int index = 0; index < ModelReplayFastPath.SIGNATURE; index++) {
-            if (index == VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET) {
+            if (index == Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET) {
                 continue;
             }
             ModelReplayFastPath.Probe changed = refilled();
@@ -408,7 +408,7 @@ class ModelReplayFastPathTest {
                 default: moved.envVersion++; break;
             }
             assertFalse(ModelReplayFastPath.sameVersions(moved, fast.cached()), name + " is part of the proof");
-            moved.signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = 9;
+            moved.signature[Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK] = 9;
             assertFalse(matches(fast, moved), name + " moving must fall back to the bytes, and the bytes moved");
         }
     }
@@ -432,24 +432,24 @@ class ModelReplayFastPathTest {
         state.cullFace(VulkanCullState.GL_FRONT);
         state.frontFace(VulkanCullState.GL_CW);
         int[] signature = new int[ModelReplayFastPath.SIGNATURE];
-        signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = state.blendEnabled() ? 1 : 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = state.blendSrcRgb();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = state.blendDstRgb();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = state.blendSrcAlpha();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = state.blendDstAlpha();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = state.blendEquationRgb();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = state.blendEquationAlpha();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = state.colorMask();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = state.alphaTestEnabled() ? 1 : 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(state.alphaFuncReference());
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = state.alphaFunc();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] = state.cullEnabled() ? 1 : 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE] = state.cullFace();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE] = state.frontFace();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = state.depthTestEnabled() ? 1 : 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = state.depthMask() ? 1 : 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] = state.depthFunc();
-        signature[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] = state.lightingEnabled() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_BLEND] = state.blendEnabled() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = state.blendSrcRgb();
+        signature[Lane2ImmediateRecorder.SIGNATURE_DST_RGB] = state.blendDstRgb();
+        signature[Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA] = state.blendSrcAlpha();
+        signature[Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA] = state.blendDstAlpha();
+        signature[Lane2ImmediateRecorder.SIGNATURE_EQ_RGB] = state.blendEquationRgb();
+        signature[Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA] = state.blendEquationAlpha();
+        signature[Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK] = state.colorMask();
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] = state.alphaTestEnabled() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(state.alphaFuncReference());
+        signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC] = state.alphaFunc();
+        signature[Lane2ImmediateRecorder.SIGNATURE_CULL] = state.cullEnabled() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE] = state.cullFace();
+        signature[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE] = state.frontFace();
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST] = state.depthTestEnabled() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE] = state.depthMask() ? 1 : 0;
+        signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC] = state.depthFunc();
+        signature[Lane2ImmediateRecorder.SIGNATURE_LIGHTING] = state.lightingEnabled() ? 1 : 0;
         assertEquals(PipelineStateKey.of(state, 0).value(), ModelReplayFastPath.pipelineKeyOf(signature));
     }
 
@@ -459,11 +459,11 @@ class ModelReplayFastPathTest {
         // judgment serves it, and the record a hit writes is the one the unchanged path resolves either way.
         ModelReplayFastPath fast = new ModelReplayFastPath();
         ModelReplayFastPath.Probe off = filled();
-        off.signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
+        off.signature[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 0;
         note(fast, off);
         ModelReplayFastPath.Probe otherFactor = refilled();
-        otherFactor.signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
-        otherFactor.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 772;
+        otherFactor.signature[Lane2ImmediateRecorder.SIGNATURE_BLEND] = 0;
+        otherFactor.signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = 772;
         assertTrue(matches(fast, otherFactor),
                 "a factor blending never reads is erased by the state mapping and by the key alike");
     }
@@ -474,14 +474,14 @@ class ModelReplayFastPathTest {
         // one fixed fallback, so two unknowns are the same state even though the raw inputs differ.
         ModelReplayFastPath fast = new ModelReplayFastPath();
         ModelReplayFastPath.Probe unknown = filled();
-        unknown.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 12345;
+        unknown.signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = 12345;
         note(fast, unknown);
         ModelReplayFastPath.Probe otherUnknown = refilled();
-        otherUnknown.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 23456;
+        otherUnknown.signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = 23456;
         assertTrue(matches(fast, otherUnknown),
                 "every unknown factor maps to the same state fallback, so the escape identifies them");
         ModelReplayFastPath.Probe known = refilled();
-        known.signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = 768;
+        known.signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB] = 768;
         assertFalse(matches(fast, known), "a defined factor is a different state");
     }
 
@@ -492,7 +492,7 @@ class ModelReplayFastPathTest {
         ModelReplayFastPath fast = new ModelReplayFastPath();
         note(fast);
         ModelReplayFastPath.Probe changed = refilled();
-        changed.signature[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 0;
+        changed.signature[Lane2ImmediateRecorder.SIGNATURE_WINDOW_TARGET] = 0;
         assertTrue(matches(fast, changed), "the bit is the target identity restated, not a value of its own");
     }
 

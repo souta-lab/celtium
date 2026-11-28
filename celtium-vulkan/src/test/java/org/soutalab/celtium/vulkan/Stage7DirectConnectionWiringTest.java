@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class Stage7DirectConnectionWiringTest {
 
     private static final String ROOT = "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/";
-    private static final String BACKEND = ROOT + "VulkanTerrainGpuBackend.java";
+    private static final String BACKEND = ROOT + "Lane2ImmediateRecorder.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative));
