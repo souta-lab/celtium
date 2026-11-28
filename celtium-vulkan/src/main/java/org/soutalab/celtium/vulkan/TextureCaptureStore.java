@@ -1262,7 +1262,7 @@ public final class TextureCaptureStore {
      *
      * @return {@code {levels released, bytes released}}
      */
-    public long[] releaseSettledTextureCaptures(GlsmFrontend stub) {
+    public long[] releaseSettledTextureCaptures() {
         long levels = 0L;
         long bytes = 0L;
         long[] keys = this.texCaptures.keySet().toLongArray();

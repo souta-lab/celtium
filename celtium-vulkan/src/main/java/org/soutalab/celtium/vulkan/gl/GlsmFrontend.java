@@ -4536,7 +4536,7 @@ public final class GlsmFrontend implements FunctionProvider {
         GlsmFrontend stub = installed;
         return stub == null
                 ? new long[] { 0L, 0L }
-                : stub.textureCaptures.releaseSettledTextureCaptures(stub);
+                : stub.textureCaptures.releaseSettledTextureCaptures();
     }
 
     final org.soutalab.celtium.vulkan.NativeRasterState raster;
