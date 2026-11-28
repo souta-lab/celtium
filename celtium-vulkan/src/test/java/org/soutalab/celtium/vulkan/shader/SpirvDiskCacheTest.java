@@ -1,6 +1,5 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan.shader;
 
-import org.soutalab.celtium.vulkan.shader.SpirvDiskCache;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
