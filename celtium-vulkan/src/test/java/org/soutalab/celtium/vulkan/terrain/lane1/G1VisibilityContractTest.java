@@ -176,12 +176,18 @@ class G1VisibilityContractTest {
             }
             assertEquals(1, cover, "quadrant probe must be covered exactly once");
         }
-        // The local-UV table must follow the same cyclic corner order.
-        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains(
-                        "vec2[](vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0))"),
-                "GEN_UV must follow the cyclic corner order");
-        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("fragLocalUv = GEN_UV[corner]"),
-                "fragLocalUv must come from the cyclic GEN_UV table");
+        // The UV consumer must follow the same cyclic corner order: since the S3-b UV
+        // wiring (NEON-UV-RULING 5.4-2) the vertex decodes the record's per-corner
+        // uvPacked word (words 16..19) with the very corner the cyclic split produced,
+        // normalizes it as Q1.15, and composes the atlas UV through the sprite
+        // rectangle table - the full-sprite GEN_UV approximation this test used to pin
+        // is exactly what the ruling ordered removed.
+        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("16u + uint(corner)"),
+                "uvPacked must be read per cyclic corner (words 16..19)");
+        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("/ 32768.0"),
+                "uvPacked must decode as Q1.15");
+        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("textureRects["),
+                "the atlas UV must compose through the sprite rectangle table");
     }
 
     // -- GENERAL_VERTEX word stride contract (C-1, S2-b landing) --------------------------
