@@ -6922,9 +6922,6 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
         /** {@return how many captures the announcement made unnecessary} */
-    public static long celtium$announcedCaptureSkips() {
-        return TextureCaptureStore.celtium$announcedCaptureSkips();
-    }
 
     /**
      * Records TextureUtil's named allocation after its delete/bind/allocate sequence. The dimensions describe
