@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.lwjgl.system.Callback;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 import org.lwjgl.system.libffi.FFICIF;
 import org.lwjgl.system.libffi.FFIType;
 
