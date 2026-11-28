@@ -64,6 +64,15 @@ public interface BlockFaceData {
     /** Whether the state is leaves (the leaf-culling predicates apply). */
     boolean isLeaves(int state);
 
+    /**
+     * Whether the state is a liquid (its material is liquid). Vanilla tints fluid surfaces
+     * through the block colour handlers unconditionally - the fluid renderer applies them
+     * by block, never by model tint index - so the scanner resolves a tint for liquid
+     * states regardless of their model quads, and the mesher passes that tint to every
+     * general quad of a liquid state.
+     */
+    boolean isLiquid(int state);
+
     /** Whether this state's face on side {@code dir} counts as solid for the leaf predicates. */
     boolean isSideSolid(int state, int dir);
 

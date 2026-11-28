@@ -84,6 +84,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     private final boolean[] cullsSame;
     private final byte[] layer;
     private final boolean[] leaves;
+    private final boolean[] liquid;
     private final boolean[] noGreedy;
     private final short[] mcEntity;
     private final float[] aoValue;
@@ -109,6 +110,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         this.cullsSame = tables.cullsSame;
         this.layer = tables.layer;
         this.leaves = tables.leaves;
+        this.liquid = tables.liquid;
         this.noGreedy = tables.noGreedy;
         this.mcEntity = tables.mcEntity;
         this.aoValue = tables.aoValue;
@@ -234,6 +236,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             t.translucent[id] = false;
             t.lightEmission[id] = 0;
         }
+        t.liquid[id] = material.isLiquid();
         if (t.air[id]) {
             return;
         }
@@ -771,6 +774,11 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     }
 
     @Override
+    public boolean isLiquid(int state) {
+        return state >= 0 && state < stateCount && liquid[state];
+    }
+
+    @Override
     public boolean isSideSolid(int state, int dir) {
         return state >= 0 && state < stateCount && sideSolid[state * 6 + dir];
     }
@@ -847,6 +855,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         boolean[] cullsSame;
         byte[] layer;
         boolean[] leaves;
+        boolean[] liquid;
         boolean[] noGreedy;
         short[] mcEntity;
         float[] aoValue;
@@ -870,6 +879,7 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             cullsSame = new boolean[size];
             layer = new byte[size];
             leaves = new boolean[size];
+            liquid = new boolean[size];
             noGreedy = new boolean[size];
             mcEntity = new short[size];
             aoValue = new float[size];

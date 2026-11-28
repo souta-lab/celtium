@@ -29,6 +29,7 @@ class SectionMesherTest {
     private static final int MODEL = 6;
     private static final int SWAY = 7;
     private static final int FLUID = 8;
+    private static final int WATER = 9;
 
     /** A configurable stub table. Defaults describe an opaque stone cube. */
     static final class Stub implements BlockFaceData {
@@ -40,6 +41,7 @@ class SectionMesherTest {
             int texture = 10;
             boolean tintUp = false;
             boolean leaves = false;
+            boolean liquid = false;
             boolean sideSolid = true;
             boolean noGreedy = false;
             short mcEntity = 0;
@@ -90,6 +92,15 @@ class SectionMesherTest {
             rows[FLUID].occludes = false;
             rows[FLUID].layer = TerrainLayer.TRANSLUCENT.ordinal();
             rows[FLUID].texture = 70;
+            // A liquid state with a baked-model quad: like real water, the quad carries
+            // no tint index (readGeneralQuad below always answers usesTint = false).
+            rows[WATER].fullCube = false;
+            rows[WATER].occludes = false;
+            rows[WATER].layer = TerrainLayer.TRANSLUCENT.ordinal();
+            rows[WATER].quads = new float[][]{{
+                    0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0}};
+            rows[WATER].quadTexture = 80;
+            rows[WATER].liquid = true;
         }
 
         @Override
@@ -140,6 +151,11 @@ class SectionMesherTest {
         @Override
         public boolean isLeaves(int state) {
             return rows[state].leaves;
+        }
+
+        @Override
+        public boolean isLiquid(int state) {
+            return rows[state].liquid;
         }
 
         @Override
@@ -515,6 +531,45 @@ class SectionMesherTest {
         assertEquals(0x7C, west.tintR());
         assertEquals(0xBD, west.tintG());
         assertEquals(0x6B, west.tintB());
+    }
+
+    @Test
+    void liquidQuadCarriesResolvedTintWithoutTintIndex() {
+        // Water's model quads carry no tint index (the stub's readGeneralQuad always
+        // answers usesTint = false), yet the resolved biome water colour must reach
+        // the quad: vanilla's fluid renderer applies the block colour handlers by
+        // block, unconditionally. 0x617B64 is the swamp water colour.
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 3, 4, 5, WATER);
+        snap.tintRgb()[WorldSectionSnapshot.index(4, 5, 6)] = 0x617B64;
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        assertEquals(1, out.generalCount(TerrainLayer.TRANSLUCENT.ordinal()));
+        GeneralQuad quad = out.generalQuad(TerrainLayer.TRANSLUCENT.ordinal(), 0);
+        assertEquals(1 | (0x617B64 << 8), quad.flags());
+    }
+
+    @Test
+    void liquidQuadWithNoTintStaysUntinted() {
+        // NO_TINT is the plains outcome (the water colour is white there, and a
+        // handler answering -1 lands on NO_TINT in the scanner): no tint is applied,
+        // exactly as before this fix.
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 3, 4, 5, WATER);
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        assertEquals(1, out.generalCount(TerrainLayer.TRANSLUCENT.ordinal()));
+        assertEquals(0, out.generalQuad(TerrainLayer.TRANSLUCENT.ordinal(), 0).flags());
+    }
+
+    @Test
+    void nonLiquidQuadWithoutTintIndexIgnoresResolvedTint() {
+        // The liquid pass-through must not widen: a non-liquid general quad without a
+        // tint index still ignores the cell's resolved tint.
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 3, 4, 5, MODEL);
+        snap.tintRgb()[WorldSectionSnapshot.index(4, 5, 6)] = 0x617B64;
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        assertEquals(1, out.generalTotal());
+        assertEquals(0, out.generalQuad(TerrainLayer.SOLID.ordinal(), 0).flags());
     }
 
     @Test

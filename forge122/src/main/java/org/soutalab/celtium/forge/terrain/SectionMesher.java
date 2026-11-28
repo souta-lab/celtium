@@ -653,7 +653,12 @@ public final class SectionMesher {
                         int block = snapshot.blockLightAt(lightIndex);
                         int lightWord = (sky * 17) | ((block * 17) << 8);
                         int flags = 0;
-                        if (quadView.usesTint && tint != WorldSectionSnapshot.NO_TINT) {
+                        // A liquid's quads take the resolved tint even without a model
+                        // tint index: vanilla's fluid renderer applies the block colour
+                        // handlers to fluids unconditionally, and a liquid's model quads
+                        // never carry a tint index for usesTint to see.
+                        if ((quadView.usesTint || data.isLiquid(state))
+                                && tint != WorldSectionSnapshot.NO_TINT) {
                             flags = 1 | ((tint & 0xFFFFFF) << 8);
                         }
                         for (int c = 0; c < 4; c++) {
