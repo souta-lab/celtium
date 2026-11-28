@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test;
 /**
  * The display-list census must be able to count the lists a run actually replays.
  *
- * <p>The census lives on the verification line as {@code celtium/lists[…]}, and it is the only measurement of the
+ * <p>The census lived on the verification line as {@code celtium/lists[…]} until S3-b E4-b1 removed
+ * the census fragments from that line; it still answers on the entrance and prints through the
+ * CELTIUM_DISPLAY_LISTS hook. It is the only measurement of the
  * drawing path the "custom rendering is invisible" report is about: geometry compiled into a list never passes through
  * the uploader the immediate path hooks, so a replay that draws nothing leaves no other trace.
  *

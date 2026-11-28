@@ -11,7 +11,7 @@ package org.soutalab.celtium.vulkan;
  * <p>The counting contract, which an Arm B wiring must match event for event:
  * <ul>
  *   <li>{@code stubDispatchCalls} / {@code stubDispatchNanos}: one per call entering through the
- *   GLSM stub's uniform dispatch ({@code GlsmFrontend.dispatch} / {@code legacyDispatch}), timed
+ *   GLSM stub's uniform dispatch (the stub's dispatch / legacyDispatch), timed
  *   entry to return - the calls that arrive as native function pointers (FFM upcalls and libffi
  *   trampolines). Measured limit, stated plainly so nobody reads this key as the GL call volume:
  *   on the BSL pack scene (2026-11-27, agera) it counted 8 calls in the first 200 frames and none

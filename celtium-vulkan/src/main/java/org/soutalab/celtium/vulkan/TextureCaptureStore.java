@@ -65,8 +65,56 @@ public final class TextureCaptureStore {
     }
 
     /**
+     * The live capture entrance's narrow context, registered by the entrance's constructor at each
+     * new GL context (E4-b1): the allocation producers below act through it, and with none
+     * registered they are no-ops, as the entrance's own statics were before an install.
+     */
+    private volatile TextureUploadContext uploadContext;
+
+    /** Registers the live entrance's upload context; called from the entrance's constructor. */
+    public void uploadContext(TextureUploadContext context) {
+        this.uploadContext = context;
+    }
+
+    /**
+     * Records TextureUtil's named allocation after its delete/bind/allocate sequence, directly for
+     * the HAL (the TextureUtil mixin calls here since E4-b1). The dimensions describe storage, not
+     * uploaded content: an undefined surface becomes usable only when an actual write is announced.
+     * The mip argument is the maximum level, not a level count, just like
+     * TextureUtil.allocateTextureImpl.
+     */
+    public void recordAllocation(int name, int mipmapLevels, int width, int height) {
+        TextureUploadContext context = this.uploadContext;
+        if (context == null || name <= 0 || mipmapLevels < 0 || mipmapLevels > 31 || width < 0 || height < 0) {
+            return;
+        }
+        context.forgetTextureRecords(name);
+        for (int level = 0; level <= mipmapLevels; level++) {
+            int levelWidth = width >> level;
+            int levelHeight = height >> level;
+            this.texLevels.put(context.putTexLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
+            this.undefinedLevel(context, name, level, levelWidth, levelHeight, 1);
+        }
+    }
+
+    /**
+     * The deletion half of the allocation lifecycle, directly for the HAL: the name-ledger
+     * classification goes, and the entrance's full deletion settle runs for the name.
+     */
+    public void forgetAllocation(int name) {
+        TextureUploadContext context = this.uploadContext;
+        if (context == null) {
+            return;
+        }
+        GlsmNameLedger.current().removeNullAllocated(name);
+        if (name > 0) {
+            context.deleteTextureRecords(name);
+        }
+    }
+
+    /**
      * Drops every filed record and resets the serial and the census. The store's lifetime is the GL
-     * context's: a new capture entrance means a new context, so {@code GlsmFrontend}'s constructor calls
+     * context's: a new capture entrance means a new context, so the entrance's constructor calls
      * this to give the new context an empty store - the isolation the per-entrance maps had before the
      * ownership inversion made the store the registry's single seat.
      */
@@ -386,7 +434,7 @@ public final class TextureCaptureStore {
          * <p>
          * The surface alone cannot answer this: an undefined level holds zeros whether the game filled it or not, and a
          * mirror built from those zeros claims whole content that no upload ever put there. Consumers ask through
-         * {@link GlsmFrontend#textureLevelHasGamePixels}. Mutable because a patch is copied into an already filed surface, and
+         * {@link #textureLevelHasGamePixels}. Mutable because a patch is copied into an already filed surface, and
          * volatile because the game thread writes it while a reader may be polling the record.
          */
         public volatile boolean gamePixels;
@@ -403,7 +451,7 @@ public final class TextureCaptureStore {
         public volatile long serial;
         /**
          * Whether a {@code glTexSubImage2D} patch has ever been written into this record (or the record was itself
-         * filed by one). The settled-capture release ({@link GlsmFrontend#releaseSettledTextureCaptures}) refuses
+         * filed by one). The settled-capture release ({@link #releaseSettledTextureCaptures}) refuses
          * a patched record outright: a patch that arrives after a release would be pasted into a freshly laid
          * undefined surface and silently zero the rest of the level, so "was ever patched" is the stub's proof
          * that a level is not a write-once image. The lightmap and the block atlas - the two levels patched every
@@ -689,7 +737,7 @@ public final class TextureCaptureStore {
     /**
      * Files one converted RGBA8 patch into a level's captured rows.
      * <p>
-     * The shared half of {@link #texSubImageForName} and {@link GlsmFrontend#copyImageSubData}: a patch that arrives as
+     * The shared half of {@link #texSubImageForName} and the entrance's copyImageSubData route: a patch that arrives as
      * client memory and one that arrives as a copy from another captured level land in the same place, so the
      * backlog, surface and settled-release rules stay the level's own rather than diverging per spelling.
      * {@code x}/{@code y} are the patch's position in the level, {@code patch} its RGBA8 rows, top row first.

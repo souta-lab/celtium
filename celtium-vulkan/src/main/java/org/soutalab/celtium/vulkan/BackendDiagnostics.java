@@ -195,10 +195,6 @@ final class BackendDiagnostics {
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
-                + "celtium/clears[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearCensus() + "] "
-                + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.listCensus() + "] "
-                + "celtium/attrib[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.attribCensus() + "] "
-                + "celtium/legacyListRuns[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.legacyListCensus() + "] "
                 // DP-01/DP-02/DP-03/DP-29: the silent-loss censuses, printed unconditionally like the bracket
                 // readings above - a loss counter that only prints when diagnostics are on is the invisibility
                 // these audits closed. offerDeaths is the pre-backend population offerRefusals cannot see;
@@ -339,10 +335,6 @@ final class BackendDiagnostics {
                 // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
                 // first four events printed). Both are now in the verification summary.
                 + " immediateDepthBiasedGroups=" + b.immediateStatistics.immediateDepthBiasedGroups()
-                // The two halves that decide whether the bias can fire at all: the call reaching the stub, and the
-                // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
-                // and the pair says which without another round of guessing.
-                + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.polygonOffsetCallCount()
                 // Every bracket's open count, enabled or not: an empty framePassSplit cannot say whether a bracket
                 // ran, and the missing HUD turns on exactly that (GuiIngameMixin's `gui` bracket against a HUD that may
                 // never be drawn).
@@ -383,8 +375,6 @@ final class BackendDiagnostics {
                 + " nonAddBlendEquationGroups=" + b.immediateStatistics.nonAddBlendEquationGroups()
                 + " scissorBoundarySplits=" + b.immediateStatistics.scissorBoundarySplits()
                 + " lightParamBoundarySplits=" + b.immediateStatistics.lightParamBoundarySplits()
-                + " scissorCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorCallCount()
-                + " scissorToggles=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorToggleCount()
                 + " scissorCapturedGroups=" + b.immediateStatistics.scissorCapturedGroups()
                 + " scissorLateCapturedGroups=" + b.immediateStatistics.scissorLateCapturedGroups()
                 + " alphaFuncGroups=" + b.immediateStatistics.alphaFuncGroups()
@@ -845,8 +835,6 @@ final class BackendDiagnostics {
                 // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
                 + b.fontStats.run0()
                 + " " + b.fontStats.retentionSummary()
-                + " legacyFontWindowSuppressed="
-                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyFontWindowSuppressed()
                 // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
@@ -1640,9 +1628,6 @@ final class BackendDiagnostics {
         // answers, and a run that does not say which format it used cannot be compared with one on another GPU.
         this.lines.add("depthFormat: " + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
                 + " (" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + ")");
-        // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
-        this.lines.add("stateMirror: stubTransformCalls="
-                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary());
         // Unconditional for the same reason: these counters were kept but read by nothing outside tests, so a
         // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
         // descriptor-set collisions that no log ever showed.
@@ -1650,11 +1635,6 @@ final class BackendDiagnostics {
         if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
-            // How many transform calls reached the stub. Not a hook-failure count on its own - the mirror hooks at
-            // the head of the GlStateManager method and does not cancel the GL body - but the denominator for the
-            // mirror's own application counts, which is the comparison that found the missing float translate.
-            this.lines.add("stateMirror: stubTransformCalls="
-                    + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary());
             this.lines.add("acceptance: refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
                     + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
                 + " submitFaultInjections=" + VulkanSubmitFault.injections()
@@ -1669,9 +1649,7 @@ final class BackendDiagnostics {
                 + " modelDrawRefusals=" + b.modelDrawRefusals
                 + " modelRecordedReplays=" + b.modelRecordedReplayCalls
                 + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
-                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
-                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
-                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary() + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
+                + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + b.modelLastRefusal
                 + " modelMeshLists=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()

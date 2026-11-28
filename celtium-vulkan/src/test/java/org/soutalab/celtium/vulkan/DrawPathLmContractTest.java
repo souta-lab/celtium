@@ -119,7 +119,11 @@ class DrawPathLmContractTest {
                 "summary exposes nullBackendDroppedQuads");
     }
 
-    /** DP-26: Font window ownership suppresses legacy glBegin and exposes legacyFontWindowSuppressed in VERIFY. */
+    /**
+     * DP-26: Font window ownership suppresses legacy glBegin. (The VERIFY exposure of the
+     * suppression counter was deleted with the old census fragments at S3-b E4-b1, Neon door
+     * ruling section 3.1(3); the gate and its counter are what this contract pins.)
+     */
     @Test
     void dp26FontWindowOwnershipSuppressesLegacyBegin() throws IOException {
         String capture = readSource(
@@ -137,11 +141,6 @@ class DrawPathLmContractTest {
         String closeBody = capture.substring(closeStart, closeEnd);
         assertEquals(2, countOccurrences(closeBody, "GlsmFrontend.celtium$fontWindowEnd();"),
                 "closeWindow lowers font window ownership flag on both TIMINGS and non-TIMINGS paths");
-
-        String diag = readSource(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java");
-        assertTrue(diag.contains("legacyFontWindowSuppressed="),
-                "VERIFY exposes legacyFontWindowSuppressed");
 
         // Behavioral verification of the GlsmFrontend ownership gate itself.
         long before = GlsmFrontend.celtium$legacyFontWindowSuppressed();

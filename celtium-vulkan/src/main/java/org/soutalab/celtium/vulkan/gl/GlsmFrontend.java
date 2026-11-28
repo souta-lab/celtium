@@ -81,17 +81,15 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     public static final byte R_PTR = 3;
 
     /**
-     * Argument types as they arrive at the trampoline: every arg slot is a pointer to the value. Package-private
-     * rather than private (the SEM_* ids below have the same shape) because {@link GlTrampolines} reads the same
-     * encoding when it builds a row's CIF and picks its upcall shape, and {@link GlFunctionTable} reads the same
-     * ids when it registers a row.
+     * Argument types as they arrive at the trampoline: the encoding is {@link GlFunctionTable}'s since
+     * E4-b1; these aliases keep the stub's own rows and readers on the same values.
      */
-    public static final byte A_INT = 11;
-    public static final byte A_LONG = 12;
-    public static final byte A_PTR = 13;
-    public static final byte A_FLOAT = 14;
-    public static final byte A_DOUBLE = 15;
-    public static final byte A_UINT = 16;
+    public static final byte A_INT = GlFunctionTable.A_INT;
+    public static final byte A_LONG = GlFunctionTable.A_LONG;
+    public static final byte A_PTR = GlFunctionTable.A_PTR;
+    public static final byte A_FLOAT = GlFunctionTable.A_FLOAT;
+    public static final byte A_DOUBLE = GlFunctionTable.A_DOUBLE;
+    public static final byte A_UINT = GlFunctionTable.A_UINT;
 
     // Semantics ids - what dispatch() does with the call. The enum keeps the table lines short.
     public static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
@@ -4372,6 +4370,8 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         VulkanTextureRegistry.captureStore().clear();
         // The framebuffer bindings seat likewise starts from a fresh context's values.
         FramebufferBindings.current().reset();
+        // The capture store's allocation producers act through this entrance's narrow context (E4-b1).
+        VulkanTextureRegistry.captureStore().uploadContext(this);
         // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
         // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
         GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, true);
@@ -6802,34 +6802,29 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         /** {@return how many captures the announcement made unnecessary} */
 
     /**
-     * Records TextureUtil's named allocation after its delete/bind/allocate sequence. The dimensions describe
-     * storage, not uploaded content: an undefined surface becomes usable only when an actual write is announced.
-     * The mip argument is the maximum level, not a level count, just like TextureUtil.allocateTextureImpl.
+     * Records TextureUtil's named allocation: the producer is the capture store's own since E4-b1
+     * ({@link TextureCaptureStore#recordAllocation}); this door keeps the entrance's callers and
+     * tests on the same name.
      */
     public static void recordTextureAllocation(int name, int mipmapLevels, int width, int height) {
-        GlsmFrontend stub = installed;
-        if (stub == null || name <= 0 || mipmapLevels < 0 || mipmapLevels > 31 || width < 0 || height < 0) {
-            return;
-        }
-        stub.forgetTexture(name);
-        for (int level = 0; level <= mipmapLevels; level++) {
-            int levelWidth = width >> level;
-            int levelHeight = height >> level;
-            stub.textureCaptures.texLevels().put(stub.putTexLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
-            stub.undefinedLevel(name, level, levelWidth, levelHeight, 1);
-        }
+        VulkanTextureRegistry.captureStore().recordAllocation(name, mipmapLevels, width, height);
     }
 
     /** Deletes the named storage record too when native glDeleteTextures cannot reach callback dispatch. */
     public static void forgetTextureAllocation(int name) {
-        GlsmFrontend stub0 = installed;
-        if (stub0 != null) {
-            GlsmNameLedger.current().removeNullAllocated(name);
-        }
-        GlsmFrontend stub = installed;
-        if (stub != null && name > 0) {
-            stub.deleteTexture(name);
-        }
+        VulkanTextureRegistry.captureStore().forgetAllocation(name);
+    }
+
+    /** The capture store's forget half for an allocation replacement: this entrance's filed records. */
+    @Override
+    public void forgetTextureRecords(int name) {
+        forgetTexture(name);
+    }
+
+    /** The capture store's deletion settle: this entrance's full texture deletion. */
+    @Override
+    public void deleteTextureRecords(int name) {
+        deleteTexture(name);
     }
 
                 /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */

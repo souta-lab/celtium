@@ -184,9 +184,8 @@ public abstract class GlStateManagerMixin {
             } catch (Throwable ignored) {
             }
         }
-        // The stub's attribute stack needs the same value to put back on glPopAttrib, and vanilla's cache means this
-        // hook is the only place the managed route is visible at all.
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthMask(mask);
+        // The stub records the same value from the call itself (the managed route reaches it through
+        // the trampoline), so a second note here would only duplicate it (E4-b1).
     }
 
     @Inject(method = "func_179089_o", at = @At("HEAD"), require = 0)
@@ -238,7 +237,6 @@ public abstract class GlStateManagerMixin {
             } catch (Throwable ignored) {
             }
         }
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAlphaFunc(glFunc, reference);
     }
 
     @Inject(method = "func_179098_w", at = @At("HEAD"), require = 0)
@@ -298,7 +296,6 @@ public abstract class GlStateManagerMixin {
             } catch (Throwable ignored) {
             }
         }
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthFunc(func);
     }
 
     @Inject(method = "func_179094_E", at = @At("HEAD"), require = 0)
@@ -795,7 +792,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = {"matrixMode", "func_179128_n"}, at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$skipRedundantMatrixMode(int mode, CallbackInfo info) {
         try {
-            if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$matrixModeIsCurrent(mode)) {
+            if (celtium$lane2().matrixMode() == mode) {
                 info.cancel();
             }
         } catch (Throwable ignored) {

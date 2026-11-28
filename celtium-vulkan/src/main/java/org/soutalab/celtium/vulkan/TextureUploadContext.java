@@ -32,4 +32,16 @@ public interface TextureUploadContext {
 
     /** Counts one bounded pixel-buffer refusal line; {@return false} once the bound is spent. */
     boolean countPixelBufferRefusal();
+
+    /**
+     * Settles a name's filed records before a fresh allocation replaces them: the parameter
+     * record, the extent records and the captures (the allocation producer's forget half).
+     */
+    void forgetTextureRecords(int name);
+
+    /**
+     * The full deletion settle for a name: bindings, backend notification and filed records
+     * (the TextureUtil deletion route's half, which native deletion dispatch also runs).
+     */
+    void deleteTextureRecords(int name);
 }

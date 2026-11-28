@@ -5526,7 +5526,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * not at the next append, which is already too late - keeps the run with the state it was captured under.
      *
      * <p>The same rule is applied by the stub for the callers that bypass this mirror (raw {@code GL11} calls land in
-     * {@code GlsmFrontend}'s records, which the group capture reads live for blend/cull/colour-mask/scissor), and it
+     * the stub's records, which the group capture reads live for blend/cull/colour-mask/scissor), and it
      * is why the flush is a no-op when the value does not change: {@code GlStateManager} calls its setters on its own
      * cache misses too, and a no-op must not split a run.
      */
@@ -7458,7 +7458,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Attaches the main framebuffer's clear to the last queued group of the main image, so the window that records
      * that group records the clear after its draws.
      * <p>
-     * The values are the ones the clear was issued with ({@link GlsmFrontend#mainClearValues}), not the live
+     * The values are the ones the clear was issued with (the clear seat's mainClearValues), not the live
      * {@code glClearColor}: the frame machinery learned that lesson already - a {@code framebufferClear} sets its own
      * colour before clearing another target, so the live read gave the world frame a black clear.
      *
@@ -7519,7 +7519,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Consumes the stub's pending clear mask when the queue carried this clear, so the latch and the window acquire do
      * not apply it a second time.
      * <p>
-     * Called by {@link GlsmFrontend#recordClear} after it has OR'd the clear into the pending mask. An exact match is
+     * Called by the entrance's clear recording after it has OR'd the clear into the pending mask. An exact match is
      * required: a mask that also carries a clear this method did not carry is left pending, and the frame machinery
      * applies it at the next pass begin - which is the order GL gives it anyway, because that clear came later.
      *
@@ -11764,10 +11764,7 @@ this.frameBufferOpen = false;
                     System.out.println("[Celtium] CELTIUM_ACCEPTED total=" + this.immediateAcceptedTotal
                             + " byFormat=[" + accepted.toString().trim() + "]"
                             + " blendingFactorsMix=" + this.immediateBlendedAccepted
-                            + " blendingOff=" + this.immediateOpaqueAccepted
-                            // With the counters, not only in the report: how many transform calls reached the stub, to be read
-                            // against the mirror's own application counts rather than on its own.
-                            + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary());
+                            + " blendingOff=" + this.immediateOpaqueAccepted);
                 }
             }
             this.immediateLastRefusal = "none";
@@ -15501,7 +15498,6 @@ this.frameBufferOpen = false;
                     + " extent=" + extent[0] + "x" + extent[1]
                     + " uploadSerial=" + VulkanTextureRegistry.captureStore().textureUploadSerial(textureId, 0)
                     + " lazyFailure=" + this.lastLazyMirrorFailure
-                    + " firstBoundBy=[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.firstBindSite(textureId) + "]"
                     + " stateBoundBy=[" + this.immediateState.firstBindSite(textureId)
                     + " sites=" + this.immediateState.bindSiteCount()
                     + " unit0=" + this.immediateState.boundTextureName() + "])";
@@ -17839,13 +17835,10 @@ this.frameBufferOpen = false;
     void celtium$printVerificationSummary(String trigger, boolean snapshot) {
         celtium$reportFlushReasonsForSummary();
         if (!snapshot) {
-            // The no-op census, at the same point and for the same reason as the flush census above: it is the only
-            // instrument that names drawing that reached no image, and its own shutdown hook does not reach the log.
-            // Measured on leg r39b-gate: CELTIUM_NOOP_CENSUS, CELTIUM_UNKNOWN_SYMBOLS, CELTIUM_BLEND_CENSUS,
-            // CELTIUM_TEX_PARAM_CENSUS and CELTIUM_DISPLAY_LISTS are in no file of the run, while a *different*
-            // shutdown hook (CELTIUM_GL_SURFACE trigger=shutdown) printed in the same teardown - so the hook is
-            // registered and the JVM runs hooks, and this one still leaves nothing. Printing here does not depend on
-            // that: world teardown and the fixture's final request are both inside the log's lifetime.
+            // The pass census line, at the same point and for the same reason as the flush census above:
+            // its own shutdown hook does not reach the log in every teardown shape, and printing here does
+            // not depend on that - world teardown and the fixture's final request are both inside the
+            // log's lifetime.
             celtium$printNoopCensus(trigger);
             // The font census, at the same point and for the same reason: its only other exits are the world
             // teardown a fixture that exits with its world loaded never reaches, and the exit hook below, whose
@@ -17861,19 +17854,12 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Prints the no-op census and the drawing-only subset of it, naming the trigger.
-     * <p>
-     * Two lines because they answer different questions. The first is the general "which swallowed calls were made at
-     * all", ranked by count. The second is the one that matters for the picture: a drawing entry point in the no-op
-     * table is geometry that no image received, and it is invisible in the ranked list under a thousand state calls.
-     * {@code none} on the second line is the only answer that says the drawing surface is complete for the calls that
-     * arrived.
+     * Prints the native pass registry's census line, naming the trigger. The old entrance no-op
+     * censuses (CELTIUM_NOOP_CENSUS / CELTIUM_NOOP_DRAWING) were deleted with the old GLSM census
+     * family at E4-b1 (Neon door ruling, family 8); this print keeps the registry's own line at the
+     * same point in the verification summary.
      */
     private void celtium$printNoopCensus(String trigger) {
-        System.out.println("[Celtium] CELTIUM_NOOP_CENSUS via=" + trigger + " "
-                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.noopCensusSummary());
-        System.out.println("[Celtium] CELTIUM_NOOP_DRAWING via=" + trigger + " "
-                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.noopDrawingCensusSummary());
         System.out.println(this.nativePassRegistry.censusLine(trigger));
     }
 
@@ -19027,14 +19013,14 @@ this.frameBufferOpen = false;
             return;
         }
         float[] rgba = this.gameClearLatchRgba;
-        // The values the main clear was issued with, not the live ones: see GlsmFrontend.mainClearValues.
+        // The values the main clear was issued with, not the live ones: see the clear seat's mainClearValues.
         double depth = FramebufferClearState.current().mainClearValues(rgba);
         if (Double.isNaN(depth)) {
             depth = FramebufferClearState.current().depth();
         }
         if (!this.targetRegistry.currentIsMain()) {
             // The non-main clear was already recorded into the pair's command stream when the game issued it
-            // (GlsmFrontend.recordClear -> celtium$gameClear); this consume keeps the pending mask honest.
+            // (the entrance's clear recording -> celtium$gameClear); this consume keeps the pending mask honest.
             this.gameClearsRoutedToPairs++;
             celtium$reportGameClearLatch("pair", mask, rgba, depth);
             return;

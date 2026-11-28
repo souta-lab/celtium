@@ -5,7 +5,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.lwjgl.system.Callback;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 import org.lwjgl.system.libffi.FFICIF;
 import org.lwjgl.system.libffi.FFIType;
 
@@ -17,7 +16,7 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_sint32;
 import static org.lwjgl.system.libffi.LibFFI.ffi_type_sint64;
 
 /**
- * The stub's upcall machinery, extracted from {@code GlsmFrontend} unchanged in behaviour
+ * The stub's upcall machinery, extracted from the stub unchanged in behaviour
  * (refactor/giant-split-3): everything that turns a function name into a callable native address - the FFM
  * upcalls, the libffi trampolines, the descriptors and CIFs built from a row's declared argument types, and
  * the caches that keep one trampoline per name - lives here, while the stub keeps the function table, the
@@ -30,8 +29,8 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_sint64;
  * The dispatch itself does not move: the trampoline entries call the two functional interfaces the stub
  * supplies at construction (its own {@code dispatch} / {@code legacyDispatch} as method references), so the
  * stub's dispatch keeps the visibility it had and this class never calls back into the stub's internals. The
- * one reference back is the table's argument-type codes ({@code GlsmFrontend.A_*}), which stay the stub's -
- * they are the encoding every row of its function table is written in.
+ * one reference back is the table's argument-type codes ({@code GlFunctionTable.A_*}), the encoding every
+ * row of the function table is written in.
  */
 public final class GlTrampolines {
 
@@ -93,9 +92,9 @@ public final class GlTrampolines {
         Callback trampoline = this.trampolines.get(name);
         if (trampoline == null) {
             Callback created;
-            if (args.length > 0 && args[0] == GlsmFrontend.A_DOUBLE) {
+            if (args.length > 0 && args[0] == GlFunctionTable.A_DOUBLE) {
                 created = new CeltiumGlDoubleTrampoline(functionId, this.dispatch, this.legacyDispatch);
-            } else if (args.length > 0 && args[0] == GlsmFrontend.A_FLOAT) {
+            } else if (args.length > 0 && args[0] == GlFunctionTable.A_FLOAT) {
                 created = new CeltiumGlFloatTrampoline(functionId, this.dispatch, this.legacyDispatch);
             } else {
                 created = new CeltiumGlTrampoline(functionId, this.dispatch, this.legacyDispatch, args);
@@ -129,7 +128,7 @@ public final class GlTrampolines {
             return false;
         }
         for (byte arg : args) {
-            if (arg == GlsmFrontend.A_FLOAT || arg == GlsmFrontend.A_DOUBLE) {
+            if (arg == GlFunctionTable.A_FLOAT || arg == GlFunctionTable.A_DOUBLE) {
                 return false;
             }
         }
@@ -292,9 +291,9 @@ public final class GlTrampolines {
         boolean floats = false;
         boolean doubles = false;
         for (byte arg : args) {
-            if (arg == GlsmFrontend.A_FLOAT) {
+            if (arg == GlFunctionTable.A_FLOAT) {
                 floats = true;
-            } else if (arg == GlsmFrontend.A_DOUBLE) {
+            } else if (arg == GlFunctionTable.A_DOUBLE) {
                 doubles = true;
             }
         }
@@ -323,13 +322,13 @@ public final class GlTrampolines {
 
     private static FFIType ffiTypeFor(byte arg) {
         switch (arg) {
-            case GlsmFrontend.A_FLOAT:
+            case GlFunctionTable.A_FLOAT:
                 return ffi_type_float;
-            case GlsmFrontend.A_DOUBLE:
+            case GlFunctionTable.A_DOUBLE:
                 return ffi_type_double;
-            case GlsmFrontend.A_LONG:
+            case GlFunctionTable.A_LONG:
                 return ffi_type_sint64;
-            case GlsmFrontend.A_PTR:
+            case GlFunctionTable.A_PTR:
                 return ffi_type_pointer;
             default:
                 return ffi_type_sint32;

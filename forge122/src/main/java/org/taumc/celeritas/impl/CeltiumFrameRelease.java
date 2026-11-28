@@ -1,7 +1,6 @@
 package org.taumc.celeritas.impl;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,8 +33,8 @@ import java.util.WeakHashMap;
  * Sprites whose custom loader succeeded take neither the census nor the release: they never reach the
  * {@code generateMipmaps} call this class is fed from, which is the conservative direction.
  * <p>
- * Third, the GL stub's own captures, through {@link GlsmFrontend#releaseSettledTextureCaptures} under the
- * same switch: the stub keeps an RGBA8 copy of every upload as the mirrors' supply source, and the settled
+ * Third, the capture store's own captures, through its {@code releaseSettledTextureCaptures} under the
+ * same switch: the store keeps an RGBA8 copy of every upload as the mirrors' supply source, and the settled
  * rule there drops only the copies a mirror has already taken in full and nothing has patched since.
  */
 public final class CeltiumFrameRelease {

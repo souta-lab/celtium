@@ -1,7 +1,7 @@
 package org.soutalab.celtium.glcompat.capture;
 
 /**
- * The dispatch thread gate extracted from {@code GlsmFrontend} at S3-b E4-a: a call that arrives while
+ * The dispatch thread gate extracted from the stub at S3-b E4-a: a call that arrives while
  * another thread is mid-dispatch is refused, so the capture machinery never serves two threads at once.
  * One of the four survivor responsibilities of the capture entrance (Neon E4 ruling section 1.1).
  */
