@@ -17,7 +17,7 @@ def write(root, rel, text):
     return path
 
 
-COMPETITORS_BODY = """package org.taumc.celeritas.core;
+COMPETITORS_BODY = """package org.soutalab.celtium.core;
 
 public final class CeltiumCompetitors {
     private static final String[][] KNOWN = {
@@ -142,13 +142,14 @@ class Check5Tests(unittest.TestCase):
             write(root, "mod/src/test/java/org/taumc/celeritas/T.java", "package org.taumc.celeritas;\n")
             files = zero.tracked_files(root)
             failures, notes = zero.check5_provenance(root, files)
-            # B.java plus CeltiumCompetitors.java itself (package org.taumc.celeritas.core).
-            self.assertTrue(any("org.taumc.celeritas: 2 production files" in f for f in failures), failures)
+            # B.java alone: CeltiumCompetitors.java itself sits in the approved
+            # org.soutalab.celtium.core package since the S6-6 relocation.
+            self.assertTrue(any("org.taumc.celeritas: 1 production files" in f for f in failures), failures)
             self.assertTrue(any("grondag.bitraster: 1 production files" in f for f in failures), failures)
             gpl = [f for f in failures if "com.dhj.actinium" in f]
             self.assertEqual(len(gpl), 1, failures)  # D.java only; the KNOWN table marker is whitelisted
             self.assertIn("D.java", gpl[0])
-            self.assertTrue(any("approved provenance" in n and "2 production files" in n for n in notes), notes)
+            self.assertTrue(any("approved provenance" in n and "3 production files" in n for n in notes), notes)
 
 
 if __name__ == "__main__":
