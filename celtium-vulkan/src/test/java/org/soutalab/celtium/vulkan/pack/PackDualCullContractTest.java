@@ -271,8 +271,10 @@ class PackDualCullContractTest {
         TerrainDrawStage stage = stage(world, drawn);
         // Main view sees only section slot 0 (blocks x 0..16); shadow view only slot 1
         // (blocks x 160..176). Both sections sit at y 64..80, z 0..16.
+        // Frustum boxes are camera-relative: the production cull contract subtracts the
+        // CameraPose from section AABBs, so each box below is the world box minus its pose.
         stage.prepareMainView(new CameraPose(8, 70, 8, 0, 0),
-                boxFrustum(-8, 56, -8, 24, 88, 24), 1L);
+                boxFrustum(-16, -14, -16, 16, 18, 16), 1L);
 
         assertThrows(IllegalStateException.class,
                 () -> stage.recordTerrainPass(new FakeStream(), TerrainPassKind.SHADOW_SOLID,
@@ -286,7 +288,7 @@ class PackDualCullContractTest {
 
         drawn.clear();
         stage.prepareShadowView(new CameraPose(168, 230, 8, 180, -90),
-                boxFrustum(152, 56, -8, 184, 88, 24), 160.0f, 1L);
+                boxFrustum(-16, -174, -16, 16, -142, 16), 160.0f, 1L);
         stage.recordTerrainPass(new FakeStream(), TerrainPassKind.SHADOW_SOLID,
                 program(TerrainPassKind.SHADOW_SOLID), targets());
         assertEquals(1, drawn.size());
