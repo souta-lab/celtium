@@ -28,6 +28,20 @@ public final class ClientArrayRange {
         slot[2] = 1L;
     }
 
+    /**
+     * {@return a copy of the published owned range as {address, bytes}, or null when none is
+     * pending}. Unlike {@link #consumePublished()} this leaves the publication in place: one
+     * draw's several pointer calls (C2(b) resolution in the capture entry) all resolve against
+     * the single range published for that draw.
+     */
+    public static long[] peekPublished() {
+        long[] slot = PUBLISHED.get();
+        if (slot[2] == 0L) {
+            return null;
+        }
+        return new long[] {slot[0], slot[1]};
+    }
+
     /** {@return the published owned buffer as {address, bytes} once, or null when none is pending}. */
     public static long[] consumePublished() {
         long[] slot = PUBLISHED.get();

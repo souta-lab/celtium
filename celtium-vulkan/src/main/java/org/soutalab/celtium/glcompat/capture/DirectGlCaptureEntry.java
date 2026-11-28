@@ -3773,27 +3773,75 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         GLSMDraws.glCallLists((int) c[0], (int) c[1], c[2]);
     }
 
+    /**
+     * C2(b) (DECODERS ruling, ruling item 25 section 3.2): with no VBO bound, a raw client
+     * pointer resolves against the owned range the game published for this draw
+     * ({@link ClientArrayRange}) into a direct buffer over exactly the readable remainder
+     * (native byte order, position 0), so the {@code GLSMVertexInput} ByteBuffer overload
+     * stores it as the VAO's client pointer. Unregistered or out-of-range addresses resolve
+     * to null and keep the VBO-offset path unchanged: the buffer is only ever built over the
+     * range the game's own publication vouched for, never over unverified memory.
+     */
+    private static ByteBuffer resolveClientArrayPointer(long pointer) {
+        if (pointer == 0L || GLStateManager.getBoundVBO() != 0) {
+            return null;
+        }
+        final long[] range = ClientArrayRange.peekPublished();
+        if (range == null || !ClientArrayRange.covers(range[0], range[1], pointer, 1)) {
+            return null;
+        }
+        final long remaining = range[0] + range[1] - pointer;
+        if (remaining <= 0L || remaining > Integer.MAX_VALUE) {
+            return null;
+        }
+        return MemoryUtil.memByteBuffer(pointer, (int) remaining);
+    }
+
     private void vertexPointer(GlFn fn, long[] c) {
         switch (fn.name) {
-            case "glVertexPointer":
+            case "glVertexPointer": {
                 recordVertexPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
-                GLSMVertexInput.glVertexPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                final ByteBuffer client = resolveClientArrayPointer(c[3]);
+                if (client != null) {
+                    GLSMVertexInput.glVertexPointer((int) c[0], (int) c[1], (int) c[2], client);
+                } else {
+                    GLSMVertexInput.glVertexPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                }
                 break;
-            case "glNormalPointer":
+            }
+            case "glNormalPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8075, 3, (int) c[0], (int) c[1], c[2],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
+                final ByteBuffer client = resolveClientArrayPointer(c[2]);
+                if (client != null) {
+                    GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], client);
+                } else {
+                    GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
+                }
                 break;
-            case "glColorPointer":
+            }
+            case "glColorPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8076, (int) c[0], (int) c[1], (int) c[2], c[3],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                final ByteBuffer client = resolveClientArrayPointer(c[3]);
+                if (client != null) {
+                    GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], client);
+                } else {
+                    GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                }
                 break;
-            case "glTexCoordPointer":
+            }
+            case "glTexCoordPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8078, (int) c[0], (int) c[1], (int) c[2], c[3],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                final ByteBuffer client = resolveClientArrayPointer(c[3]);
+                if (client != null) {
+                    GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], client);
+                } else {
+                    GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                }
                 break;
+            }
             default:
                 break;
         }
@@ -3979,29 +4027,54 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 recordVertexAttribEnabled((int) c[0], false);
                 GLSMVertexInput.glDisableVertexAttribArray((int) c[0]);
                 return 0L;
-            case "glVertexAttribPointer": case "glVertexAttribPointerARB":
+            case "glVertexAttribPointer": case "glVertexAttribPointerARB": {
                 recordVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L, (int) c[4], c[5]);
-                GLSMVertexInput.glVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L,
-                        (int) c[4], c[5]);
+                final ByteBuffer client = resolveClientArrayPointer(c[5]);
+                if (client != null) {
+                    GLSMVertexInput.glVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L,
+                            (int) c[4], client);
+                } else {
+                    GLSMVertexInput.glVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L,
+                            (int) c[4], c[5]);
+                }
                 return 0L;
+            }
             case "glVertexAttribDivisor":
                 GLSMVertexInput.glVertexAttribDivisor((int) c[0], (int) c[1]);
                 return 0L;
-            case "glTexCoordPointer":
+            case "glTexCoordPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8078, (int) c[0], (int) c[1], (int) c[2], c[3],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                final ByteBuffer client = resolveClientArrayPointer(c[3]);
+                if (client != null) {
+                    GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], client);
+                } else {
+                    GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                }
                 return 0L;
-            case "glColorPointer":
+            }
+            case "glColorPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8076, (int) c[0], (int) c[1], (int) c[2], c[3],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                final ByteBuffer client = resolveClientArrayPointer(c[3]);
+                if (client != null) {
+                    GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], client);
+                } else {
+                    GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
+                }
                 return 0L;
-            case "glNormalPointer":
+            }
+            case "glNormalPointer": {
                 GlsmClientArrayState.current().setClientPointer(0x8075, 3, (int) c[0], (int) c[1], c[2],
                         NativeGeometryBuffer.boundId());
-                GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
+                final ByteBuffer client = resolveClientArrayPointer(c[2]);
+                if (client != null) {
+                    GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], client);
+                } else {
+                    GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
+                }
                 return 0L;
+            }
             case "glEdgeFlagPointer":
                 GLSMVertexInput.glEdgeFlagPointer((int) c[0], c[1]);
                 return 0L;
