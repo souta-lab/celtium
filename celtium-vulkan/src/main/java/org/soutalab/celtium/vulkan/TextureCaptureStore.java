@@ -1,7 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
 import org.soutalab.celtium.vulkan.gl.GlsmBufferState;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 import org.soutalab.celtium.vulkan.gl.GlsmNameLedger;
 
 import java.nio.ByteBuffer;
@@ -12,10 +11,10 @@ import static org.lwjgl.system.MemoryUtil.memGetLong;
 import static org.lwjgl.system.MemoryUtil.memPutInt;
 
 /**
- * The texture-pixel capture store, extracted from {@code GlsmFrontend} (giant-split seam 7, QUEUE 688)
+ * The texture-pixel capture store, extracted from the GL entrance (giant-split seam 7, QUEUE 688)
  * and moved under the HAL texture registry at S3-b E5 seat B. This class owns the filed capture records ({@link TexCapture}), the patch
  * backlog's bookkeeping, the RGBA8 conversion every upload passes through, the capture census and the
- * read-side answers the Vulkan mirrors are built from. {@code GlsmFrontend} keeps thin public doors
+ * read-side answers the Vulkan mirrors are built from. The entrance keeps thin public doors
  * (the {@code textureUpload*} statics and kin) over this store until E4-b re-homes them.
  * <p>
  * Ownership inverted at S3-b E5 seat B (Neon E4 ruling section 1.3): this store is the texture mirror's
@@ -25,8 +24,8 @@ import static org.lwjgl.system.MemoryUtil.memPutInt;
  * patch-byte total and the per-key patch census.
  * <p>
  * The producers still read the capture entrance's live extent and binding records, so the ones that need
- * them take the entrance itself rather than a copy of its values; those reads are capture machinery and
- * leave with the entrance at E4-b.
+ * them take a {@link TextureUploadContext} - the narrow read of the entrance's records, since E4-b1 -
+ * rather than a copy of its values; those reads are capture machinery and leave with the entrance at E4-b.
  */
 public final class TextureCaptureStore {
 
@@ -74,6 +73,7 @@ public final class TextureCaptureStore {
     public void clear() {
         this.texCaptures.clear();
         this.texLevels.clear();
+        this.targetFormatRequests.clear();
         this.suppliedSerials.clear();
         this.texPatchBacklog.clear();
         this.texUploadSerial.set(0L);
@@ -104,6 +104,56 @@ public final class TextureCaptureStore {
     /** The recorded image extents, keyed like every store here. */
     public it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels() {
         return this.texLevels;
+    }
+
+    /** Distinct internal formats the format distribution tracks; past the cap a format is not recorded. */
+    private static final int MAX_TARGET_FORMATS = 32;
+
+    /**
+     * How often each colour internal format was recorded at level 0 (the format census, QUEUE 405 S5):
+     * the distribution that answers "did this fixture's mods actually ask for 16F" at the GL surface,
+     * before any pair decision is made about it. The record lived on the entrance until E4-b1 moved
+     * it here with the distribution reader, beside the extents it is counted from.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap targetFormatRequests =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
+    /** Counts one level-0 colour internal format into the distribution, under the distinct-format cap. */
+    public void noteTargetFormatRequest(int internal) {
+        synchronized (this.targetFormatRequests) {
+            if (this.targetFormatRequests.containsKey(internal)
+                    || this.targetFormatRequests.size() < MAX_TARGET_FORMATS) {
+                this.targetFormatRequests.addTo(internal, 1L);
+            }
+        }
+    }
+
+    /**
+     * {@return the recorded colour internal formats and their counts} for the format census, as
+     * {@code 0x<gl>=<count>} pairs in GLenum order: {@code "off"} when the census switch is off
+     * (a distribution that was never counted must not read as an empty one) and {@code "none"} when
+     * it is on but no colour format was recorded.
+     */
+    public String targetFormatDistribution() {
+        if (!TargetFormatCensus.ENABLED) {
+            return "off";
+        }
+        synchronized (this.targetFormatRequests) {
+            if (this.targetFormatRequests.isEmpty()) {
+                return "none";
+            }
+            int[] formats = this.targetFormatRequests.keySet().toIntArray();
+            java.util.Arrays.sort(formats);
+            StringBuilder out = new StringBuilder();
+            for (int format : formats) {
+                if (out.length() > 0) {
+                    out.append(' ');
+                }
+                out.append("0x").append(Integer.toHexString(format)).append('=')
+                        .append(this.targetFormatRequests.get(format));
+            }
+            return out.toString();
+        }
     }
 
     /** The texture parameter record (wrap/filter/min-mag and kin) this store owns. */
@@ -261,6 +311,49 @@ public final class TextureCaptureStore {
 
     private static final int GL_UNSIGNED_INT_8_8_8_8_REV = 0x8367;
     private static final int GL_UNSIGNED_INT_8_8_8_8 = 0x8035;
+    private static final int GL_UNSIGNED_BYTE = 0x1401;
+    private static final int GL_RGB = 0x1907;
+    private static final int GL_RGBA = 0x1908;
+    private static final int GL_BGRA = 0x80E1;
+
+    /** GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing. */
+    static boolean isProxyTarget(int target) {
+        return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
+    }
+
+    /**
+     * {@return the byte offset a range may map}, or -1 when the range is not within the capacity:
+     * the range contract, kept in step with {@code BufferStorageRecord.mapRangeOffset} (the record
+     * class is package-private to the entrance's package, so the contract has this twin here).
+     */
+    static long mapRangeOffset(long offset, long length, long capacity) {
+        if (offset < 0L || length <= 0L || capacity < 0L) {
+            return -1L;
+        }
+        if (length > capacity || offset > capacity - length) {
+            return -1L;
+        }
+        return offset;
+    }
+
+    /**
+     * {@return why a pixel transfer refuses while a pixel buffer is bound}, or null when it may go
+     * ahead. With {@code GL_PIXEL_PACK_BUFFER} or {@code GL_PIXEL_UNPACK_BUFFER} bound, GL's contract
+     * says the {@code pixels} argument is an offset into that buffer, not a client address (audit
+     * #360); neither path can honour a buffer offset, so both refuse explicitly instead of
+     * dereferencing it. The body lived on the entrance until E4-b1; the entrance's own static now
+     * delegates here.
+     */
+    public static String pixelBufferRefusal(int boundPixelBuffer, long offset, String operation) {
+        if (boundPixelBuffer == 0) {
+            return null;
+        }
+        if (boundPixelBuffer < 0) {
+            return null;
+        }
+        return operation + " with a pixel buffer bound (buffer=" + boundPixelBuffer + " offset=" + offset
+                + "): the argument is a buffer offset, not a client pointer, and this path cannot copy into a PBO";
+    }
 
     /**
      * The largest level worth mirroring: 4096x4096 RGBA8, the biggest atlas the game builds. A larger upload is
@@ -347,11 +440,7 @@ public final class TextureCaptureStore {
      * bound texture's level. A NULL data pointer is a legal GL call that allocates the level with undefined content -
      * see {@link #undefinedLevel}, because the game fills levels exactly that way.
      */
-    public void texImagePixels(GlsmFrontend stub, GlsmFrontend.Fn fn, long[] c) {
-        this.texImagePixels(stub, fn.name, c);
-    }
-
-    public void texImagePixels(GlsmFrontend stub, String name, long[] c) {
+    public void texImagePixels(TextureUploadContext stub, String name, long[] c) {
         this.texImagePixels(stub, name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6],
                 (int) c[7], c[8]);
     }
@@ -366,7 +455,7 @@ public final class TextureCaptureStore {
      * lower half of the frame was drawn by nobody. The census counted the calls that were dropped all along:
      * {@code nglTexSubImage2D=41199} in one cohort run.
      */
-    public void texImagePixels(GlsmFrontend stub, String name, int target, int level, int internal, int width, int height, int border,
+    public void texImagePixels(TextureUploadContext stub, String name, int target, int level, int internal, int width, int height, int border,
             int format, int type, long pixels) {
         boolean oneD = "glTexImage1D".equals(name);
         boolean threeD = "glTexImage3D".equals(name);
@@ -376,10 +465,10 @@ public final class TextureCaptureStore {
         // transformer's route only carries the 2D form, whose slots are the ones this method's parameters name.
         stub.recordExtent(target, level, internal, width, extentHeight);
         int targetName = stub.uploadTargetName(target);
-        if (GlsmFrontend.isProxyTarget(target) || targetName == 0) {
+        if (isProxyTarget(target) || targetName == 0) {
             return;
         }
-        if (!carriesPixels(pixels, stub.pixelUnpackBuffer)) {
+        if (!carriesPixels(pixels, stub.pixelUnpackBuffer())) {
             if (level == 0) {
                 GlsmNameLedger.current().addNullAllocated(targetName);
             }
@@ -463,7 +552,7 @@ public final class TextureCaptureStore {
      * of an undefined level, and they are exactly what the extent record already claims, so the two records agree. It
      * carries no game bytes, so it is counted apart from the full images.
      */
-    public void undefinedLevel(GlsmFrontend stub, int name, int level, int width, int height, int depth) {
+    public void undefinedLevel(TextureUploadContext stub, int name, int level, int width, int height, int depth) {
         long pixels = (long) width * (long) height;
         if (depth > 1 || width <= 0 || height <= 0 || pixels > MAX_CAPTURE_BYTES / 4L) {
             // No shape to lay a surface out from: a 2D record cannot describe depth, and this level is past the size
@@ -488,14 +577,14 @@ public final class TextureCaptureStore {
      * patch, not as a full image. A patch that does not fit inside the captured image is counted and dropped, the way
      * GL raises GL_INVALID_VALUE and leaves the level alone; a partly written image would be worse than none.
      */
-    public void texSubImage(GlsmFrontend stub, long[] c) {
+    public void texSubImage(TextureUploadContext stub, long[] c) {
         this.texSubImage(stub, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7],
                 c[8]);
     }
 
     /** The mean byte value of the bytes an upload is about to read from a pixel unpack buffer, for the PBO log line. */
     private static String celtium$pboMean(ByteBuffer storage, long offset, long bytes) {
-        if (storage == null || GlsmFrontend.mapRangeOffset(offset, bytes, storage.capacity()) < 0L) {
+        if (storage == null || mapRangeOffset(offset, bytes, storage.capacity()) < 0L) {
             return "n/a";
         }
         long sum = 0L;
@@ -547,9 +636,9 @@ public final class TextureCaptureStore {
     }
 
     /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
-    public void texSubImage(GlsmFrontend stub, int target, int level, int xOffset, int yOffset, int width, int height, int format,
+    public void texSubImage(TextureUploadContext stub, int target, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
-        if (GlsmFrontend.isProxyTarget(target)) {
+        if (isProxyTarget(target)) {
             return;
         }
         if (celtium$announcedPending) {
@@ -574,20 +663,19 @@ public final class TextureCaptureStore {
     }
 
     /** The DSA spelling's producer: the same patch rules, with the texture named by the caller. */
-    public void texSubImageForName(GlsmFrontend stub, int name, int level, int xOffset, int yOffset, int width, int height, int format,
+    public void texSubImageForName(TextureUploadContext stub, int name, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         int x = xOffset;
         int y = yOffset;
-        if (stub.pixelUnpackBuffer > 0 && stub.pboUploadLogs < 8) {
-            stub.pboUploadLogs++;
-            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer);
+        if (stub.pixelUnpackBuffer() > 0 && stub.countPboUploadLog()) {
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer());
             System.out.println("[Celtium] CELTIUM_PBO_UPLOAD texture=" + name + " level=" + level + " at=" + x + ","
                     + y + " size=" + width + "x" + height + " format=0x" + Integer.toHexString(format) + " type=0x"
-                    + Integer.toHexString(type) + " buffer=" + stub.pixelUnpackBuffer + " offset=" + pixels
+                    + Integer.toHexString(type) + " buffer=" + stub.pixelUnpackBuffer() + " offset=" + pixels
                     + " storage=" + (storage == null ? "none" : storage.capacity() + "B")
                     + " sourceMean=" + celtium$pboMean(storage, pixels, (long) width * height * 4L));
         }
-        if (name == 0 || !carriesPixels(pixels, stub.pixelUnpackBuffer) || width <= 0 || height <= 0) {
+        if (name == 0 || !carriesPixels(pixels, stub.pixelUnpackBuffer()) || width <= 0 || height <= 0) {
             return;
         }
         ByteBuffer patch = this.uploadToRgba8(stub, width, height, format, type, pixels);
@@ -606,7 +694,7 @@ public final class TextureCaptureStore {
      * backlog, surface and settled-release rules stay the level's own rather than diverging per spelling.
      * {@code x}/{@code y} are the patch's position in the level, {@code patch} its RGBA8 rows, top row first.
      */
-    public void fileTexturePatch(GlsmFrontend stub, int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
+    public void fileTexturePatch(TextureUploadContext stub, int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
         long key = texLevelKey(name, level);
         this.patchKeys.addTo(key, 1);
         TexCapture existing = this.texCaptures.get(key);
@@ -740,10 +828,10 @@ public final class TextureCaptureStore {
      * similar and decoding it is not this stub's job - the upload is counted as unconverted, which leaves whatever the
      * level held before it.
      */
-    public void compressedTexImage(GlsmFrontend stub, long[] c) {
+    public void compressedTexImage(TextureUploadContext stub, long[] c) {
         int target = (int) c[0];
         stub.recordExtent(target, (int) c[1], (int) c[2], (int) c[3], (int) c[4]);
-        if (!GlsmFrontend.isProxyTarget(target) && c[7] != 0L) {
+        if (!isProxyTarget(target) && c[7] != 0L) {
             this.unconvertedUploads.incrementAndGet();
         }
     }
@@ -760,30 +848,29 @@ public final class TextureCaptureStore {
      * {@code GL_RGB} with {@code GL_UNSIGNED_BYTE}. Rows are read where GL would read them, padded to the recorded
      * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
      */
-    public ByteBuffer uploadToRgba8(GlsmFrontend stub, int width, int height, int format, int type, long pixels) {
-        if (stub.pixelUnpackBuffer > 0) {
+    public ByteBuffer uploadToRgba8(TextureUploadContext stub, int width, int height, int format, int type, long pixels) {
+        if (stub.pixelUnpackBuffer() > 0) {
             // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
             // so the offset is resolved to an address inside it - bounds-checked against the buffer's logical size.
-            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer);
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer());
             int logicalSize = storage == null ? 0
-                    : stub.logicalSizeOf(stub.pixelUnpackBuffer, storage.capacity());
+                    : stub.logicalSizeOf(stub.pixelUnpackBuffer(), storage.capacity());
             if (storage != null && width > 0 && height > 0
                     && (long) width * (long) height <= logicalSize / 4L
-                    && GlsmFrontend.mapRangeOffset(pixels, (long) width * (long) height * 4L, logicalSize) >= 0L) {
+                    && mapRangeOffset(pixels, (long) width * (long) height * 4L, logicalSize) >= 0L) {
                 pixels = memAddress(storage) + pixels;
-                int bound = stub.pixelUnpackBuffer;
-                stub.pixelUnpackBuffer = 0;
+                int bound = stub.pixelUnpackBuffer();
+                stub.pixelUnpackBuffer()(0);
                 try {
                     return this.uploadToRgba8(stub, width, height, format, type, pixels);
                 } finally {
-                    stub.pixelUnpackBuffer = bound;
+                    stub.pixelUnpackBuffer()(bound);
                 }
             }
         }
-        String pboRefusal = GlsmFrontend.pixelBufferRefusal(stub.pixelUnpackBuffer, pixels, "texture upload");
+        String pboRefusal = pixelBufferRefusal(stub.pixelUnpackBuffer(), pixels, "texture upload");
         if (pboRefusal != null) {
-            if (stub.pixelBufferRefusals < 8) {
-                stub.pixelBufferRefusals++;
+            if (stub.countPixelBufferRefusal()) {
                 System.out.println("[Celtium] CELTIUM_PBO_REFUSED " + pboRefusal);
             }
             return null;
@@ -799,8 +886,8 @@ public final class TextureCaptureStore {
         if (bytes > MAX_CAPTURE_BYTES) {
             return null;
         }
-        boolean bgra = format == GlsmFrontend.GL_BGRA;
-        if (type == GlsmFrontend.GL_UNSIGNED_BYTE && (format == GlsmFrontend.GL_RGBA || bgra)) {
+        boolean bgra = format == GL_BGRA;
+        if (type == GL_UNSIGNED_BYTE && (format == GL_RGBA || bgra)) {
             int rowBytes = width * 4;
             int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
@@ -826,7 +913,7 @@ public final class TextureCaptureStore {
             out.clear();
             return out;
         }
-        if (type == GlsmFrontend.GL_UNSIGNED_BYTE && format == GlsmFrontend.GL_RGB) {
+        if (type == GL_UNSIGNED_BYTE && format == GL_RGB) {
             // Three bytes per pixel, expanded with an opaque alpha; the source rows carry GL's alignment padding.
             int rowBytes = width * 3;
             int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
@@ -844,7 +931,7 @@ public final class TextureCaptureStore {
             return out;
         }
         boolean reversed = type == GL_UNSIGNED_INT_8_8_8_8_REV;
-        if ((reversed || type == GL_UNSIGNED_INT_8_8_8_8) && (format == GlsmFrontend.GL_RGBA || bgra)) {
+        if ((reversed || type == GL_UNSIGNED_INT_8_8_8_8) && (format == GL_RGBA || bgra)) {
             // The packed forms read the 32-bit word in host order. _REV puts the first component in the least
             // significant bits - for GL_BGRA that is the game's own 0xAARRGGBB int - and the plain form puts it in the
             // most significant bits (Xaero's Minimap uploads its tiles as GL_BGRA/GL_UNSIGNED_INT_8_8_8_8).
@@ -1153,7 +1240,7 @@ public final class TextureCaptureStore {
             return false;
         }
         return celtium$mirrorWaitsForFramebuffer(
-                GlsmFrontend.celtium$framebufferForColorTexture(textureName) != 0,
+                FramebufferAttachmentTable.current().framebufferForColorTexture(textureName) != 0,
                 textureHasPendingPatches(textureName, 0), textureLevelHasGamePixels(textureName, 0));
     }
 
@@ -1166,7 +1253,7 @@ public final class TextureCaptureStore {
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(key);
         boolean pendingPatches = pending != null && !pending.isEmpty();
         boolean gamePixels = capture != null && capture.gamePixels;
-        if (celtium$mirrorWaitsForFramebuffer(GlsmFrontend.celtium$framebufferForColorTexture(textureName) != 0,
+        if (celtium$mirrorWaitsForFramebuffer(FramebufferAttachmentTable.current().framebufferForColorTexture(textureName) != 0,
                 pendingPatches, gamePixels)) {
             return SUPPLY_WAIT_FRAMEBUFFER;
         }
@@ -1304,7 +1391,7 @@ public final class TextureCaptureStore {
                     continue;
                 }
                 int textureName = (int) (key >> 16);
-                if (GlsmFrontend.celtium$framebufferForColorTexture(textureName) != 0) {
+                if (FramebufferAttachmentTable.current().framebufferForColorTexture(textureName) != 0) {
                     continue;
                 }
                 this.texCaptures.remove(key);

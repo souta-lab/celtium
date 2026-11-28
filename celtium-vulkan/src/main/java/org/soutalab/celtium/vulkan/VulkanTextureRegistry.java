@@ -5,7 +5,6 @@ import java.util.Map;
 
 import org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding;
 import org.soutalab.celtium.vulkan.bindless.BindlessTextureTable;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glGetTexLevelParameteri;
@@ -2804,7 +2803,7 @@ public final class VulkanTextureRegistry {
                 // Deferring is the trade the creation branch already documents: the publisher owns the association,
                 // and when it cannot publish either the draw refuses and says so instead of drawing black. Counted
                 // apart from the creation deferral, so a leg can say which of the two ran.
-                if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferForColorTexture(glTextureId) != 0) {
+                if (FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureId) != 0) {
                     this.staleAttachmentsDeferred++;
                     this.noteMirrorDeferred(glTextureId, existing.width, existing.height,
                             "stale and content-less, but a framebuffer's colour attachment; the owner publishes it");
@@ -2850,7 +2849,7 @@ public final class VulkanTextureRegistry {
         // logged a PATCH_REJECTED (measured: seven per run, for 1280x720 render targets). Returning null leaves the
         // decision to the path that owns the association; if that path cannot publish either, the draw refuses and
         // says so, which is the honest outcome rather than drawing black.
-        if (GlsmFrontend.celtium$framebufferForColorTexture(glTextureId) != 0) {
+        if (FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureId) != 0) {
             return null;
         }
         // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the

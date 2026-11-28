@@ -6724,7 +6724,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateState.color(red, green, blue, alpha);
         // The stub answers glGetFloatv(GL_CURRENT_COLOR) from its own record; without this a mod that set a colour and
         // queried it back got the stub's default white.
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$setCurrentColor(red, green, blue, alpha);
+        org.soutalab.celtium.vulkan.gl.GlsmImmediateState.current().color(red, green, blue, alpha);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
@@ -7389,7 +7389,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.mainClearRefusedBusy++;
             return false;
         }
-        if (!org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawFramebufferIsMain()) {
+        if (!FramebufferBindings.current().drawIsMain()) {
             // Only the main framebuffer's clear has the frame image as its target. A mod's framebuffer clear is carried
             // by its own group (celtium$gameClear), and carrying it here would record it against the frame image.
             this.mainClearRefusedForeign++;
@@ -7465,7 +7465,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * @return whether the clear was carried
      */
     private boolean celtium$carryMainClearInQueue(int mask) {
-        int effective = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$effectiveClearMask(mask);
+        int effective = FramebufferClearState.effectiveClearMask(mask);
         int reserved = celtium$carriedReservationMask();
         if (reserved != 0) {
             if (reserved == effective) {
@@ -7487,9 +7487,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             closeCurrentImmediateGroup();
         }
         float[] rgba = this.mainClearCarriedRgba;
-        double depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(rgba);
+        double depth = FramebufferClearState.current().mainClearValues(rgba);
         if (Double.isNaN(depth)) {
-            depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
+            depth = FramebufferClearState.current().depth();
         }
         for (int i = this.immediateGroups.size() - 1; i >= 0; i--) {
             ImmediateGroup group = this.immediateGroups.get(i);
@@ -7501,7 +7501,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The owner a discard hands the clear back under: the framebuffer this clear was issued
                 // against, which the predicate above has just shown to be the main one. Read now, while
                 // the stub still names it - the pending-mask record of it is only written at record time.
-                int drawFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawFramebuffer();
+                int drawFbo = FramebufferBindings.current().drawFramebuffer();
                 // S2-2: the reservation lives in the ClearState, its values copied out of
                 // the shared scratch above; the group keeps carrying the clear itself, and
                 // the issue is counted where the queue takes ownership of it.
@@ -7531,7 +7531,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return false;
         }
         celtium$dropCarriedReservation();
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
+        FramebufferClearState.current().consumePending();
         return true;
     }
 
@@ -7603,14 +7603,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // into the very texture the clear covers is an ordering the queue does not express.
             return true;
         }
-        int drawFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawFramebuffer();
+        int drawFbo = FramebufferBindings.current().drawFramebuffer();
         if (drawFbo < 0) {
             return true;
         }
         long identity = drawFbo <= 0 ? Long.MIN_VALUE
                 : this.targetRegistry.identityForFramebufferName(drawFbo);
         if (identity == Long.MIN_VALUE && drawFbo > 0) {
-            int colorTexture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorTexture(drawFbo);
+            int colorTexture = FramebufferAttachmentTable.current().colorTexture(drawFbo);
             if (colorTexture != 0) {
                 identity = celtium$framebufferIdentityForColorTexture(colorTexture);
             }
@@ -7891,7 +7891,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (selectTarget) celtium$bindFromRawRegister(0L, false);
             return;
         }
-        int color = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorTexture(framebuffer);
+        int color = FramebufferAttachmentTable.current().colorTexture(framebuffer);
         if (color != 0) {
             long game = celtium$gameIdentityForRawColorTexture(color);
             if (game != Long.MIN_VALUE) {
@@ -7907,7 +7907,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 return;
             }
         }
-        int depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferDepthTexture(framebuffer);
+        int depth = FramebufferAttachmentTable.current().depthTexture(framebuffer);
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color, depth);
         boolean sharedColorDepth = RenderTargetRegistry.isRawColorDepthIdentity(identity);
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
@@ -7937,7 +7937,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // detached an attachment clears the record it no longer has (a zero depth name clears the depth record).
         // For a shared (color, depth) canonical G-buffer/shadow target, never shrink the extra colour slot tuple
         // when a fewer-target FBO (e.g. gbuffers_skybasic or gbuffers_hand) binds the same (colortex0, depthtex0).
-        int[] rawColorAttachments = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorAttachments(framebuffer);
+        int[] rawColorAttachments = new int[FramebufferAttachmentTable.COLOR_SLOTS];
+        FramebufferAttachmentTable.current().colorAttachments(framebuffer, rawColorAttachments);
         if (!sharedColorDepth
                 || celtium$leadingColorAttachmentCount(rawColorAttachments)
                         >= this.publishedTextures.colorAttachmentCount(identity)) {
@@ -8580,12 +8581,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * @return whether a record existed and was published
      */
     boolean celtium$adoptRawFramebufferColorTexture(int glTextureName) {
-        int framebuffer = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                .celtium$framebufferForColorTexture(glTextureName);
+        int framebuffer = FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureName);
         if (framebuffer == 0) {
             return false;
         }
-        if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorTexture(framebuffer)
+        if (FramebufferAttachmentTable.current().colorTexture(framebuffer)
                 != glTextureName) {
             // The name fills an extra colour slot of the framebuffer, not slot 0: recording it through the
             // slot-0 record below would evict the texture that does fill slot 0 from the census. Adopt by
@@ -8606,7 +8606,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             return recorded;
         }
-        int depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferDepthTexture(framebuffer);
+        int depth = FramebufferAttachmentTable.current().depthTexture(framebuffer);
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName, depth);
         int width = 0;
         int height = 0;
@@ -9001,12 +9001,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         VulkanTextureRegistry registry = celtium$registry();
         VulkanGlTexture existing = registry.existing(glTextureName);
         boolean hasUsableMirror = existing != null && existing.view() != 0L;
-        boolean colourAttachment = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                .celtium$framebufferForColorTexture(glTextureName) != 0
+        boolean colourAttachment = FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureName) != 0
                 || celtium$framebufferIdentityForColorTexture(glTextureName) != Long.MIN_VALUE;
         boolean depthRecorded = this.publishedTextures.identityForDepthTexture(glTextureName) != Long.MIN_VALUE
-                || org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                        .celtium$framebufferForDepthTexture(glTextureName) != 0;
+                || FramebufferAttachmentTable.current().framebufferForDepthTexture(glTextureName) != 0;
         boolean gamePixels = VulkanTextureRegistry.captureStore()
                 .textureLevelHasGamePixels(glTextureName, 0);
         int width = VulkanTextureRegistry.captureStore().textureLevelParameter(
@@ -9035,8 +9033,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (image == 0L) {
             // The depth copy's late registration, for the same case: a framebuffer whose pair has not borrowed
             // the shared depth yet registers here, and the store is re-read before the refusal stands.
-            int fbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$framebufferForDepthTexture(glTextureName);
+            int fbo = FramebufferAttachmentTable.current().framebufferForDepthTexture(glTextureName);
             if (fbo != 0) celtium$registerRawFramebuffer(fbo, false);
             image = target.sharedDepthImage(depthKey);
         }
@@ -9171,7 +9168,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.framebufferIdentityIsMain.put(targetIdentity, isMain);
         // The stub classifies a clear by this decision, not by the raw GL name: the game's main render target is not
         // necessarily the default framebuffer, so name-based classification dropped the frame's own clears.
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.noteDrawFramebufferIsMain(isMain);
+        FramebufferBindings.current().noteDrawIsMain(isMain);
         // First, while the fields below still describe the framebuffer that is bound: the game clears a framebuffer
         // between binding it and binding the next one, so this is the only moment a glClear can be attributed to the
         // image it names. See celtium$latchGameClearAtTargetChange for what the two routes mean.
@@ -9258,7 +9255,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     public void viewport(int x, int y, int width, int height) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$viewport(x, y, width, height);
+        FramebufferViewportState.current().set(x, y, width, height);
         // No flush here. Every queued group is drawn with the current target's own viewport and scissor, so a viewport
         // change cannot strand or invalidate one; it only makes *new* offers outside the full-target contract, and those
         // are refused before acceptance, where the ordering flush already happens. Flushing here as well cost a whole
@@ -9782,8 +9779,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // state-model write alone is invisible to it. Without this the last page the game bound for the NEXT
             // glyph overrode the run's texture at flush - measured as ja_jp text drawn from the wrong page at the
             // right cell: カ rendered page_00's «, 漢 rendered page_5b's glyph.
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glBindTexture(
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_2D, run.texture);
+            NativeTextureBindings.current().noteBoundTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, run.texture);
             this.immediateState.alphaTestEnabled(run.alphaTest);
             this.immediateState.alphaFuncReference(run.alphaRef);
             System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
@@ -9825,8 +9821,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.immediateState.texture2dEnabled(savedTexture2d);
             this.immediateState.bindTexture(savedTexture);
             // Restore through the same direct route so the GL-binding record matches the state model again.
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glBindTexture(
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_2D, savedTexture);
+            NativeTextureBindings.current().noteBoundTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, savedTexture);
             this.immediateState.activeTextureUnit(savedUnit);
             this.immediateState.alphaTestEnabled(savedAlphaTest);
             this.immediateState.alphaFuncReference(savedAlphaRef);
@@ -15098,14 +15093,14 @@ this.frameBufferOpen = false;
      * a stale answer is impossible while the serial is unchanged, and one bind invalidates it.
      */
     private int drawFramebufferBinding() {
-        long serial = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferBindSerial();
+        long serial = FramebufferBindings.current().bindSerial();
         if (serial < 0L) {
             // No stub installed: the bridge owns a real GL context and there is nothing to cache against.
             return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         }
         // With a stub, the answer is its own field: the query would travel the GL entry path only to read the same
         // value. The real-GL shape below stays for a renderer without the stub.
-        int direct = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawFramebuffer();
+        int direct = FramebufferBindings.current().drawFramebuffer();
         if (direct >= 0) {
             return direct;
         }
@@ -16238,7 +16233,7 @@ this.frameBufferOpen = false;
                                     && celtium$routedDepthClearAllowed(windowDepthKey,
                                             offTarget.sharedDepthClearedFrameSerial(windowDepthKey),
                                             celtium$frameSerial())) {
-                                double depthVal = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
+                                double depthVal = FramebufferClearState.current().depth();
                                 if (offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
                                         0x0100, new float[4], depthVal)) {
                                     offTarget.noteSharedDepthCleared(windowDepthKey, celtium$frameSerial());
@@ -18430,7 +18425,7 @@ this.frameBufferOpen = false;
         if (depthTexture == 0) {
             int boundFbo = drawFramebufferBinding();
             if (boundFbo > 0) {
-                depthTexture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferDepthTexture(boundFbo);
+                depthTexture = FramebufferAttachmentTable.current().depthTexture(boundFbo);
                 source = boundFbo;
             }
         }
@@ -18500,8 +18495,7 @@ this.frameBufferOpen = false;
         if (this.gameFramebufferObjectName > 0) {
             gameRawDepth = this.publishedTextures.depthTexture(
                     RenderTargetRegistry.rawFramebufferIdentity(this.gameFramebufferObjectName));
-            gameStubDepth = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$framebufferDepthTexture(this.gameFramebufferObjectName);
+            gameStubDepth = FramebufferAttachmentTable.current().depthTexture(this.gameFramebufferObjectName);
         }
         int mainDepthTexture = notedDepth > 0 ? notedDepth
                 : gameRecordDepth > 0 ? gameRecordDepth
@@ -18653,8 +18647,8 @@ this.frameBufferOpen = false;
                 depth = pending.depth;
             } else {
                 colour = new float[4];
-                org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(colour);
-                depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
+                FramebufferClearState.current().clearColor(colour);
+                depth = FramebufferClearState.current().depth();
             }
             applied = owner.applyGameClearToChainPair(identity, this.commandBuffer, mask, colour, depth);
         }
@@ -19028,15 +19022,15 @@ this.frameBufferOpen = false;
         if (glless == null) {
             return;
         }
-        int mask = org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
+        int mask = FramebufferClearState.current().consumePending();
         if (mask == 0) {
             return;
         }
         float[] rgba = this.gameClearLatchRgba;
         // The values the main clear was issued with, not the live ones: see GlsmFrontend.mainClearValues.
-        double depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(rgba);
+        double depth = FramebufferClearState.current().mainClearValues(rgba);
         if (Double.isNaN(depth)) {
-            depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
+            depth = FramebufferClearState.current().depth();
         }
         if (!this.targetRegistry.currentIsMain()) {
             // The non-main clear was already recorded into the pair's command stream when the game issued it
@@ -19049,7 +19043,7 @@ this.frameBufferOpen = false;
         // identity; GllessFrameTarget.applyGameClears consumes it from there.
         this.glsmFrameState.clearState().latch(this.targetRegistry.mainIdentity(), mask,
                 rgba[0], rgba[1], rgba[2], rgba[3], depth,
-                org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearDrawFbo());
+                FramebufferClearState.current().pendingDrawFbo());
         this.targetStatistics.noteGameClearsLatchedForFrame();
         celtium$reportGameClearLatch("frame", mask, rgba, depth);
     }
@@ -19090,8 +19084,8 @@ this.frameBufferOpen = false;
             return;
         }
         float[] rgba = new float[4];
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(rgba);
-        double depth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
+        FramebufferClearState.current().clearColor(rgba);
+        double depth = FramebufferClearState.current().depth();
         long resolved = drawFbo <= 0 ? Long.MIN_VALUE
                 : this.targetRegistry.identityForFramebufferName(drawFbo);
         boolean fixtureClear = resolved != Long.MIN_VALUE && resolved != 0L
@@ -19122,7 +19116,7 @@ this.frameBufferOpen = false;
         if (identity == Long.MIN_VALUE && drawFbo > 0) {
             // Raw-GL framebuffer: no object identity was ever reported, so resolve through the colour texture its
             // attach call recorded, then the identity that texture was reported under.
-            int colorTexture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorTexture(drawFbo);
+            int colorTexture = FramebufferAttachmentTable.current().colorTexture(drawFbo);
             if (colorTexture != 0) {
                 identity = celtium$framebufferIdentityForColorTexture(colorTexture);
             }
@@ -19431,7 +19425,7 @@ this.frameBufferOpen = false;
      */
     private static int celtium$alphaFuncSelector(int[] state) {
         int captured = state.length > 14 ? state[14] : 0;
-        int override = org.soutalab.celtium.vulkan.gl.GlsmFrontend.alphaFuncOverride();
+        int override = NativeRasterState.alphaFuncOverride();
         // The override applies only where a comparison is in force. Slot 14 encodes "the test is disabled" as 0 - no
         // GL enum is 0 - so overriding a 0 would switch the test *on* with a reference the batch never asked for
         // (measured before this condition: the override leg's census read `[0x203:4536]` with no 0x0 slot at all,

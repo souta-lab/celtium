@@ -290,7 +290,7 @@ final class GlStateQueries {
     static void getTexParameterQuery(GlsmFrontend stub, String name, int target, int paramPname, long out) {
         int textureName = 0;
         if (!GlsmFrontend.isProxyTarget(target)) {
-            int bound = (target == GlsmFrontend.GL_TEXTURE_2D ? stub.textures.texture2d() : stub.textureBindings.get(stub.texBindKey(target)));
+            int bound = stub.textures.boundTexture(target);
             textureName = bound < 0 ? 0 : bound;
         }
         int value = GlsmFrontend.textureParameterValue(textureName, paramPname);

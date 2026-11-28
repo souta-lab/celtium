@@ -149,6 +149,7 @@ public final class FramebufferAttachmentTable {
      * forward maps (slot 0, then the other slots) are scanned and the reverse repaired.
      */
     public int framebufferForColorTexture(int texture) {
+        if (texture == 0) return 0;
         Integer cached = this.fboByColorTexture.get(texture);
         if (cached != null && this.attachesColor(cached.intValue(), texture)) return cached.intValue();
         this.fboByColorTexture.remove(texture);
@@ -172,6 +173,7 @@ public final class FramebufferAttachmentTable {
 
     /** The depth twin of {@link #framebufferForColorTexture(int)}. */
     public int framebufferForDepthTexture(int texture) {
+        if (texture == 0) return 0;
         Integer cached = this.fboByDepthTexture.get(texture);
         if (cached != null && this.depthTexture(cached.intValue()) == texture) return cached.intValue();
         this.fboByDepthTexture.remove(texture);

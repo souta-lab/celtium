@@ -72,7 +72,7 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
  *   work and must not be described as a successful fallback.</li>
  * </ul>
  */
-public final class GlsmFrontend implements FunctionProvider {
+public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtium.vulkan.TextureUploadContext {
 
     /** C return types. Java-side only - the trampoline marshals them into the libffi result slot. */
     public static final byte R_VOID = 0;
@@ -269,10 +269,7 @@ public final class GlsmFrontend implements FunctionProvider {
     // may be an observed disable or simply an untouched provider default; native replacements can bypass
     // callbacks, so the latter must never erase state captured through Minecraft's API.
     // GAP-ST-2 rewired: buffer bindings and storage are owned by GlsmBufferState.
-    /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
-     * of an unbound (unit,target) returns -1 - never a valid GL name. */
-    final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
-            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    /* Bound texture names per (unit, target) are NativeTextureBindings' record since E4-b1. */
     /**
      * First caller each texture name was bound through, either route - a bound-but-never-uploaded name cannot have
      * its producer reconstructed from the upload records (there are none), which is exactly the state the "no mirror
@@ -296,16 +293,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * the distribution below is never touched.
      */
     private static final boolean TARGET_FORMAT_CENSUS = Boolean.getBoolean("celtium.vulkan.targetFormatCensus");
-    /** Distinct internal formats the distribution tracks; past the cap a format is not recorded. */
-    private static final int MAX_TARGET_FORMATS = 32;
-    /**
-     * How often each colour internal format was recorded into {@link #texLevels} at level 0, under
-     * {@link #TARGET_FORMAT_CENSUS}: the distribution that answers "did this fixture's mods actually ask
-     * for 16F" at the GL surface, before any pair decision is made about it. Depth formats are not
-     * counted - a frame's depth is {@code VulkanDepthFormat}'s answer, not a colour request.
-     */
-    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap targetFormatRequests =
-            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+    /* The format distribution's record moved to TextureCaptureStore with its reader (E4-b1). */
     /**
      * The texture-pixel captures - the filed records, the patch backlog's bookkeeping, the conversion and
      * the capture census - are owned by {@link TextureCaptureStore}, the HAL texture registry's capture
@@ -347,37 +335,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 + clear.lastForeignGreen() + "," + clear.lastForeignBlue();
     }
 
-    /**
-     * {@return the recorded colour internal formats and their counts} for the format census (QUEUE 405,
-     * S5), as {@code 0x<gl>=<count>} pairs in GLenum order: {@code "off"} when the census switch is off
-     * (a distribution that was never counted must not read as an empty one) and {@code "none"} when it
-     * is on but no colour format was recorded.
-     */
-    public static String targetFormatDistribution() {
-        if (!TARGET_FORMAT_CENSUS) {
-            return "off";
-        }
-        GlsmFrontend stub = installed;
-        if (stub == null) {
-            return "none";
-        }
-        synchronized (stub.targetFormatRequests) {
-            if (stub.targetFormatRequests.isEmpty()) {
-                return "none";
-            }
-            int[] formats = stub.targetFormatRequests.keySet().toIntArray();
-            java.util.Arrays.sort(formats);
-            StringBuilder out = new StringBuilder();
-            for (int format : formats) {
-                if (out.length() > 0) {
-                    out.append(' ');
-                }
-                out.append("0x").append(Integer.toHexString(format)).append('=')
-                        .append(stub.targetFormatRequests.get(format));
-            }
-            return out.toString();
-        }
-    }
+    /* The format distribution reader lives on TextureCaptureStore since E4-b1. */
     /* Whether the draw binding is the main one is FramebufferBindings' record (E4-b1). */
 
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
@@ -414,8 +372,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet celtium$programBinds =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
-    /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
-    private volatile int lastBoundTexture = -1;
+    /* The last-bound texture name is NativeTextureBindings' record since E4-b1. */
     /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
     private static final int GL_COMPILE_AND_EXECUTE = 0x1301;
 
@@ -1074,19 +1031,7 @@ public final class GlsmFrontend implements FunctionProvider {
         return installed;
     }
 
-    /**
-     * BH-03's one-flag control: the alpha comparison function the immediate path applies, overriding whatever the game
-     * set. {@code -Dceltium.glstub.alphaFuncOverride=<GL enum>} (GL_LEQUAL 0x0203, GL_ALWAYS 0x0207, ...), with 0
-     * meaning "use the game's own function". It exists because the game sets its own functions and a fixture knob for
-     * every piece of GL state is what this avoids: the same jar, scene and crop can then be compared under two
-     * functions, which is how the shader's comparison switch is verified rather than assumed.
-     */
-    public static int alphaFuncOverride() {
-        return ALPHA_FUNC_OVERRIDE;
-    }
-
-    /** Read once: the override is a launch flag, and the state capture asks for it per offer. */
-    private static final int ALPHA_FUNC_OVERRIDE = Integer.getInteger("celtium.glstub.alphaFuncOverride", 0).intValue();
+    /* The alpha function override constant is NativeRasterState's since E4-b1. */
 
     /**
      * Reserves {@code range} names from the one window every generated GL name comes from.
@@ -1315,8 +1260,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.textures.bindTexture2d(texture);
-        stub.lastBoundTexture = texture;
+        stub.textures.noteBoundTexture(GL_TEXTURE_2D, texture);
         stub.noteBindSite(texture);
     }
 
@@ -1325,7 +1269,7 @@ public final class GlsmFrontend implements FunctionProvider {
      *
      * <p>Before the route existed the rewritten native was a no-op: a mod's raw {@code GL11.glBindTexture} - and this
      * project's own {@code whiteTextureId()} - bound nothing the stub could see, so the upload that followed was
-     * filed under whatever {@link #lastBoundTexture} still named. Measured consequence on the E2E pack: the white
+     * filed under whatever the bindings seat's last-bound record still named. Measured consequence on the E2E pack: the white
      * 1x1 pixel landed on the atlas's capture record, the synthetic texture got name 506 with no extent and no
      * pixels, and every texturing-off batch was refused "no mirror for this GL id" forever.
      */
@@ -1334,9 +1278,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        if (target == GL_TEXTURE_2D) stub.textures.bindTexture2d(texture);
-        else stub.textureBindings.put(stub.texBindKey(target), texture);
-        stub.lastBoundTexture = texture;
+        stub.textures.noteBoundTexture(target, texture);
         stub.noteBindSite(texture);
     }
 
@@ -1592,23 +1534,45 @@ public final class GlsmFrontend implements FunctionProvider {
     /** The bound pixel unpack buffer, 0 when none is bound. */
     public int pixelUnpackBuffer;
 
+    /** The capture store's narrow read of this entrance (E4-b1): the bound pixel unpack buffer. */
+    @Override
+    public int pixelUnpackBuffer() {
+        return this.pixelUnpackBuffer;
+    }
+
+    /** The capture store's narrow write: the PBO upload path clears and restores the binding. */
+    @Override
+    public void pixelUnpackBuffer(int buffer) {
+        this.pixelUnpackBuffer = buffer;
+    }
+
+    /** Counts one bounded PBO upload log line for the capture store; false once the bound is spent. */
+    @Override
+    public boolean countPboUploadLog() {
+        if (this.pboUploadLogs < 8) {
+            this.pboUploadLogs++;
+            return true;
+        }
+        return false;
+    }
+
+    /** Counts one bounded pixel-buffer refusal line for the capture store; false once spent. */
+    @Override
+    public boolean countPixelBufferRefusal() {
+        if (this.pixelBufferRefusals < 8) {
+            this.pixelBufferRefusals++;
+            return true;
+        }
+        return false;
+    }
+
     /**
-     * {@return why a readback or upload must be refused when a pixel buffer is bound}, or null when it may proceed.
-     * <p>
-     * With {@code GL_PIXEL_PACK_BUFFER} or {@code GL_PIXEL_UNPACK_BUFFER} bound, GL's contract says the {@code pixels}
-     * argument is an offset into that buffer, not a client address (audit #360). Treating the offset as a pointer - which
-     * the readback and upload paths did - reads or writes the JVM's low memory at address 0 or 16. Neither path can honour
-     * a buffer offset, so both refuse explicitly instead of dereferencing it; the offset reaches the diagnostic verbatim.
+     * {@return why a readback or upload must be refused when a pixel buffer is bound}, or null when it
+     * may proceed: the body is {@link TextureCaptureStore#pixelBufferRefusal}'s since E4-b1, kept as
+     * one implementation for the readback here and the uploads the store files.
      */
     public static String pixelBufferRefusal(int boundPixelBuffer, long offset, String operation) {
-        if (boundPixelBuffer == 0) {
-            return null;
-        }
-        if (boundPixelBuffer < 0) {
-            return null;
-        }
-        return operation + " with a pixel buffer bound (buffer=" + boundPixelBuffer + " offset=" + offset
-                + "): the argument is a buffer offset, not a client pointer, and this path cannot copy into a PBO";
+        return TextureCaptureStore.pixelBufferRefusal(boundPixelBuffer, offset, operation);
     }
 
     /**
@@ -1800,8 +1764,7 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         int textureName = 0;
         if (!isProxyTarget(targetOrName)) {
-            int bound = targetOrName == GL_TEXTURE_2D ? stub.textures.texture2d()
-                    : stub.textureBindings.get(stub.texBindKey(targetOrName));
+            int bound = stub.textures.boundTexture(targetOrName);
             textureName = bound < 0 ? 0 : bound;
         }
         return textureParameterValue(textureName, pname);
@@ -2504,7 +2467,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** {@return the name bound to a texture target on the active unit, or zero when unbound}. */
     int textureBindingOrZero(int target) {
-        int bound = target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target));
+        int bound = this.textures.boundTexture(target);
         return bound < 0 ? 0 : bound;
     }
 
@@ -3772,7 +3735,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return false;
         }
-        return FramebufferClearState.current().hasPending() && FramebufferClearState.current().pendingIsMain();
+        return FramebufferClearState.current().pendingBelongsToMain();
     }
 
     /**
@@ -4409,9 +4372,6 @@ public final class GlsmFrontend implements FunctionProvider {
         VulkanTextureRegistry.captureStore().clear();
         // The framebuffer bindings seat likewise starts from a fresh context's values.
         FramebufferBindings.current().reset();
-        // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
-        // the GL "unbound" name a caller can legitimately store.
-        this.textureBindings.defaultReturnValue(-1);
         // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
         // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
         GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, true);
@@ -5021,8 +4981,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 this.bindBuffer((int) a0, (int) a1);
                 return 0L;
             case SEM_BIND_TEXTURE:
-                if ((int) a0 == GL_TEXTURE_2D) this.textures.bindTexture2d((int) a1);
-                else this.textureBindings.put(texBindKey((int) a0), (int) a1);
+                this.textures.bindTexture((int) a0, (int) a1);
                 noteBindSite((int) a1);
                 return 0L;
             case SEM_BIND_IMAGE_TEXTURE:
@@ -6057,12 +6016,7 @@ public final class GlsmFrontend implements FunctionProvider {
         // TextureUtil route removed it in forgetTextureAllocation, the raw route left it standing, and a
         // recycled name was then read as render-target idiom it never declared.
         GlsmNameLedger.current().removeNullAllocated(name);
-        if (!this.textureBindings.isEmpty()) {
-            it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
-            while (bindings.hasNext()) {
-                if (this.textureBindings.get(bindings.nextLong()) == name) bindings.remove();
-            }
-        }
+        this.textures.forgetBoundTexture(name);
         forgetTexture(name);
     }
 
@@ -6641,9 +6595,7 @@ public final class GlsmFrontend implements FunctionProvider {
         return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
     }
 
-    long texBindKey(int target) {
-        return ((long) this.textures.activeUnit() << 16) | (target & 0xFFFFL);
-    }
+    /* The (unit, target) bind key is NativeTextureBindings' own since E4-b1. */
 
     /**
      * The shared record key: texture name in the high bits, level in the low byte. {@link #texLevels} and
@@ -6673,7 +6625,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (isProxyTarget(target)) {
             return -target;
         }
-        int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
+        int bound = this.textures.boundTexture(target);
         if (bound < 0) {
             // The per-unit map is empty under GL-less, by design: GlStateManager.bindTexture skips the GL call when its
             // own cache already holds the binding, so no glBindTexture arrives for the unit a texture was first bound
@@ -6683,7 +6635,7 @@ public final class GlsmFrontend implements FunctionProvider {
             // CELTIUM_CAPTURE_MISS glTexture=353 level=0 "the stub captured no upload for this texture level" while
             // nglTexSubImage2D was called 41199 times in a single cohort run - the uploads went nowhere because the
             // unit map had no entry to file them under.
-            bound = lastBoundTexture;
+            bound = this.textures.lastBoundTexture();
         }
         return bound < 0 ? 0 : bound;
     }
@@ -6704,12 +6656,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private void recordExtentForName(int name, int level, int internal, int width, int height) {
         int[] previous = this.textureCaptures.texLevels().put(putTexLevelKey(name, level), new int[] { width, height, internal });
         if (TARGET_FORMAT_CENSUS && level == 0 && internal != 0 && !isDepthInternalFormat(internal)) {
-            synchronized (this.targetFormatRequests) {
-                if (this.targetFormatRequests.containsKey(internal)
-                        || this.targetFormatRequests.size() < MAX_TARGET_FORMATS) {
-                    this.targetFormatRequests.addTo(internal, 1L);
-                }
-            }
+            this.textureCaptures.noteTargetFormatRequest(internal);
         }
         if (level == 0 && previous != null && (previous[0] != width || previous[1] != height)
                 && previous[0] * previous[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
@@ -6788,7 +6735,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** The tex-image producer the dispatch case lands on; see {@link TextureCaptureStore}. */
     private void texImagePixels(Fn fn, long[] c) {
-        this.textureCaptures.texImagePixels(this, fn, c);
+        this.textureCaptures.texImagePixels(this, fn.name, c);
     }
 
     /** The tex-image producer the transformer's route lands on; see {@link TextureCaptureStore}. */
@@ -7090,13 +7037,13 @@ public final class GlsmFrontend implements FunctionProvider {
             // A proxy target carries no image and binds to nothing; GL accepts the call and it means nothing.
             return;
         }
-        int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
+        int bound = this.textures.boundTexture(target);
         if (bound < 0) {
             // Under GL-less the per-unit map is empty by design: the bind is rewritten before any trampoline sees it
             // (see celtium$noteBoundTexture), so the record is asked for the name the manager last bound. Without this
             // the parameter was filed against texture 0 and the registry never saw a filter - measured as the blurred
             // item: it falls back to inferring LINEAR from the upload's shape when nothing is recorded.
-            bound = this.lastBoundTexture;
+            bound = this.textures.lastBoundTexture();
         }
         this.textureCaptures.parameters().set(bound < 0 ? 0 : bound, pname, value, site);
     }
@@ -7218,12 +7165,12 @@ public final class GlsmFrontend implements FunctionProvider {
     private void celtium$noteTextureCopy(String name, int target, int level, int xoffset, int yoffset,
                                           int x, int y, int width, int height) {
         this.textureCopyRequests++;
-        int dest = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
+        int dest = this.textures.boundTexture(target);
         if (dest < 0) {
             // The per-unit map is empty under GL-less by design (the bind is rewritten before any trampoline sees it),
             // so the destination is asked for the name the manager last bound - the same fallback the texture
             // parameters use. Without it the copy was filed against texture 0 and the panorama stayed content-less.
-            dest = this.lastBoundTexture;
+            dest = this.textures.lastBoundTexture();
         }
         int destName = dest < 0 ? 0 : dest;
         // The source side lives with the frame target, which owns the image the read framebuffer names: ask it for the

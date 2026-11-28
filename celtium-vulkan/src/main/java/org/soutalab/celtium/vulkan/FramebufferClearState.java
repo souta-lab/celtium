@@ -83,6 +83,9 @@ public final class FramebufferClearState {
     public int pendingDrawFbo() { return this.hasPending() ? this.pendingDrawFbo : -1; }
     public boolean pendingIsMain() { return this.pendingIsMain; }
 
+    /** {@return whether the pending clear belongs to the main render target}, false when no clear is pending. */
+    public boolean pendingBelongsToMain() { return this.hasPending() && this.pendingIsMain; }
+
     /** F-9 consumption: returns the latched mask and clears the latch. */
     public int consumePending() {
         int mask = this.pendingMask;

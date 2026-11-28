@@ -921,7 +921,7 @@ public final class TextureCopyService {
                         + " min=" + depth3(min) + " max=" + depth3(max) + " mean=" + depth3((float) (sum / box.length))
                         + " atOne=" + atOne + "/" + box.length + " belowOne=" + below
                         + " row0=" + depth3(box[0]) + " row128=" + depth3(box[128 * 256])
-                        + " clearDepth=" + depth3((float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth()));
+                        + " clearDepth=" + depth3((float) FramebufferClearState.current().depth()));
             }
         }
         // The cube's own contribution to the panorama's box, measured inside one run instead of argued from bounds: the
@@ -1044,8 +1044,7 @@ public final class TextureCopyService {
             // single-pair design got wrong.
             long identity = this.host.identityForFramebufferName(readFbo);
             if (identity == Long.MIN_VALUE) {
-                int colorTexture = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                        .celtium$framebufferColorTexture(readFbo);
+                int colorTexture = FramebufferAttachmentTable.current().colorTexture(readFbo);
                 identity = colorTexture == 0 ? Long.MIN_VALUE
                         : this.host.identityForColorTexture(colorTexture);
             }

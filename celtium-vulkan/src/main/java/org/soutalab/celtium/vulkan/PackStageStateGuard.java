@@ -2,7 +2,6 @@ package org.soutalab.celtium.vulkan;
 
 import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
 
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 /**
  * Snapshot/restore bracket for one pack terrain execution
@@ -79,9 +78,9 @@ final class PackStageStateGuard {
         this.alphaTestEnabled = state.alphaTestEnabled();
         this.alphaFunc = state.alphaFunc();
         this.alphaRef = state.alphaFuncReference();
-        this.drawFramebuffer = GlsmFrontend.celtium$drawFramebuffer();
-        this.readFramebuffer = GlsmFrontend.celtium$readFramebuffer();
-        this.viewportPacked = GlsmFrontend.celtium$viewportPacked();
+        this.drawFramebuffer = FramebufferBindings.current().drawFramebuffer();
+        this.readFramebuffer = FramebufferBindings.current().readFramebuffer();
+        this.viewportPacked = FramebufferViewportState.current().packed();
     }
 
     /**
@@ -105,7 +104,9 @@ final class PackStageStateGuard {
      * Puts the captured state back, after the guest's own {@code restoreState}. Depth and the alpha test go
      * through the sink; the raster fields go through the state model's setters, whose {@code changing()} flush
      * submits pending glyph geometry under the old state before the value moves. The framebuffer and viewport
-     * are re-issued through the stub's own entries, the routes any bind takes.
+     * are re-issued through the HAL seats (FramebufferBindings / FramebufferViewportState)
+     * that own the values since E4-b1; the restored framebuffer was already registered with
+     * the backend when it was first bound, so the seat write is the whole restore.
      */
     void restore(Lane2ImmediateState state, DepthAlphaSink sink) {
         if (state.cullEnabled() != this.cullEnabled) {
@@ -147,18 +148,18 @@ final class PackStageStateGuard {
             sink.setAlphaFunc(this.alphaFunc, this.alphaRef);
         }
         if (this.drawFramebuffer >= 0
-                && (GlsmFrontend.celtium$drawFramebuffer() != this.drawFramebuffer
-                        || GlsmFrontend.celtium$readFramebuffer() != this.readFramebuffer)) {
+                && (FramebufferBindings.current().drawFramebuffer() != this.drawFramebuffer
+                        || FramebufferBindings.current().readFramebuffer() != this.readFramebuffer)) {
             if (this.drawFramebuffer == this.readFramebuffer) {
-                GlsmFrontend.celtium$bindFramebuffer(GL_FRAMEBUFFER, this.drawFramebuffer);
+                FramebufferBindings.current().bind(GL_FRAMEBUFFER, this.drawFramebuffer);
             } else {
-                GlsmFrontend.celtium$bindFramebuffer(GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
-                GlsmFrontend.celtium$bindFramebuffer(GL_READ_FRAMEBUFFER, this.readFramebuffer);
+                FramebufferBindings.current().bind(GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
+                FramebufferBindings.current().bind(GL_READ_FRAMEBUFFER, this.readFramebuffer);
             }
         }
-        if (this.viewportPacked >= 0 && GlsmFrontend.celtium$viewportPacked() != this.viewportPacked) {
+        if (this.viewportPacked >= 0 && FramebufferViewportState.current().packed() != this.viewportPacked) {
             long packed = this.viewportPacked;
-            GlsmFrontend.celtium$viewport((int) ((packed >>> 48) & 0xFFFF), (int) ((packed >>> 32) & 0xFFFF),
+            FramebufferViewportState.current().set((int) ((packed >>> 48) & 0xFFFF), (int) ((packed >>> 32) & 0xFFFF),
                     (int) ((packed >>> 16) & 0xFFFF), (int) (packed & 0xFFFF));
         }
     }

@@ -100,9 +100,8 @@ final class CopyReadSide {
         // a copy by name ("framebuffer N is not an image this renderer owns"); the measured case is Iris's
         // pre-translucent shadow depth copy, refused every leg until this route existed.
         if (level == 0 && destName != 0
-                && org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferForDepthTexture(destName) != 0) {
-            int sourceDepthTexture = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$framebufferDepthTexture(readFbo);
+                && FramebufferAttachmentTable.current().framebufferForDepthTexture(destName) != 0) {
+            int sourceDepthTexture = FramebufferAttachmentTable.current().depthTexture(readFbo);
             if (sourceDepthTexture != 0) {
                 return celtium$serveDepthCopy(sourceDepthTexture, destName, x, y, width, height,
                         xoffset, yoffset);
@@ -155,8 +154,7 @@ final class CopyReadSide {
             // before this backend existed registers here instead — too late for this frame's copy (the pass has
             // already drawn into whatever target it drew into, not into a pair created now), so the refusal
             // stands, but the store is filled for the frames that follow.
-            int sourceFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$framebufferForDepthTexture(sourceDepthTexture);
+            int sourceFbo = FramebufferAttachmentTable.current().framebufferForDepthTexture(sourceDepthTexture);
             if (sourceFbo != 0) this.backend.celtium$registerRawFramebuffer(sourceFbo, false);
             return "the depth copy's source texture " + sourceDepthTexture
                     + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
@@ -164,8 +162,7 @@ final class CopyReadSide {
         if (destImage == 0L) {
             // The destination's content is defined by this copy, so registering it now is exact rather than late:
             // its framebuffer's pair borrows the shared depth image and the copy lands in it below.
-            int destFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$framebufferForDepthTexture(destDepthTexture);
+            int destFbo = FramebufferAttachmentTable.current().framebufferForDepthTexture(destDepthTexture);
             if (destFbo != 0) this.backend.celtium$registerRawFramebuffer(destFbo, false);
             destImage = target.sharedDepthImage(destKey);
             if (destImage == 0L) {
@@ -1147,9 +1144,9 @@ final class CopyReadSide {
     private static int[] lastViewport;
 
     static int[] currentViewport() {
-        // Under the GL-less window the answer is the rectangle the game last set, kept by the stub: asking GL through
+        // Under the GL-less window the answer is the rectangle the game last set, kept by the viewport seat: asking GL through
         // the direct buffer below costs an allocation and a query for every group.
-        long packed = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$viewportPacked();
+        long packed = FramebufferViewportState.current().packed();
         if (packed >= 0L) {
             // Held by queued groups and never written: the same rectangle shares one array (a new one per group was
             // 1.7% of the client thread's allocation). Render thread only.
