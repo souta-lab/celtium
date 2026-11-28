@@ -1620,7 +1620,13 @@ final class DirectGlRuntime {
         if (data != null) {
             shadow.put(data.duplicate());
         }
-        shadow.flip();
+        // The shadow's limit is its capacity, not the written length. A flip() here left a
+        // size-form shadow (glBufferData with a size and no data) at limit 0, and every
+        // later bufferSubData write into it - the client-array upload does exactly that
+        // pair on every draw - overflowed, because the grow check in bufferSubDataImpl
+        // measures capacity while put() honours the limit.
+        shadow.position(0);
+        shadow.limit(shadow.capacity());
         rec.shadow = shadow;
         syncBufferToSink(rec);
     }
