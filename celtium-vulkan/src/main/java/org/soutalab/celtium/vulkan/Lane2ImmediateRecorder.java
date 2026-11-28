@@ -997,8 +997,8 @@ public final class Lane2ImmediateRecorder {
     private static final int MAX_UNIFORM_PASSES = 6;
 
     static {
-        for (int f = 0; f < FrameCoordinator.GROUP_MARK_LABELS.length; f++) {
-            FrameCoordinator.GROUP_MARK_LABELS[f] = "g" + f;
+        for (int f = 0; f < GROUP_MARK_LABELS.length; f++) {
+            GROUP_MARK_LABELS[f] = "g" + f;
         }
     }
 
@@ -1007,16 +1007,16 @@ public final class Lane2ImmediateRecorder {
      * pair before this measured only whichever window ran last (about one in ten), so the integrated GPU's frame
      * outside the terrain passes - 1.6 of 2.3 ms on the UHD 630 - could not be attributed.
      */
-    private static final int WINDOW_SLOT_BASE = 16;
+    static final int WINDOW_SLOT_BASE = 16;
 
-    private static final int WINDOW_SLOTS = 12;
+    static final int WINDOW_SLOTS = 12;
 
     private final long[] windowTimestampTargets = new long[WINDOW_SLOTS];
 
     private final java.util.Map<String, long[]> statisticsTotals =
             new Reference2ObjectOpenHashMap<>();
 
-    private int timestampSlots;
+    int timestampSlots;
 
 
     /** The world-lifetime half of the Lane 1 residency: every section goes, the device stays. */
@@ -2825,6 +2825,11 @@ public final class Lane2ImmediateRecorder {
 
     /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+
+    /** Reusable 1-element structs for {@link #celtium$setGroupViewport}, avoiding per-change MemoryStack+wrapper alloc. */
+    private org.lwjgl.vulkan.VkViewport.Buffer groupViewportScratch;
+
+    private org.lwjgl.vulkan.VkRect2D.Buffer groupScissorScratch;
 
     /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
     final float[] lightInverseScratch = new float[9];
@@ -19123,6 +19128,8 @@ this.frame.frameBufferOpen = false;
     /** The terrain begin struct reused across passes, in the window cache's shape; see below. */
     private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedTerrainBegin;
 
+    private org.lwjgl.vulkan.VkRect2D cachedTerrainBeginArea;
+
     private long cachedTerrainBeginPass;
 
     private long cachedTerrainBeginFramebuffer;
@@ -19157,13 +19164,13 @@ this.frame.frameBufferOpen = false;
             // for the same reason, even though both of its fields are rewritten: the cost is once per process, the
             // failure mode is not worth re-deriving if a field is ever added.
             this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc();
-            this.owner.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
+            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
             this.cachedTerrainBeginValid = false;
         }
         if (!this.cachedTerrainBeginValid || renderPass != this.cachedTerrainBeginPass
                 || framebuffer != this.cachedTerrainBeginFramebuffer
                 || width != this.cachedTerrainBeginWidth || height != this.cachedTerrainBeginHeight) {
-            org.lwjgl.vulkan.VkRect2D area = this.owner.cachedTerrainBeginArea;
+            org.lwjgl.vulkan.VkRect2D area = this.cachedTerrainBeginArea;
             area.offset().set(0, 0);
             area.extent().set(width, height);
             this.cachedTerrainBegin.sType$Default().pNext(0L).renderPass(renderPass).framebuffer(framebuffer)
@@ -20457,13 +20464,13 @@ this.frame.frameBufferOpen = false;
         @Override
         public void bindPipeline(int pipelineKey) {
             this.twin = batchTwinBindings.get(Integer.valueOf(pipelineKey));
-            vkCmdBindPipeline(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
             // The records set is bound with the pipeline, at the family's own index: set 1 for the
             // texture, item, block and particle families (set 0 is the per-texture pair), set 0 for
             // the colour family, whose layout declares the records set alone. The dynamic offset is
             // read now, at execution: a store grow during the window moved the slice, and the
             // offset that names this window's records is the current one.
-            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                     this.twin.recordsSet, this.stack.longs(drawRecords.descriptorSet()),
                     this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
             drawRecords.noteSetBound();
@@ -20472,7 +20479,7 @@ this.frame.frameBufferOpen = false;
                 // entries name their textures in their records, so no per-texture bind follows
                 // for them, and a per-texture drop verdict left over from an earlier entry of
                 // this segment never applies to them.
-                vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 this.textureDropped = false;
@@ -20497,7 +20504,7 @@ this.frame.frameBufferOpen = false;
                 // (the entries' flag suppresses the ask); defensively, the only set this twin
                 // reads at set 0 is the array itself, so rebind that and never enter the
                 // per-texture registration, eviction-check or drop procedure for it.
-                vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 return;
@@ -20521,7 +20528,7 @@ this.frame.frameBufferOpen = false;
                 // wrapper, in the family's own form (the pair-keyed families take the drain's light map,
                 // as the drain's own rebuild does); when no rebuild is available, the entries that
                 // sample this texture are dropped (counted), never drawn with the retired set.
-                VulkanGlTexture current = this.owner.celtium$registry().get(textureSlot);
+                VulkanGlTexture current = celtium$registry().get(textureSlot);
                 long rebuilt = current == null ? 0L
                         : binding.celtium$rebuild(current, lightmapTexture);
                 if (rebuilt == 0L) {
@@ -20531,7 +20538,7 @@ this.frame.frameBufferOpen = false;
                 binding.descriptor = rebuilt;
                 descriptor = rebuilt;
             }
-            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
                     this.stack.longs(descriptor), null);
         }
 
@@ -20543,7 +20550,7 @@ this.frame.frameBufferOpen = false;
             float constantFactor = offsetEnabled ? donor.polygonOffsetUnits : 0.0F;
             float slopeFactor = offsetEnabled ? donor.polygonOffsetFactor : 0.0F;
             if (constantFactor != passBiasC || slopeFactor != passBiasS) {
-                vkCmdSetDepthBias(this.frame.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                vkCmdSetDepthBias(commandBuffer, constantFactor, 0.0F, slopeFactor);
                 passBiasC = constantFactor;
                 passBiasS = slopeFactor;
             }
@@ -20568,10 +20575,10 @@ this.frame.frameBufferOpen = false;
                 // the frame ring's mapping at the store's offset reads geometry bytes as the
                 // fragment's tint and alpha reference - the panel-background defect's seat.
                 long address = drawRecords.recordAddress(firstInstance);
-                vkCmdPushConstants(this.frame.commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }
-            vkCmdDrawIndexed(this.frame.commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
         }
     }
 
@@ -21598,10 +21605,10 @@ this.frame.frameBufferOpen = false;
             this.immediateOffTargetViewports++;
         }
         if (x0 != this.passVpX || y != this.passVpY || width != this.passVpW || height != this.passVpH) {
-            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = this.owner.groupViewportScratch;
+            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = this.groupViewportScratch;
             if (vkViewport == null) {
                 vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1);
-                this.owner.groupViewportScratch = vkViewport;
+                this.groupViewportScratch = vkViewport;
             }
             vkViewport.get(0).x((float) x0).y((float) y)
                     .width((float) width).height((float) height)
@@ -21686,10 +21693,10 @@ this.frame.frameBufferOpen = false;
         }
         if (scissorX != this.passScX || scissorY != this.passScY
                 || scissorWidth != this.passScW || scissorHeight != this.passScH) {
-            org.lwjgl.vulkan.VkRect2D.Buffer scissor = this.owner.groupScissorScratch;
+            org.lwjgl.vulkan.VkRect2D.Buffer scissor = this.groupScissorScratch;
             if (scissor == null) {
                 scissor = org.lwjgl.vulkan.VkRect2D.calloc(1);
-                this.owner.groupScissorScratch = scissor;
+                this.groupScissorScratch = scissor;
             }
             scissor.get(0).offset().set(scissorX, scissorY);
             scissor.get(0).extent().set(scissorWidth, scissorHeight);

@@ -346,7 +346,7 @@ public final class FrameCoordinator {
             // the fixed template's here and the executor's frames are picked on its own
             // entry when the world-pass hook is wired (S3-b D7-c).
 
-        VulkanContext context = this.host == null ? null : this.context;
+        VulkanContext context = this.context;
         if (context != null) context.setDirectGlFrameSlot(this.frameSlot);
         this.frameTemplate = selectTemplate(packActive, modFboRequested);
         this.frameModFboRequested = modFboRequested;
@@ -403,8 +403,8 @@ public final class FrameCoordinator {
         // as offers=7011/fallbacks=7011/draws=0 on leg swap6-amd, the whole indirect path dead letter.
         // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
         // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
-        this.passVpX = this.passVpY = this.passVpW = this.funnel.passVpH = -1;
-        this.passScX = this.passScY = this.passScW = this.funnel.passScH = -1;
+        this.funnel.passVpX = this.funnel.passVpY = this.funnel.passVpW = this.funnel.passVpH = -1;
+        this.funnel.passScX = this.funnel.passScY = this.funnel.passScW = this.funnel.passScH = -1;
         this.funnel.passBiasC = this.passBiasS = Float.NaN;
         // The pass area is the window's until a pass says otherwise; see the field's own note.
         this.funnel.passAreaWidth = this.funnel.targetWidth;
@@ -512,7 +512,7 @@ public final class FrameCoordinator {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // The frame's own GPU-time pair closes here, so it spans both the passes and everything between them.
             this.recordFrameEndTimestamp();
-            check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer");
+            check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer");
             this.commandState.end();
             if (this.frameBufferOpen) {
                 // Falling back to a direct submit mid-frame: the partially recorded frame buffer is ended above and
@@ -552,7 +552,7 @@ public final class FrameCoordinator {
             // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
             // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
             // call, and the shared batch fence stands in for the slot's own fence via the reclaim callback.
-            this.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
+            this.celtium$submitSlotDeferred(this.commandBuffer, waitArray, stageArray, signalArray);
             submitQueueNanos += System.nanoTime() - submitStartedNanos;
             submitQueueCalls++;
 
@@ -605,7 +605,7 @@ public final class FrameCoordinator {
         if (waitArray != null) {
             stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
         }
-        check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer(frame)");
+        check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer(frame)");
         this.commandState.end();
         if (this.funnel.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && this.failImmediateSubmits > 0) {
             this.failImmediateSubmits--;
@@ -619,7 +619,7 @@ public final class FrameCoordinator {
         if (VulkanSubmitFault.shouldFail("fenced")) {
             check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
         }
-        this.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
+        this.celtium$submitSlotDeferred(this.commandBuffer, waitArray, stageArray, signalArray);
         celtium$noteSubmissionBookkeeping();
     }
 
@@ -709,10 +709,10 @@ public void setLastFrameReachedQueue(boolean reached) {
     private long frameIndex;
 
     /** The arena's own frame counter: advanced at every frame boundary, world pass or not. */
-    private long arenaFrameId;
+    long arenaFrameId;
 
     /** Whether a world snapshot ran since the last frame boundary, so the menu-only resets know to stay out. */
-    private boolean frameSnapshotSinceBoundary;
+    boolean frameSnapshotSinceBoundary;
 
     private long readbackBuffer;
 
@@ -741,7 +741,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      */
     static volatile long lastFinishedFrameId;
 
-    private boolean submissionPending;
+    boolean submissionPending;
 
     VulkanCommandBufferState commandState;
 
@@ -776,15 +776,15 @@ public void setLastFrameReachedQueue(boolean reached) {
      * terrain is drawn by three passes in a row and handing the images back between them costs a full colour copy
      */
     /** CPU time spent inside the GL/Vulkan handoff, so the debug overlay can show what the round trip costs. */
-    private long handoffNanos;
+    long handoffNanos;
 
-    private long handoffSamples;
+    long handoffSamples;
 
-    private long handoffWorstNanos;
+    long handoffWorstNanos;
 
-    private int frameOpens;
+    int frameOpens;
 
-    private int frameCloses;
+    int frameCloses;
 
 
     /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
@@ -820,7 +820,7 @@ public void setLastFrameReachedQueue(boolean reached) {
         this.gpuMarkCount++;
     }
 
-    private int windowTimestampCount;
+    int windowTimestampCount;
 
     private long windowGpuMainNanos;
 
@@ -839,7 +839,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      */
     private static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
 
-    private long timestampPool;
+    long timestampPool;
 
 
     /**
@@ -879,7 +879,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     private long statisticsLastPrintFrame = -1L;
 
-    private long statisticsSamples;
+    long statisticsSamples;
 
     private long statisticsDroppedPasses;
 
@@ -916,7 +916,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
-    private boolean timestampsUsable;
+    boolean timestampsUsable;
 
     /**
      * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
@@ -937,10 +937,10 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     private long readbackOffset;
 
-    private final Reference2ReferenceMap<Integer, String> timestampPasses = new Reference2ReferenceOpenHashMap<>();
+    final Reference2ReferenceMap<Integer, String> timestampPasses = new Reference2ReferenceOpenHashMap<>();
 
     /** Which pack stage each live timed slot belongs to, for the slots the pack route armed. */
-    private final java.util.Map<Integer, String> timestampPackPassNames = new java.util.HashMap<>();
+    final java.util.Map<Integer, String> timestampPackPassNames = new java.util.HashMap<>();
 
 
     /** The offset of the recording frame slot's query range within the timestamp pool. */
@@ -1681,7 +1681,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     }
 
     /** Hash of the current frame's batch traffic, and the previous frame's, to count identical frames. */
-    private long frameBatchSignature;
+    long frameBatchSignature;
 
     private long previousFrameBatchSignature;
 
@@ -1946,7 +1946,7 @@ public void setLastFrameReachedQueue(boolean reached) {
         return result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
     }
 
-    private boolean settleGpu(String reason) {
+    boolean settleGpu(String reason) {
         celtium$watchDeviceWait(reason);
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded

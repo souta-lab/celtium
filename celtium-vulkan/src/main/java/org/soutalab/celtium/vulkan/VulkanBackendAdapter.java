@@ -264,7 +264,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     // Lane 1 terrain (S2-b): the resident frontend and its frame entry.
     // ------------------------------------------------------------------
 
-    private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
+    org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
 
     long lane1PreparedFrame = -1L;
 
@@ -702,11 +702,6 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
-    /** Reusable 1-element structs for {@link #celtium$setGroupViewport}, avoiding per-change MemoryStack+wrapper alloc. */
-    private org.lwjgl.vulkan.VkViewport.Buffer groupViewportScratch;
-
-    private org.lwjgl.vulkan.VkRect2D.Buffer groupScissorScratch;
-
     final PassExecutor nativePassExecutor;
 
     /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
@@ -957,17 +952,17 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
             this.funnel.cachedTerrainBegin.free();
             this.funnel.cachedTerrainBegin = null;
         }
-        if (this.cachedTerrainBeginArea != null) {
-            this.cachedTerrainBeginArea.free();
-            this.cachedTerrainBeginArea = null;
+        if (this.funnel.cachedTerrainBeginArea != null) {
+            this.funnel.cachedTerrainBeginArea.free();
+            this.funnel.cachedTerrainBeginArea = null;
         }
-        if (this.groupViewportScratch != null) {
-            this.groupViewportScratch.free();
-            this.groupViewportScratch = null;
+        if (this.funnel.groupViewportScratch != null) {
+            this.funnel.groupViewportScratch.free();
+            this.funnel.groupViewportScratch = null;
         }
-        if (this.groupScissorScratch != null) {
-            this.groupScissorScratch.free();
-            this.groupScissorScratch = null;
+        if (this.funnel.groupScissorScratch != null) {
+            this.funnel.groupScissorScratch.free();
+            this.funnel.groupScissorScratch = null;
         }
         if (this.fullyDeleted) {
             // The full teardown already ran to its end once: nothing here is left to release, and running
@@ -1249,8 +1244,6 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     }
 
     final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
-
-    private org.lwjgl.vulkan.VkRect2D cachedTerrainBeginArea;
 
 
     /**
