@@ -197,6 +197,13 @@ final class DirectGlExecutorTest {
                 }
 
                 @Override
+                public void uploadUniforms(long programHandle, MemorySegment values) {
+                    ByteBuffer copy = ByteBuffer.allocateDirect((int) values.byteSize()).order(ByteOrder.nativeOrder());
+                    MemorySegment.copy(values, 0L, MemorySegment.ofBuffer(copy), 0L, values.byteSize());
+                    uniformUpdates.put(programHandle, copy);
+                }
+
+                @Override
                 public void destroyProgram(long programHandle) {
                 }
             };
@@ -212,13 +219,7 @@ final class DirectGlExecutorTest {
             this.programAttribs.put(programHandle, attribs);
         }
 
-        @Override
-        public void updateUniforms(long programHandle, MemorySegment values) {
-            ByteBuffer copy = ByteBuffer.allocateDirect((int) values.byteSize())
-                    .order(ByteOrder.nativeOrder());
-            MemorySegment.copy(values, 0L, MemorySegment.ofBuffer(copy), 0L, values.byteSize());
-            this.uniformUpdates.put(programHandle, copy);
-        }
+
     }
 
     private static DirectGlExecutor executorWith(FakeSink sink) {
@@ -394,9 +395,72 @@ final class DirectGlExecutorTest {
         int fs = executor.createShader(GL_FRAGMENT_SHADER);
         executor.shaderSource(fs, "neither is this");
         executor.attachShader(program, fs);
+        var reason = DirectGlRefusalCensus.Reason.COMPILE_FAILED;
+        long before = DirectGlRefusalCensus.count(reason);
+        long total = totalRefusals();
         executor.linkProgram(program);
+        assertEquals(before + 1, DirectGlRefusalCensus.count(reason));
+        assertEquals(total + 1, totalRefusals());
         assertEquals(0, executor.getProgrami(program, GL_LINK_STATUS));
         assertNotEquals("", executor.getProgramInfoLog(program, 4096));
+    }
+
+    private static long totalRefusals() {
+        return Long.parseLong(DirectGlRefusalCensus.refusalSummary().split(" ")[0].substring("modRefusals=".length()));
+    }
+
+    @Test
+    void censusUsesFixedSnakeCaseKeys() {
+        String summary = DirectGlRefusalCensus.refusalSummary();
+        for (String key : List.of("compile_failed", "unsupported_stage", "no_frame", "target_incompatible",
+                "feedback", "sampler_unbound", "descriptor_exhausted", "pipeline_failed")) {
+            assertTrue(java.util.regex.Pattern.compile("[\\[ ]" + key + "=\\d+[ \\]]").matcher(summary).find(), key);
+        }
+    }
+
+    @Test
+    void compilerAndUploadAgreeOnStd140MemberOffsets() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                uniform float shift;
+                uniform vec4 scale;
+                void main() { gl_Position = vec4(position * scale.xy + shift, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                uniform vec4 scale;
+                void main() { gl_FragColor = scale; }
+                """;
+        var translated = org.soutalab.celtium.vulkan.shader.ModGlslTranslator.translateDirect(vertex, fragment);
+        assertTrue(translated.vertex().contains("layout(set = 0, binding = 0, std140)"));
+        var compiled = DirectGlShaderCompiler.compileProgram(vertex, fragment);
+        assertTrue(compiled.ok(), compiled.failure());
+        assertEquals(translated.uniformBlockSize(), compiled.uniformBlockSize());
+        assertEquals(translated.uniforms(), compiled.uniforms());
+        assertEquals(List.of(0, 16), compiled.uniforms().stream().map(member -> member.offset()).toList());
+
+        var runtime = new DirectGlRuntime();
+        FakeSink sink = new FakeSink();
+        runtime.setSink(sink);
+        int program = runtime.createProgram();
+        int vertexId = runtime.createShader(GL_VERTEX_SHADER);
+        int fragmentId = runtime.createShader(GL_FRAGMENT_SHADER);
+        runtime.shaderSource(vertexId, vertex);
+        runtime.shaderSource(fragmentId, fragment);
+        runtime.attachShader(program, vertexId);
+        runtime.attachShader(program, fragmentId);
+        runtime.linkProgram(program);
+        runtime.useProgram(program);
+        runtime.uniform1f(runtime.getUniformLocation(program, "shift"), 2.5f);
+        runtime.uniform4f(runtime.getUniformLocation(program, "scale"), 5, 6, 7, 8);
+        var linked = runtime.programs.get(program);
+        runtime.flushUniforms(linked);
+        ByteBuffer upload = sink.uniformUpdates.get(linked.sinkHandle);
+        assertEquals(32, upload.capacity());
+        assertEquals(2.5f, upload.getFloat(0));
+        assertEquals(5f, upload.getFloat(16));
+        assertEquals(8f, upload.getFloat(28));
     }
 
     /** Links the GTCEu-bloom-shaped program the translator's own tests use. */

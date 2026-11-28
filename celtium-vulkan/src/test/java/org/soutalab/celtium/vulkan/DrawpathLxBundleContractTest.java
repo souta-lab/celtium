@@ -170,7 +170,7 @@ class DrawpathLxBundleContractTest {
                 "the lab-switch seat counts instead of returning in silence");
         assertTrue(programs.contains("celtium$noteModRefusal(ModRefusal.UNSUPPORTED)"),
                 "the executable query's refusal counts");
-        assertTrue(read(DIAGNOSTICS).contains("b.modPrograms.celtium$refusalSummary()"),
+        assertTrue(read(DIAGNOSTICS).contains("DirectGlRefusalCensus.refusalSummary()"),
                 "the verify line carries the aggregate");
     }
 

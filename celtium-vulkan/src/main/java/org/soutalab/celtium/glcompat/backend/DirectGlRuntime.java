@@ -1,5 +1,7 @@
 package org.soutalab.celtium.glcompat.backend;
 
+import static org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.Reason.*;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
@@ -2454,6 +2456,7 @@ final class DirectGlRuntime {
         String vertexSource = null;
         String fragmentSource = null;
         String computeSource = null;
+        int unsupportedStage = 0;
         for (int shaderId : rec.attachedShaders) {
             DirectGlRecords.Shader shader = this.shaders.get(shaderId);
             if (shader == null) {
@@ -2463,24 +2466,29 @@ final class DirectGlRuntime {
                 case GL_VERTEX_SHADER -> vertexSource = shader.source;
                 case GL_FRAGMENT_SHADER -> fragmentSource = shader.source;
                 case GL_COMPUTE_SHADER -> computeSource = shader.source;
-                default -> {
-                }
+                default -> unsupportedStage = shader.type;
             }
         }
         DirectGlShaderCompiler.CompiledProgram compiled;
-        if (computeSource != null) {
+        if (unsupportedStage != 0) {
+            compiled = DirectGlShaderCompiler.refuse(UNSUPPORTED_STAGE,
+                    "shader stage 0x" + Integer.toHexString(unsupportedStage));
+        } else if (computeSource != null) {
             compiled = DirectGlShaderCompiler.compileCompute(computeSource);
-            if (compiled.ok() && this.sink != null) {
-                rec.sinkHandle = this.sink.shaderOps().createComputeProgram(compiled.bundle()).handle();
-            }
         } else {
             compiled = DirectGlShaderCompiler.compileProgram(vertexSource, fragmentSource);
-            if (compiled.ok() && this.sink != null) {
+        }
+        if (compiled.ok() && this.sink != null) {
+            try {
                 rec.sinkHandle = this.sink.shaderOps().createProgram(compiled.bundle());
+                if (rec.sinkHandle == 0) throw new IllegalStateException("invalid converter program handle");
                 DirectGlSinkExtensions ext = ext();
                 if (ext != null) {
                     ext.registerProgramAttribs(rec.sinkHandle, attribDescs(compiled));
+                    ext.registerProgramResources(rec.sinkHandle, compiled.samplers().size(), compiled.fragmentOutputs());
                 }
+            } catch (RuntimeException | LinkageError failure) {
+                compiled = DirectGlShaderCompiler.refuse(PIPELINE_FAILED, failure.toString());
             }
         }
         rec.compiled = compiled;
@@ -2490,6 +2498,10 @@ final class DirectGlRuntime {
             rec.attribLocations.clear();
             for (int i = 0; i < compiled.uniforms().size(); i++) {
                 rec.uniformLocations.put(compiled.uniforms().get(i).name(), i);
+            }
+            rec.samplerUnits = new int[compiled.samplers().size()];
+            for (int i = 0; i < rec.samplerUnits.length; i++) {
+                rec.uniformLocations.put(compiled.samplers().get(i).name(), compiled.uniforms().size() + i);
             }
             for (org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute attribute
                     : compiled.attributes()) {
@@ -2880,6 +2892,14 @@ final class DirectGlRuntime {
     }
 
     public void uniform1i(int location, int v0) {
+        DirectGlRecords.Program program = this.programs.get(this.currentProgram);
+        if (program != null && program.compiled != null) {
+            int sampler = location - program.compiled.uniforms().size();
+            if (sampler >= 0 && sampler < program.samplerUnits.length) {
+                program.samplerUnits[sampler] = v0;
+                return;
+            }
+        }
         putInts(location, new int[] {v0});
     }
 
@@ -3068,16 +3088,9 @@ final class DirectGlRuntime {
         if (rec == null || !rec.uniformsDirty || rec.uniformBlock == null) {
             return;
         }
-        rec.uniformsDirty = false;
-        DirectGlSinkExtensions ext = ext();
-        if (ext != null && rec.sinkHandle != 0L) {
-            ByteBuffer view = rec.uniformBlock.duplicate();
-            view.position(0);
-            try (Arena arena = Arena.ofConfined()) {
-                MemorySegment segment = arena.allocate(view.capacity());
-                segment.asByteBuffer().put(view);
-                ext.updateUniforms(rec.sinkHandle, segment);
-            }
+        if (this.sink != null && rec.sinkHandle != 0L) {
+            this.sink.shaderOps().uploadUniforms(rec.sinkHandle, MemorySegment.ofBuffer(rec.uniformBlock));
+            rec.uniformsDirty = false;
         }
     }
 
@@ -3581,12 +3594,37 @@ final class DirectGlRuntime {
         int fboId = boundFramebufferId(GL_DRAW_FRAMEBUFFER);
         int renderTargetId = 0;
         if (fboId != 0) {
+            DirectGlRecords.Framebuffer fbo = this.framebuffers.get(fboId);
+            if (fbo != null) {
+                for (int unit : program.samplerUnits) {
+                    Integer texture = this.boundTextures.get(textureKey(unit, GL_TEXTURE_2D));
+                    if (texture != null && texture != 0 && fbo.textureAttachments.containsValue(texture)) {
+                        this.droppedDraws++;
+                        DirectGlRefusalCensus.note(FEEDBACK, "draw samples its framebuffer attachment");
+                        return;
+                    }
+                }
+            }
             long sinkFbo = ensureSinkFramebuffer(fboId);
             if (sinkFbo == 0L) {
                 this.droppedDraws++;
+                DirectGlRefusalCensus.note(TARGET_INCOMPATIBLE, "draw framebuffer could not be realized");
                 return;
             }
             renderTargetId = (int) sinkFbo;
+        }
+        DirectGlSinkExtensions extensions = ext();
+        if (extensions != null && program.samplerUnits.length > 0) {
+            long[] samplerTextures = new long[program.samplerUnits.length];
+            for (int i = 0; i < samplerTextures.length; i++) {
+                if (!"sampler2D".equals(program.compiled.samplers().get(i).type())) continue;
+                Integer name = this.boundTextures.get(textureKey(program.samplerUnits[i], GL_TEXTURE_2D));
+                if (name != null) {
+                    long texture = sinkTextureId(name);
+                    samplerTextures[i] = texture == 0 ? name : texture;
+                }
+            }
+            extensions.setProgramSamplerTextures(program.sinkHandle, samplerTextures);
         }
         DirectGlDrawState state = new DirectGlDrawState(stateKey(), program.sinkHandle, topology,
                 renderTargetId);

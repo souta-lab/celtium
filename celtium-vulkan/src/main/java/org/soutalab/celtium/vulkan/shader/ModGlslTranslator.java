@@ -228,8 +228,17 @@ public final class ModGlslTranslator {
      * one. Never throws: a source outside the subset comes back with {@link Result#failure}.
      */
     public static Result translate(String vertexSource, String fragmentSource) {
+        return translate(vertexSource, fragmentSource, false);
+    }
+
+    /** Lane 3 always declares the std140 block at set 0, binding 0. */
+    public static Result translateDirect(String vertexSource, String fragmentSource) {
+        return translate(vertexSource, fragmentSource, true);
+    }
+
+    private static Result translate(String vertexSource, String fragmentSource, boolean direct) {
         try {
-            return translateOrThrow(vertexSource, fragmentSource);
+            return translateOrThrow(vertexSource, fragmentSource, direct);
         } catch (IllegalArgumentException outside) {
             return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, false,
                     Map.of(), outside.getMessage(), null, List.of(), List.of());
@@ -273,7 +282,7 @@ public final class ModGlslTranslator {
         return source.substring(0, end);
     }
 
-    private static Result translateOrThrow(String vertexSource, String fragmentSource) {
+    private static Result translateOrThrow(String vertexSource, String fragmentSource, boolean direct) {
         if (vertexSource == null) {
             vertexSource = FIXED_FUNCTION_VERTEX;
         }
@@ -398,7 +407,7 @@ public final class ModGlslTranslator {
         // ModPushConstantLimit records (the device's limit, or the guaranteed minimum before selection), so a
         // program linked before selection takes the buffer route above 128 bytes: always valid, because the
         // buffer route does not depend on the push limit at all.
-        boolean uniformsViaBuffer = blockSize > ModPushConstantLimit.limit();
+        boolean uniformsViaBuffer = direct || blockSize > ModPushConstantLimit.limit();
         List<ImageBinding> images = new ArrayList<>();
         for (Declaration d : uniforms.values()) {
             if (List.of("image2D", "iimage2D", "uimage2D").contains(d.type)) {
@@ -421,7 +430,7 @@ public final class ModGlslTranslator {
         List<String> glsmSharedPerFrame = new ArrayList<>();
         List<UniformMember> glsmExtracted = new ArrayList<>();
         boolean glsmFragmentRegion = false;
-        if (GlsmPackState.ENABLED && uniformsViaBuffer) {
+        if (!direct && GlsmPackState.ENABLED && uniformsViaBuffer) {
             for (UniformMember m : members) {
                 GlsmPackState.Bucket bucket = GlsmPackState.classify(m.name(), m.type(), m.arrayLength());
                 if (bucket == GlsmPackState.Bucket.REGION && glsmRegionMember == null
@@ -525,7 +534,7 @@ public final class ModGlslTranslator {
         if (!members.isEmpty()) {
             if (uniformsViaBuffer) {
                 // The binding after every sampler and storage image: the pipeline declares the same index.
-                common.append("layout(set = 0, binding = ").append(samplers.size() + images.size())
+                common.append("layout(set = 0, binding = ").append(direct ? 0 : samplers.size() + images.size())
                         .append(", std140) uniform CeltiumModUniforms {\n");
             } else {
                 common.append("layout(push_constant, std140) uniform CeltiumModUniforms {\n");
@@ -538,11 +547,11 @@ public final class ModGlslTranslator {
             common.append("};\n");
         }
         for (SamplerBinding s : samplers) {
-            common.append("layout(set = 0, binding = ").append(s.binding).append(") uniform ").append(s.type)
+            common.append(direct ? "layout(set = 1, binding = " : "layout(set = 0, binding = ").append(s.binding).append(") uniform ").append(s.type)
                     .append(' ').append(glslName(s.name)).append(";\n");
         }
         for (ImageBinding image : images) {
-            common.append("layout(set = 0, binding = ").append(image.binding).append(") uniform ")
+            common.append(direct ? "layout(set = 1, binding = " : "layout(set = 0, binding = ").append(image.binding).append(") uniform ")
                     .append(image.type).append(' ').append(glslName(image.name)).append(";\n");
         }
 

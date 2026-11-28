@@ -208,6 +208,8 @@ public final class FrameCoordinator {
      * host's stage marks; the pick is recorded so the frame's shape is stated either way.
      */
     void beginFrame(boolean packActive, boolean modFboRequested) {
+        VulkanContext context = this.host == null ? null : this.host.context();
+        if (context != null) context.setDirectGlFrameSlot(this.host.frameSlot());
         this.frameTemplate = selectTemplate(packActive, modFboRequested);
         this.frameModFboRequested = modFboRequested;
         java.util.Arrays.fill(this.stageEntered, false);

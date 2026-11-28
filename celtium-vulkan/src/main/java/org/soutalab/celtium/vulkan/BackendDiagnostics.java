@@ -632,7 +632,7 @@ final class BackendDiagnostics {
                 + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
                 // The mod-program refusals by reason (drawpath audit DP-35): the total above counts
                 // the batches the shutter refused; this aggregate says why, per fixed category.
-                + " " + b.modPrograms.celtium$refusalSummary()
+                + " " + org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.refusalSummary()
                 // The native-pass refusals (DP-37): until now they existed only in the
                 // CELTIUM_NATIVE_PASS census line at snapshot time, outside this verify body.
                 + " nativePassExecRefusals=" + b.nativePassRegistry.executionRefusalCount()

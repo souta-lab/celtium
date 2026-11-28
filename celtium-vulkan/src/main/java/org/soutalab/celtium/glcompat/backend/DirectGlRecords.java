@@ -87,6 +87,7 @@ final class DirectGlRecords {
         /** Packed uniform values, laid out at the compiled block's member offsets. */
         ByteBuffer uniformBlock;
         boolean uniformsDirty;
+        int[] samplerUnits = new int[0];
         int uniformBlockBindingPoint = -1;
     }
 
