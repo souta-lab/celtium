@@ -143,6 +143,12 @@ dependencies {
     // Mod GLSL lowering (ModGlslTranslatorTest) is checked by compiling its output with the real compiler.
     testImplementation 'org.lwjgl:lwjgl-shaderc'
     testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':' + lwjglNativesClassifier
+    // E4-b2-tail T1/T2: the immediate-mode machinery (VertexFormatElement's buffer-state
+    // setup) initialises GL11, whose class initialiser loads liblwjgl_opengl.so - the
+    // opengl natives have to ride the test runtime beside the core and shaderc ones, and
+    // the test task's unpack step flattens every lwjgl natives jar it finds into
+    // org.lwjgl.librarypath. Test-only; nothing ships in the mod jar.
+    testRuntimeOnly 'org.lwjgl:lwjgl-opengl:' + lwjglVersion + ':' + lwjglNativesClassifier
     testImplementation 'com.google.code.gson:gson:2.10.1'
     testImplementation 'org.anarres:jcpp:1.4.14'
     testImplementation 'org.antlr:antlr4-runtime:4.13.2'
