@@ -171,7 +171,7 @@ class Stage7BarrierWiringTest {
         String backend = read(BACKEND);
         assertTrue(segment(frontend, "private void recordClear(int mask)",
                         "public static int celtium$effectiveClearMask(int mask)")
-                        .contains("vulkan.celtium$gameClear(mask, this.drawFbo);"),
+                        .contains("vulkan.celtium$gameClear(mask, FramebufferBindings.current().drawFramebuffer());"),
                 "a non-main clear is handed to the backend at its queue position");
         assertTrue(backend.contains("public void flushBeforeClear(int mask)"),
                 "the backend's clear-ordering flush exists for the main route");

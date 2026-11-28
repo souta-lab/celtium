@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * GLSM stage 3, GAP-ST-4 (census S-8, flush trigger F-9): the owner of clear state in its
@@ -10,10 +10,10 @@ package org.soutalab.celtium.vulkan.gl;
  * {@link #consumePending()} is the F-9 trigger point: the backend's consumption of a pending
  * clear reads and clears the latch here instead of the stub's pendingClears counter.
  */
-public final class GlsmClearState {
-    private static final GlsmClearState CURRENT = new GlsmClearState();
+public final class FramebufferClearState {
+    private static final FramebufferClearState CURRENT = new FramebufferClearState();
 
-    public static GlsmClearState current() { return CURRENT; }
+    public static FramebufferClearState current() { return CURRENT; }
 
     private float red, green, blue = 0.0f, alpha = 1.0f;
     private double depth = 1.0;
@@ -27,7 +27,7 @@ public final class GlsmClearState {
     private boolean mainValuesKnown;
     private long version;
 
-    private GlsmClearState() {
+    private FramebufferClearState() {
     }
 
     public void clearColor(float red, float green, float blue, float alpha) {
@@ -105,4 +105,72 @@ public final class GlsmClearState {
 
     public double lastMainDepth() { return this.lastMainDepth; }
     public long version() { return this.version; }
+
+    /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
+    public void clearColor(float[] out) {
+        out[0] = this.red;
+        out[1] = this.green;
+        out[2] = this.blue;
+        out[3] = this.alpha;
+    }
+
+    /**
+     * The colour and depth of the last {@code glClear} of the main framebuffer, as set when that
+     * clear was issued - into {@code out} as {r,g,b,a}; {@return the depth}, or NaN when no main
+     * clear has been seen (use the live values).
+     * <p>
+     * The main clear is carried to the frame later (the latch at the next bind, or the acquire),
+     * and reading the live {@code glClearColor} then gave whatever was set in between: a
+     * {@code Framebuffer.framebufferClear} sets its own colour (black) before clearing another
+     * target, so the world frame was cleared black instead of with the fog colour vanilla's clear
+     * used - the E2E pack's black area below the horizon beyond the loaded chunks.
+     */
+    public double mainClearValues(float[] out) {
+        if (!this.mainValuesKnown) {
+            this.clearColor(out);
+            return Double.NaN;
+        }
+        this.mainValues(out);
+        return this.lastMainDepth;
+    }
+
+    /**
+     * The mask a {@code glClear} actually erases, after the two write-mask rules GL applies to it.
+     * <p>
+     * GL's clear obeys the colour write mask: a pass that clears depth with every colour channel
+     * masked off - the fancy-cloud depth-only pass does exactly that through
+     * {@code GlStateManager.colorMask} - must not erase the image's colour. The latch, the pending
+     * mask and every replay read this value, so the masking belongs at this one choke point. A
+     * partial mask cannot be expressed by an attachment clear and still clears the colour.
+     * <p>
+     * The depth half is the same rule: {@code glClear} honours {@code glDepthMask}, and the game's
+     * depth writes are mirrored on the backend (a {@code GlStateManager.depthMask} hook), not here,
+     * so the answer comes from there at the moment the clear is issued. A pass that disabled depth
+     * writes and then cleared must not have the frame image's depth erased.
+     * <p>
+     * Two callers have to agree on it: the capture entrance applies it when a clear is recorded,
+     * and the backend's {@code flushBeforeClear} asks it before it decides whether the queue can
+     * carry the clear - a reservation made with the raw mask would not match the mask the clear is
+     * recorded with, and the clear would then be applied twice.
+     */
+    public static int effectiveClearMask(int mask) {
+        if (NativeRasterState.current().colorMask() == 0) {
+            mask &= ~0x4000;
+        }
+        if (!depthWritesEnabled()) {
+            mask &= ~0x0100;
+        }
+        return mask;
+    }
+
+    /** {@return the game's current depth-write state}; assumed true when no backend is installed. */
+    private static boolean depthWritesEnabled() {
+        try {
+            Object backend = CeltiumBackends.current();
+            return !(backend instanceof VulkanTerrainGpuBackend vulkan)
+                    || vulkan.celtium$depthWritesLive();
+        } catch (RuntimeException | LinkageError error) {
+            return true;
+        }
+    }
 }

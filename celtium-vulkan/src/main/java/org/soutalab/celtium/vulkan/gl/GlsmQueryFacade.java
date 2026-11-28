@@ -1,5 +1,9 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.FramebufferViewportState;
+
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+
 /**
  * GLSM stage 3, GAP-Q-1 (census Q-1..Q-7): the query facade GlStateQueries (985 lines,
  * stub-direct reads) is re-pointed at at merge time.
@@ -48,7 +52,7 @@ public final class GlsmQueryFacade {
 
     /** GL_VIEWPORT as {x, y, width, height}. */
     public void viewport(int[] out) {
-        GlsmViewportState viewport = GlsmViewportState.current();
+        FramebufferViewportState viewport = FramebufferViewportState.current();
         out[0] = viewport.x(); out[1] = viewport.y();
         out[2] = viewport.width(); out[3] = viewport.height();
     }
@@ -62,6 +66,6 @@ public final class GlsmQueryFacade {
     public int boundVertexArray() { return GlsmClientArrayState.current().boundVertexArray(); }
 
     public int colorAttachmentTexture(int framebuffer) {
-        return GlsmFramebufferAttachments.current().colorTexture(framebuffer);
+        return FramebufferAttachmentTable.current().colorTexture(framebuffer);
     }
 }

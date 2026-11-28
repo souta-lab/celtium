@@ -1,5 +1,9 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.FramebufferClearState;
+
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -214,7 +218,7 @@ public final class GlsmHintLedger {
         CURRENT.registerDoor("glColorPointer", "clientArray");
         CURRENT.registerDoor("glNormalPointer", "clientArray");
         CURRENT.registerDoor("glGetRenderbufferParameter", "clientArray");
-        // Clear entry points beyond the colour/depth setters: GlsmClearState (ST-4) owns the current values and pending latch these doors feed.
+        // Clear entry points beyond the colour/depth setters: FramebufferClearState (ST-4) owns the current values and pending latch these doors feed.
         CURRENT.registerDoor("glClear", "clear");
         CURRENT.registerDoor("glClearBufferfv", "clear");
         CURRENT.registerDoor("glClearBufferfi", "clear");
@@ -226,7 +230,7 @@ public final class GlsmHintLedger {
         CURRENT.registerDoor("glGetBooleanIndexed", "queryFacade");
         CURRENT.registerDoor("glGetIntegerIndexed", "queryFacade");
         CURRENT.registerDoor("glGetInteger64", "queryFacade");
-        // Framebuffer attachments: GlsmFramebufferAttachments (ST-3) owns the attachment maps these doors write and read.
+        // Framebuffer attachments: FramebufferAttachmentTable (ST-3) owns the attachment maps these doors write and read.
         CURRENT.registerDoor("glNamedFramebufferTexture", "framebufferAttachments");
         CURRENT.registerDoor("glFramebufferTexture2D", "framebufferAttachments");
         CURRENT.registerDoor("glGetFramebufferAttachmentParameteriv", "framebufferAttachments");

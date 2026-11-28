@@ -1,5 +1,10 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.FramebufferViewportState;
+
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
+
 import org.soutalab.celtium.glcompat.capture.GlContextTerms;
 import org.soutalab.celtium.glcompat.capture.GlsmStringState;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -366,11 +371,11 @@ final class GlStateQueries {
                 return 0x84C0 + stub.textures.activeUnit();
             case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
                 // M-8 residual: the framebuffer binding names (S-7) have no stage-3 owner -
-                // GlsmFramebufferAttachments owns the attachments, not the binding - and the
+                // FramebufferAttachmentTable owns the attachments, not the binding - and the
                 // writers are the stub's bind/delete doors, so the move is a stub-wide slice.
-                return stub.drawFbo;
+                return FramebufferBindings.current().drawFramebuffer();
             case 0x8CAA: // GL_READ_FRAMEBUFFER_BINDING
-                return stub.readFbo;
+                return FramebufferBindings.current().readFramebuffer();
             case 0x8CA5: // GL_STENCIL_BACK_WRITEMASK - no stencil state is kept; GL's default makes every bit writable
                 return 0xFF;
             case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
@@ -421,9 +426,9 @@ final class GlStateQueries {
             case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
                 return 0;
             case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
-                return stub.drawFbo == 0 ? 0x0405 : 0x8CE0;
+                return FramebufferBindings.current().drawFramebuffer() == 0 ? 0x0405 : 0x8CE0;
             case 0x0C02: // GL_READ_BUFFER
-                return stub.readFbo == 0 ? 0x0405 : 0x8CE0;
+                return FramebufferBindings.current().readFramebuffer() == 0 ? 0x0405 : 0x8CE0;
             case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
                 return GlsmMatrixMode.current().get();
             case 0x0B74: { // GL_DEPTH_FUNC
@@ -556,10 +561,10 @@ final class GlStateQueries {
                 return;
             }
             case 0x0BA2: // GL_VIEWPORT
-                memPutInt(out, GlsmViewportState.current().x());
-                memPutInt(out + 4, GlsmViewportState.current().y());
-                memPutInt(out + 8, GlsmViewportState.current().width());
-                memPutInt(out + 12, GlsmViewportState.current().height());
+                memPutInt(out, FramebufferViewportState.current().x());
+                memPutInt(out + 4, FramebufferViewportState.current().y());
+                memPutInt(out + 8, FramebufferViewportState.current().width());
+                memPutInt(out + 12, FramebufferViewportState.current().height());
                 return;
             case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
                 int mask = stub.raster.colorMask();
@@ -675,10 +680,10 @@ final class GlStateQueries {
                 return;
             }
             case 0x0BA2: { // GL_VIEWPORT
-                putFloatOrDouble(out, 0, GlsmViewportState.current().x(), asDouble);
-                putFloatOrDouble(out, 1, GlsmViewportState.current().y(), asDouble);
-                putFloatOrDouble(out, 2, GlsmViewportState.current().width(), asDouble);
-                putFloatOrDouble(out, 3, GlsmViewportState.current().height(), asDouble);
+                putFloatOrDouble(out, 0, FramebufferViewportState.current().x(), asDouble);
+                putFloatOrDouble(out, 1, FramebufferViewportState.current().y(), asDouble);
+                putFloatOrDouble(out, 2, FramebufferViewportState.current().width(), asDouble);
+                putFloatOrDouble(out, 3, FramebufferViewportState.current().height(), asDouble);
                 return;
             }
             case 0x0C10: { // GL_SCISSOR_BOX

@@ -1,5 +1,12 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.FramebufferViewportState;
+
+import org.soutalab.celtium.vulkan.FramebufferClearState;
+
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
+
 import org.soutalab.celtium.glcompat.capture.ClientArrayRange;
 import org.soutalab.celtium.glcompat.capture.DispatchThreadGate;
 import org.soutalab.celtium.glcompat.capture.GlContextTerms;
@@ -315,12 +322,11 @@ public final class GlsmFrontend implements FunctionProvider {
     // GAP-ST-2 (S-5): pixel-store state is also GlsmBufferState's.
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
     /* The glGetString intern buffer that used to sit here is owned by GlsmStringState (census S-23). */
-    // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by GlsmViewportState.
-    /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
-    volatile int drawFbo, readFbo;
+    // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by FramebufferViewportState.
+    /* GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings are owned by FramebufferBindings (E4-b1). */
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
     // GAP-ST-4 rewired: current clear values, the pending latch and the issue-time snapshots
-    // are owned by GlsmClearState.
+    // are owned by FramebufferClearState.
 
     /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
     /** Bounded caller log for main-framebuffer clears: which caller clears it, and how often. */
@@ -335,7 +341,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return "main=none foreign=none colour=none";
         }
-        GlsmClearState clear = GlsmClearState.current();
+        FramebufferClearState clear = FramebufferClearState.current();
         return "main=" + clear.mainClears() + "/" + clear.lastMainRed() + "," + clear.lastMainGreen() + ","
                 + clear.lastMainBlue() + " foreign=" + clear.foreignClears() + "/" + clear.lastForeignRed() + ","
                 + clear.lastForeignGreen() + "," + clear.lastForeignBlue();
@@ -372,8 +378,7 @@ public final class GlsmFrontend implements FunctionProvider {
             return out.toString();
         }
     }
-    /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
-    private volatile boolean drawFramebufferIsMain = true;
+    /* Whether the draw binding is the main one is FramebufferBindings' record (E4-b1). */
 
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
     // GAP-ST-9 rewired: the immediate mode's current colour is GlsmImmediateState's.
@@ -1765,7 +1770,7 @@ public final class GlsmFrontend implements FunctionProvider {
             return;
         }
         if (isDepthAttachment(attachment)) {
-            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
+            FramebufferAttachmentTable.current().attachDepth(framebuffer, texture);
             // Registration point, as in the bound-form attach: the record is complete enough to register from.
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -1777,7 +1782,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
+        FramebufferAttachmentTable.current().attachColor(framebuffer, slot, texture);
         Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
@@ -2136,10 +2141,10 @@ public final class GlsmFrontend implements FunctionProvider {
         snapshot.scissorHeight = stub.raster.scissorHeight();
         snapshot.polygonOffsetFactor = stub.raster.polygonOffsetFactor();
         snapshot.polygonOffsetUnits = stub.raster.polygonOffsetUnits();
-        snapshot.viewportX = GlsmViewportState.current().x();
-        snapshot.viewportY = GlsmViewportState.current().y();
-        snapshot.viewportWidth = GlsmViewportState.current().width();
-        snapshot.viewportHeight = GlsmViewportState.current().height();
+        snapshot.viewportX = FramebufferViewportState.current().x();
+        snapshot.viewportY = FramebufferViewportState.current().y();
+        snapshot.viewportWidth = FramebufferViewportState.current().width();
+        snapshot.viewportHeight = FramebufferViewportState.current().height();
         snapshot.listBase = GlsmDisplayListLedger.current().listBase();
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
@@ -3477,23 +3482,23 @@ public final class GlsmFrontend implements FunctionProvider {
     public static void initializeWindowRectangles(int width, int height) {
         GlsmFrontend stub = installed;
         if (stub == null || width <= 0 || height <= 0) return;
-        GlsmViewportState.current().initialize(0, 0, width, height);
+        FramebufferViewportState.current().initialize(0, 0, width, height);
         stub.raster.initializeScissor(width, height);
     }
 
     /** {@return the last viewport rectangle packed into one long, or {@code -1} when the game never set one}. */
     public static long celtium$viewportPacked() {
-        return GlsmViewportState.current().packed();
+        return FramebufferViewportState.current().packed();
     }
 
     /**
      * Records the viewport selected through Minecraft's API or LWJGL3's native entry point.
-     * Both entries that can set it go through GlsmViewportState: the transformed native's route
+     * Both entries that can set it go through FramebufferViewportState: the transformed native's route
      * (this method, which the hint calls) and the stub's own dispatch table (SEM_VIEWPORT).
      */
     public static void celtium$viewport(int x, int y, int width, int height) {
         GlsmHintLedger.current().noteArrival("glViewport");
-        GlsmViewportState.current().set(x, y, width, height);
+        FramebufferViewportState.current().set(x, y, width, height);
     }
 
     /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
@@ -3757,7 +3762,7 @@ public final class GlsmFrontend implements FunctionProvider {
     public static void noteDrawFramebufferIsMain(boolean isMain) {
         GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.drawFramebufferIsMain = isMain;
+            FramebufferBindings.current().noteDrawIsMain(isMain);
         }
     }
 
@@ -3767,7 +3772,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return false;
         }
-        return GlsmClearState.current().hasPending() && GlsmClearState.current().pendingIsMain();
+        return FramebufferClearState.current().hasPending() && FramebufferClearState.current().pendingIsMain();
     }
 
     /**
@@ -3779,7 +3784,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return -1;
         }
-        return GlsmClearState.current().pendingDrawFbo();
+        return FramebufferClearState.current().pendingDrawFbo();
     }
 
     /**
@@ -3791,7 +3796,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     public static boolean hasPendingClears() {
         GlsmFrontend stub = installed;
-        return stub != null && GlsmClearState.current().hasPending();
+        return stub != null && FramebufferClearState.current().hasPending();
     }
 
     /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
@@ -4089,7 +4094,7 @@ public final class GlsmFrontend implements FunctionProvider {
             float green = org.lwjgl.system.MemoryUtil.memGetFloat(value + 4L);
             float blue = org.lwjgl.system.MemoryUtil.memGetFloat(value + 8L);
             float alpha = org.lwjgl.system.MemoryUtil.memGetFloat(value + 12L);
-            GlsmClearState clear = GlsmClearState.current();
+            FramebufferClearState clear = FramebufferClearState.current();
             float oldRed = clear.red(), oldGreen = clear.green(), oldBlue = clear.blue(), oldAlpha = clear.alpha();
             try {
                 clear.clearColor(red, green, blue, alpha);
@@ -4099,7 +4104,7 @@ public final class GlsmFrontend implements FunctionProvider {
             }
         } else if (buffer == 0x1801) { // GL_DEPTH
             double depth = org.lwjgl.system.MemoryUtil.memGetFloat(value);
-            GlsmClearState clear = GlsmClearState.current();
+            FramebufferClearState clear = FramebufferClearState.current();
             double old = clear.depth();
             try {
                 clear.clearDepth(depth);
@@ -4138,7 +4143,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
             return;
         }
-        GlsmClearState clear = GlsmClearState.current();
+        FramebufferClearState clear = FramebufferClearState.current();
         double old = clear.depth();
         try {
             clear.clearDepth(depth);
@@ -4239,36 +4244,25 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
-    /** {@return the game's current depth-write state}; assumed true when no backend is installed. */
-    private static boolean depthWritesEnabled() {
-        try {
-            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            return !(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)
-                    || vulkan.celtium$depthWritesLive();
-        } catch (RuntimeException | LinkageError error) {
-            return true;
-        }
-    }
-
     private void recordClear(int mask) {
         mask = celtium$effectiveClearMask(mask);
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
         // How often the game clears what it calls its main framebuffer, and with what colour, is the
-        // GlsmClearState census (GAP-ST-4): issue() latches the pending mask and snapshots per buffer.
-        if (this.drawFramebufferIsMain && CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
+        // FramebufferClearState census (GAP-ST-4): issue() latches the pending mask and snapshots per buffer.
+        if (FramebufferBindings.current().drawIsMain() && CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
             this.mainClearCallerLogs++;
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             StringBuilder callers = new StringBuilder(200);
             for (int i = 2; i < Math.min(stack.length, 11); i++) {
                 callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
             }
-            GlsmClearState clear = GlsmClearState.current();
+            FramebufferClearState clear = FramebufferClearState.current();
             System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
                     + " colour=(" + clear.red() + "," + clear.green() + "," + clear.blue() + ","
                     + clear.alpha() + ") callers=" + callers);
         }
-        GlsmClearState.current().issue(mask, this.drawFbo, this.drawFramebufferIsMain);
-        if (this.drawFramebufferIsMain) {
+        FramebufferClearState.current().issue(mask, FramebufferBindings.current().drawFramebuffer(), FramebufferBindings.current().drawIsMain());
+        if (FramebufferBindings.current().drawIsMain()) {
             // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
             // attached it to the last queued group of the frame image when the ordering flush was asked for
             // (VulkanTerrainGpuBackend.flushBeforeClear), and this consumes the pending mask so the latch and the
@@ -4291,7 +4285,7 @@ public final class GlsmFrontend implements FunctionProvider {
             try {
                 Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
                 if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                    vulkan.celtium$gameClear(mask, this.drawFbo);
+                    vulkan.celtium$gameClear(mask, FramebufferBindings.current().drawFramebuffer());
                 }
             } catch (RuntimeException | LinkageError ignored) {
                 // The pending mask stays set, so the next bind's latch still carries the clear as before.
@@ -4300,39 +4294,20 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     /**
-     * The mask a {@code glClear} actually erases, after the two write-mask rules GL applies to it.
-     * <p>
-     * GL's clear obeys the colour write mask: a pass that clears depth with every colour channel masked off - the
-     * fancy-cloud depth-only pass does exactly that through {@code GlStateManager.colorMask} - must not erase the
-     * image's colour. The latch, the pending mask and every replay read this value, so the masking belongs at this one
-     * choke point. A partial mask cannot be expressed by an attachment clear and still clears the colour.
-     * <p>
-     * The depth half is the same rule: {@code glClear} honours {@code glDepthMask}, and the game's depth writes are
-     * mirrored on the backend (a {@code GlStateManager.depthMask} hook), not here, so the answer comes from there at the
-     * moment the clear is issued. A pass that disabled depth writes and then cleared must not have the frame image's
-     * depth erased.
-     * <p>
-     * Extracted because two callers have to agree on it: {@link #recordClear} applies it, and the backend's
-     * {@code flushBeforeClear} asks it before it decides whether the queue can carry the clear - a reservation made
-     * with the raw mask would not match the mask the clear is recorded with, and the clear would then be applied
-     * twice.
+     * The mask a {@code glClear} actually erases: the choke point lives on the clear seat
+     * ({@link FramebufferClearState#effectiveClearMask(int)}) since E4-b1, so the entrance and
+     * the backend's {@code flushBeforeClear} keep agreeing on one implementation.
      */
     public static int celtium$effectiveClearMask(int mask) {
-        if (installed != null && installed.raster.colorMask() == 0) {
-            mask &= ~0x4000;
-        }
-        if (!depthWritesEnabled()) {
-            mask &= ~0x0100;
-        }
-        return mask;
+        return FramebufferClearState.effectiveClearMask(mask);
     }
 
     private void recordClearColor(float red, float green, float blue, float alpha) {
-        GlsmClearState.current().clearColor(red, green, blue, alpha);
+        FramebufferClearState.current().clearColor(red, green, blue, alpha);
     }
 
     private void recordClearDepth(double depth) {
-        GlsmClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
+        FramebufferClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
     }
 
     /**
@@ -4345,7 +4320,7 @@ public final class GlsmFrontend implements FunctionProvider {
     public static int consumePendingClears() {
         GlsmFrontend stub = installed;
         if (stub == null) return 0;
-        int consumed = GlsmClearState.current().consumePending();
+        int consumed = FramebufferClearState.current().consumePending();
         if (consumed != 0) FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.CLEAR_CONSUME);
         return consumed;
     }
@@ -4361,12 +4336,11 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     public static double mainClearValues(float[] out) {
         GlsmFrontend stub = installed;
-        if (stub == null || !GlsmClearState.current().mainValuesKnown()) {
+        if (stub == null) {
             clearColor(out);
             return Double.NaN;
         }
-        GlsmClearState.current().mainValues(out);
-        return GlsmClearState.current().lastMainDepth();
+        return FramebufferClearState.current().mainClearValues(out);
     }
 
     /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
@@ -4379,7 +4353,7 @@ public final class GlsmFrontend implements FunctionProvider {
             out[3] = 1.0f;
             return;
         }
-        GlsmClearState clear = GlsmClearState.current();
+        FramebufferClearState clear = FramebufferClearState.current();
         out[0] = clear.red();
         out[1] = clear.green();
         out[2] = clear.blue();
@@ -4389,7 +4363,7 @@ public final class GlsmFrontend implements FunctionProvider {
     /** The depth the game last asked {@code glClear} to use. */
     public static double clearDepth() {
         GlsmFrontend stub = installed;
-        return stub == null ? 1.0 : GlsmClearState.current().depth();
+        return stub == null ? 1.0 : FramebufferClearState.current().depth();
     }
 
     // ---- texture captures --------------------------------------------------
@@ -4433,6 +4407,8 @@ public final class GlsmFrontend implements FunctionProvider {
                 ? readableRangeProvider : ReadableMemoryRanges.defaultProvider();
         // A new entrance is a new GL context: the registry's capture store starts empty for it.
         VulkanTextureRegistry.captureStore().clear();
+        // The framebuffer bindings seat likewise starts from a fresh context's values.
+        FramebufferBindings.current().reset();
         // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
         // the GL "unbound" name a caller can legitimately store.
         this.textureBindings.defaultReturnValue(-1);
@@ -5076,7 +5052,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 pixelStore((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_VIEWPORT:
-                GlsmViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
+                FramebufferViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_FOG_I:
                 org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);
@@ -6059,7 +6035,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (name != 0) {
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                for (Integer fbo : GlsmFramebufferAttachments.current().framebuffersWithColorTexture(name)) {
+                for (Integer fbo : FramebufferAttachmentTable.current().framebuffersWithColorTexture(name)) {
                     vulkan.celtium$rawAttachmentTextureDeleted(fbo.intValue());
                 }
                 vulkan.celtium$rawTextureDeleted(name);
@@ -6273,13 +6249,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** GL_FRAMEBUFFER (0x8D40) binds both slots; GL_DRAW/READ_FRAMEBUFFER (0x8CA9/0x8CA8) bind one each. */
     private void bindFramebuffer(int target, int name) {
-        if (target == 0x8D40 || target == 0x8CA9) {
-            this.drawFbo = name;
-        }
-        if (target == 0x8D40 || target == 0x8CA8) {
-            this.readFbo = name;
-        }
-        this.framebufferBindSerial++;
+        FramebufferBindings.current().bind(target, name);
         FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.FBO_BIND);
         // The registration the renderer makes from a raw bind (identity, records, pair, shared-depth borrow)
         // is triggered here rather than in the hint's report: every raw bind lands in this record, including
@@ -6320,18 +6290,15 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
-    /** Bumped by every framebuffer bind, which is the only thing that can change a draw-framebuffer query. */
-    private long framebufferBindSerial;
-
     /**
-     * {@return how many framebuffer binds this stub has recorded}.
+     * {@return how many framebuffer binds the seat has recorded}, or -1 when no stub is installed.
      * <p>
      * A caller that has to know the bound draw framebuffer can cache its answer against this number instead of asking
      * GL per draw: the answer cannot change without a bind, and the bind is what bumps the serial.
      */
     public static long celtium$framebufferBindSerial() {
         GlsmFrontend stub = installed;
-        return stub == null ? -1L : stub.framebufferBindSerial;
+        return stub == null ? -1L : FramebufferBindings.current().bindSerial();
     }
 
     /**
@@ -6346,7 +6313,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * ({@code celtium$publishFramebufferColorTexture}).
      */
     // GAP-ST-3 rewired: the five attachment records (colour forward/reverse, per-slot colour,
-    // depth forward/reverse) are GlsmFramebufferAttachments'. The javadoc above is the record's
+    // depth forward/reverse) are FramebufferAttachmentTable'. The javadoc above is the record's
     // history; the resolution stays at celtium$publishFramebufferColorTexture as it says.
 
     /** Colour attachment slots a framebuffer record carries: the MRT ledger size (GL_MAX_COLOR_ATTACHMENTS). */
@@ -6447,22 +6414,18 @@ public final class GlsmFrontend implements FunctionProvider {
 
     private void forgetFramebuffer(int name) {
         if (name == 0) return;
-        int color = GlsmFramebufferAttachments.current().colorTexture(name);
+        int color = FramebufferAttachmentTable.current().colorTexture(name);
         Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
-        GlsmFramebufferAttachments.current().framebufferDeleted(name);
-        if (this.drawFbo == name) {
-            this.drawFbo = 0;
-            this.framebufferBindSerial++;
-        }
-        if (this.readFbo == name) this.readFbo = 0;
+        FramebufferAttachmentTable.current().framebufferDeleted(name);
+        FramebufferBindings.current().forgetName(name);
     }
 
     /** The attachment record {@code glFramebufferTexture2D} writes and the backend reads. */
     private void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
-        int framebuffer = target == 0x8CA8 ? this.readFbo : this.drawFbo;
+        int framebuffer = target == 0x8CA8 ? FramebufferBindings.current().readFramebuffer() : FramebufferBindings.current().drawFramebuffer();
         if (framebuffer == 0) {
             return;
         }
@@ -6482,12 +6445,12 @@ public final class GlsmFrontend implements FunctionProvider {
         // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
         // colour, but the backend keys its shared depth storage from the texture named here.
         if (isDepthAttachment(attachment)) {
-            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
+            FramebufferAttachmentTable.current().attachDepth(framebuffer, texture);
             if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
                 framebufferDepthAttachmentLogs++;
                 System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
                         + " depthTexture=" + texture
-                        + " depthAttachments=" + GlsmFramebufferAttachments.current().depthTextureCount());
+                        + " depthAttachments=" + FramebufferAttachmentTable.current().depthTextureCount());
             }
             // The depth attach completes most framebuffers' records (colour went on first), so it is a
             // registration point too: a framebuffer whose binds never reach the renderer's bind report still
@@ -6506,7 +6469,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
+        FramebufferAttachmentTable.current().attachColor(framebuffer, slot, texture);
         // After the record update, not before: the backend's registration reads the record this call just wrote
         // (it used to be notified first and so registered the previous attachment, or none).
         Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
@@ -6519,7 +6482,7 @@ public final class GlsmFrontend implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
                     + " colorTexture=" + texture
                     + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
-                    + " colorAttachments=" + GlsmFramebufferAttachments.current().colorTextureCount());
+                    + " colorAttachments=" + FramebufferAttachmentTable.current().colorTextureCount());
         }
     }
 
@@ -6544,13 +6507,13 @@ public final class GlsmFrontend implements FunctionProvider {
         /** {@return the draw framebuffer the stub last bound}, or -1 when no stub is installed. */
     public static int celtium$drawFramebuffer() {
         GlsmFrontend stub = installed;
-        return stub == null ? -1 : stub.drawFbo;
+        return stub == null ? -1 : FramebufferBindings.current().drawFramebuffer();
     }
 
     /** {@return the read framebuffer the stub last bound}, or -1 when no stub is installed. */
     public static int celtium$readFramebuffer() {
         GlsmFrontend stub = installed;
-        return stub == null ? -1 : stub.readFbo;
+        return stub == null ? -1 : FramebufferBindings.current().readFramebuffer();
     }
 
     /**
@@ -6562,7 +6525,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     public static boolean celtium$drawFramebufferIsMain() {
         GlsmFrontend stub = installed;
-        return stub == null || stub.drawFramebufferIsMain;
+        return stub == null || FramebufferBindings.current().drawIsMain();
     }
 
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
@@ -6571,7 +6534,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return GlsmFramebufferAttachments.current().colorTexture(glFramebufferName);
+        return FramebufferAttachmentTable.current().colorTexture(glFramebufferName);
     }
 
     /** {@return the depth texture of a raw framebuffer, or 0 when none was recorded}. */
@@ -6580,7 +6543,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return GlsmFramebufferAttachments.current().depthTexture(glFramebufferName);
+        return FramebufferAttachmentTable.current().depthTexture(glFramebufferName);
     }
 
     /** {@return the framebuffer a depth texture is attached to, or 0 when the texture is not a raw depth attachment}. */
@@ -6589,7 +6552,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        return GlsmFramebufferAttachments.current().framebufferForDepthTexture(glTextureName);
+        return FramebufferAttachmentTable.current().framebufferForDepthTexture(glTextureName);
     }
 
     /**
@@ -6603,7 +6566,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return out;
         }
-        GlsmFramebufferAttachments.current().colorAttachments(glFramebufferName, out);
+        FramebufferAttachmentTable.current().colorAttachments(glFramebufferName, out);
         return out;
     }
 
@@ -6613,13 +6576,13 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        return GlsmFramebufferAttachments.current().framebufferForColorTexture(glTextureName);
+        return FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureName);
     }
 
     /** {@return whether {@code framebuffer}'s recorded colour attachments name {@code glTextureName} at any slot}. */
     private static boolean celtium$framebufferAttachesColor(GlsmFrontend stub, int framebuffer,
             int glTextureName) {
-        return GlsmFramebufferAttachments.current().attachesColor(framebuffer, glTextureName);
+        return FramebufferAttachmentTable.current().attachesColor(framebuffer, glTextureName);
     }
 
     /**
@@ -7272,7 +7235,7 @@ public final class GlsmFrontend implements FunctionProvider {
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     ? vulkan.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
-                            this.readFbo)
+                            FramebufferBindings.current().readFramebuffer())
                     : "refused-no-vulkan-backend";
         } catch (RuntimeException | LinkageError error) {
             servedFrom = "refused-serve-failed: " + error;
@@ -7280,14 +7243,14 @@ public final class GlsmFrontend implements FunctionProvider {
         if ("served".equals(servedFrom)) {
             return;
         }
-        String key = name + "/" + target + "/" + width + "x" + height + "/readFbo=" + this.readFbo;
+        String key = name + "/" + target + "/" + width + "x" + height + "/readFbo=" + FramebufferBindings.current().readFramebuffer();
         if (TEXTURE_COPY_SHAPES.size() < 8 && TEXTURE_COPY_SHAPES.add(key)) {
             System.out.println("[Celtium] CELTIUM_TEX_COPY " + name
                     + " target=0x" + Integer.toHexString(target) + " level=" + level
                     + " dest=" + destName
                     + " destOffset=" + xoffset + "," + yoffset
                     + " source=" + x + "," + y + " " + width + "x" + height
-                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
                     + " servedFrom=" + servedFrom + " requests=" + this.textureCopyRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
@@ -7421,12 +7384,12 @@ public final class GlsmFrontend implements FunctionProvider {
         String key = bits + "/" + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
                 + "->" + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
                 + "/filter=0x" + Integer.toHexString(filter)
-                + "/readFbo=" + this.readFbo + "/drawFbo=" + this.drawFbo;
+                + "/readFbo=" + FramebufferBindings.current().readFramebuffer() + "/drawFbo=" + FramebufferBindings.current().drawFramebuffer();
         if (BLIT_UNSERVED_SHAPES.size() < 8 && BLIT_UNSERVED_SHAPES.add(key)) {
             System.out.println("[Celtium] CELTIUM_BLIT_UNSERVED glBlitFramebuffer bits=" + bits
                     + " source=" + srcX0 + "," + srcY0 + " " + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
                     + " dest=" + dstX0 + "," + dstY0 + " " + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
-                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
                     + " requests=" + this.blitUnservedRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
@@ -7451,13 +7414,13 @@ public final class GlsmFrontend implements FunctionProvider {
             return;
         }
         this.blitDepthRequests++;
-        int sourceTexture = GlsmFramebufferAttachments.current().depthTexture(this.readFbo);
-        int destTexture = GlsmFramebufferAttachments.current().depthTexture(this.drawFbo);
+        int sourceTexture = FramebufferAttachmentTable.current().depthTexture(FramebufferBindings.current().readFramebuffer());
+        int destTexture = FramebufferAttachmentTable.current().depthTexture(FramebufferBindings.current().drawFramebuffer());
         int width = srcX1 - srcX0;
         int height = srcY1 - srcY0;
         String servedFrom;
         if (sourceTexture == 0 || destTexture == 0) {
-            servedFrom = "refused-depth-unrecorded: readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+            servedFrom = "refused-depth-unrecorded: readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
                     + " sourceTexture=" + sourceTexture + " destTexture=" + destTexture;
         } else if (width <= 0 || height <= 0 || dstX1 - dstX0 != width || dstY1 - dstY0 != height
                 || filter != FILTER_NEAREST) {
@@ -7478,13 +7441,13 @@ public final class GlsmFrontend implements FunctionProvider {
                 servedFrom = "native-depth";
             }
         }
-        String key = width + "x" + height + "/readFbo=" + this.readFbo + "/drawFbo=" + this.drawFbo
+        String key = width + "x" + height + "/readFbo=" + FramebufferBindings.current().readFramebuffer() + "/drawFbo=" + FramebufferBindings.current().drawFramebuffer()
                 + "/" + servedFrom;
         if (BLIT_DEPTH_SHAPES.size() < 8 && BLIT_DEPTH_SHAPES.add(key)) {
             System.out.println("[Celtium] CELTIUM_BLIT_DEPTH glBlitFramebuffer"
                     + " source=" + srcX0 + "," + srcY0 + " " + width + "x" + height
                     + " dest=" + dstX0 + "," + dstY0
-                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
                     + " servedFrom=" + servedFrom + " requests=" + this.blitDepthRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
@@ -7541,7 +7504,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private void serveReadPixels(int x, int y, int width, int height, int format, int type, long address) {
         if (this.readPixelsEntries < 6) {
             this.readPixelsEntries++;
-            System.out.println("[Celtium] CELTIUM_READ_PIXELS_ENTRY readFbo=" + this.readFbo
+            System.out.println("[Celtium] CELTIUM_READ_PIXELS_ENTRY readFbo=" + FramebufferBindings.current().readFramebuffer()
                     + " rect=" + x + "," + y + " " + width + "x" + height
                     + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type));
         }
@@ -7557,10 +7520,10 @@ public final class GlsmFrontend implements FunctionProvider {
         try {
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                    && vulkan.celtium$readPixels(this.readFbo, x, y, width, height, format, type, address);
+                    && vulkan.celtium$readPixels(FramebufferBindings.current().readFramebuffer(), x, y, width, height, format, type, address);
             if (!served && readPixelsRefusals < 8) {
                 readPixelsRefusals++;
-                System.out.println("[Celtium] CELTIUM_READ_PIXELS refused readFbo=" + this.readFbo
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS refused readFbo=" + FramebufferBindings.current().readFramebuffer()
                         + " rect=" + x + "," + y + " " + width + "x" + height
                         + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type)
                         + " backend=" + (backend == null ? "none" : backend.getClass().getSimpleName()));
@@ -8140,7 +8103,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 reason = "no terrain backend is installed";
             }
             if (backend != null && reason == null) {
-                reason = celtium$projectionRefusal(backend, this.drawFbo);
+                reason = celtium$projectionRefusal(backend, FramebufferBindings.current().drawFramebuffer());
             }
             if (backend != null && reason == null) {
                 // The two conditions that used to refuse a draw here are gone, each because the capability it named
@@ -8288,13 +8251,13 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         String shortReason = reason == null ? "none"
                 : reason.substring(0, Math.min(48, reason.length()));
-        String key = this.drawFbo + "/" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height() + "/" + shortReason;
+        String key = FramebufferBindings.current().drawFramebuffer() + "/" + FramebufferViewportState.current().width() + "x" + FramebufferViewportState.current().height() + "/" + shortReason;
         if (!REFUSAL_CONTEXTS.add(key)) {
             return;
         }
-        System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + this.drawFbo
-                + " readFbo=" + this.readFbo
-                + " viewport=" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height()
+        System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                + " readFbo=" + FramebufferBindings.current().readFramebuffer()
+                + " viewport=" + FramebufferViewportState.current().width() + "x" + FramebufferViewportState.current().height()
                 + " stride=" + VERTEX_POINTER.stride
                 + " otherArrays=" + celtium$otherArrayNames()
                 + " reason=" + shortReason
@@ -9339,13 +9302,13 @@ public final class GlsmFrontend implements FunctionProvider {
             // its texture: a mod that created a framebuffer and asks whether it is complete otherwise reads "no
             // attachment" for an attachment this renderer is drawing into.
             boolean named = fn.name.startsWith("glGetNamed");
-            int framebuffer = named ? (int) c[0] : ((int) c[0] == 0x8CA8 ? this.readFbo : this.drawFbo);
+            int framebuffer = named ? (int) c[0] : ((int) c[0] == 0x8CA8 ? FramebufferBindings.current().readFramebuffer() : FramebufferBindings.current().drawFramebuffer());
             int attachment = (int) c[1];
             int paramPname = (int) c[2];
             int slot = colorAttachmentSlot(attachment);
             int colorTexture = 0;
             if (framebuffer != 0 && slot >= 0) {
-                colorTexture = GlsmFramebufferAttachments.current().colorSlot(framebuffer, slot);
+                colorTexture = FramebufferAttachmentTable.current().colorSlot(framebuffer, slot);
             }
             boolean colorAttached = colorTexture != 0;
             int value;

@@ -1,5 +1,11 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.FramebufferViewportState;
+
+import org.soutalab.celtium.vulkan.FramebufferClearState;
+
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,10 +31,10 @@ public final class GlsmVoidNoopRoutes {
     public enum Route {
         RASTER,     // NativeRasterState / its stage-3 extensions
         ENABLE,     // GlsmEnableState
-        BINDING,    // GlsmBufferState / NativeTextureBindings / GlsmFramebufferAttachments
-        CLEAR,      // GlsmClearState
+        BINDING,    // GlsmBufferState / NativeTextureBindings / FramebufferAttachmentTable
+        CLEAR,      // FramebufferClearState
         IMMEDIATE,  // GlsmImmediateState
-        VIEWPORT    // GlsmViewportState
+        VIEWPORT    // FramebufferViewportState
     }
 
     private static final Map<String, Route> ROUTES;

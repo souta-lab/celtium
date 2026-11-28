@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * GLSM stage 3, GAP-ST-5 (stage-2 design S2-3): the single owner of the viewport's three
@@ -10,10 +10,10 @@ package org.soutalab.celtium.vulkan.gl;
  * {@code GlsmFrontend.celtium$viewportPacked()}. The backend's currentViewportKey becomes a
  * dependent of {@link #version()} at merge time.
  */
-public final class GlsmViewportState {
-    private static final GlsmViewportState CURRENT = new GlsmViewportState();
+public final class FramebufferViewportState {
+    private static final FramebufferViewportState CURRENT = new FramebufferViewportState();
 
-    public static GlsmViewportState current() { return CURRENT; }
+    public static FramebufferViewportState current() { return CURRENT; }
 
     private int x, y;
     private int width = 1280, height = 720;
@@ -21,7 +21,7 @@ public final class GlsmViewportState {
     private boolean seen;
     private long version;
 
-    private GlsmViewportState() {
+    private FramebufferViewportState() {
     }
 
     public void set(int x, int y, int width, int height) {

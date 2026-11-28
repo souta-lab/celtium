@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -14,13 +14,13 @@ import java.util.Map;
  * texture was re-attached to a second framebuffer, because two call sites updated them;
  * here {@link #attachColor} is the only writer of both.
  */
-public final class GlsmFramebufferAttachments {
+public final class FramebufferAttachmentTable {
     /** Colour attachment slots per framebuffer record (GL_MAX_COLOR_ATTACHMENTS). */
     public static final int COLOR_SLOTS = 8;
 
-    private static final GlsmFramebufferAttachments CURRENT = new GlsmFramebufferAttachments();
+    private static final FramebufferAttachmentTable CURRENT = new FramebufferAttachmentTable();
 
-    public static GlsmFramebufferAttachments current() { return CURRENT; }
+    public static FramebufferAttachmentTable current() { return CURRENT; }
 
     private final Map<Integer, Integer> colorTextureByFbo = new HashMap<Integer, Integer>();
     private final Map<Integer, Integer> fboByColorTexture = new HashMap<Integer, Integer>();
@@ -29,7 +29,7 @@ public final class GlsmFramebufferAttachments {
     private final Map<Integer, Integer> fboByDepthTexture = new HashMap<Integer, Integer>();
     private long version;
 
-    private GlsmFramebufferAttachments() {
+    private FramebufferAttachmentTable() {
     }
 
     public void attachColor(int framebuffer, int slot, int texture) {
