@@ -121,8 +121,19 @@ public final class WorldSectionSnapshot {
      * once at the end of a fill, over the raw arrays.
      */
     public void applyRenderLightRule() {
-        byte[] rawSky = skyLight.clone();
-        byte[] rawBlock = blockLight.clone();
+        applyRenderLightRule(new byte[VOLUME], new byte[VOLUME]);
+    }
+
+    /**
+     * The render-light rule over caller-provided scratch: the two arrays receive a copy of
+     * the raw light before the in-place maximum pass, so a caller that applies the rule
+     * repeatedly (the build scheduler, once per build on a worker) passes thread-local
+     * scratch instead of cloning both arrays per section. The scratch arrays must hold at
+     * least {@link #VOLUME} bytes; their previous contents are irrelevant.
+     */
+    public void applyRenderLightRule(byte[] scratchSky, byte[] scratchBlock) {
+        System.arraycopy(skyLight, 0, scratchSky, 0, VOLUME);
+        System.arraycopy(blockLight, 0, scratchBlock, 0, VOLUME);
         for (int y = 0; y < SIZE; y++) {
             for (int z = 0; z < SIZE; z++) {
                 for (int x = 0; x < SIZE; x++) {
@@ -140,11 +151,11 @@ public final class WorldSectionSnapshot {
                             continue;
                         }
                         int nIdx = idx + offset(dir);
-                        int sky = rawSky[nIdx] & 0xFF;
+                        int sky = scratchSky[nIdx] & 0xFF;
                         if (sky > maxSky) {
                             maxSky = sky;
                         }
-                        int block = rawBlock[nIdx] & 0xFF;
+                        int block = scratchBlock[nIdx] & 0xFF;
                         if (block > maxBlock) {
                             maxBlock = block;
                         }

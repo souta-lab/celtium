@@ -36,6 +36,13 @@ public final class ForgeSectionScanner {
         net.minecraft.world.World realWorld = world instanceof net.minecraft.world.World w ? w : null;
         net.minecraft.world.chunk.storage.ExtendedBlockStorage[][][] storages =
                 new net.minecraft.world.chunk.storage.ExtendedBlockStorage[3][3][3];
+        // The storages' raw light bytes, in the same [cx][cz][sy] shape: the cell loop reads
+        // light straight from these instead of two Chunk.getLightFor calls per cell (11,664
+        // virtual calls per section). A null entry means "no array": for block light that
+        // cannot happen on a live storage, and for sky light it is exactly the dimensions
+        // whose provider has no sky light - the case getLightFor answers 0 for.
+        byte[][][] skyLightData = new byte[3][3][3][];
+        byte[][][] blockLightData = new byte[3][3][3][];
         Chunk[][] chunks = new Chunk[3][3];
         if (realWorld != null) {
             for (int cx = 0; cx < 3; cx++) {
@@ -50,7 +57,15 @@ public final class ForgeSectionScanner {
                     for (int sy = 0; sy < 3; sy++) {
                         int sectionIndex = sectionY + sy - 1;
                         if (sectionIndex >= 0 && sectionIndex < sections.length) {
-                            storages[cx][cz][sy] = sections[sectionIndex];
+                            net.minecraft.world.chunk.storage.ExtendedBlockStorage storage =
+                                    sections[sectionIndex];
+                            storages[cx][cz][sy] = storage;
+                            if (storage != null) {
+                                net.minecraft.world.chunk.NibbleArray sky = storage.getSkyLight();
+                                skyLightData[cx][cz][sy] = sky == null ? null : sky.getData();
+                                net.minecraft.world.chunk.NibbleArray block = storage.getBlockLight();
+                                blockLightData[cx][cz][sy] = block == null ? null : block.getData();
+                            }
                         }
                     }
                 }
@@ -93,14 +108,15 @@ public final class ForgeSectionScanner {
                     }
                     IBlockState state = storage.get(lx, ly, lz);
                     int id = Block.BLOCK_STATE_IDS.get(state);
-                    // The chunk's own light read: the same rule World.getCombinedLight
-                    // delegates to, without the per-cell chunk-map lookup.
-                    pos.setPos(wx, wy, wz);
-                    Chunk chunk = chunks[cx][cz];
-                    int blockLight = chunk == null ? 0
-                            : chunk.getLightFor(net.minecraft.world.EnumSkyBlock.BLOCK, pos);
-                    int skyLight = chunk == null ? 15
-                            : chunk.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, pos);
+                    // The chunk's own light read, from the storage's raw NibbleArray bytes:
+                    // Chunk.getLightFor's storage-present branches are exactly these reads -
+                    // BLOCK is the block array's nibble, SKY is 0 when the sky array is null
+                    // (a provider without sky light) and its nibble otherwise (verified
+                    // against the decompiled Chunk / ExtendedBlockStorage / NibbleArray).
+                    byte[] blockData = blockLightData[cx][cz][sy];
+                    int blockLight = blockData == null ? 0 : lightNibble(blockData, lx, ly, lz);
+                    byte[] skyData = skyLightData[cx][cz][sy];
+                    int skyLight = skyData == null ? 0 : lightNibble(skyData, lx, ly, lz);
                     int tint = WorldSectionSnapshot.NO_TINT;
                     if (table.stateUsesTint(id)) {
                         pos.setPos(wx, wy, wz);
@@ -111,11 +127,13 @@ public final class ForgeSectionScanner {
                 }
             }
         }
-        // The snapshot's light is render light (what World.getCombinedLight returns per
-        // cell), not the raw stored values: states that use neighbour brightness take
-        // the maximum over their neighbours. The old scanner read getCombinedLight per
-        // cell; this pass computes the same values from the raw arrays just captured.
-        snapshot.applyRenderLightRule();
+        // The snapshot's light must become render light (what World.getCombinedLight
+        // returns per cell), not the raw stored values: states that use neighbour
+        // brightness take the maximum over their neighbours. That pass is pure
+        // snapshot-array work, so it no longer runs here on the render thread - the
+        // build worker applies it at the head of TerrainBuildScheduler.build
+        // (S2-b-perf CPU-3). The fluid pass below does not touch the light arrays,
+        // so moving the rule past it changes nothing.
         if (fluids != null && fluids.present() && world instanceof net.minecraft.world.World realWorld2) {
             Chunk chunk = realWorld2.getChunk(sectionX, sectionZ);
             int[] sectionFluids = fluids.sectionFluids(chunk, sectionY);
@@ -133,6 +151,19 @@ public final class ForgeSectionScanner {
                 }
             }
         }
+    }
+
+    /**
+     * One cell's light value from a {@code NibbleArray}'s raw bytes, in the array's own
+     * arithmetic (decompiled {@code NibbleArray.get}): the coordinate index is
+     * {@code y << 8 | z << 4 | x}, an even index is the byte's low nibble, an odd index the
+     * high nibble. Package-private so the equivalence with {@code NibbleArray.get} is
+     * unit-testable without a world.
+     */
+    static int lightNibble(byte[] data, int x, int y, int z) {
+        int index = (y << 8) | (z << 4) | x;
+        int b = data[index >> 1];
+        return (index & 1) == 0 ? b & 15 : (b >> 4) & 15;
     }
 
     private static int resolveTint(IBlockAccess world, BlockPos pos, IBlockState state) {

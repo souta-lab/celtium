@@ -20,6 +20,14 @@ import java.util.function.Supplier;
  * pool is warm a build allocates nothing. The caller fills the snapshot (on whichever thread
  * owns the world read) and hands it over; the caller must not touch the snapshot until the
  * future completes.
+ * <p>
+ * Snapshots circulate through a pool of their own ({@link #acquireSnapshot} /
+ * {@link #releaseSnapshot}): one snapshot is ~87.5 KB of arrays, and the driver used to
+ * allocate a fresh one per build on the render thread. The caller returns a snapshot by
+ * registering the release on the build future's completion, which fires on success, failure
+ * and cancellation alike. The render-light rule also runs here, at the head of each build:
+ * it is pure snapshot-array work, so it belongs on the worker, not in the render thread's
+ * fill (S2-b-perf CPU-3, discharging D-V040-5).
  */
 public final class TerrainBuildScheduler implements AutoCloseable {
     private final ExecutorService meshPool;
@@ -27,6 +35,10 @@ public final class TerrainBuildScheduler implements AutoCloseable {
     private final ThreadLocal<SectionMesher> meshers = ThreadLocal.withInitial(SectionMesher::new);
     private final java.util.concurrent.ConcurrentLinkedQueue<MeshBuffers> bufferPool =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.ConcurrentLinkedQueue<WorldSectionSnapshot> snapshotPool =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final ThreadLocal<byte[][]> lightRuleScratch = ThreadLocal.withInitial(() ->
+            new byte[][]{new byte[WorldSectionSnapshot.VOLUME], new byte[WorldSectionSnapshot.VOLUME]});
     private final int meshThreads;
 
     public TerrainBuildScheduler() {
@@ -63,9 +75,26 @@ public final class TerrainBuildScheduler implements AutoCloseable {
     }
 
     /**
+     * Checks a snapshot out of the pool (allocating only while the pool is cold). The caller
+     * fills it and hands it to {@link #build}; see the class doc for how it comes back.
+     */
+    public WorldSectionSnapshot acquireSnapshot() {
+        WorldSectionSnapshot snapshot = snapshotPool.poll();
+        return snapshot != null ? snapshot : new WorldSectionSnapshot();
+    }
+
+    /** Returns a snapshot to the pool. Its arrays are fully overwritten by the next fill. */
+    public void releaseSnapshot(WorldSectionSnapshot snapshot) {
+        if (snapshot != null) {
+            snapshotPool.offer(snapshot);
+        }
+    }
+
+    /**
      * Meshes one filled snapshot on the platform pool. The future's {@link MeshBuffers} are
      * checked out of the pool: the consumer copies the geometry out (the store does, on the
-     * render thread) and returns them through {@link #releaseBuffers}.
+     * render thread) and returns them through {@link #releaseBuffers}. The snapshot's
+     * render-light rule is applied first, on the worker, over thread-local scratch.
      */
     public CompletableFuture<MeshBuffers> build(WorldSectionSnapshot snapshot, BlockFaceData data,
                                                 MesherOptions options) {
@@ -74,6 +103,8 @@ public final class TerrainBuildScheduler implements AutoCloseable {
             if (out == null) {
                 out = new MeshBuffers();
             }
+            byte[][] scratch = lightRuleScratch.get();
+            snapshot.applyRenderLightRule(scratch[0], scratch[1]);
             meshers.get().mesh(snapshot, data, options, out);
             return out;
         }, meshPool);
