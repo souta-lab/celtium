@@ -117,7 +117,7 @@ public final class VulkanColorBlendState {
 
     /**
      * Content equality over all eight fields. This is load-bearing, not housekeeping: the pack terrain
-     * pipeline key ({@code VulkanTerrainGpuBackend}) carries {@code colorBlend.hashCode()}, and with the
+     * pipeline key ({@code Lane2ImmediateRecorder}) carries {@code colorBlend.hashCode()}, and with the
      * identity hash the blend-disabled shape - which that site builds fresh via {@link #of} on every
      * execution - produced a new key every time, so the pipeline cache missed on every opaque pass
      * execution and re-created the pipeline (measured by the bsl-wedge-7 census: created on every sampled

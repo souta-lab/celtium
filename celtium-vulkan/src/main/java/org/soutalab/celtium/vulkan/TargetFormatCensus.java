@@ -10,7 +10,7 @@ import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
  * disagree - counted, never silently dropped (QUEUE 394's standing rule for this work).
  * <p>
  * Item 404 wired the resolution itself ({@link VulkanColorFormat}, the junction in
- * {@code VulkanTerrainGpuBackend.celtium$registerRawFramebuffer}) and deliberately left the counting here:
+ * {@code Lane2ImmediateRecorder.celtium$registerRawFramebuffer}) and deliberately left the counting here:
  * its {@code forRequest} collapses every refusal - an unrecorded texture, an unmapped format, a depth
  * format - onto {@code RGBA8_UNORM}, which is the right allocation and the wrong record. This class is the
  * record. It is observation only: nothing here feeds back into the chosen class, the pair, the pass or the

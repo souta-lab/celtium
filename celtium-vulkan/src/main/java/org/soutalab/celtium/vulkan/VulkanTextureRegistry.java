@@ -907,7 +907,7 @@ public final class VulkanTextureRegistry {
      * the owner's publish arrived, whether the shared layout handshake is bound to its submissions, and which mip
      * levels the animated patches reached.
      * <p>
-     * Instance rather than static on purpose: {@code VulkanTerrainGpuBackend.verificationSummary()} calls this through
+     * Instance rather than static on purpose: {@code VulkanBackendAdapter.verificationSummary()} calls this through
      * a registry reference, and the fixture's report is the one place the layout ledger ({@code unbound=0} with a
      * non-zero {@code abandons}, the N05 acceptance) and the per-level patch census ({@code reachUnwritten=0}, the
      * N07 acceptance) can be read. The two facts it adds live in {@link VulkanGlTexture} and are process-wide, but

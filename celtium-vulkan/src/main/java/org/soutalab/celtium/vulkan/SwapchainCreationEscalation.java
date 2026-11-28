@@ -4,7 +4,7 @@ package org.soutalab.celtium.vulkan;
  * The swapchain creation escalation: how many creations in a row the platform has refused, and whether
  * that run has earned the crash the window-renderer path already has.
  * <p>
- * {@code VulkanTerrainGpuBackend.ensureSwapchain()} creates the swapchain lazily at the first present and
+ * {@code PresentSwapchain.ensureSwapchain()} creates the swapchain lazily at the first present and
  * refuses fail-closed with its reasons when creation is refused - but the present path only counted the
  * skip and returned, and nothing anywhere consumed a failure count, so a surface that refuses forever (no
  * WSI extension, a permanently failing {@code SDL_Vulkan_CreateSurface}, a non-presenting queue family, a

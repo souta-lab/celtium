@@ -30,7 +30,7 @@ import java.util.List;
  * The discipline is the one flight-c4 designed and {@code pendingFlushEntryKind} already
  * follows: an entrance stamps the pending cause, the stamp is spent by the window it
  * leads to and cannot leak onto a later, unrelated window. Here the stamp lives in
- * {@link VulkanTerrainGpuBackend} beside the entry kind, is scoped by save/restore
+ * {@link Lane2ImmediateRecorder} beside the entry kind, is scoped by save/restore
  * around the entrance's flush call (the {@code celtium$bindFromRawRegister} pattern),
  * and is read at the one point a window is confirmed - {@code flushImmediateWindow}
  * setting {@code immediateWindowBusy} - so busy, empty and target-less early returns

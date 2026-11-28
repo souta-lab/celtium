@@ -182,7 +182,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     /**
      * The clear the game issued while <em>its own main framebuffer</em> was bound, latched by
-     * {@code VulkanTerrainGpuBackend.bindFramebuffer} at the binding change that ends it.
+     * {@code Lane2ImmediateRecorder.bindFramebuffer} at the binding change that ends it.
      * <p>
      * The game clears three different framebuffers and only one of them is this image: its own main framebuffer is
      * the delivered frame, the entity-outline framebuffer is {@link #chainPairs} and the default framebuffer is
@@ -1956,7 +1956,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * one ensure that sets a pair's class, and a pair's class is written in exactly one of two places: the
      * registration junction, which resolves a raw pair's class from its GL request, and the off-target
      * window path, which passes the resolved class for pairs no junction resolves (a ShaderGroup group
-     * pair has no GL request; see {@code VulkanTerrainGpuBackend.celtium$pairClassForWindow}). Every
+     * pair has no GL request; see {@code Lane2ImmediateRecorder.celtium$pairClassForWindow}). Every
      * consumer only follows the pair's recorded class and never re-reads a request (rule R5).
      */
     public void ensureChainPair(long identity, int width, int height, TargetFormatClass formatClass) {
@@ -2830,7 +2830,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * census used to print only the second: the game's main framebuffer identity is a non-zero
      * {@code System.identityHashCode}, so a bind census line read {@code main=true pair=chain-pair}, which conflates
      * "this is the delivered image" with "these draws go to the outline pair". The routing itself never had that
-     * ambiguity - {@code VulkanTerrainGpuBackend} keys it on the main flag, {@code offTarget = !currentRenderTargetIsMain}
+     * ambiguity - {@code Lane2ImmediateRecorder} keys it on the main flag, {@code offTarget = !currentRenderTargetIsMain}
      * - so this is the label that was wrong, and this method is the one place the two questions are separated:
      * the main framebuffer renders into the frame image, identity 0 into {@link #defaultPair} and every other
      * non-main identity into {@link #chainPairs}.

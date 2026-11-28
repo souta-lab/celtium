@@ -10,7 +10,7 @@ import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
  * model replays in 112 frames and the enqueue path took 781 ms for them, about 311 ns a replay. Two of the things a
  * replay builds depend on values that did not change between most consecutive replays:
  * <ul>
- *   <li>the lit payload ({@code VulkanTerrainGpuBackend.celtium$lightParams}) is the inverse of the modelview's upper
+ *   <li>the lit payload ({@code GroupLighting.celtium$lightParams}) is the inverse of the modelview's upper
  *       3x3 times the two light directions, two normalisations and the ambient/diffuse copy - a 3x3 inverse and two
  *       square roots per replay. It reads only {@code modelView[0..10]} (the rotation; the translation at 12..14 is
  *       never read), {@code state[8]} and the light state, whose {@link Lane2ImmediateState#lightGeneration()} moves on every
@@ -33,7 +33,7 @@ final class ModelReplayInputCache {
     /**
      * {@return whether two modelviews carry the same nine rotation floats the lit payload reads}.
      * <p>
-     * The single owner of that list: {@code VulkanTerrainGpuBackend.celtium$lightParams} reads the payload from a
+     * The single owner of that list: {@code GroupLighting.celtium$lightParams} reads the payload from a
      * {@link #copyRotation} of the modelview, and {@link #reuseLightPayload} asks this comparison, so the cache's key
      * and the function's inputs cannot drift. It is deliberately <em>not</em> the model replay's hit test: that
      * compares the payload's twenty bytes, because the payload is invariant under a change of modelview (the inverse

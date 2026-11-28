@@ -9,7 +9,7 @@ import java.util.List;
  * R3a: one owner for the compiled model geometry - the display-list meshes, their compile generation, the lending rule
  * and the two teardown paths.
  * <p>
- * What moved here from {@code VulkanTerrainGpuBackend}: the {@code modelMeshes} table and the builder that fills it
+ * What moved here from the former backend monolith: the {@code modelMeshes} table and the builder that fills it
  * ({@code celtium$buildModelMeshes}, around line 10630), the missing-mesh counter and its bounded log, the contract
  * failures and the build summary, the world-teardown and full-teardown release loops (around lines 9091 and 9169), and
  * the borrow the draw path performs when it looks a list's mesh up (around line 10976).
@@ -171,7 +171,7 @@ public final class ModelGeometryCache {
      * Builds or refreshes the table from the captured display lists, reusing every mesh whose list has not moved
      * generation and retiring the ones that have.
      * <p>
-     * Moved verbatim from {@code VulkanTerrainGpuBackend.celtium$buildModelMeshes}; the only change is that the
+     * Moved verbatim from the former monolith's {@code celtium$buildModelMeshes}; the only change is that the
      * context arrives as an argument instead of a field, and the summary line goes through {@link #reportBuild}.
      *
      * @return whether the table was replaced (a failed build leaves the previous table in place)

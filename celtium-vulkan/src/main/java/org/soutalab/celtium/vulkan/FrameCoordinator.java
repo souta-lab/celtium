@@ -1063,7 +1063,7 @@ public void setLastFrameReachedQueue(boolean reached) {
             // window-flush catch it was first read as.
             String site = "unknown";
             for (StackTraceElement frame : stack) {
-                if (frame.getClassName().startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")) {
+                if (isSeatClass(frame.getClassName())) {
                     if (site.equals("unknown") && !"noteStalled".equals(frame.getMethodName())) {
                         site = frame.getMethodName() + ':' + frame.getLineNumber();
                     }
@@ -2512,8 +2512,8 @@ public void setLastFrameReachedQueue(boolean reached) {
             }
             org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
                     .sType$Default().allocationSize(requirements.size()).memoryTypeIndex(type);
-            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTerrainGpuBackend:5047")) {
-                throw new IllegalStateException("injected allocation failure: VulkanTerrainGpuBackend:5047");
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("FrameCoordinator:readbackStaging")) {
+                throw new IllegalStateException("injected allocation failure: FrameCoordinator:readbackStaging");
             }
             check(VulkanContext.allocateMemory(this.context.device(), allocate, handle, "readbackStaging"), "vkAllocateMemory(readback)");
             this.readbackMemory = handle.get(0);
@@ -2598,5 +2598,13 @@ public void setLastFrameReachedQueue(boolean reached) {
         // timestamp-less device would report a silent instrument, which reads as "nothing was drawn".
         readPipelineStatistics();
         updateTimingsBody();
+    }
+
+    /** Whether a stack-frame class is one of the three seats the monolith split into (E7): the
+     *  stack-walk filters that used to skip the monolith's own frames skip all three seats now. */
+    static boolean isSeatClass(String className) {
+        return className.startsWith("org.soutalab.celtium.vulkan.Lane2ImmediateRecorder")
+                || className.startsWith("org.soutalab.celtium.vulkan.FrameCoordinator")
+                || className.startsWith("org.soutalab.celtium.vulkan.VulkanBackendAdapter");
     }
 }

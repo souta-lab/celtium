@@ -5,7 +5,7 @@ import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
 
 /**
  * Snapshot/restore bracket for one pack terrain execution
- * ({@link VulkanTerrainGpuBackend#celtium$tryRenderPackTerrainPass}).
+ * (driven by {@link Lane2ImmediateRecorder} pack terrain recording).
  * <p>
  * The guest shader interface's {@code setupState} writes execution state into the shared mirror (cull, the depth
  * trio, blend, the alpha test, the bound framebuffer, the viewport) and its {@code restoreState} is under no
@@ -86,7 +86,7 @@ final class PackStageStateGuard {
     /**
      * The backend's depth/alpha setters, abstracted so the bracket can be exercised without a device: a real
      * change through one of these fires the same font-draw state boundary the guest's own restores fire when
-     * they arrive through the stub. {@link VulkanTerrainGpuBackend} implements this with its existing setters.
+     * they arrive through the stub. {@link VulkanBackendAdapter} implements this with its existing setters.
      */
     interface DepthAlphaSink {
         void setDepthTest(boolean enabled);

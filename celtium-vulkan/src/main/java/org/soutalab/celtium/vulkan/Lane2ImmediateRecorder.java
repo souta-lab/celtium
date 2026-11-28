@@ -12098,7 +12098,7 @@ this.frame.frameBufferOpen = false;
         String reason = "unknown";
         for (StackTraceElement frame : trace) {
             String type = frame.getClassName();
-            if (type.startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")
+            if (FrameCoordinator.isSeatClass(type)
                     || type.startsWith("java.")) {
                 // The census call itself lives in this class, and getStackTrace is java.lang.Thread.
                 continue;
@@ -19208,7 +19208,7 @@ this.frame.frameBufferOpen = false;
         StackTraceElement[] frames = Thread.currentThread().getStackTrace();
         for (int i = 2; i < frames.length; i++) {
             String name = frames[i].getClassName();
-            if (name.startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")
+            if (FrameCoordinator.isSeatClass(name)
                     || name.startsWith("java.lang.Thread")) {
                 continue;
             }

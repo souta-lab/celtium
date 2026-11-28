@@ -4,7 +4,7 @@ package org.soutalab.celtium.vulkan;
  * The root the renderer is reached through (refactoring plan R7).
  * <p>
  * Everything the game and the terrain factory need is declared here, so the factory can ask a
- * {@code VulkanRenderer} instead of testing for {@link VulkanTerrainGpuBackend} and reaching into the
+ * {@code VulkanRenderer} instead of testing for {@link VulkanBackendAdapter} and reaching into the
  * class. It extends {@link CeltiumBackend} because that is the contract the game already holds; what
  * this adds is the window-time surface - whether this instance is the one the window created, and the
  * adoption that hands a world to it - plus the lifecycle the factory calls. The lifetime split itself

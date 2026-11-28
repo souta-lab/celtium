@@ -9,7 +9,7 @@ import java.nio.LongBuffer;
 /**
  * The texture-copy path: {@code glCopyTexImage2D}/{@code glCopyTexSubImage2D} served from an image this renderer owns.
  * <p>
- * Extracted from {@code VulkanTerrainGpuBackend} (task-63) so this file can be owned on its own. The backend keeps
+ * Extracted from the former backend monolith (task-63) so this file can be owned on its own. The backend keeps
  * thin delegates with the same signatures, which is what lets every caller - the GL-less stub above all - stay
  * unchanged, and everything this service needs from the backend arrives through {@link Host}. The host surface is
  * deliberately read-only plus four operations: the pending-group flush, the idle wait, the diagnostics sink and the
