@@ -2829,7 +2829,7 @@ public final class CeltiumGllessHint {
      */
     public static int glGetTexLevelParameteri(int target, int level, int pname) {
         int measured = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texLevelSize(target, level, pname);
-        return org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
+        return org.soutalab.celtium.vulkan.TextureLevelAnswer.withFallback(measured, pname);
     }
     /**
      * Answers {@code glGetTexLevelParameteriv} for the two queries a caller divides by.
@@ -2848,7 +2848,7 @@ public final class CeltiumGllessHint {
      */
     public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
         int measured = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texLevelSize(target, level, pname);
-        int value = org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
+        int value = org.soutalab.celtium.vulkan.TextureLevelAnswer.withFallback(measured, pname);
         if (params == 0L) {
             return;
         }
