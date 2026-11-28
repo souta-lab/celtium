@@ -1,4 +1,5 @@
 package org.soutalab.celtium.vulkan.gl;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.Test;
@@ -13,10 +14,7 @@ class FramebufferColorAttachmentTest {
     installed.setAccessible(true);
     var forget = GlsmFrontend.class.getDeclaredMethod("forgetFramebuffer", int.class);
     forget.setAccessible(true);
-    var draw = GlsmFrontend.class.getDeclaredField("drawFbo");
-    var read = GlsmFrontend.class.getDeclaredField("readFbo");
-    draw.setAccessible(true);
-    read.setAccessible(true);
+    // The bindings themselves are the HAL seat's since E4-b1; the constructor above reset them.
     Object previous = installed.get(null);
     Object stub = ctor.newInstance();
     installed.set(null, stub);
@@ -25,8 +23,8 @@ class FramebufferColorAttachmentTest {
       GlsmFrontend.celtium$bindFramebuffer(0x8CA8, 20);
       long before = GlsmFrontend.celtium$framebufferBindSerial();
       forget.invoke(stub, 10);
-      assertEquals(0, draw.getInt(stub));
-      assertEquals(20, read.getInt(stub));
+      assertEquals(0, FramebufferBindings.current().drawFramebuffer());
+      assertEquals(20, FramebufferBindings.current().readFramebuffer());
       assertNotEquals(before, GlsmFrontend.celtium$framebufferBindSerial());
       long afterDrawDeletion = GlsmFrontend.celtium$framebufferBindSerial();
       forget.invoke(stub, 0);
