@@ -707,8 +707,19 @@ public final class VulkanTextureRegistry {
      */
     public VulkanGlTexture publishExternalDepthImage(int glTextureId, long image, long view, int width, int height,
             int declaredLayout) {
+        return publishExternalDepthImage(glTextureId, image, view, width, height, declaredLayout, 0);
+    }
+
+    VulkanGlTexture publishDirectGlDepthAttachment(int glTextureId, long image, long view,
+            int width, int height, int aspects) {
+        return publishExternalDepthImage(glTextureId, image, view, width, height,
+                org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED, aspects);
+    }
+
+    private VulkanGlTexture publishExternalDepthImage(int glTextureId, long image, long view, int width, int height,
+            int declaredLayout, int directGlAspects) {
         if (glTextureId == 0 || image == 0L || view == 0L || width <= 0 || height <= 0
-                || declaredLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
+                || (directGlAspects == 0 && declaredLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)) {
             this.failureCount++;
             this.lastFailure = "an external depth image for GL texture " + glTextureId + " (image=0x"
                     + Long.toHexString(image) + " view=0x" + Long.toHexString(view) + " " + width + "x" + height
@@ -755,13 +766,16 @@ public final class VulkanTextureRegistry {
                 || minFilter == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
         VulkanGlTexture shared;
         try {
-            shared = VulkanGlTexture.shareExternalDepth(this.context, image, view, width, height, declaredLayout,
-                    nearestFilterOf(glTextureId), nearestMin,
-                    textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S)
-                            == org.lwjgl.opengl.GL11.GL_REPEAT,
-                    textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T)
-                            == org.lwjgl.opengl.GL11.GL_REPEAT,
-                    compareEnable, compareOp);
+            boolean nearest = nearestFilterOf(glTextureId);
+            boolean repeatU = textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S)
+                    == org.lwjgl.opengl.GL11.GL_REPEAT;
+            boolean repeatV = textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T)
+                    == org.lwjgl.opengl.GL11.GL_REPEAT;
+            shared = directGlAspects == 0
+                    ? VulkanGlTexture.shareExternalDepth(this.context, image, view, width, height, declaredLayout,
+                            nearest, nearestMin, repeatU, repeatV, compareEnable, compareOp)
+                    : VulkanGlTexture.shareDirectGlDepthAttachment(this.context, image, view, width, height,
+                            directGlAspects, nearest, nearestMin, repeatU, repeatV, compareEnable, compareOp);
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
             this.lastFailure = "external depth image for GL texture " + glTextureId + ": " + error;
@@ -1020,8 +1034,14 @@ public final class VulkanTextureRegistry {
 
     /** Creates a renderer-owned texture directly from RGBA bytes, without binding or creating any GL object. */
     public int createTexture2d(int width, int height, boolean nearestFilter, java.nio.ByteBuffer rgba) {
+        return createTexture2d(width, height, nearestFilter, rgba, false);
+    }
+
+    int createTexture2d(int width, int height, boolean nearestFilter, java.nio.ByteBuffer rgba,
+            boolean colorAttachment) {
         int id = RenderObjectIds.reserve(1);
-        VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+        VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter,
+                false, false, colorAttachment);
         try {
             texture.uploadFromNamedImage(id, width, height, rgba);
         } catch (RuntimeException | Error failure) {

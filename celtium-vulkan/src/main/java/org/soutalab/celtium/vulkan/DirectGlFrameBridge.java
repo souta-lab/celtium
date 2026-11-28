@@ -18,36 +18,53 @@ import org.soutalab.celtium.core.frame.ActiveRenderTargets;
  */
 public final class DirectGlFrameBridge {
 
-    private static volatile VkCommandBuffer commandBuffer;
-    private static volatile ActiveRenderTargets mainTargets;
+    /**
+     * Images of the active main rendering. Color is slot zero. Both images are single-sampled and
+     * support transfer source and destination usage. The layouts must match the owner's rendering.
+     */
+    public record MainImages(long colorImage, int colorLayout, long depthImage, int depthLayout,
+                             boolean stencilAttached) {
+    }
+
+    private record Frame(VkCommandBuffer commandBuffer, ActiveRenderTargets targets, MainImages images) {
+    }
+
+    private static volatile Frame frame;
 
     private DirectGlFrameBridge() {
     }
 
-    /** Publishes the open frame: its command buffer and its main rendering targets (id 0). */
+    /** Publishes the open frame for drawing and in-place clears. */
     public static void bindFrame(VkCommandBuffer buffer, ActiveRenderTargets targets) {
-        mainTargets = targets;
-        commandBuffer = buffer;
+        bindFrame(buffer, targets, null);
     }
 
-    /** Withdraws the frame at its boundary; later sink draws drop until the next bind. */
+    /** Publishes the open frame and the images needed for transfers. */
+    public static void bindFrame(VkCommandBuffer buffer, ActiveRenderTargets targets, MainImages images) {
+        frame = new Frame(buffer, targets, images);
+    }
+
+    /** Withdraws the frame at its boundary. */
     public static void unbindFrame() {
-        commandBuffer = null;
-        mainTargets = null;
+        frame = null;
     }
 
-    /** Whether a frame is currently bound. */
     public static boolean bound() {
-        return commandBuffer != null;
+        return commandBuffer() != null;
     }
 
-    /** The bound frame's command buffer, or {@code null} when unbound. */
     public static VkCommandBuffer commandBuffer() {
-        return commandBuffer;
+        Frame current = frame;
+        return current == null ? null : current.commandBuffer();
     }
 
-    /** The bound frame's main targets (the swapchain, registry id 0), or {@code null}. */
     public static ActiveRenderTargets mainTargets() {
-        return mainTargets;
+        Frame current = frame;
+        return current == null ? null : current.targets();
+    }
+
+    static MainImages mainImages() {
+        Frame current = frame;
+        return current == null ? null : current.images();
     }
 }

@@ -5,7 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.BlitRegion;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.ClearSpec;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.FramebufferOps;
 
 import org.soutalab.celtium.core.state.RenderStateKey;
 
@@ -50,5 +56,48 @@ class DirectGlContractTest {
                 RenderStateKey.DEFAULT, 5L, PrimitiveTopology.TRIANGLES, -1));
         assertFalse(ComputeProgramHandle.NONE.isValid());
         assertTrue(new ComputeProgramHandle(3L).isValid());
+    }
+
+    @Test
+    void framebufferOpsCarryClearAndBlitValuesToBothTargets() {
+        record Clear(long target, ClearSpec spec) {}
+        record Blit(long source, long destination, BlitRegion region) {}
+        List<Clear> clears = new ArrayList<>();
+        List<Blit> blits = new ArrayList<>();
+        FramebufferOps sink = new FramebufferOps() {
+            @Override
+            public long createFramebuffer(long[] colors, long depth, int width, int height) {
+                return 42L;
+            }
+
+            @Override
+            public void destroyFramebuffer(long framebufferId) {
+            }
+
+            @Override
+            public void clearFramebuffer(long framebufferId, ClearSpec spec) {
+                clears.add(new Clear(framebufferId, spec));
+            }
+
+            @Override
+            public void blitFramebuffer(long srcFramebufferId, long dstFramebufferId, BlitRegion region) {
+                blits.add(new Blit(srcFramebufferId, dstFramebufferId, region));
+            }
+        };
+
+        long custom = sink.createFramebuffer(new long[] {1L}, 2L, 32, 16);
+        var depth = new ClearSpec(DirectGlVulkanSink.DEPTH_ASPECT, 0, 0, 0, 0, 0.5f, 0, false, 0, 0, 0, 0);
+        var color = new ClearSpec(DirectGlVulkanSink.COLOR_ASPECT, 1, 0.5f, 0, 1, 1, 0, true, -2, 3, 12, 8);
+        sink.clearFramebuffer(0, depth);
+        sink.clearFramebuffer(custom, color);
+
+        var scale = new BlitRegion(2, 4, 10, 8, 31, 0, 1, 16, DirectGlVulkanSink.COLOR_ASPECT, true);
+        var copy = new BlitRegion(0, 0, 32, 16, 0, 0, 32, 16,
+                DirectGlVulkanSink.DEPTH_ASPECT | DirectGlVulkanSink.STENCIL_ASPECT, false);
+        sink.blitFramebuffer(0, custom, scale);
+        sink.blitFramebuffer(custom, 0, copy);
+
+        assertEquals(List.of(new Clear(0, depth), new Clear(42, color)), clears);
+        assertEquals(List.of(new Blit(0, 42, scale), new Blit(42, 0, copy)), blits);
     }
 }

@@ -84,6 +84,10 @@ public interface DirectGlVulkanSink {
         long createFramebuffer(long[] colorTextureIds, long depthTextureId, int width, int height);
 
         void destroyFramebuffer(long framebufferId);
+
+        void clearFramebuffer(long framebufferId, ClearSpec spec);
+
+        void blitFramebuffer(long srcFramebufferId, long dstFramebufferId, BlitRegion region);
     }
 
     /** Shader operations: conversion output (SPIR-V bundles) becomes sink-owned programs. */

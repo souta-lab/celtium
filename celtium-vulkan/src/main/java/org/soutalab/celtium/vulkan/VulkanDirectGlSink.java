@@ -1,8 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -16,11 +13,9 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
@@ -37,6 +32,12 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK13;
+import org.lwjgl.vulkan.VkClearAttachment;
+import org.lwjgl.vulkan.VkClearRect;
+import org.lwjgl.vulkan.VkFormatProperties;
+import org.lwjgl.vulkan.VkImageBlit;
+import org.lwjgl.vulkan.VkImageCopy;
+import org.lwjgl.vulkan.VkMemoryBarrier2;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
@@ -189,6 +190,10 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             }
             targets = fbo.targets;
         }
+        if (targets == null) {
+            BackendCallCounters.noteLane3DroppedDraw();
+            return;
+        }
         long pipeline = pipelineFor(state, program, targets, vertices);
         if (pipeline == VK_NULL_HANDLE) {
             BackendCallCounters.noteLane3DroppedDraw();
@@ -196,8 +201,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (!mainTarget) {
-                VulkanDynamicRendering.endRendering(cmd);
-                VulkanDynamicRendering.beginRendering(cmd, stack, targets, null, 1.0f, 0);
+                suspendMain(cmd, main);
+                beginSideRendering(cmd, stack, fbo);
             }
             VK10.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             applyDynamicState(cmd, stack, targets);
@@ -211,7 +216,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                 BufferRec indexBuffer = this.buffers.get(indices.bufferHandle());
                 if (indexBuffer == null) {
                     if (!mainTarget) {
-                        resumeMain(cmd, stack, main);
+                        finishSideRendering(cmd, stack, fbo, main);
                     }
                     BackendCallCounters.noteLane3DroppedDraw();
                     return;
@@ -226,9 +231,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                         draw.firstInstance());
             }
             if (!mainTarget) {
-                VulkanDynamicRendering.endRendering(cmd);
-                transitionFboToSampled(cmd, stack, fbo);
-                resumeMain(cmd, stack, main);
+                finishSideRendering(cmd, stack, fbo, main);
             }
         }
         BackendCallCounters.noteLane3Draw();
@@ -253,49 +256,90 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         BackendCallCounters.noteLane3Dispatch();
     }
 
-    private void resumeMain(VkCommandBuffer cmd, MemoryStack stack, ActiveRenderTargets main) {
+    private static void suspendMain(VkCommandBuffer cmd, ActiveRenderTargets main) {
         if (main != null) {
-            VulkanDynamicRendering.beginRendering(cmd, stack, main, null, 1.0f, 0);
+            VulkanDynamicRendering.endRendering(cmd);
         }
     }
 
-    /** After a side-target draw, the FBO's images become shader-readable for later sampling. */
-    private void transitionFboToSampled(VkCommandBuffer cmd, MemoryStack stack, FboRec fbo) {
-        int count = (fbo.colorImage != VK_NULL_HANDLE ? 1 : 0) + (fbo.depthImage != VK_NULL_HANDLE ? 1 : 0);
-        if (count == 0) {
+    private void resumeMain(VkCommandBuffer cmd, MemoryStack stack, ActiveRenderTargets main) {
+        if (main == null) {
             return;
         }
-        VkImageMemoryBarrier2.Buffer barriers = VkImageMemoryBarrier2.calloc(count, stack);
-        int index = 0;
-        if (fbo.colorImage != VK_NULL_HANDLE) {
-            VkImageMemoryBarrier2 barrier = barriers.get(index++);
-            barrier.sType$Default()
-                    .srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
-                    .dstStageMask(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
-                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    .image(fbo.colorImage);
-            barrier.subresourceRange().aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT)
-                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+        // LOAD in the next rendering instance must see the previous instance's STORE.
+        long stages = VK13.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+                | VK13.VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK13.VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        VkMemoryBarrier2.Buffer barriers = VkMemoryBarrier2.calloc(1, stack);
+        barriers.get(0).sType$Default().srcStageMask(stages).dstStageMask(stages)
+                .srcAccessMask(VK13.VK_ACCESS_2_MEMORY_WRITE_BIT)
+                .dstAccessMask(VK13.VK_ACCESS_2_MEMORY_READ_BIT | VK13.VK_ACCESS_2_MEMORY_WRITE_BIT);
+        VK13.vkCmdPipelineBarrier2(cmd, VkDependencyInfo.calloc(stack).sType$Default().pMemoryBarriers(barriers));
+        BackendCallCounters.noteBarrier();
+
+        ActiveRenderTargets resumed = new ActiveRenderTargets(
+                main.colorAttachments().stream().map(VulkanDirectGlSink::loadView).toList(),
+                main.depthAttachment() == null ? null : loadView(main.depthAttachment()),
+                main.width(), main.height());
+        DirectGlFrameBridge.MainImages images = DirectGlFrameBridge.mainImages();
+        VulkanDynamicRendering.beginRendering(cmd, stack, resumed, null, 1.0f, 0,
+                images == null ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : images.colorLayout(),
+                images == null ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : images.depthLayout(),
+                images != null && images.stencilAttached());
+    }
+
+    private static ActiveRenderTargets.RenderTargetView loadView(ActiveRenderTargets.RenderTargetView view) {
+        return new ActiveRenderTargets.RenderTargetView(view.imageViewHandle(), view.format(),
+                ActiveRenderTargets.LoadOp.LOAD, view.storeOp());
+    }
+
+    private static void beginSideRendering(VkCommandBuffer cmd, MemoryStack stack, FboRec fbo) {
+        int depthLayout = restingLayout(cmd, fbo.depth);
+        transition(cmd, stack, fbo.color, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition(cmd, stack, fbo.depth, depthLayout, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        ActiveRenderTargets targets = fbo.targets;
+        if (fbo.depth != null && depthLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            ActiveRenderTargets.RenderTargetView depth = targets.depthAttachment();
+            targets = new ActiveRenderTargets(targets.colorAttachments(),
+                    new ActiveRenderTargets.RenderTargetView(depth.imageViewHandle(), depth.format(),
+                            ActiveRenderTargets.LoadOp.DONT_CARE, depth.storeOp()), targets.width(), targets.height());
         }
-        if (fbo.depthImage != VK_NULL_HANDLE) {
-            VkImageMemoryBarrier2 barrier = barriers.get(index++);
-            barrier.sType$Default()
-                    .srcStageMask(VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
-                    .srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
-                    .dstStageMask(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
-                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    .image(fbo.depthImage);
-            barrier.subresourceRange().aspectMask(VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
-                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+        VulkanDynamicRendering.beginRendering(cmd, stack, targets, null, 1.0f, 0,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                hasStencil(fbo.depth));
+    }
+
+    private void finishSideRendering(VkCommandBuffer cmd, MemoryStack stack, FboRec fbo, ActiveRenderTargets main) {
+        VulkanDynamicRendering.endRendering(cmd);
+        transition(cmd, stack, fbo.color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        transition(cmd, stack, fbo.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        resumeMain(cmd, stack, main);
+    }
+
+    private static void transition(VkCommandBuffer cmd, MemoryStack stack, FramebufferImage image,
+                                   int oldLayout, int newLayout) {
+        if (image == null) {
+            return;
         }
-        VkDependencyInfo dependency = VkDependencyInfo.calloc(stack)
-                .sType$Default().pImageMemoryBarriers(barriers);
-        VK13.vkCmdPipelineBarrier2(cmd, dependency);
+        // Include attachment LOAD/STORE, shader sampling, and transfer commands in the dependency.
+        long memoryAccess = VK13.VK_ACCESS_2_MEMORY_READ_BIT | VK13.VK_ACCESS_2_MEMORY_WRITE_BIT;
+        try (MemoryStack barrierStack = stack.push()) {
+            VkImageMemoryBarrier2.Buffer barriers = VkImageMemoryBarrier2.calloc(1, barrierStack);
+            barriers.get(0).sType$Default()
+                    .srcStageMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK13.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT)
+                    .srcAccessMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : memoryAccess)
+                    .dstStageMask(VK13.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT).dstAccessMask(memoryAccess)
+                    .oldLayout(oldLayout).newLayout(newLayout)
+                    .srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(image.handle())
+                    .subresourceRange().set(image.aspects(), 0, 1, 0, 1);
+            VK13.vkCmdPipelineBarrier2(cmd,
+                    VkDependencyInfo.calloc(barrierStack).sType$Default().pImageMemoryBarriers(barriers));
+        }
+        VulkanGlTexture.noteExternalForeignLayout(cmd, image.handle(), newLayout);
         BackendCallCounters.noteBarrier();
     }
 
@@ -323,7 +367,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     // -- pipeline cache --------------------------------------------------------
 
     private record PipelineKey(DirectGlDrawState state, long extendedHash, long vertexLayoutHash,
-                               int colorFormat, int depthFormat) {
+                               int colorFormat, int depthFormat, boolean stencilAttached) {
     }
 
     private long pipelineFor(DirectGlDrawState state, ProgramRec program, ActiveRenderTargets targets,
@@ -334,12 +378,15 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         int depthFormat = targets.depthAttachment() == null
                 ? VK10.VK_FORMAT_UNDEFINED : targets.depthAttachment().format();
         long layoutHash = program.vertexLayoutHash ^ (vertices == null ? 0L : vertices.strideBytes());
-        PipelineKey key = new PipelineKey(state, this.extendedState.hash(), layoutHash, colorFormat, depthFormat);
+        FboRec fbo = this.framebuffers.get((long) state.renderTargetId());
+        DirectGlFrameBridge.MainImages main = DirectGlFrameBridge.mainImages();
+        boolean stencil = fbo == null ? main != null && main.stencilAttached() : hasStencil(fbo.depth);
+        PipelineKey key = new PipelineKey(state, this.extendedState.hash(), layoutHash, colorFormat, depthFormat, stencil);
         Long cached = this.pipelineCache.get(key);
         if (cached != null) {
             return cached;
         }
-        long created = createPipeline(state, program, targets, vertices, colorFormat, depthFormat);
+        long created = createPipeline(state, program, targets, vertices, colorFormat, depthFormat, stencil);
         if (created != VK_NULL_HANDLE) {
             this.pipelineCache.put(key, created);
         }
@@ -347,7 +394,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     }
 
     private long createPipeline(DirectGlDrawState state, ProgramRec program, ActiveRenderTargets targets,
-                                VertexBindingSpan vertices, int colorFormat, int depthFormat) {
+                                VertexBindingSpan vertices, int colorFormat, int depthFormat, boolean stencilAttached) {
         ensurePipelineLayout();
         RenderStateKey key = state.renderState();
         ExtendedFixedState ext = this.extendedState;
@@ -409,7 +456,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                     .depthTestEnable(key.depthTestEnabled())
                     .depthWriteEnable(key.depthWriteEnabled())
                     .depthCompareOp(ext.depthFunc())
-                    .stencilTestEnable(key.stencilTestEnabled())
+                    .stencilTestEnable(stencilAttached && key.stencilTestEnabled())
                     .front(stencilFront)
                     .back(stencilBack);
             VkPipelineColorBlendAttachmentState.Buffer attachment = null;
@@ -433,7 +480,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             VkPipelineRenderingCreateInfo rendering = VkPipelineRenderingCreateInfo.calloc(stack)
                     .sType$Default()
                     .colorAttachmentCount(colorFormat == VK10.VK_FORMAT_UNDEFINED ? 0 : 1)
-                    .depthAttachmentFormat(depthFormat);
+                    .depthAttachmentFormat(depthFormat)
+                    .stencilAttachmentFormat(stencilAttached ? depthFormat : VK10.VK_FORMAT_UNDEFINED);
             if (colorFormat != VK10.VK_FORMAT_UNDEFINED) {
                 rendering.pColorAttachmentFormats(stack.ints(colorFormat));
             }
@@ -615,13 +663,26 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         @Override
         public long createTexture2D(int width, int height, int format, int mipLevels) {
             BackendCallCounters.noteLane3SinkCall();
-            ByteBuffer zeros = ByteBuffer.allocateDirect(Math.max(4, width * height * 4));
-            int id = VulkanDirectGlSink.this.textures.createTexture2d(width, height, false, zeros);
             TextureRec rec = new TextureRec();
             rec.width = width;
             rec.height = height;
-            rec.shadow = new byte[width * height * 4];
-            VulkanDirectGlSink.this.textureRecs.put((long) id, rec);
+            rec.format = attachmentFormat(format);
+            int id;
+            if (rec.format == VK_FORMAT_R8G8B8A8_UNORM) {
+                ByteBuffer zeros = ByteBuffer.allocateDirect(Math.max(4, width * height * 4));
+                id = textures.createTexture2d(width, height, false, zeros, true);
+            } else {
+                id = RenderObjectIds.reserve(1);
+                int aspects = depthAspects(rec.format);
+                rec.depth = createAttachmentImage(width, height, rec.format,
+                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, aspects);
+                if (textures.publishDirectGlDepthAttachment(id, rec.depth.image(), rec.depth.sampleView(),
+                        width, height, aspects) == null) {
+                    retireAttachment(rec.depth);
+                    return 0;
+                }
+            }
+            textureRecs.put((long) id, rec);
             return id;
         }
 
@@ -629,36 +690,22 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         public void writeTexture(long textureId, int level, int x, int y, int width, int height,
                                  MemorySegment pixels) {
             BackendCallCounters.noteLane3SinkCall();
-            TextureRec rec = VulkanDirectGlSink.this.textureRecs.get(textureId);
-            VulkanGlTexture texture = VulkanDirectGlSink.this.textures.existing((int) textureId);
-            if (rec == null || texture == null || pixels == null) {
-                return;
-            }
-            if (level == 0) {
-                // Region writes land in the CPU shadow and the whole level is re-uploaded: the
-                // registry's upload entry is whole-image, and converter textures are small.
-                int rowBytes = width * 4;
-                for (int row = 0; row < height; row++) {
-                    int dst = ((y + row) * rec.width + x) * 4;
-                    int src = row * rowBytes;
-                    if (dst >= 0 && dst + rowBytes <= rec.shadow.length
-                            && src + rowBytes <= pixels.byteSize()) {
-                        pixels.asSlice(src, rowBytes).asByteBuffer().get(rec.shadow, dst, rowBytes);
-                    }
-                }
-                ByteBuffer upload = ByteBuffer.allocateDirect(rec.shadow.length);
-                upload.put(rec.shadow).flip();
-                texture.uploadFromNamedImage((int) textureId, rec.width, rec.height, upload);
+            TextureRec rec = textureRecs.get(textureId);
+            VulkanGlTexture texture = textures.existing((int) textureId);
+            if (level == 0 && rec != null && rec.depth == null && texture != null && pixels != null) {
+                texture.uploadPatchFromPixels(width, height, x, y, pixels.asByteBuffer());
             }
         }
 
         @Override
         public void destroyTexture(long textureId) {
             BackendCallCounters.noteLane3SinkCall();
-            VulkanDirectGlSink.this.textureRecs.remove(textureId);
-            VulkanGlTexture texture = VulkanDirectGlSink.this.textures.existing((int) textureId);
-            if (texture != null) {
-                texture.delete();
+            TextureRec rec = textureRecs.remove(textureId);
+            if (rec != null) {
+                textures.forgetTexture((int) textureId);
+                if (rec.depth != null) {
+                    retireAttachment(rec.depth);
+                }
             }
         }
     };
@@ -724,88 +771,59 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         @Override
         public long createFramebuffer(long[] colorTextureIds, long depthTextureId, int width, int height) {
             BackendCallCounters.noteLane3SinkCall();
+            TextureRec colorRec = colorTextureIds.length == 0 ? null : textureRecs.get(colorTextureIds[0]);
+            TextureRec depthRec = textureRecs.get(depthTextureId);
+            VulkanGlTexture colorTexture = colorRec == null ? null : textures.existing((int) colorTextureIds[0]);
+            if (colorTexture != null && (colorRec.depth != null || colorRec.width < width || colorRec.height < height)
+                    || depthRec != null && (depthRec.depth == null || depthRec.width < width || depthRec.height < height)) {
+                return 0;
+            }
+
             FboRec rec = new FboRec();
-            rec.width = width;
-            rec.height = height;
             ActiveRenderTargets.RenderTargetView colorView = null;
-            if (colorTextureIds != null && colorTextureIds.length > 0 && colorTextureIds[0] != 0L) {
-                long textureId = colorTextureIds[0];
-                VulkanGlTexture existing = VulkanDirectGlSink.this.textures.existing((int) textureId);
-                if (existing != null && existing.view() != VK_NULL_HANDLE) {
-                    rec.colorImage = existing.image();
-                    colorView = new ActiveRenderTargets.RenderTargetView(existing.view(),
-                            VK_FORMAT_R8G8B8A8_UNORM, ActiveRenderTargets.LoadOp.LOAD,
-                            ActiveRenderTargets.StoreOp.STORE);
-                } else {
-                    AttachmentImage attachment = createAttachmentImage(width, height,
-                            VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false);
-                    rec.colorImage = attachment.image;
-                    rec.colorView = attachment.view;
-                    rec.colorAllocation = attachment.allocation;
-                    rec.colorPublished = true;
-                    colorView = new ActiveRenderTargets.RenderTargetView(attachment.view,
-                            VK_FORMAT_R8G8B8A8_UNORM, ActiveRenderTargets.LoadOp.LOAD,
-                            ActiveRenderTargets.StoreOp.STORE);
-                    VulkanDirectGlSink.this.textures.publishExternalImage((int) textureId,
-                            attachment.image, attachment.view, width, height);
+            if (colorTexture != null) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    rec.colorView = attachmentView(stack, colorTexture.image(), colorRec.format, VK10.VK_IMAGE_ASPECT_COLOR_BIT);
                 }
+                rec.color = new FramebufferImage(colorTexture.image(), colorRec.format, VK10.VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                colorView = targetView(rec.colorView, colorRec.format);
             }
             ActiveRenderTargets.RenderTargetView depthView = null;
-            if (depthTextureId != 0L) {
-                VulkanGlTexture existing = VulkanDirectGlSink.this.textures.existing((int) depthTextureId);
-                if (existing != null && existing.view() != VK_NULL_HANDLE) {
-                    rec.depthImage = existing.image();
-                    depthView = new ActiveRenderTargets.RenderTargetView(existing.view(),
-                            VK_FORMAT_D32_SFLOAT, ActiveRenderTargets.LoadOp.LOAD,
-                            ActiveRenderTargets.StoreOp.STORE);
-                } else {
-                    AttachmentImage attachment = createAttachmentImage(width, height, VK_FORMAT_D32_SFLOAT,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, true);
-                    rec.depthImage = attachment.image;
-                    rec.depthView = attachment.view;
-                    rec.depthAllocation = attachment.allocation;
-                    rec.depthPublished = true;
-                    depthView = new ActiveRenderTargets.RenderTargetView(attachment.view,
-                            VK_FORMAT_D32_SFLOAT, ActiveRenderTargets.LoadOp.LOAD,
-                            ActiveRenderTargets.StoreOp.STORE);
-                    VulkanDirectGlSink.this.textures.publishExternalDepthImage((int) depthTextureId,
-                            attachment.image, attachment.view, width, height,
-                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-                }
+            if (depthRec != null) {
+                rec.depth = new FramebufferImage(depthRec.depth.image(), depthRec.format, depthAspects(depthRec.format),
+                        VK_IMAGE_LAYOUT_UNDEFINED);
+                depthView = targetView(depthRec.depth.view(), depthRec.format);
             }
-            rec.targets = new ActiveRenderTargets(
-                    colorView == null ? java.util.List.of() : java.util.List.of(colorView),
+            if (colorView == null && depthView == null) {
+                return 0;
+            }
+            rec.targets = new ActiveRenderTargets(colorView == null ? List.of() : List.of(colorView),
                     depthView, width, height);
-            long id = VulkanDirectGlSink.this.nextFramebufferId++;
-            VulkanDirectGlSink.this.framebuffers.put(id, rec);
+            long id = nextFramebufferId++;
+            framebuffers.put(id, rec);
             return id;
         }
 
         @Override
         public void destroyFramebuffer(long framebufferId) {
             BackendCallCounters.noteLane3SinkCall();
-            FboRec rec = VulkanDirectGlSink.this.framebuffers.remove(framebufferId);
-            if (rec == null) {
-                return;
+            FboRec rec = framebuffers.remove(framebufferId);
+            if (rec != null && rec.colorView != VK_NULL_HANDLE) {
+                VulkanRetireQueue.retire(device.address(), () -> VK10.vkDestroyImageView(device, rec.colorView, null));
             }
-            // Attachments published into the registry are owned by the registry from the
-            // publish on (its unpublish/delete path destroys image and view); the slab range
-            // underneath is still this sink's, and returns either way. Unpublished attachments
-            // (none today - every sink-created attachment is published) would be destroyed here.
-            if (rec.colorAllocation != null) {
-                if (!rec.colorPublished) {
-                    VK10.vkDestroyImageView(VulkanDirectGlSink.this.device, rec.colorView, null);
-                    VK10.vkDestroyImage(VulkanDirectGlSink.this.device, rec.colorImage, null);
-                }
-                VulkanDirectGlSink.this.attachmentSlab.release(rec.colorAllocation);
-            }
-            if (rec.depthAllocation != null) {
-                if (!rec.depthPublished) {
-                    VK10.vkDestroyImageView(VulkanDirectGlSink.this.device, rec.depthView, null);
-                    VK10.vkDestroyImage(VulkanDirectGlSink.this.device, rec.depthImage, null);
-                }
-                VulkanDirectGlSink.this.attachmentSlab.release(rec.depthAllocation);
-            }
+        }
+
+        @Override
+        public void clearFramebuffer(long framebufferId, ClearSpec spec) {
+            BackendCallCounters.noteLane3SinkCall();
+            recordFramebufferClear(framebufferId, spec);
+        }
+
+        @Override
+        public void blitFramebuffer(long srcFramebufferId, long dstFramebufferId, BlitRegion region) {
+            BackendCallCounters.noteLane3SinkCall();
+            recordFramebufferBlit(srcFramebufferId, dstFramebufferId, region);
         }
     };
 
@@ -814,16 +832,322 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         return this.framebufferOps;
     }
 
-    /** One sink-created attachment: its image, its view, and the slab range underneath. */
-    private record AttachmentImage(long image, long view, TransientAttachmentSlab.Allocation allocation) {
+    private void recordFramebufferClear(long framebufferId, ClearSpec spec) {
+        VkCommandBuffer cmd = DirectGlFrameBridge.commandBuffer();
+        ActiveRenderTargets main = DirectGlFrameBridge.mainTargets();
+        FboRec fbo = this.framebuffers.get(framebufferId);
+        ActiveRenderTargets targets = framebufferId == 0 ? main : fbo == null ? null : fbo.targets;
+        if (cmd == null || targets == null) {
+            return;
+        }
+        DirectGlFrameBridge.MainImages mainImages = DirectGlFrameBridge.mainImages();
+        boolean stencil = fbo == null ? mainImages != null && mainImages.stencilAttached() : hasStencil(fbo.depth);
+        int depthStencil = targets.depthAttachment() == null ? 0
+                : vkAspects(spec.clearMask()) & (VK10.VK_IMAGE_ASPECT_DEPTH_BIT
+                        | (stencil ? VK10.VK_IMAGE_ASPECT_STENCIL_BIT : 0));
+        int colorCount = (spec.clearMask() & COLOR_ASPECT) == 0 ? 0 : targets.colorAttachments().size();
+        int count = colorCount + (depthStencil == 0 ? 0 : 1);
+        if (count == 0) {
+            return;
+        }
+
+        int x0 = 0, y0 = 0, x1 = targets.width(), y1 = targets.height();
+        if (spec.scissorEnabled()) {
+            x0 = Math.max(0, spec.scissorX());
+            y0 = Math.max(0, spec.scissorY());
+            x1 = (int) Math.min(x1, (long) spec.scissorX() + Math.max(0, spec.scissorWidth()));
+            y1 = (int) Math.min(y1, (long) spec.scissorY() + Math.max(0, spec.scissorHeight()));
+        }
+        if (x0 >= x1 || y0 >= y1) {
+            return;
+        }
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkClearAttachment.Buffer attachments = VkClearAttachment.calloc(count, stack);
+            for (int slot = 0; slot < colorCount; slot++) {
+                VkClearAttachment attachment = attachments.get(slot)
+                        .aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT).colorAttachment(slot);
+                attachment.clearValue().color()
+                        .float32(0, spec.r()).float32(1, spec.g()).float32(2, spec.b()).float32(3, spec.a());
+            }
+            if (depthStencil != 0) {
+                attachments.get(colorCount).aspectMask(depthStencil).clearValue().depthStencil()
+                        .set(spec.depth(), spec.stencil());
+            }
+            VkClearRect.Buffer rectangles = VkClearRect.calloc(1, stack);
+            VkClearRect rect = rectangles.get(0).baseArrayLayer(0).layerCount(1);
+            rect.rect().offset().set(x0, y0);
+            rect.rect().extent().set(x1 - x0, y1 - y0);
+
+            if (fbo != null) {
+                suspendMain(cmd, main);
+                beginSideRendering(cmd, stack, fbo);
+            }
+            VK10.vkCmdClearAttachments(cmd, attachments, rectangles);
+            if (fbo != null) {
+                finishSideRendering(cmd, stack, fbo, main);
+            }
+        }
     }
 
-    /**
-     * Creates one attachment image whose memory is an aligned range of the transient-attachment
-     * slab. Usage always includes {@code SAMPLED} - the blackness fixes' invariant: an image a
-     * mod renders into must stay sampleable, or the borrow that presents it goes black.
-     */
-    private AttachmentImage createAttachmentImage(int width, int height, int format, int usage, boolean depth) {
+    private static int vkAspects(int aspects) {
+        int mask = 0;
+        if ((aspects & COLOR_ASPECT) != 0) {
+            mask |= VK10.VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+        if ((aspects & DEPTH_ASPECT) != 0) {
+            mask |= VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        if ((aspects & STENCIL_ASPECT) != 0) {
+            mask |= VK10.VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+        return mask;
+    }
+
+    private void recordFramebufferBlit(long srcId, long dstId, BlitRegion region) {
+        VkCommandBuffer cmd = DirectGlFrameBridge.commandBuffer();
+        if (cmd == null) {
+            return;
+        }
+        ActiveRenderTargets main = DirectGlFrameBridge.mainTargets();
+        FboRec src = srcId == 0 ? mainFramebuffer(main) : this.framebuffers.get(srcId);
+        FboRec dst = dstId == 0 ? mainFramebuffer(main) : this.framebuffers.get(dstId);
+        if (src == null || dst == null) {
+            return;
+        }
+        region = clipBlitRegion(region, src.targets, dst.targets);
+        if (region == null) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            BlitTransfer color = blitTransfer(cmd, stack, src.color, dst.color, region, VK10.VK_IMAGE_ASPECT_COLOR_BIT);
+            BlitTransfer depthStencil = blitTransfer(cmd, stack, src.depth, dst.depth, region,
+                    VK10.VK_IMAGE_ASPECT_DEPTH_BIT | VK10.VK_IMAGE_ASPECT_STENCIL_BIT);
+            if (color == null && depthStencil == null) {
+                return;
+            }
+            suspendMain(cmd, main);
+            recordBlitTransfer(cmd, stack, color, region);
+            recordBlitTransfer(cmd, stack, depthStencil, region);
+            resumeMain(cmd, stack, main);
+        }
+    }
+
+    private static FboRec mainFramebuffer(ActiveRenderTargets main) {
+        DirectGlFrameBridge.MainImages images = DirectGlFrameBridge.mainImages();
+        if (main == null || images == null) {
+            return null;
+        }
+        FboRec target = new FboRec();
+        target.targets = main;
+        if (images.colorImage() != VK_NULL_HANDLE && !main.colorAttachments().isEmpty()) {
+            target.color = new FramebufferImage(images.colorImage(), main.colorAttachments().getFirst().format(),
+                    VK10.VK_IMAGE_ASPECT_COLOR_BIT, images.colorLayout());
+        }
+        if (images.depthImage() != VK_NULL_HANDLE && main.depthAttachment() != null) {
+            int format = main.depthAttachment().format();
+            target.depth = new FramebufferImage(images.depthImage(), format, depthAspects(format), images.depthLayout());
+        }
+        return target;
+    }
+
+    private static BlitRegion clipBlitRegion(BlitRegion region, ActiveRenderTargets source, ActiveRenderTargets destination) {
+        BlitAxis x = clipAxis(region.srcX0(), region.srcX1(), source.width(),
+                region.dstX0(), region.dstX1(), destination.width());
+        BlitAxis y = clipAxis(region.srcY0(), region.srcY1(), source.height(),
+                region.dstY0(), region.dstY1(), destination.height());
+        return x == null || y == null ? null : new BlitRegion(x.src0(), y.src0(), x.src1(), y.src1(),
+                x.dst0(), y.dst0(), x.dst1(), y.dst1(), region.aspectMask(), region.linearFilter());
+    }
+
+    private record BlitAxis(int src0, int src1, int dst0, int dst1) {
+    }
+
+    private static BlitAxis clipAxis(int src0, int src1, int srcLimit, int dst0, int dst1, int dstLimit) {
+        double srcDelta = (double) src1 - src0;
+        double dstDelta = (double) dst1 - dst0;
+        if (srcDelta == 0 || dstDelta == 0) {
+            return null;
+        }
+        double srcAtZero = -src0 / srcDelta;
+        double srcAtLimit = (srcLimit - (double) src0) / srcDelta;
+        double dstAtZero = -dst0 / dstDelta;
+        double dstAtLimit = (dstLimit - (double) dst0) / dstDelta;
+        double start = Math.max(0, Math.max(Math.min(srcAtZero, srcAtLimit), Math.min(dstAtZero, dstAtLimit)));
+        double end = Math.min(1, Math.min(Math.max(srcAtZero, srcAtLimit), Math.max(dstAtZero, dstAtLimit)));
+        if (start >= end) {
+            return null;
+        }
+        double startSrc = Math.fma(start, srcDelta, src0);
+        double endSrc = Math.fma(end, srcDelta, src0);
+        double startDst = Math.fma(start, dstDelta, dst0);
+        double endDst = Math.fma(end, dstDelta, dst0);
+        // VkImageBlit describes integer texel edges. Fractional intersections would change the GL scale if rounded.
+        if (!isTexelEdge(startSrc) || !isTexelEdge(endSrc) || !isTexelEdge(startDst) || !isTexelEdge(endDst)) {
+            return null;
+        }
+        return new BlitAxis((int) Math.round(startSrc), (int) Math.round(endSrc),
+                (int) Math.round(startDst), (int) Math.round(endDst));
+    }
+
+    private static boolean isTexelEdge(double value) {
+        return Math.abs(value - Math.rint(value)) < 0.000001;
+    }
+
+    private record BlitTransfer(FramebufferImage source, FramebufferImage destination, int aspects,
+                                int sourceLayout, int destinationLayout, boolean copy, int filter) {
+    }
+
+    private BlitTransfer blitTransfer(VkCommandBuffer cmd, MemoryStack stack, FramebufferImage source,
+                                      FramebufferImage destination, BlitRegion region, int requestedAspects) {
+        if (source == null || destination == null || source.handle() == destination.handle()) {
+            return null;
+        }
+        int aspects = requestedAspects & vkAspects(region.aspectMask()) & source.aspects() & destination.aspects();
+        int sourceLayout = restingLayout(cmd, source);
+        if (aspects == 0 || sourceLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return null;
+        }
+        boolean color = aspects == VK10.VK_IMAGE_ASPECT_COLOR_BIT;
+        boolean sameFormat = source.format() == destination.format();
+        if (!color && !sameFormat) {
+            return null; // Vulkan requires identical depth/stencil formats.
+        }
+        int srcFeatures = formatFeatures(stack, source.format());
+        int dstFeatures = sameFormat ? srcFeatures : formatFeatures(stack, destination.format());
+        if ((srcFeatures & org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) == 0
+                || (dstFeatures & org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT) == 0) {
+            return null;
+        }
+        boolean copy = sameFormat && region.srcX1() - region.srcX0() == region.dstX1() - region.dstX0()
+                && region.srcY1() - region.srcY0() == region.dstY1() - region.dstY0();
+        boolean linear = color && region.linearFilter();
+        if (!copy && ((srcFeatures & VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0
+                || (dstFeatures & VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0
+                || linear && (srcFeatures & VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0)) {
+            return null;
+        }
+        return new BlitTransfer(source, destination, aspects, sourceLayout, restingLayout(cmd, destination), copy,
+                linear ? VK10.VK_FILTER_LINEAR : VK10.VK_FILTER_NEAREST);
+    }
+
+    private int formatFeatures(MemoryStack stack, int format) {
+        VkFormatProperties properties = VkFormatProperties.calloc(stack);
+        VK10.vkGetPhysicalDeviceFormatProperties(this.context.physicalDevice(), format, properties);
+        return properties.optimalTilingFeatures();
+    }
+
+    private static void recordBlitTransfer(VkCommandBuffer cmd, MemoryStack stack,
+                                           BlitTransfer transfer, BlitRegion region) {
+        if (transfer == null) {
+            return;
+        }
+        int srcLayout = VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        int dstLayout = VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        FramebufferImage source = transfer.source();
+        FramebufferImage destination = transfer.destination();
+        transition(cmd, stack, source, transfer.sourceLayout(), srcLayout);
+        transition(cmd, stack, destination, transfer.destinationLayout(), dstLayout);
+        for (int aspects = transfer.aspects(); aspects != 0; aspects &= aspects - 1) {
+            int aspect = Integer.lowestOneBit(aspects);
+            if (transfer.copy()) {
+                VkImageCopy.Buffer copies = VkImageCopy.calloc(1, stack);
+                VkImageCopy copy = copies.get(0);
+                copy.srcSubresource().set(aspect, 0, 0, 1);
+                copy.dstSubresource().set(aspect, 0, 0, 1);
+                copy.srcOffset().set(Math.min(region.srcX0(), region.srcX1()), Math.min(region.srcY0(), region.srcY1()), 0);
+                copy.dstOffset().set(Math.min(region.dstX0(), region.dstX1()), Math.min(region.dstY0(), region.dstY1()), 0);
+                copy.extent().set(Math.abs(region.srcX1() - region.srcX0()), Math.abs(region.srcY1() - region.srcY0()), 1);
+                VK10.vkCmdCopyImage(cmd, source.handle(), srcLayout, destination.handle(), dstLayout, copies);
+            } else {
+                VkImageBlit.Buffer blits = VkImageBlit.calloc(1, stack);
+                VkImageBlit blit = blits.get(0);
+                blit.srcSubresource().set(aspect, 0, 0, 1);
+                blit.dstSubresource().set(aspect, 0, 0, 1);
+                blit.srcOffsets(0).set(region.srcX0(), region.srcY0(), 0);
+                blit.srcOffsets(1).set(region.srcX1(), region.srcY1(), 1);
+                blit.dstOffsets(0).set(region.dstX0(), region.dstY0(), 0);
+                blit.dstOffsets(1).set(region.dstX1(), region.dstY1(), 1);
+                VK10.vkCmdBlitImage(cmd, source.handle(), srcLayout, destination.handle(), dstLayout,
+                        blits, transfer.filter());
+            }
+        }
+        transition(cmd, stack, source, srcLayout, transfer.sourceLayout());
+        transition(cmd, stack, destination, dstLayout, transfer.destinationLayout() == VK_IMAGE_LAYOUT_UNDEFINED
+                ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : transfer.destinationLayout());
+    }
+
+    private static ActiveRenderTargets.RenderTargetView targetView(long view, int format) {
+        return new ActiveRenderTargets.RenderTargetView(view, format, ActiveRenderTargets.LoadOp.LOAD,
+                ActiveRenderTargets.StoreOp.STORE);
+    }
+
+    private int attachmentFormat(int glFormat) {
+        return switch (glFormat) {
+            case 0x81A5 -> VK10.VK_FORMAT_D16_UNORM; // GL_DEPTH_COMPONENT16
+            case 0x81A6 -> VK10.VK_FORMAT_X8_D24_UNORM_PACK32; // GL_DEPTH_COMPONENT24
+            case 0x1902, 0x81A7, 0x8CAC -> VK_FORMAT_D32_SFLOAT; // GL_DEPTH_COMPONENT, 32, 32F
+            case 0x84F9, 0x88F0 -> { // GL_DEPTH_STENCIL, GL_DEPTH24_STENCIL8
+                int required = VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+                        | VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    yield (formatFeatures(stack, VK10.VK_FORMAT_D24_UNORM_S8_UINT) & required) == required
+                            ? VK10.VK_FORMAT_D24_UNORM_S8_UINT : VK10.VK_FORMAT_D32_SFLOAT_S8_UINT;
+                }
+            }
+            case 0x8CAD -> VK10.VK_FORMAT_D32_SFLOAT_S8_UINT; // GL_DEPTH32F_STENCIL8
+            default -> VK_FORMAT_R8G8B8A8_UNORM;
+        };
+    }
+
+    private static int depthAspects(int format) {
+        return switch (format) {
+            case VK10.VK_FORMAT_D16_UNORM_S8_UINT, VK10.VK_FORMAT_D24_UNORM_S8_UINT,
+                    VK10.VK_FORMAT_D32_SFLOAT_S8_UINT -> VK10.VK_IMAGE_ASPECT_DEPTH_BIT | VK10.VK_IMAGE_ASPECT_STENCIL_BIT;
+            default -> VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
+        };
+    }
+
+    private static boolean hasStencil(FramebufferImage image) {
+        return image != null && (image.aspects() & VK10.VK_IMAGE_ASPECT_STENCIL_BIT) != 0;
+    }
+
+    private record FramebufferImage(long handle, int format, int aspects, int layout) {
+    }
+
+    private static int restingLayout(VkCommandBuffer cmd, FramebufferImage image) {
+        if (image == null) {
+            return VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+        return image.layout() == VK_IMAGE_LAYOUT_UNDEFINED
+                ? VulkanGlTexture.recordingLayoutOf(cmd.address(), image.handle()) : image.layout();
+    }
+
+    /** Slab-backed depth attachment. The sampled view selects the depth aspect alone. */
+    private record AttachmentImage(long image, long view, long sampleView, TransientAttachmentSlab.Allocation allocation) {
+    }
+
+    private void retireAttachment(AttachmentImage attachment) {
+        VulkanRetireQueue.retire(this.device.address(), () -> {
+            if (attachment.sampleView() != attachment.view()) {
+                VK10.vkDestroyImageView(this.device, attachment.sampleView(), null);
+            }
+            VK10.vkDestroyImageView(this.device, attachment.view(), null);
+            VK10.vkDestroyImage(this.device, attachment.image(), null);
+            this.attachmentSlab.release(attachment.allocation());
+        });
+    }
+
+    private long attachmentView(MemoryStack stack, long image, int format, int aspects) {
+        VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()
+                .image(image).viewType(VK10.VK_IMAGE_VIEW_TYPE_2D).format(format);
+        viewInfo.subresourceRange().set(aspects, 0, 1, 0, 1);
+        LongBuffer view = stack.longs(0);
+        check(VK10.vkCreateImageView(this.device, viewInfo, null, view), "vkCreateImageView(converter fbo)");
+        return view.get(0);
+    }
+
+    private AttachmentImage createAttachmentImage(int width, int height, int format, int usage, int aspects) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack).sType$Default()
                     .imageType(VK10.VK_IMAGE_TYPE_2D)
@@ -831,28 +1155,34 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                     .mipLevels(1).arrayLayers(1)
                     .samples(VK10.VK_SAMPLE_COUNT_1_BIT)
                     .tiling(VK10.VK_IMAGE_TILING_OPTIMAL)
-                    .usage(usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                    .usage(usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                     .sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE)
-                    .initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
-            imageInfo.extent().width(width).height(height).depth(1);
-            LongBuffer image = stack.longs(0);
-            check(VK10.vkCreateImage(this.device, imageInfo, null, image), "vkCreateImage(converter fbo)");
-            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
-            VK10.vkGetImageMemoryRequirements(this.device, image.get(0), requirements);
-            TransientAttachmentSlab.Allocation allocation =
-                    this.attachmentSlab.acquire(requirements.size(), requirements.alignment());
-            check(VK10.vkBindImageMemory(this.device, image.get(0),
-                    this.attachmentSlab.memoryHandle(), allocation.offset()),
-                    "vkBindImageMemory(converter fbo)");
-            VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()
-                    .image(image.get(0)).viewType(VK10.VK_IMAGE_VIEW_TYPE_2D).format(format);
-            viewInfo.subresourceRange()
-                    .aspectMask(depth ? VK10.VK_IMAGE_ASPECT_DEPTH_BIT : VK10.VK_IMAGE_ASPECT_COLOR_BIT)
-                    .levelCount(1).layerCount(1);
-            LongBuffer view = stack.longs(0);
-            check(VK10.vkCreateImageView(this.device, viewInfo, null, view),
-                    "vkCreateImageView(converter fbo)");
-            return new AttachmentImage(image.get(0), view.get(0), allocation);
+                    .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
+            imageInfo.extent().set(width, height, 1);
+            LongBuffer handle = stack.longs(0);
+            check(VK10.vkCreateImage(this.device, imageInfo, null, handle), "vkCreateImage(converter fbo)");
+            long image = handle.get(0);
+            long view = VK_NULL_HANDLE;
+            TransientAttachmentSlab.Allocation allocation = null;
+            try {
+                VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+                VK10.vkGetImageMemoryRequirements(this.device, image, requirements);
+                allocation = this.attachmentSlab.acquire(requirements.size(), requirements.alignment());
+                check(VK10.vkBindImageMemory(this.device, image, this.attachmentSlab.memoryHandle(), allocation.offset()),
+                        "vkBindImageMemory(converter fbo)");
+                view = attachmentView(stack, image, format, aspects);
+                long sampleView = (aspects & VK10.VK_IMAGE_ASPECT_STENCIL_BIT) != 0
+                        ? attachmentView(stack, image, format, VK10.VK_IMAGE_ASPECT_DEPTH_BIT) : view;
+                return new AttachmentImage(image, view, sampleView, allocation);
+            } catch (RuntimeException | Error failure) {
+                VK10.vkDestroyImageView(this.device, view, null);
+                VK10.vkDestroyImage(this.device, image, null);
+                if (allocation != null) {
+                    this.attachmentSlab.release(allocation);
+                }
+                throw failure;
+            }
         }
     }
 
@@ -966,21 +1296,15 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     private static final class TextureRec {
         int width;
         int height;
-        byte[] shadow;
+        int format;
+        AttachmentImage depth;
     }
 
     private static final class FboRec {
         ActiveRenderTargets targets;
-        long colorImage;
-        long depthImage;
+        FramebufferImage color;
+        FramebufferImage depth;
         long colorView;
-        long depthView;
-        TransientAttachmentSlab.Allocation colorAllocation;
-        TransientAttachmentSlab.Allocation depthAllocation;
-        boolean colorPublished;
-        boolean depthPublished;
-        int width;
-        int height;
     }
 
     private static final class ProgramRec {

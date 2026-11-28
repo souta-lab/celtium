@@ -39,6 +39,13 @@ public final class VulkanDynamicRendering {
 
     public static void beginRendering(VkCommandBuffer cmd, MemoryStack stack, ActiveRenderTargets targets,
                                       float[][] clearColors, float clearDepth, int clearStencil) {
+        beginRendering(cmd, stack, targets, clearColors, clearDepth, clearStencil,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, false);
+    }
+
+    public static void beginRendering(VkCommandBuffer cmd, MemoryStack stack, ActiveRenderTargets targets,
+                                      float[][] clearColors, float clearDepth, int clearStencil,
+                                      int colorLayout, int depthLayout, boolean stencilAttached) {
         VkRenderingAttachmentInfo.Buffer colourInfos = null;
         if (!targets.colorAttachments().isEmpty()) {
             colourInfos = VkRenderingAttachmentInfo.calloc(targets.colorAttachments().size(), stack);
@@ -46,7 +53,7 @@ public final class VulkanDynamicRendering {
                 ActiveRenderTargets.RenderTargetView view = targets.colorAttachments().get(i);
                 VkRenderingAttachmentInfo info = colourInfos.get(i).sType$Default()
                         .imageView(view.imageViewHandle())
-                        .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                        .imageLayout(colorLayout)
                         .loadOp(loadOp(view.loadOp()))
                         .storeOp(storeOp(view.storeOp()));
                 if (view.loadOp() == ActiveRenderTargets.LoadOp.CLEAR
@@ -68,13 +75,16 @@ public final class VulkanDynamicRendering {
             ActiveRenderTargets.RenderTargetView depth = targets.depthAttachment();
             VkRenderingAttachmentInfo depthInfo = VkRenderingAttachmentInfo.calloc(stack).sType$Default()
                     .imageView(depth.imageViewHandle())
-                    .imageLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .imageLayout(depthLayout)
                     .loadOp(loadOp(depth.loadOp()))
                     .storeOp(storeOp(depth.storeOp()));
             if (depth.loadOp() == ActiveRenderTargets.LoadOp.CLEAR) {
                 depthInfo.clearValue().depthStencil().set(clearDepth, clearStencil);
             }
             rendering.pDepthAttachment(depthInfo);
+            if (stencilAttached) {
+                rendering.pStencilAttachment(depthInfo);
+            }
         }
         VK13.vkCmdBeginRendering(cmd, rendering);
     }
