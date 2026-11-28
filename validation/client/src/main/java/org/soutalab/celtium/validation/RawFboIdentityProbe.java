@@ -49,19 +49,28 @@ final class RawFboIdentityProbe {
         }
         Object backend = Class.forName("org.soutalab.celtium.vulkan.CeltiumBackends")
                 .getMethod("current").invoke(null);
-        if (backend == null || !backend.getClass().getName().endsWith("VulkanTerrainGpuBackend")) {
+        if (backend == null || !backend.getClass().getName().endsWith("VulkanBackendAdapter")) {
             throw new IllegalStateException("Vulkan backend unavailable");
         }
         Class<?> backendClass = backend.getClass();
-        Field registryField = backendClass.getDeclaredField("targetRegistry");
+        // The dismantled monolith's seats moved to the recorder the adapter holds in its funnel
+        // field (S3-b E7): the target registry, the reported framebuffer identity, the off-target
+        // target and the raw-framebuffer adoption/publication methods all live there now. The
+        // adapter itself keeps the facade seats this probe also uses (presentSwapchain,
+        // textureCopyService, context, bindFramebuffer, celtium$forgetDeletedFramebuffer).
+        Field funnelField = backendClass.getDeclaredField("funnel");
+        funnelField.setAccessible(true);
+        Object recorder = funnelField.get(backend);
+        Class<?> recorderClass = recorder.getClass();
+        Field registryField = recorderClass.getDeclaredField("targetRegistry");
         registryField.setAccessible(true);
-        Object registry = registryField.get(backend);
+        Object registry = registryField.get(recorder);
         Class<?> registryClass = registry.getClass();
         long previousIdentity = ((Number) registryClass.getMethod("currentIdentity").invoke(registry)).longValue();
         boolean previousMain = (Boolean) registryClass.getMethod("currentIsMain").invoke(registry);
-        Field currentFramebufferIdentity = backendClass.getDeclaredField("currentFramebufferIdentity");
+        Field currentFramebufferIdentity = recorderClass.getDeclaredField("currentFramebufferIdentity");
         currentFramebufferIdentity.setAccessible(true);
-        long previousReportedIdentity = currentFramebufferIdentity.getLong(backend);
+        long previousReportedIdentity = currentFramebufferIdentity.getLong(recorder);
         long identity = ((Number) registryClass.getMethod("rawFramebufferIdentity", int.class)
                 .invoke(null, fbo)).longValue();
 
@@ -83,20 +92,20 @@ final class RawFboIdentityProbe {
             if (((Number) registryClass.getMethod("currentIdentity").invoke(registry)).longValue() != identity) {
                 throw new IllegalStateException("raw bind did not select the expected target");
             }
-            Method targetMethod = backendClass.getDeclaredMethod("offTargetTarget");
+            Method targetMethod = recorderClass.getDeclaredMethod("offTargetTarget");
             targetMethod.setAccessible(true);
-            Object target = targetMethod.invoke(backend);
+            Object target = targetMethod.invoke(recorder);
             if (target == null) throw new IllegalStateException("GL-less target unavailable");
             target.getClass().getMethod("ensureChainPair", long.class, int.class, int.class)
                     .invoke(target, identity, 64, 64);
             long drawnImage = ((Number) target.getClass().getMethod("chainPairColorImage", long.class)
                     .invoke(target, identity)).longValue();
-            Method adopt = backendClass.getDeclaredMethod("celtium$adoptRawFramebufferColorTexture", int.class);
-            Method publish = backendClass.getDeclaredMethod("celtium$publishFramebufferColorTexture", int.class);
+            Method adopt = recorderClass.getDeclaredMethod("celtium$adoptRawFramebufferColorTexture", int.class);
+            Method publish = recorderClass.getDeclaredMethod("celtium$publishFramebufferColorTexture", int.class);
             adopt.setAccessible(true);
             publish.setAccessible(true);
-            if (!Boolean.TRUE.equals(adopt.invoke(backend, texture))
-                    || !Boolean.TRUE.equals(publish.invoke(backend, texture))) {
+            if (!Boolean.TRUE.equals(adopt.invoke(recorder, texture))
+                    || !Boolean.TRUE.equals(publish.invoke(recorder, texture))) {
                 throw new IllegalStateException("raw attachment adoption or publication failed");
             }
             // The publication census's image half moved to PresentSwapchain in S3-b E6;
@@ -203,12 +212,12 @@ final class RawFboIdentityProbe {
             org.lwjgl.opengl.GL30C.glDeleteFramebuffers(fbo);
             if (FramebufferAttachmentTable.current().colorTexture(fbo) != 0
                     || ((Number) imageFor.invoke(target, identity)).longValue() != drawnImage
-                    || !((Map<?, ?>) images.get(backend)).containsKey(Integer.valueOf(texture))) {
+                    || !((Map<?, ?>) images.get(presentSwapchain)).containsKey(Integer.valueOf(texture))) {
                 throw new IllegalStateException("raw FBO deletion did not preserve its live texture image");
             }
             org.lwjgl.opengl.GL11C.glDeleteTextures(texture);
             if (((Number) imageFor.invoke(target, identity)).longValue() != 0L
-                    || ((Map<?, ?>) images.get(backend)).containsKey(Integer.valueOf(texture))) {
+                    || ((Map<?, ?>) images.get(presentSwapchain)).containsKey(Integer.valueOf(texture))) {
                 throw new IllegalStateException("raw FBO/texture deletion did not retire the target");
             }
             Method retire = backendClass.getMethod("celtium$forgetDeletedFramebuffer", long.class);
@@ -223,7 +232,7 @@ final class RawFboIdentityProbe {
                 }
             }
             retire.invoke(backend, failedIdentity);
-            if (((Map<?, ?>) images.get(backend)).containsKey(Integer.valueOf(texture))) {
+            if (((Map<?, ?>) images.get(presentSwapchain)).containsKey(Integer.valueOf(texture))) {
                 throw new IllegalStateException("deleted target's texture is still published");
             }
             // Reverse deletion order: retain the pair while its FBO exists, then retire it on FBO deletion.
@@ -236,8 +245,8 @@ final class RawFboIdentityProbe {
                     .invoke(null, secondFbo)).longValue();
             ensure.invoke(target, secondIdentity, 64, 64);
             long secondImage = ((Number) imageFor.invoke(target, secondIdentity)).longValue();
-            if (!Boolean.TRUE.equals(adopt.invoke(backend, secondTexture))
-                    || !Boolean.TRUE.equals(publish.invoke(backend, secondTexture))) {
+            if (!Boolean.TRUE.equals(adopt.invoke(recorder, secondTexture))
+                    || !Boolean.TRUE.equals(publish.invoke(recorder, secondTexture))) {
                 throw new IllegalStateException("second raw attachment publication failed");
             }
             org.lwjgl.opengl.GL11C.glDeleteTextures(secondTexture);
@@ -270,7 +279,7 @@ final class RawFboIdentityProbe {
             rawDraw.setInt(null, previousRawDraw);
             backendClass.getMethod("bindFramebuffer", long.class, boolean.class)
                     .invoke(backend, previousIdentity, previousMain);
-            currentFramebufferIdentity.setLong(backend, previousReportedIdentity);
+            currentFramebufferIdentity.setLong(recorder, previousReportedIdentity);
             Method forget = DirectGlCaptureEntry.class.getDeclaredMethod("forgetFramebuffer", int.class);
             forget.setAccessible(true);
             forget.invoke(stub, fbo);
