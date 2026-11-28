@@ -1493,31 +1493,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 modelView[4], modelView[5], modelView[6], modelView[7],
                 modelView[8], modelView[9], modelView[10], modelView[11],
                 modelView[12], modelView[13], modelView[14], modelView[15]);
-        Matrix4f full = new Matrix4f(vulkanProjection(proj)).mul(mv);
-        float[][] rows = {
-                {full.m00(), full.m10(), full.m20(), full.m30()},
-                {full.m01(), full.m11(), full.m21(), full.m31()},
-                {full.m02(), full.m12(), full.m22(), full.m32()},
-                {full.m03(), full.m13(), full.m23(), full.m33()}};
-        float[] planes = new float[24];
-        // left = r3 + r0, right = r3 - r0, bottom = r3 + r1, top = r3 - r1,
-        // near = r2 (Vulkan depth starts at 0), far = r3 - r2.
-        int[][] spec = {{3, 0, 1}, {3, 0, -1}, {3, 1, 1}, {3, 1, -1}, {2, 0, 0}, {3, 2, -1}};
-        for (int plane = 0; plane < 6; plane++) {
-            for (int c = 0; c < 4; c++) {
-                float value = rows[spec[plane][0]][c];
-                if (spec[plane][2] != 0) {
-                    value += spec[plane][2] * rows[spec[plane][1]][c];
-                }
-                planes[plane * 4 + c] = value;
-            }
-        }
+        // The frustum and the shader transform are both origin-relative: the extractor
+        // combines the Vulkan projection with the translation-free model-view (the
+        // model-view operating on camera-relative positions), which is the same product
+        // the vertex stage applies after the section relativization. The plane spec is
+        // the Gribb-Hartmann set this seat used to hand-roll (near = row 2 under the
+        // Vulkan depth convention); the extractor additionally falls back to permissive
+        // planes for a non-finite or singular transform instead of publishing garbage.
         Matrix4f mvZero = new Matrix4f(mv);
         mvZero.m30(0.0f);
         mvZero.m31(0.0f);
         mvZero.m32(0.0f);
-        float[] viewProj = new float[16];
-        new Matrix4f(vulkanProjection(proj)).mul(mvZero).get(viewProj);
+        float[] vulkanProj = new float[16];
+        vulkanProjection(proj).get(vulkanProj);
+        float[] mvZeroValues = new float[16];
+        mvZero.get(mvZeroValues);
+        org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.View frameView =
+                org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.extract(
+                        new org.soutalab.celtium.core.frame.CameraPose(cameraX, cameraY, cameraZ, 0.0f, 0.0f),
+                        vulkanProj, mvZeroValues,
+                        org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.DepthConvention
+                                .VULKAN_ZERO_TO_ONE);
         java.util.List<org.soutalab.celtium.vulkan.terrain.lane1.LightGridBuilder.PointLight> lights =
                 new java.util.ArrayList<>();
         DynamicLightService service = this.dynamicLightService;
@@ -1545,7 +1541,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 default -> 1;
             };
         }
-        frontend.prepareFrame(viewProj, cameraX, cameraY, cameraZ, planes, lights,
+        frontend.prepareFrame(frameView, lights,
                 this.fog.getFogColor(), this.fog.getFogStart(), this.fog.getFogEnd(),
                 this.fog.getFogDensity(), fogMode, this.frameId);
         frontend.collectCompleted();
