@@ -90,7 +90,10 @@ public final class NativeRasterState {
     public static void glCullFace(int face) { current().cullFace(face); }
     public static void glFrontFace(int face) { current().frontFace(face); }
     public static void glPolygonOffset(float factor, float units) { current().polygonOffset(factor, units); }
-    public static void glScissor(int x, int y, int width, int height) { current().scissor(x, y, width, height); }
+    public static void glScissor(int x, int y, int width, int height) {
+        current().noteScissorCall();
+        current().scissor(x, y, width, height);
+    }
 
     public boolean blendEnabled() { return this.blendEnabled; }
     public void blendEnabled(boolean enabled) {
@@ -158,6 +161,22 @@ public final class NativeRasterState {
         this.scissorEnabled = enabled;
     }
     public boolean scissorCalled() { return this.scissorCalled; }
+    /**
+     * BH-09's diagnostic counts, seated with the state they describe since E4-c removed the
+     * monolith that kept them: {@code scissorCallCount} counts the {@code glScissor} calls that
+     * reached this owner through a game-facing door (the capture entry's scissor case or the
+     * transformer's {@code glScissor} route - the attribute stack's internal restore writes the
+     * rectangle directly and is not a game call), and {@code scissorToggleCount} counts the
+     * {@code GL_SCISSOR_TEST} enable/disable calls the capture entry's capability door saw.
+     * The validation harness reads both at the end of a leg to answer "did this scene clip".
+     */
+    private long scissorCallCount;
+    private long scissorToggleCount;
+
+    public long scissorCallCount() { return this.scissorCallCount; }
+    public long scissorToggleCount() { return this.scissorToggleCount; }
+    public void noteScissorCall() { this.scissorCallCount++; }
+    public void noteScissorToggle() { this.scissorToggleCount++; }
     public int scissorX() { return this.scissorX; }
     public int scissorY() { return this.scissorY; }
     public int scissorWidth() { return this.scissorWidth; }

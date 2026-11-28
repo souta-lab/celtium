@@ -791,6 +791,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 FramebufferViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_SCISSOR:
+                NativeRasterState.current().noteScissorCall();
                 NativeRasterState.current().scissor((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_CLEAR:
@@ -1106,7 +1107,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             }
             case 0x0BE2: NativeRasterState.current().blendEnabled(enabled); break; // GL_BLEND
             case 0x0B44: NativeRasterState.current().cullEnabled(enabled); break; // GL_CULL_FACE
-            case 0x0C11: NativeRasterState.current().scissorTest(enabled); break; // GL_SCISSOR_TEST
+            case 0x0C11: NativeRasterState.current().noteScissorToggle();
+                NativeRasterState.current().scissorTest(enabled); break; // GL_SCISSOR_TEST
             case 0x8037: NativeRasterState.current().polygonOffsetFillEnabled(enabled); break; // GL_POLYGON_OFFSET_FILL
             case 0x0DE1: NativeTextureBindings.current().enabled2d(enabled); break; // GL_TEXTURE_2D
             default: break;

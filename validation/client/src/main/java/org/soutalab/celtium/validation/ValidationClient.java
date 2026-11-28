@@ -8503,7 +8503,7 @@ public final class ValidationClient {
      */
     private static boolean celtium$glLessInstalled() {
         try {
-            return org.soutalab.celtium.vulkan.gl.GlsmFrontend.isInstalled();
+            return org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.isInstalled();
         } catch (RuntimeException | LinkageError absent) {
             return false;
         }
@@ -8519,11 +8519,11 @@ public final class ValidationClient {
      */
     private static String celtium$glLessProbeDetail() {
         try {
-            return org.soutalab.celtium.vulkan.gl.GlsmFrontend.isInstalled()
-                    ? "probe: the stub class is present and installed"
-                    : "probe: the stub class is present but reports no installation";
+            return org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.isInstalled()
+                    ? "probe: the capture entry class is present and installed"
+                    : "probe: the capture entry class is present but reports no installation";
         } catch (RuntimeException | LinkageError absent) {
-            return "probe: the stub class could not be reached from this caller (" + absent + ")";
+            return "probe: the capture entry class could not be reached from this caller (" + absent + ")";
         }
     }
 
@@ -13705,15 +13705,15 @@ public final class ValidationClient {
         // rectangle was. Read here for the same reason as the summary above.
         try {
             report.addProperty("glScissorCallsAtEnd",
-                    Long.valueOf(org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorCallCount()));
+                    Long.valueOf(org.soutalab.celtium.vulkan.NativeRasterState.current().scissorCallCount()));
             report.addProperty("glScissorTogglesAtEnd",
-                    Long.valueOf(org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorToggleCount()));
+                    Long.valueOf(org.soutalab.celtium.vulkan.NativeRasterState.current().scissorToggleCount()));
             report.addProperty("glScissorCalledAtEnd",
-                    Boolean.valueOf(org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorCalled()));
+                    Boolean.valueOf(org.soutalab.celtium.vulkan.NativeRasterState.current().scissorCalled()));
             report.addProperty("glScissorTestAtEnd",
-                    Boolean.valueOf(org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorTest()));
+                    Boolean.valueOf(org.soutalab.celtium.vulkan.NativeRasterState.current().scissorTest()));
             report.addProperty("glScissorBoxAtEnd",
-                    java.util.Arrays.toString(org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorBox()));
+                    java.util.Arrays.toString(org.soutalab.celtium.vulkan.NativeRasterState.current().scissorBox()));
         } catch (Throwable error) {
             report.addProperty("glScissorCallsAtEnd", "unreadable: " + error);
         }

@@ -8,7 +8,10 @@ import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 
 /** Opt-in GPU probe for the raw-FBO fallback; never part of the renderer distribution. */
 final class RawFboIdentityProbe {
@@ -40,8 +43,8 @@ final class RawFboIdentityProbe {
     private static void run() throws Exception {
         final int fbo = 170000001;
         final int texture = 170000002;
-        if (!GlsmFrontend.isInstalled() || GlsmFrontend.celtium$framebufferColorTexture(fbo) != 0
-                || GlsmFrontend.celtium$textureExtent(texture) != null) {
+        if (!DirectGlCaptureEntry.isInstalled() || FramebufferAttachmentTable.current().colorTexture(fbo) != 0
+                || VulkanTextureRegistry.captureStore().textureExtent(texture) != null) {
             throw new IllegalStateException("GL-less stub unavailable or synthetic names already in use");
         }
         Object backend = Class.forName("org.soutalab.celtium.vulkan.CeltiumBackends")
@@ -66,21 +69,17 @@ final class RawFboIdentityProbe {
         Field rawDraw = hint.getDeclaredField("rawDrawFramebuffer");
         rawDraw.setAccessible(true);
         int previousRawDraw = rawDraw.getInt(null);
-        Field installed = GlsmFrontend.class.getDeclaredField("installed");
-        installed.setAccessible(true);
-        Object stub = installed.get(null);
-        Field draw = GlsmFrontend.class.getDeclaredField("drawFbo");
-        Field read = GlsmFrontend.class.getDeclaredField("readFbo");
-        draw.setAccessible(true);
-        read.setAccessible(true);
-        int previousDraw = draw.getInt(stub);
-        int previousRead = read.getInt(stub);
+        // The bindings record is the HAL seat's (FramebufferBindings); the capture entry is the
+        // installed stub whose private forget door the cleanup below drives reflectively.
+        Object stub = DirectGlCaptureEntry.installed();
+        int previousDraw = FramebufferBindings.current().drawFramebuffer();
+        int previousRead = FramebufferBindings.current().readFramebuffer();
 
         try {
-            GlsmFrontend.recordTextureAllocation(texture, 0, 64, 64);
+            VulkanTextureRegistry.captureStore().recordAllocation(texture, 0, 64, 64);
             hint.getMethod("glBindFramebuffer", int.class, int.class).invoke(null, 0x8D40, fbo);
             // Deliberately bypass the hint's attachment report to exercise the fallback rather than its normal bind path.
-            GlsmFrontend.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
+            DirectGlCaptureEntry.framebufferTexture2DRoute(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
             if (((Number) registryClass.getMethod("currentIdentity").invoke(registry)).longValue() != identity) {
                 throw new IllegalStateException("raw bind did not select the expected target");
             }
@@ -197,7 +196,7 @@ final class RawFboIdentityProbe {
             // A raw FBO deletion must keep the texture's contents alive. Deleting the texture afterwards
             // must then retire the orphaned target. Use LWJGL entry points to exercise the transformer route.
             org.lwjgl.opengl.GL30C.glDeleteFramebuffers(fbo);
-            if (GlsmFrontend.celtium$framebufferColorTexture(fbo) != 0
+            if (FramebufferAttachmentTable.current().colorTexture(fbo) != 0
                     || ((Number) imageFor.invoke(target, identity)).longValue() != drawnImage
                     || !((Map<?, ?>) images.get(backend)).containsKey(Integer.valueOf(texture))) {
                 throw new IllegalStateException("raw FBO deletion did not preserve its live texture image");
@@ -225,9 +224,9 @@ final class RawFboIdentityProbe {
             // Reverse deletion order: retain the pair while its FBO exists, then retire it on FBO deletion.
             int secondFbo = fbo + 20;
             int secondTexture = texture + 20;
-            GlsmFrontend.recordTextureAllocation(secondTexture, 0, 64, 64);
+            VulkanTextureRegistry.captureStore().recordAllocation(secondTexture, 0, 64, 64);
             hint.getMethod("glBindFramebuffer", int.class, int.class).invoke(null, 0x8D40, secondFbo);
-            GlsmFrontend.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, secondTexture, 0);
+            DirectGlCaptureEntry.framebufferTexture2DRoute(0x8D40, 0x8CE0, 0x0DE1, secondTexture, 0);
             long secondIdentity = ((Number) registryClass.getMethod("rawFramebufferIdentity", int.class)
                     .invoke(null, secondFbo)).longValue();
             ensure.invoke(target, secondIdentity, 64, 64);
@@ -261,16 +260,16 @@ final class RawFboIdentityProbe {
                     + " extent=64x64 fallback=exercised liveTargets=" + identities.length
                     + " retired=true rawDeleteBothOrders=true vanillaDelete=true reverseOwners=true extentBounds=true");
         } finally {
-            GlsmFrontend.celtium$bindFramebuffer(0x8CA9, previousDraw);
-            GlsmFrontend.celtium$bindFramebuffer(0x8CA8, previousRead);
+            DirectGlCaptureEntry.bindFramebufferRoute(0x8CA9, previousDraw);
+            DirectGlCaptureEntry.bindFramebufferRoute(0x8CA8, previousRead);
             rawDraw.setInt(null, previousRawDraw);
             backendClass.getMethod("bindFramebuffer", long.class, boolean.class)
                     .invoke(backend, previousIdentity, previousMain);
             currentFramebufferIdentity.setLong(backend, previousReportedIdentity);
-            Method forget = GlsmFrontend.class.getDeclaredMethod("forgetFramebuffer", int.class);
+            Method forget = DirectGlCaptureEntry.class.getDeclaredMethod("forgetFramebuffer", int.class);
             forget.setAccessible(true);
             forget.invoke(stub, fbo);
-            GlsmFrontend.forgetTextureAllocation(texture);
+            VulkanTextureRegistry.captureStore().forgetAllocation(texture);
         }
     }
 
