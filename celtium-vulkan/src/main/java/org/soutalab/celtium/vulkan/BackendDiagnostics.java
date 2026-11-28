@@ -61,13 +61,20 @@ final class BackendDiagnostics {
      * bytes submitted, and bytes the flushes left queued by deferral. Zero when no upload has
      * created the service yet - printed unconditionally, like the bindless counters above, so a
      * leg reads the service's activity (or its absence) from the summary line itself.
+     * <p>
+     * The mip level write census rides in the same fragment (R-104): per-level write counts and
+     * bytes across every mirror upload path, {@code level:count/bytes} per written level. It is
+     * a process aggregate, so it reads the same whether or not the service exists yet, and it is
+     * printed unconditionally - a leg tells "the chain was built" from "only level 0 was ever
+     * written" by which levels appear, without the texture diagnostics flag.
      */
     private String textureUploadSummary() {
         TextureUploadService service =
                 b.context == null ? null : b.context.celtium$textureUploadServiceOrNull();
         return "textureUploadSubmits=" + (service == null ? 0L : service.submits())
                 + " textureUploadBytes=" + (service == null ? 0L : service.uploadedBytes())
-                + " textureUploadDeferredBytes=" + (service == null ? 0L : service.deferredBytesTotal());
+                + " textureUploadDeferredBytes=" + (service == null ? 0L : service.deferredBytesTotal())
+                + " textureMipLevelWrites=[" + MipLevelWriteCensus.summary() + "]";
     }
 
     /**
