@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 import org.objectweb.asm.ClassReader;
@@ -62,7 +62,7 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                             public void visitCode() {
                                 super.visitCode();
                                 super.visitMethodInsn(Opcodes.INVOKESTATIC,
-                                        "org/taumc/celeritas/core/CeltiumLoadingProgress", "refresh", "()V", false);
+                                        "org/soutalab/celtium/core/CeltiumLoadingProgress", "refresh", "()V", false);
                             }
                         };
                     }
@@ -108,7 +108,7 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                         target.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
                     }
                     target.visitMethodInsn(Opcodes.INVOKESTATIC,
-                            "org/taumc/celeritas/core/CeltiumLoadingProgress", methodName, "()V", false);
+                            "org/soutalab/celtium/core/CeltiumLoadingProgress", methodName, "()V", false);
                     target.visitInsn(Opcodes.RETURN);
                     target.visitMaxs("start".equals(methodName) ? 1 : 0, 0);
                     target.visitEnd();

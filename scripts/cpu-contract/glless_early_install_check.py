@@ -52,12 +52,12 @@ def main():
     coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
     require('the coremod registers the GL-less transformer',
             'CeltiumGllessWindowTransformer' in coremod and 'getASMTransformerClass' in coremod)
-    transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java').read_text(encoding='utf-8')
+    transformer = (ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessWindowTransformer.java').read_text(encoding='utf-8')
     require('the transformer injects before glfwCreateWindow',
             'glfwCreateWindow' in transformer and 'beforeWindowCreation' in transformer)
     require('the transformer returns the original bytes on failure',
             'catch (Throwable error)' in transformer and 'return basicClass;' in transformer)
-    hint = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text(encoding='utf-8')
+    hint = (ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessHint.java').read_text(encoding='utf-8')
     require('the hint has no mode property and is applied once',
             'System.getProperty' not in hint and 'if (applied) {' in hint)
     require('the hint sets GLFW_CLIENT_API to GLFW_NO_API',
@@ -72,7 +72,7 @@ def main():
     stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java').read_text(encoding='utf-8')
     require('the stub still installs itself as the process GL function source',
             'install()' in stub and 'FunctionProvider' in stub)
-    transformer_path = ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java'
+    transformer_path = ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessNativeTransformer.java'
     require('the native-replacement transformer is present', transformer_path.exists())
     native = transformer_path.read_text(encoding='utf-8')
     require('the transformer replaces native GL methods rather than building capabilities',

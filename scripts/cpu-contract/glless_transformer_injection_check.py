@@ -26,7 +26,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TRANSFORMER = ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java'
+TRANSFORMER = ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessWindowTransformer.java'
 PRISM = Path('/home/s0u7a/.local/share/PrismLauncher/libraries')
 GRADLE_CACHE = Path.home() / '.gradle/caches/modules-2/files-2.1/org.ow2.asm'
 
@@ -42,7 +42,7 @@ public class HintCheck {
     static final int ASM_API = 9 << 16;
     static final String GLFW = "org/lwjgl/glfw/GLFW";
     static final String CREATE = "glfwCreateWindow";
-    static final String HINT_OWNER = "org/taumc/celeritas/core/CeltiumGllessHint";
+    static final String HINT_OWNER = "org/soutalab/celtium/core/CeltiumGllessHint";
     static final String HINT = "beforeWindowCreation";
 
     public static void main(String[] args) throws Exception {

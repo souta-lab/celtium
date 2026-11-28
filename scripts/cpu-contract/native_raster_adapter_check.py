@@ -49,7 +49,7 @@ def main():
                           'public void info(String s, Object... a) {} '
                           'public void error(String s, Object... a) { throw new AssertionError(s); } } }')
         sources = [transformer_stub, logger,
-                   ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java',
+                   ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessNativeTransformer.java',
                    ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/NativeRasterAdapter.java',
                    ROOT / 'scripts/cpu-contract/NativeRasterAdapterCheck.java']
         classpath = os.pathsep.join(map(str, [asm, renderer]))

@@ -1,4 +1,4 @@
-package org.taumc.celeritas.interfaces;
+package org.soutalab.celtium.interfaces;
 
 /** Task state only: a replacement renderer must still allocate its own size-dependent targets. */
 public interface LoadingProgressState {

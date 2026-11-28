@@ -5,7 +5,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.core.CeltiumGllessHint;
+import org.soutalab.celtium.core.CeltiumGllessHint;
 
 /**
  * Hands out a display-list id when the GL surface cannot, so vanilla's own check does not abort the client.

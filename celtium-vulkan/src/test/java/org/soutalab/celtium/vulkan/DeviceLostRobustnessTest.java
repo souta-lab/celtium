@@ -78,7 +78,7 @@ class DeviceLostRobustnessTest {
     @Test
     void theNativeDrawEntrySkipsWhileStalledAndOnLiveRefusals() throws IOException {
         String source = Files.readString(findRepoFile(
-                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumNativeDraw.java"));
+                "forge122/src/main/java/org/soutalab/celtium/core/CeltiumNativeDraw.java"));
         int stallCheck = source.indexOf("celtium$isGpuStalled()");
         int refusedNote = source.indexOf("NativeDrawSkipCensus.noteRefusedSkip()");
         assertTrue(stallCheck >= 0, "the entry consults the backend's stall latch on a refusal");

@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@code renderWorld} cannot be cancelled directly because this project's HEAD/RETURN pair on it holds the backend's
  * world pass open.
  * <p>
- * Written every frame from {@link org.taumc.celeritas.core.CeltiumWorldEntryWatch}'s record, because vanilla clears
+ * Written every frame from {@link org.soutalab.celtium.core.CeltiumWorldEntryWatch}'s record, because vanilla clears
  * the flag in {@code displayGuiScreen} and because the condition cannot be tested here: the world arrives part-way
  * through the frame that crashes, so at this head it is still null. The record is taken where the world is assigned
  * and cleared as soon as a player exists, which is what makes the write correct rather than merely early.
@@ -39,7 +39,7 @@ public abstract class MinecraftSkipWorldWithoutCameraMixin {
     private void celtium$skipWorldWithoutCamera(CallbackInfo info) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null) {
-            mc.skipRenderWorld = org.taumc.celeritas.core.CeltiumWorldEntryWatch.shouldSkipWorld(mc);
+            mc.skipRenderWorld = org.soutalab.celtium.core.CeltiumWorldEntryWatch.shouldSkipWorld(mc);
             if (mc.skipRenderWorld) {
                 // DP-29: the guard's activity is counted, so a session stuck without a camera reads as a
                 // number in the verification summary instead of a silent absence of world frames.

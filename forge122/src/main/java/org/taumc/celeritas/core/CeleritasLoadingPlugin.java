@@ -2,6 +2,7 @@ package org.taumc.celeritas.core;
 
 import net.minecraftforge.fml.relauncher.IFMLLoadingPlugin;
 import org.jetbrains.annotations.Nullable;
+import org.soutalab.celtium.core.CeltiumMixinErrorHandler;
 import zone.rong.mixinbooter.IEarlyMixinLoader;
 
 import java.util.Collections;
@@ -35,20 +36,20 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
             // through GlStateManager.bindTexture, which skips the GL call when its cache already holds the name,
             // so the stub never sees it and every lightmapped batch was refused with id=-1. The object that owns
             // the name answers instead.
-            org.taumc.celeritas.core.CeltiumLightmapIdInstaller.install();
+            org.soutalab.celtium.core.CeltiumLightmapIdInstaller.install();
             org.soutalab.celtium.vulkan.gl.GlsmFrontend.installFirstCapabilities();
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
                     "CELTIUM_GLSTUB early capabilities install failed: {}", error.toString());
         }
 
-        return new String[] {"org.taumc.celeritas.core.CeltiumGllessWindowTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessContextTermsTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessNativeTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessSplashTransformer",
-                "org.taumc.celeritas.core.CeltiumSdlLogTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessSdlSwapTransformer",
-                "org.taumc.celeritas.core.CeltiumGllessWindowGlTransformer"};
+        return new String[] {"org.soutalab.celtium.core.CeltiumGllessWindowTransformer",
+                "org.soutalab.celtium.core.CeltiumGllessContextTermsTransformer",
+                "org.soutalab.celtium.core.CeltiumGllessNativeTransformer",
+                "org.soutalab.celtium.core.CeltiumGllessSplashTransformer",
+                "org.soutalab.celtium.core.CeltiumSdlLogTransformer",
+                "org.soutalab.celtium.core.CeltiumGllessSdlSwapTransformer",
+                "org.soutalab.celtium.core.CeltiumGllessWindowGlTransformer"};
     }
 
     @Override

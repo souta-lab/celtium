@@ -6,7 +6,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.core.CeltiumWorldEntryWatch;
+import org.soutalab.celtium.core.CeltiumWorldEntryWatch;
 
 /**
  * Records the moment a world is assigned while there is no player yet.

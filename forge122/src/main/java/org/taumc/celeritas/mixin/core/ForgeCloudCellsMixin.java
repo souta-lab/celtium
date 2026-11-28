@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.core.CeltiumNativeDraw;
+import org.soutalab.celtium.core.CeltiumNativeDraw;
 
 /**
  * Forge's clouds with geometry that only covers the clouds.

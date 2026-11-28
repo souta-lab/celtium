@@ -125,14 +125,14 @@ public abstract class GlStateManagerMixin {
     private static void celtium$newList(int list, int mode, CallbackInfo info) {
         // One owner for both halves: CeltiumModelCapture tells the model capture a list is starting and publishes the
         // open list to the stub. Splitting those across two injections on this method is what starved the capture.
-        if (org.taumc.celeritas.core.CeltiumModelCapture.onNewList(list, mode)) {
+        if (org.soutalab.celtium.core.CeltiumModelCapture.onNewList(list, mode)) {
             info.cancel();
         }
     }
 
     @Inject(method = "glEndList", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$endList(CallbackInfo info) {
-        if (org.taumc.celeritas.core.CeltiumModelCapture.onEndList()) {
+        if (org.soutalab.celtium.core.CeltiumModelCapture.onEndList()) {
             info.cancel();
         }
     }
@@ -309,7 +309,7 @@ public abstract class GlStateManagerMixin {
             // The mirror's stack is bounded at the register's depth; a deeper vanilla stack
             // is a state the mirror reports by its absence, never a rendering failure.
         }
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_PUSH;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_PUSH;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
@@ -328,7 +328,7 @@ public abstract class GlStateManagerMixin {
             // the mirror keeps its base matrix and the disagreement stays observable in
             // the depth the register reports.
         }
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_POP;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_POP;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
@@ -367,7 +367,7 @@ public abstract class GlStateManagerMixin {
         } catch (Throwable ignored) {
             // An unknown mode value is vanilla's own business; the mirror keeps its mode.
         }
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MODE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_MODE;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
@@ -380,7 +380,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179096_D", at = @At("HEAD"), require = 0)
     private static void celtium$loadIdentity(CallbackInfo info) {
         celtium$lane2().loadIdentity();
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_IDENTITY;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_IDENTITY;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
@@ -394,7 +394,7 @@ public abstract class GlStateManagerMixin {
     private static void celtium$ortho(double left, double right, double bottom, double top, double near, double far,
                                       CallbackInfo info) {
         celtium$lane2().ortho(left, right, bottom, top, near, far);
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ORTHO;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_ORTHO;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend != null) {
             try {
@@ -406,7 +406,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179137_b", at = @At("HEAD"), require = 0)
     private static void celtium$translate(double x, double y, double z, CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_TRANSLATE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_TRANSLATE;
         celtium$translate((float) x, (float) y, (float) z);
     }
 
@@ -422,7 +422,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179109_b", at = @At("HEAD"), require = 0)
     private static void celtium$translateFloat(float x, float y, float z, CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_TRANSLATE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_TRANSLATE;
         celtium$translate((float) x, (float) y, (float) z);
     }
 
@@ -432,7 +432,7 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179139_a", at = @At("HEAD"), require = 0)
     private static void celtium$scaleDouble(double x, double y, double z, CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_SCALE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_SCALE;
         celtium$scale((float) x, (float) y, (float) z);
     }
 
@@ -473,7 +473,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
     private static void celtium$rotate(float angle, float x, float y, float z, CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ROTATE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_ROTATE;
         celtium$rotate(angle, x, y, z);
     }
 
@@ -541,7 +541,7 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
     private static void celtium$scale(float x, float y, float z, CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_SCALE;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall = org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_SCALE;
         celtium$scale(x, y, z);
     }
 
@@ -877,8 +877,8 @@ public abstract class GlStateManagerMixin {
         }
         // The native glMultMatrixf route applies mod-originated multiplies; this one is vanilla's, already mirrored
         // here, so it marks itself and the route skips exactly one call.
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall =
-                org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MULT;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaMatrixCall =
+                org.soutalab.celtium.core.CeltiumGllessHint.MATRIX_MULT;
         CeltiumBackend backend = celtium$backendOrNull();
         if (backend == null) {
             return;

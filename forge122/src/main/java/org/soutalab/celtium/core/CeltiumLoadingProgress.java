@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import java.awt.image.BufferedImage;
 import java.io.File;

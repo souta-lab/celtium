@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 import org.objectweb.asm.ClassReader;
@@ -47,7 +47,7 @@ public class CeltiumGllessContextTermsTransformer implements IClassTransformer {
     private static final String SDL = "com/cleanroommc/client/sdl/SDL";
     private static final String CREATE_WINDOW = "createWindow";
     private static final String CREATE_WINDOW_DESC = "()Lcom/cleanroommc/client/sdl/Window$Builder;";
-    private static final String HINT_OWNER = "org/taumc/celeritas/core/CeltiumGllessHint";
+    private static final String HINT_OWNER = "org/soutalab/celtium/core/CeltiumGllessHint";
     private static final String HINT_METHOD = "noteContextRequest";
 
     @Override

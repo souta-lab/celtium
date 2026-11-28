@@ -10,7 +10,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-HANDLER = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeltiumMixinErrorHandler.java"
+HANDLER = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeltiumMixinErrorHandler.java"
 LOADING_PLUGIN = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java"
 RECORDER = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchErrorRecorder.java"
 
@@ -22,7 +22,7 @@ class HandlerShapeTests(unittest.TestCase):
 
     def test_handler_exists_and_implements_the_mixin_interface(self):
         self.assertIn("public class CeltiumMixinErrorHandler implements IMixinErrorHandler", self.handler)
-        self.assertIn("package org.taumc.celeritas.core;", self.handler)
+        self.assertIn("package org.soutalab.celtium.core;", self.handler)
 
     def test_both_error_entry_points_are_implemented(self):
         self.assertIn("onPrepareError", self.handler)

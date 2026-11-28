@@ -62,7 +62,7 @@ final class RawFboIdentityProbe {
         long identity = ((Number) registryClass.getMethod("rawFramebufferIdentity", int.class)
                 .invoke(null, fbo)).longValue();
 
-        Class<?> hint = Class.forName("org.taumc.celeritas.core.CeltiumGllessHint");
+        Class<?> hint = Class.forName("org.soutalab.celtium.core.CeltiumGllessHint");
         Field rawDraw = hint.getDeclaredField("rawDrawFramebuffer");
         rawDraw.setAccessible(true);
         int previousRawDraw = rawDraw.getInt(null);

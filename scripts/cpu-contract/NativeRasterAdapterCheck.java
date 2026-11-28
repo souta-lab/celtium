@@ -4,7 +4,7 @@ import java.util.Map;
 import java.util.jar.JarFile;
 import org.objectweb.asm.*;
 import org.soutalab.celtium.vulkan.NativeRasterState;
-import org.taumc.celeritas.core.CeltiumGllessNativeTransformer;
+import org.soutalab.celtium.core.CeltiumGllessNativeTransformer;
 
 /** Executes transformed native declarations from the real LWJGL jar without initializing a GL class or context. */
 public class NativeRasterAdapterCheck {

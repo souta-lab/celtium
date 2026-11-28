@@ -25,7 +25,7 @@ import java.util.zip.*;
  */
 public class GllessSurfaceAudit {
     public static void main(String[] args) throws Exception {
-        Class<?> t = Class.forName("org.taumc.celeritas.core.CeltiumGllessNativeTransformer");
+        Class<?> t = Class.forName("org.soutalab.celtium.core.CeltiumGllessNativeTransformer");
         Object transformer = t.getDeclaredConstructor().newInstance();
         java.lang.reflect.Method transform = t.getMethod("transform", String.class, String.class, byte[].class);
         Map<String, Set<String>> calls = new TreeMap<>();

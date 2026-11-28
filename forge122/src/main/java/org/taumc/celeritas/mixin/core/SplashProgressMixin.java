@@ -6,7 +6,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.core.CeltiumGllessHint;
+import org.soutalab.celtium.core.CeltiumGllessHint;
 
 /**
  * Answers Forge's cached maximum texture size when the GL-less path means it was never measured.

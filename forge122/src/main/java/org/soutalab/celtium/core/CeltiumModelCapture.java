@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;

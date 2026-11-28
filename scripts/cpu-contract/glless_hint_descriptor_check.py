@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TRANSFORMER = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java"
-HINT = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java"
+TRANSFORMER = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessNativeTransformer.java"
+HINT = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessHint.java"
 
 PRIMITIVES = {"void": "V", "int": "I", "long": "J", "float": "F", "double": "D", "boolean": "Z", "byte": "B",
               "short": "S", "char": "C", "String": "Ljava/lang/String;"}
@@ -45,7 +45,7 @@ def declared_methods(source: str) -> set[tuple[str, str]]:
 
 
 def emitted_calls(source: str) -> set[tuple[str, str]]:
-    pattern = r'"org/taumc/celeritas/core/CeltiumGllessHint",\s*"(\w+)",\s*"(\([^"]*\)[^"]*)"'
+    pattern = r'"org/soutalab/celtium/core/CeltiumGllessHint",\s*"(\w+)",\s*"(\([^"]*\)[^"]*)"'
     found = set(re.findall(pattern, source, re.S))
     # The integer legacy routes go through one emitter, so their pair sits at the emitter's call site as a literal
     # (name, descriptor) argument instead of inside a visitMethodInsn of its own. The emitter emits exactly what it is

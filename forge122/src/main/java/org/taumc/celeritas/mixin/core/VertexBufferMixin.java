@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.core.CeltiumNativeDraw;
-import org.taumc.celeritas.core.CeltiumVertexFormats;
+import org.soutalab.celtium.core.CeltiumNativeDraw;
+import org.soutalab.celtium.core.CeltiumVertexFormats;
 
 import java.nio.ByteBuffer;
 

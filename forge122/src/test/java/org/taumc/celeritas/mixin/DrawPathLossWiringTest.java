@@ -69,8 +69,8 @@ class DrawPathLossWiringTest {
     @Test
     void nativeDrawRefusalSkipsInsteadOfThrowing() throws Exception {
         String draw = read(
-                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumNativeDraw.java",
-                "src/main/java/org/taumc/celeritas/core/CeltiumNativeDraw.java");
+                "forge122/src/main/java/org/soutalab/celtium/core/CeltiumNativeDraw.java",
+                "src/main/java/org/soutalab/celtium/core/CeltiumNativeDraw.java");
         assertTrue(draw.contains("NativeDrawSkipCensus.noteStalledSkip()"), "the stall skip is counted");
         assertTrue(draw.contains("NativeDrawSkipCensus.noteRefusedSkip()"), "the refusal skip is counted");
         assertFalse(draw.contains("native VertexBuffer draw refused"),
@@ -83,8 +83,8 @@ class DrawPathLossWiringTest {
     @Test
     void loadingProgressStopIsNamed() throws Exception {
         String progress = read(
-                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumLoadingProgress.java",
-                "src/main/java/org/taumc/celeritas/core/CeltiumLoadingProgress.java");
+                "forge122/src/main/java/org/soutalab/celtium/core/CeltiumLoadingProgress.java",
+                "src/main/java/org/soutalab/celtium/core/CeltiumLoadingProgress.java");
         assertTrue(progress.contains("native loading progress disabled after"),
                 "the three-failure stop prints a line naming the stop");
     }

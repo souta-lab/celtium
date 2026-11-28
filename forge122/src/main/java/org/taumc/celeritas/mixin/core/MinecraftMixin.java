@@ -5,7 +5,7 @@ import net.minecraft.client.LoadingScreenRenderer;
 import org.soutalab.celtium.harness.HarnessConfig;
 import org.objectweb.asm.Opcodes;
 import org.taumc.celeritas.impl.profile.GameLoopTiming;
-import org.taumc.celeritas.interfaces.LoadingProgressState;
+import org.soutalab.celtium.interfaces.LoadingProgressState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;

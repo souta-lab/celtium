@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 import org.objectweb.asm.ClassReader;
@@ -40,7 +40,7 @@ public class CeltiumGllessWindowGlTransformer implements IClassTransformer {
     private static final String GLFW = "org.lwjgl.glfw.GLFW";
     private static final String SDL_VIDEO = "org.lwjgl.sdl.SDLVideo";
     private static final int ASM_API = 9 << 16;
-    private static final String HINT = "org/taumc/celeritas/core/CeltiumGllessHint";
+    private static final String HINT = "org/soutalab/celtium/core/CeltiumGllessHint";
     private static final String NOTE = "noteWindowGlCall";
     private static final String NOTE_DESC = "(Ljava/lang/String;)V";
 

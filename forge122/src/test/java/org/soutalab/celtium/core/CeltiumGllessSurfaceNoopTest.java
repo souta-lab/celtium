@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.junit.jupiter.api.Test;
 
@@ -67,7 +67,7 @@ class CeltiumGllessSurfaceNoopTest {
     @Test
     void aBaseInstanceOnAForwardedDrawIsCountedAsANarrowing() throws IOException {
         String hint = Files.readString(findRepoFile(
-                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java"));
+                "forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessHint.java"));
         assertTrue(hint.contains("noteUnsupportedInstanced(\"glDrawArraysInstancedBaseInstance\", \"baseInstance\")"),
                 "the arrays form counts an ignored base instance as a narrowing");
         assertTrue(hint.contains(
@@ -83,7 +83,7 @@ class CeltiumGllessSurfaceNoopTest {
     @Test
     void theTransformerCountsTheNoopSetAndReportsIt() throws IOException {
         String source = Files.readString(findRepoFile(
-                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java"));
+                "forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessNativeTransformer.java"));
         int branch = source.indexOf("if (VOID_NOOPS.contains(name) && descriptor.endsWith(\")V\"))");
         assertTrue(branch >= 0, "the no-op branch exists");
         int counted = source.indexOf("\"noteSurfaceNoop\"", branch);

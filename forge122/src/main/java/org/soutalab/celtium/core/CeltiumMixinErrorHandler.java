@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.soutalab.celtium.patch.PatchErrorRecorder;
 import org.soutalab.celtium.patch.PatchLedger;
@@ -10,7 +10,7 @@ import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
 /**
  * Records a failed celtium mixin into the patch ledger (item 356-C), so the next launch skips the failing
  * group by name instead of dying the same way at the same class. Registered from
- * {@link CeleritasLoadingPlugin#getMixinConfigs()}, before any config is prepared, so a failure while the
+ * {@link org.taumc.celeritas.core.CeleritasLoadingPlugin#getMixinConfigs()}, before any config is prepared, so a failure while the
  * very first config is prepared is still caught.
  * <p>
  * This handler is <b>record-only</b>. Both entry points return the {@code ErrorAction} they were handed,

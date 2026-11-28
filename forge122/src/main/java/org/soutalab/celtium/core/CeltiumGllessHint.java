@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 /**
  * The GL-less window hint, in its own class so the transformer can call it without loading the target's classes.
@@ -1352,7 +1352,7 @@ public final class CeltiumGllessHint {
         UNROUTED_TOTAL.incrementAndGet();
         if (!surfaceReported && UNROUTED_TOTAL.get() >= SURFACE_REPORT_CALLS) {
             surfaceReported = true;
-            org.taumc.celeritas.core.CeltiumGllessNativeTransformer.printSurfaceReport("in-run");
+            org.soutalab.celtium.core.CeltiumGllessNativeTransformer.printSurfaceReport("in-run");
         }
     }
 

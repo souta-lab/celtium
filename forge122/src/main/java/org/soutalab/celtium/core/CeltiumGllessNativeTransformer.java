@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 import org.objectweb.asm.ClassReader;
@@ -125,7 +125,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                         // CELTIUM_NOOP_CENSUS line at all, because under GL-less these calls never reach the stub.
                         // Off by default: one map increment per GL call is not free in a renderer's steady state.
                         method.visitLdcInsn(methodName);
-                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                                 "noteRewritten", "(Ljava/lang/String;)V", false);
                     }
                     if (CALLER_CENSUS) {
@@ -138,7 +138,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                         // the Java caller already unwound through the native hop. Off by default: resolving the
                         // caller costs a short stack walk per call, which a renderer's steady state must not pay.
                         method.visitLdcInsn(methodName + descriptor);
-                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                                 "noteCaller", "(Ljava/lang/String;)V", false);
                     }
                     emitDefaultReturn(method, methodName, descriptor);
@@ -167,7 +167,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * GluProjectionMixin already mirrors - routing it too drew the world with the projection applied twice (blank).
      */
     private static boolean emitRawMatrixRoute(MethodVisitor method, String name, String descriptor) {
-        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        String hint = "org/soutalab/celtium/core/CeltiumGllessHint";
         switch (name + descriptor) {
             case "glPushMatrix()V":
             case "glPopMatrix()V":
@@ -226,7 +226,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * {@link #emitLegacyIntRoute} and in the hint's scalar entry points.
      */
     private static boolean emitRawColourRoute(MethodVisitor method, String name, String descriptor) {
-        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        String hint = "org/soutalab/celtium/core/CeltiumGllessHint";
         switch (name + descriptor) {
             case "glColor4f(FFFF)V":
                 for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
@@ -446,7 +446,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         for (int slot = 0; slot < arguments; slot++) {
             method.visitVarInsn(Opcodes.ILOAD, slot);
         }
-        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                 hintName, descriptor, false);
         method.visitInsn(Opcodes.RETURN);
     }
@@ -521,10 +521,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.ICONST_0 + count);
             method.visitVarInsn(Opcodes.LLOAD, multi ? 1 : 0);
             if (multi) {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyMultiTexCoordV", "(IIIJ)V", false);
             } else {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyTexCoordV", "(IIJ)V", false);
             }
             method.visitInsn(Opcodes.RETURN);
@@ -560,23 +560,23 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (multi) {
             if (type == 'F') {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyMultiTexCoordF", "(IFF)V", false);
             } else if (type == 'D') {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyMultiTexCoordD", "(IDD)V", false);
             } else {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyMultiTexCoordI", "(III)V", false);
             }
         } else if (type == 'F') {
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyTexCoordF", "(FF)V", false);
         } else if (type == 'D') {
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyTexCoordD", "(DD)V", false);
         } else {
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyTexCoordI", "(II)V", false);
         }
         method.visitInsn(Opcodes.RETURN);
@@ -662,7 +662,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     public static void celtium$noteUnroutedForCheck(String key) {
         int id = unroutedId(key);
         if (id >= 0) {
-            org.taumc.celeritas.core.CeltiumGllessHint.noteUnrouted(id);
+            org.soutalab.celtium.core.CeltiumGllessHint.noteUnrouted(id);
         }
     }
 
@@ -718,7 +718,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * after the first {@link CeltiumGllessHint#SURFACE_REPORT_CALLS} zero-answered calls and again at shutdown.
      */
     public static void printSurfaceReport(String trigger) {
-        int[] counts = org.taumc.celeritas.core.CeltiumGllessHint.unroutedCounts();
+        int[] counts = org.soutalab.celtium.core.CeltiumGllessHint.unroutedCounts();
         java.util.List<Integer> order = new java.util.ArrayList<Integer>();
         int calls = 0;
         for (int i = 0; i < counts.length; i++) {
@@ -796,7 +796,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // The no-op set's own line: which names the set answered, and how often. Separate from the unrouted
         // line above because the answers differ in kind - these calls were decided per name, not missed -
         // and a reader sizing what the set still costs needs the two apart.
-        int[] noopCounts = org.taumc.celeritas.core.CeltiumGllessHint.surfaceNoopCounts();
+        int[] noopCounts = org.soutalab.celtium.core.CeltiumGllessHint.surfaceNoopCounts();
         java.util.List<Integer> noopOrder = new java.util.ArrayList<Integer>();
         int noopCalls = 0;
         for (int i = 0; i < noopCounts.length; i++) {
@@ -827,7 +827,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 + " noopCalls=" + noopCalls
                 + " [" + noopLine + "]");
         // The instanced draws the hint would not forward, aggregated from its per-name counters.
-        String instanced = org.taumc.celeritas.core.CeltiumGllessHint.unsupportedInstancedSummary();
+        String instanced = org.soutalab.celtium.core.CeltiumGllessHint.unsupportedInstancedSummary();
         if (!instanced.isEmpty() || "shutdown".equals(trigger)) {
             System.out.println("[Celtium] CELTIUM_UNSUPPORTED_INSTANCED trigger=" + trigger + " "
                     + (instanced.isEmpty() ? "none" : instanced));
@@ -858,7 +858,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      * (glShaderSourceARB, glAttachObjectARB, glLinkProgramARB, glUniform*ARB) take the same arguments.
      */
     private static boolean celtium$routeModProgram(MethodVisitor method, String name, String descriptor) {
-        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        String hint = "org/soutalab/celtium/core/CeltiumGllessHint";
         // glCreateShader is routed, not generated: the hint records the stage with the name, so the registry's
         // link classifies by the caller's argument instead of guessing from the source text. The ARB spelling
         // returns a long handle, a different native shape, and stays with the generic generator.
@@ -953,7 +953,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (("nglAlphaFunc".equals(name) || "glAlphaFunc".equals(name)) && "(IF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glAlphaFunc", "(IF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -962,7 +962,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // operation) and a raw depth comparison every immediate pipeline carries.
         if (("nglDeleteSync".equals(name) || "glDeleteSync".equals(name)) && "(J)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.LLOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glDeleteSync", "(J)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -977,7 +977,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // counted. Measured on the GTCEu scene: CELTIUM_SHADER_PROGRAM_REFUSED and CELTIUM_PROGRAM_DRAW both
             // printed zero lines while the composite demonstrably ran.
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glUseProgram", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -987,7 +987,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (("nglDepthFunc".equals(name) || "glDepthFunc".equals(name)) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glDepthFunc", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1007,7 +1007,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.FLOAD, 1);
                 method.visitVarInsn(Opcodes.FLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLegacyMultiTexCoord2f", "(IFF)V", false);
             }
             method.visitInsn(Opcodes.RETURN);
@@ -1017,20 +1017,20 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
         if ("glBegin".equals(name) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyBegin", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glEnd".equals(name) && "()V".equals(descriptor)) {
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyEnd", "()V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex3f", "(FFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1043,7 +1043,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("glVertex2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex2f", "(FF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1051,7 +1051,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("glVertex2d".equals(name) && "(DD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex2d", "(DD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1060,21 +1060,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitVarInsn(Opcodes.DLOAD, 4);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex3d", "(DDD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glVertex4f".equals(name) && "(FFFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex4f", "(FFFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glVertex4d".equals(name) && "(DDDD)V".equals(descriptor)) {
             for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyVertex4d", "(DDDD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1082,7 +1082,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyTexCoord2f", "(FF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1090,7 +1090,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyTexCoord2d", "(DD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1134,14 +1134,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // The capture expands it with GL's own four (texcoord, vertex) pairs, in the layout the run is opened for.
         if ("glRectf".equals(name) && "(FFFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyRectf", "(FFFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glRectd".equals(name) && "(DDDD)V".equals(descriptor)) {
             for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glLegacyRectd", "(DDDD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1175,7 +1175,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             int surfaceNoop = surfaceNoopId(name + descriptor);
             if (surfaceNoop >= 0) {
                 method.visitLdcInsn(Integer.valueOf(surfaceNoop));
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "noteSurfaceNoop", "(I)V", false);
             }
             method.visitInsn(Opcodes.RETURN);
@@ -1196,7 +1196,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // leave a caller decoding a null pointer.
         if (returnType.equals("J") && name.endsWith("glGetString") && descriptor.startsWith("(I)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glStringPointer", "(I)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
@@ -1218,7 +1218,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (returnType.equals("J") && name.endsWith("glFenceSync") && descriptor.startsWith("(II)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glFenceSyncId", "(II)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
@@ -1229,7 +1229,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitInsn(named ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetTextureParameterInt", "(IIZ)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1243,7 +1243,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 2);
             method.visitVarInsn(Opcodes.LLOAD, 3);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClientWaitSyncStatus", "(JIJ)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1279,7 +1279,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("(IJ)I".equals(descriptor) && (name.endsWith("nglGetUniformLocation")
                 || name.endsWith("nglGetUniformLocationARB"))) {
             method.visitVarInsn(Opcodes.LLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glUniformLocation", "(J)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1297,7 +1297,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (returnType.equals("V") && name.endsWith("nglGetIntegerv") && descriptor.startsWith("(IJ)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.LLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetIntegerv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1311,7 +1311,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
             method.visitVarInsn(Opcodes.LLOAD, 4);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "nglGetProgramInfoLog".equals(name) ? "glGetProgramInfoLog" : "glGetShaderInfoLog",
                     "(IIJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
@@ -1324,7 +1324,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "nglGetBufferParameteri64v".equals(name) ? "glGetBufferParameteri64v"
                             : "glGetBufferParameteriv", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
@@ -1349,7 +1349,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         query, "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1362,7 +1362,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (returnType.equals("V") && "nglGetBooleanv".equals(name) && descriptor.startsWith("(IJ)")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.LLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetBooleanv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1370,7 +1370,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // glIsEnabled is a native returning a boolean: unhandled, it answered false for every capability.
         if ("glIsEnabled".equals(name) && "(I)Z".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glIsEnabled", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1378,7 +1378,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // These typed natives otherwise return without ever reaching the existing pending-clear producer.
         if ("glClear".equals(name) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClear", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1388,14 +1388,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.FLOAD, 1);
             method.visitVarInsn(Opcodes.FLOAD, 2);
             method.visitVarInsn(Opcodes.FLOAD, 3);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClearColor", "(FFFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("glClearDepth".equals(name) && "(D)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClearDepth", "(D)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1403,7 +1403,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("glClearDepthf".equals(name) && "(F)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitInsn(Opcodes.F2D);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClearDepth", "(D)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1413,7 +1413,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.ILOAD, 2);
             method.visitVarInsn(Opcodes.ILOAD, 3);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glViewport", "(IIII)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1425,7 +1425,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 && ("nglGetFloatv".equals(name) || "nglGetDoublev".equals(name))) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.LLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "nglGetDoublev".equals(name) ? "glGetDoublev" : "glGetFloatv", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1444,7 +1444,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetShaderProgramiv", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1452,7 +1452,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("(II)I".equals(descriptor) && (name.endsWith("nglGetShaderi") || name.endsWith("nglGetProgrami"))) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetShaderProgrami", "(II)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1464,7 +1464,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                         || name.startsWith("nglCreate") || name.startsWith("glCreate"))) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.LLOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGenNames", "(IJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1480,7 +1480,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.ILOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetTexLevelParameteri", "(III)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1490,7 +1490,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.ILOAD, 2);
             method.visitVarInsn(Opcodes.LLOAD, 3);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetTexLevelParameteriv", "(IIIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1503,7 +1503,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.ILOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glTexEnvi", "(III)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1512,7 +1512,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.FLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glTexEnvf", "(IIF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1521,7 +1521,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glTexEnvPtr", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1530,7 +1530,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetTexEnvInt", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1539,7 +1539,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGetTexEnvFloats", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1555,7 +1555,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 int slot = lastArgumentSlot(descriptor);
                 method.visitVarInsn(Opcodes.LLOAD, slot);
                 method.visitLdcInsn(Integer.valueOf(size));
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetZero", "(JI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1571,7 +1571,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // matched the ngl* form, and an offline check of the transformed class showed it still returning iconst_0.
         if (returnType.equals("I") && (name.startsWith("nglGen") || name.startsWith("glGen")
                 || name.startsWith("nglCreate") || name.startsWith("glCreate"))) {
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glGenName", "()I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1580,7 +1580,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1589,7 +1589,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1601,7 +1601,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetNamedBufferParameter", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1614,7 +1614,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.LCONST_0);
             method.visitInsn(Opcodes.LCONST_0);
             method.visitVarInsn(Opcodes.LLOAD, 4);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClearBuffer", "(IZJJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1627,7 +1627,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 2);  // offset
             method.visitVarInsn(Opcodes.LLOAD, 4);  // size
             method.visitVarInsn(Opcodes.LLOAD, 8);  // data
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glClearBuffer", "(IZJJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
@@ -1638,7 +1638,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.LCONST_0);
             method.visitInsn(Opcodes.LCONST_0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glMapNamedBuffer", "(IZJJI)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
@@ -1649,14 +1649,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 3);
             method.visitVarInsn(Opcodes.ILOAD, 5);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glMapNamedBuffer", "(IZJJI)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
         }
         if ("(I)Z".equals(descriptor) && name.endsWith("glUnmapNamedBuffer")) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glUnmapNamedBuffer", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1669,7 +1669,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.LCONST_0);
             method.visitInsn(Opcodes.LCONST_0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glMapBuffer", "(IZJJI)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
@@ -1681,7 +1681,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 3);
             method.visitVarInsn(Opcodes.ILOAD, 5);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glMapBuffer", "(IZJJI)J", false);
             method.visitInsn(Opcodes.LRETURN);
             return;
@@ -1689,7 +1689,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if ("(I)Z".equals(descriptor) && (name.endsWith("glUnmapBuffer") || name.endsWith("glUnmapBufferARB"))) {
             // GL returns false only when the store was corrupted; the default false told callers it was.
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glUnmapBuffer", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1711,7 +1711,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         if (("glIsList".equals(name) || "nglIsList".equals(name)) && "(I)Z".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glIsList", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1722,14 +1722,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         if (returnType.equals("Z") && "(I)Z".equals(descriptor) && name.startsWith("glIs")
                 && !"glIsEnabled".equals(name) && !"glIsEnabledi".equals(name)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glIsObject", "(I)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
         }
         if (returnType.equals("Z") && "(J)Z".equals(descriptor) && name.startsWith("glIs")) {
             method.visitVarInsn(Opcodes.LLOAD, 0);
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "glIsSync", "(J)Z", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
@@ -1741,7 +1741,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetActiveUniformInt", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1753,7 +1753,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetActiveUniformName", "(IIJJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1764,7 +1764,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetInternalFormat", "(IJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1775,7 +1775,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetProgramResourceName", "(IIIIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1783,14 +1783,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIIIJIJJ)V".equals(descriptor) && name.endsWith("glGetProgramResourceiv")) {
                 method.visitVarInsn(Opcodes.ILOAD, 6);
                 method.visitVarInsn(Opcodes.LLOAD, 7);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetProgramResourceLength", "(IJ)V", false);
                 // The property values are written too: the caller sized its array by propCount, so zeroing exactly that
                 // many is inside its allocation and leaves a deterministic "not supported" rather than stale values.
                 method.visitVarInsn(Opcodes.LLOAD, 9);
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1798,7 +1798,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIJIJ)V".equals(descriptor) && name.endsWith("glGetActiveUniformsiv")) {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetActiveUniforms", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1809,7 +1809,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetProgramBinary", "(IIJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1819,7 +1819,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetShaderPrecisionFormat", "(IIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1829,7 +1829,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetInfoLogARB", "(IIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1839,7 +1839,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetShaderSource", "(IIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1849,7 +1849,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetAttachedShaders", "(IIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1864,7 +1864,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 5);
                 method.visitVarInsn(Opcodes.LLOAD, 7);
                 method.visitVarInsn(Opcodes.LLOAD, 9);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetActiveObject", "(IIIJJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1874,7 +1874,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                             || name.endsWith("glBlendEquationIndexedEXT"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBlendEquationIndexed", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1884,7 +1884,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 3; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBlendEquationSeparateIndexed", "(III)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1894,7 +1894,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBlendFuncSeparateIndexed", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1905,7 +1905,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 1; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glColorMaskIndexed", "(IZZZZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1915,7 +1915,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glMultiDrawArrays", "(IJJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1926,7 +1926,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitVarInsn(Opcodes.ILOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glMultiDrawElements", "(IJIJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1935,7 +1935,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawArraysInstancedBaseInstance", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1946,7 +1946,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElementsInstanced", "(IIIJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1958,7 +1958,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
                 method.visitVarInsn(Opcodes.ILOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElementsInstancedBaseVertex", "(IIIJII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1971,7 +1971,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 5);
                 method.visitVarInsn(Opcodes.ILOAD, 6);
                 method.visitVarInsn(Opcodes.ILOAD, 7);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElementsInstancedBaseVertexBaseInstance", "(IIIJIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1980,7 +1980,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 4; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawArraysInstanced", "(IIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -1991,7 +1991,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElementsInstanced", "(IIIJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2002,7 +2002,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElementsBaseVertex", "(IIIJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2012,7 +2012,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElements", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2022,7 +2022,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawElements", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2033,7 +2033,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glVertexAttribIPointer", "(IIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2044,7 +2044,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 }
                 method.visitVarInsn(Opcodes.ILOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glVertexAttribPointer", "(IIIZIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2054,33 +2054,33 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 boolean enabled = name.contains("Enable");
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitInsn(enabled ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glEnableVertexAttribArray", "(IZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("(I)V".equals(descriptor) && name.endsWith("glPushAttrib")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPushAttrib", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("()V".equals(descriptor) && name.endsWith("glPopAttrib")) {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPopAttrib", "()V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("(I)V".equals(descriptor) && name.endsWith("glPushClientAttrib")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPushClientAttrib", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("()V".equals(descriptor) && name.endsWith("glPopClientAttrib")) {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPopClientAttrib", "()V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2089,7 +2089,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetObjectLabel", "(IJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2098,7 +2098,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetObjectLabel", "(IJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2106,7 +2106,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(II)V".equals(descriptor) && name.endsWith("glBindRenderbuffer")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindRenderbuffer", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2114,7 +2114,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIII)V".equals(descriptor) && name.endsWith("glRenderbufferStorage")) {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.ILOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glRenderbufferStorage", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2122,21 +2122,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIIII)V".equals(descriptor) && name.endsWith("glRenderbufferStorageMultisample")) {
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glRenderbufferStorage", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("(F)V".equals(descriptor) && name.endsWith("glPointSize")) {
                 method.visitVarInsn(Opcodes.FLOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPointSize", "(F)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("(F)V".equals(descriptor) && name.endsWith("glLineWidth")) {
                 method.visitVarInsn(Opcodes.FLOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLineWidth", "(F)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2148,7 +2148,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitInsn(enabled ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glEnableIndexed", "(IIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2157,7 +2157,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     && (name.endsWith("glIsEnabledi") || name.endsWith("glIsEnabledIndexedEXT"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glIsEnabledIndexed", "(II)Z", false);
                 method.visitInsn(Opcodes.IRETURN);
                 return;
@@ -2167,7 +2167,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         name.endsWith("glGetLightiv") ? "glGetLightiv" : "glGetMaterialiv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2176,7 +2176,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetMaterialfv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2185,7 +2185,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2194,7 +2194,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2203,7 +2203,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     && (name.endsWith("glGetRenderbufferParameteriv") || name.endsWith("glGetRenderbufferParameterfv"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetRenderbufferParameter", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2214,7 +2214,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2223,7 +2223,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_2);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2236,7 +2236,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetQueryObject", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2248,7 +2248,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(asDouble ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetVertexAttribFloats", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2258,7 +2258,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetVertexAttribiv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2267,7 +2267,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetVertexAttribPointer", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2276,7 +2276,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetVertexAttribiv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2284,7 +2284,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IJ)V".equals(descriptor) && name.endsWith("glGetInteger64v")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetInteger64", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2292,7 +2292,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetInteger64i_v")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetInteger64", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2303,7 +2303,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetSynciv", "(JIIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2316,7 +2316,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         named ? "glGetNamedFramebufferAttachmentParameteriv"
                                 : "glGetFramebufferAttachmentParameteriv", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
@@ -2328,7 +2328,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glShaderObjectParameter", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2339,7 +2339,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glClearBufferfv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2350,7 +2350,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.FLOAD, 2);
                 method.visitVarInsn(Opcodes.ILOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glClearBufferfi", "(IIFI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2362,7 +2362,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 1; slot <= 5; slot += 2) {
                     method.visitVarInsn(Opcodes.LLOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         named ? "glGetNamedBufferSubData" : "glGetBufferSubData", "(IJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2375,7 +2375,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 4);
                 method.visitVarInsn(Opcodes.LLOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         named ? "glCopyNamedBufferSubData" : "glCopyBufferSubData", "(IIJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2389,7 +2389,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitLdcInsn(name);
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDeleteObjects", "(Ljava/lang/String;IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2399,7 +2399,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     && !name.endsWith("glDeleteLists") && !name.endsWith("glDeleteSync")) {
                 method.visitLdcInsn(name);
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDeleteObject", "(Ljava/lang/String;I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2410,7 +2410,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     && (name.endsWith("glBindFramebufferEXT") || name.endsWith("glBindFramebufferARB"))) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindFramebuffer", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2420,7 +2420,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFramebufferTexture2D", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2437,7 +2437,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 4; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glNamedFramebufferTexture", "(IIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2446,7 +2446,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 3; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTextureParameteri", "(III)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2455,7 +2455,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.FLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTextureParameterf", "(IIF)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2468,7 +2468,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTextureParameterPointer", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2477,7 +2477,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.FLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexParameterf", "(IIF)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2490,7 +2490,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexParameterPointer", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2503,14 +2503,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(floats ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetTextureParameterNamed", "(IIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetBooleani_v")) {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetBooleanIndexed", "(J)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2520,7 +2520,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(name.endsWith("glGetDoublei_v") ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2533,7 +2533,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitInsn(Opcodes.ICONST_1);
                 method.visitInsn(Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glZeroOut", "(JIZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2541,7 +2541,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("(IIJ)V".equals(descriptor) && name.endsWith("glGetIntegeri_v")) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetIntegerIndexed", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2555,7 +2555,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitInsn(wide ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetTexLevelParameterNamed", "(IIIJZ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2564,7 +2564,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 10);
                 method.visitInsn(Opcodes.I2L);
                 method.visitVarInsn(Opcodes.LLOAD, 11);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetTextureImageZero", "(JJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2573,7 +2573,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 5);
                 method.visitVarInsn(Opcodes.ILOAD, 4);
                 method.visitInsn(Opcodes.I2L);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetTextureImageZero", "(JJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2583,7 +2583,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 8);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexSubImageNamed", "(IIIIIIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2592,7 +2592,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexStorageNamed", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2601,7 +2601,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexStorageNamed", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2610,7 +2610,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexStorage2D", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2619,7 +2619,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 6; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexStorage3D", "(IIIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2632,7 +2632,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBufferSubData", "(IJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2643,7 +2643,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.LLOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glNamedBufferSubData", "(IJJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2657,7 +2657,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         named ? "glNamedBufferData" : "glBufferStorage", "(IJJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2665,7 +2665,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glBindVertexArray".equals(name) || "nglBindVertexArray".equals(name))
                     && "(I)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindVertexArray", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2675,7 +2675,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // replay written there could not run.
             if (("glListBase".equals(name) || "nglListBase".equals(name)) && "(I)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glListBase", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2684,7 +2684,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glCallLists", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2692,7 +2692,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glDeleteLists".equals(name) || "nglDeleteLists".equals(name)) && "(II)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDeleteLists", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2703,7 +2703,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glPixelStorei".equals(name) || "nglPixelStorei".equals(name)) && "(II)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPixelStorei", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2711,7 +2711,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glPixelStoref".equals(name) || "nglPixelStoref".equals(name)) && "(IF)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.FLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glPixelStoref", "(IF)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2720,7 +2720,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetLightfv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2730,7 +2730,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLightfv", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2738,7 +2738,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glLightModelfv".equals(name) || "nglLightModelfv".equals(name)) && "(IJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glLightModelfv", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2747,7 +2747,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glFogf".equals(name) || "nglFogf".equals(name)) && "(IF)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.FLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFogf", "(IF)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2755,7 +2755,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glFogi".equals(name) || "nglFogi".equals(name)) && "(II)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFogi", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2763,7 +2763,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glFogfv".equals(name) || "nglFogfv".equals(name)) && "(IJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFogfv", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2771,7 +2771,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if (("glFogiv".equals(name) || "nglFogiv".equals(name)) && "(IJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFogiv", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2780,13 +2780,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // (II)V - the natives are static, so the arguments are at slots 0 and 1.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glNewList", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if ("glEndList".equals(name) || "nglEndList".equals(name)) {
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glEndList", "()V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2794,7 +2794,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("glCallList".equals(name) || "nglCallList".equals(name)) {
                 // (I)V
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glCallList", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2818,7 +2818,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 8; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glCopyTexSubImage2D", "(IIIIIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2827,7 +2827,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 8; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glCopyTexImage2D", "(IIIIIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2844,7 +2844,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 15; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glCopyImageSubData", "(IIIIIIIIIIIIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2862,7 +2862,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 6);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glReadPixels", "(IIIIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2876,7 +2876,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 4);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glGetTexImage", "(IIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2890,7 +2890,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 3; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDrawArrays", "(III)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2901,7 +2901,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // (II)V
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindBuffer", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2913,7 +2913,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // (I)V
                 boolean enable = name.startsWith("glEnable") || name.startsWith("nglEnable");
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         enable ? "glEnableClientState" : "glDisableClientState", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2924,7 +2924,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glVertexPointer", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2936,14 +2936,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // RenderContext.multMatrix could never set the projection mirror, and the stride-48 item-model draw
                 // was refused with "the mirrored projection is the identity at draw time".
                 method.visitVarInsn(Opcodes.LLOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glMultMatrixf", "(J)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
             if (MOD_MATRIX_ROUTES && "nglMultMatrixd".equals(name) && descriptor.equals("(J)V")) {
                 method.visitVarInsn(Opcodes.LLOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glMultMatrixd", "(J)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2956,7 +2956,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexCoordPointer", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2967,7 +2967,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 3);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glColorPointer", "(IIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2977,7 +2977,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glNormalPointer", "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2987,7 +2987,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 for (int slot = 0; slot < 5; slot++) {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glFramebufferTexture2D", "(IIIII)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -2996,7 +2996,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // (II)V - target, framebuffer.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindFramebuffer", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3007,7 +3007,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 8);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexImage2D", "(IIIIIIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3018,7 +3018,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     method.visitVarInsn(Opcodes.ILOAD, slot);
                 }
                 method.visitVarInsn(Opcodes.LLOAD, 8);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexSubImage2D", "(IIIIIIIIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3030,7 +3030,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.LLOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 3);
                 method.visitVarInsn(Opcodes.ILOAD, 5);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBufferData", "(IJJI)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3040,7 +3040,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.ILOAD, 2);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glTexParameteri", "(III)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3052,7 +3052,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // texture is created with the same direct call).
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.ILOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glBindTexture", "(II)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3061,7 +3061,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                     || name.endsWith("glActiveTextureARB")) {
                 // (I)V - the unit enum; the stub records it so the unit-keyed binding map answers the right slot.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glActiveTexture", "(I)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3071,7 +3071,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 // would read as its own pixels.
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDeleteTextures", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3079,7 +3079,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             if ("nglDeleteFramebuffers".equals(name) && "(IJ)V".equals(descriptor)) {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.LLOAD, 1);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                         "glDeleteFramebuffers", "(IJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
@@ -3091,7 +3091,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         int unrouted = unroutedId(name + descriptor);
         if (unrouted >= 0) {
             method.visitLdcInsn(Integer.valueOf(unrouted));
-            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/core/CeltiumGllessHint",
                     "noteUnrouted", "(I)V", false);
         }
         switch (returnType) {

@@ -11,7 +11,7 @@ import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import org.objectweb.asm.*;
-import org.taumc.celeritas.core.CeltiumGllessNativeTransformer;
+import org.soutalab.celtium.core.CeltiumGllessNativeTransformer;
 
 public class TransformerRouteVerifierCheck {
     static final String[] NAMES = {
@@ -262,7 +262,7 @@ public class TransformerRouteVerifierCheck {
                             // (noteUnrouted), so counting every invokestatic would report a dropped spelling as routed
                             // - the positive control that removed one route was answered with 32/32 before this.
                             if (opcode == Opcodes.INVOKESTATIC
-                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(owner)
+                                    && "org/soutalab/celtium/core/CeltiumGllessHint".equals(owner)
                                     && hintName.startsWith("glColor")) {
                                 routed.put(name, Boolean.TRUE);
                                 hintCalls.add(hintName + hintDescriptor);
@@ -283,7 +283,7 @@ public class TransformerRouteVerifierCheck {
             // the route, not by executing it: the hint's static initialisers need the Vulkan/LWJGL natives this check
             // deliberately does not load, so initialization is asked for as false and only the method lookup runs.
             // This is the failure mode that compiles fine and first appears in whichever mod calls that spelling.
-            Class<?> hintClass = Class.forName("org.taumc.celeritas.core.CeltiumGllessHint", false,
+            Class<?> hintClass = Class.forName("org.soutalab.celtium.core.CeltiumGllessHint", false,
                     TransformerRouteVerifierCheck.class.getClassLoader());
             for (String call : hintCalls) {
                 int paren = call.indexOf('(');
@@ -333,7 +333,7 @@ public class TransformerRouteVerifierCheck {
                         @Override public void visitMethodInsn(int opcode, String owner, String hintName,
                                 String hintDescriptor, boolean isInterface) {
                             if (opcode == Opcodes.INVOKESTATIC
-                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(owner)
+                                    && "org/soutalab/celtium/core/CeltiumGllessHint".equals(owner)
                                     && (hintName.startsWith("glLegacyTexCoord")
                                             || hintName.startsWith("glLegacyMultiTexCoord"))) {
                                 routedCoords.put(methodName, Boolean.TRUE);
@@ -416,7 +416,7 @@ public class TransformerRouteVerifierCheck {
                         @Override public void visitMethodInsn(int opcode, String callOwner, String hintName,
                                 String hintDescriptor, boolean isInterface) {
                             if (opcode == Opcodes.INVOKESTATIC
-                                    && "org/taumc/celeritas/core/CeltiumGllessHint".equals(callOwner)) {
+                                    && "org/soutalab/celtium/core/CeltiumGllessHint".equals(callOwner)) {
                                 calls.add(hintName + hintDescriptor);
                             }
                         }
@@ -517,13 +517,13 @@ public class TransformerRouteVerifierCheck {
         // the line is read back. Without this, "none" in a leg is not evidence of anything.
         int drawingCensusFailures = 0;
         try {
-            org.taumc.celeritas.core.CeltiumGllessNativeTransformer
+            org.soutalab.celtium.core.CeltiumGllessNativeTransformer
                     .celtium$noteUnroutedForCheck("glDrawElements(IIIJ)V");
             java.io.PrintStream original = System.out;
             java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
             try {
                 System.setOut(new java.io.PrintStream(captured, true, "UTF-8"));
-                org.taumc.celeritas.core.CeltiumGllessNativeTransformer.printSurfaceReport("positive-control");
+                org.soutalab.celtium.core.CeltiumGllessNativeTransformer.printSurfaceReport("positive-control");
             } finally {
                 System.setOut(original);
             }

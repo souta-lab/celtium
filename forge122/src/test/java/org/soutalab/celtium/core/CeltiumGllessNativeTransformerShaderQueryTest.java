@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CeltiumGllessNativeTransformerShaderQueryTest {
 
-    private static final String HINT = "org/taumc/celeritas/core/CeltiumGllessHint.";
+    private static final String HINT = "org/soutalab/celtium/core/CeltiumGllessHint.";
 
     @Test
     void statusRoutesForwardTheObjectToTheHint() {

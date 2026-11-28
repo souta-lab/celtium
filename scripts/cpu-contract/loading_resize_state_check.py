@@ -8,7 +8,7 @@ from loading_capture_boundary_check import method
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "forge122/src/main/java/org/taumc/celeritas/mixin/core"
-BRIDGE = ROOT / "forge122/src/main/java/org/taumc/celeritas/interfaces/LoadingProgressState.java"
+BRIDGE = ROOT / "forge122/src/main/java/org/soutalab/celtium/interfaces/LoadingProgressState.java"
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
         "public boolean celtium$loadingSuccess(",
     ))
     java = r'''
-import org.taumc.celeritas.interfaces.LoadingProgressState;
+import org.soutalab.celtium.interfaces.LoadingProgressState;
 class LoadingResizeCheck {
     static class Minecraft { Object loadingScreen; }
     static class LoadingScreenRenderer implements LoadingProgressState {

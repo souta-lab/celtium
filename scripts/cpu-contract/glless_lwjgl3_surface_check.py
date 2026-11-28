@@ -98,7 +98,7 @@ def main():
     coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
     require('the native replacement is installed from the transformer chain',
             'CeltiumGllessNativeTransformer' in coremod)
-    native_transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java').read_text(encoding='utf-8')
+    native_transformer = (ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeltiumGllessNativeTransformer.java').read_text(encoding='utf-8')
     require('it rewrites only native methods in the LWJGL GL package',
             'ACC_NATIVE' in native_transformer and 'org.lwjgl.opengl.' in native_transformer)
     require('it returns this project\'s identity for glGetString rather than null',

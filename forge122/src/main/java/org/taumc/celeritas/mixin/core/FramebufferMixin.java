@@ -76,14 +76,14 @@ public abstract class FramebufferMixin {
     @Inject(method = {"func_147610_a", "func_147609_e", "func_147605_b", "func_147608_a"}, at = @At("HEAD"),
             require = 0)
     private void celtium$enterVanillaFramebuffer(CallbackInfo info) {
-        org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth++;
+        org.soutalab.celtium.core.CeltiumGllessHint.vanillaFramebufferDepth++;
     }
 
     @Inject(method = {"func_147610_a", "func_147609_e", "func_147605_b", "func_147608_a"}, at = @At("RETURN"),
             require = 0)
     private void celtium$leaveVanillaFramebuffer(CallbackInfo info) {
-        if (org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth > 0) {
-            org.taumc.celeritas.core.CeltiumGllessHint.vanillaFramebufferDepth--;
+        if (org.soutalab.celtium.core.CeltiumGllessHint.vanillaFramebufferDepth > 0) {
+            org.soutalab.celtium.core.CeltiumGllessHint.vanillaFramebufferDepth--;
         }
     }
 

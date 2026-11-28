@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class CeltiumGllessTransformerGuardsTest {
 
     private static final String HINT_CALL =
-            "org/taumc/celeritas/core/CeltiumGllessHint.beforeWindowCreation";
+            "org/soutalab/celtium/core/CeltiumGllessHint.beforeWindowCreation";
     private static final String ANCHOR_CALL = "org/lwjgl/glfw/GLFW.glfwCreateWindow";
 
     @Test
