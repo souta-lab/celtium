@@ -1343,6 +1343,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         celtium$lane1().setTextureCellTable(packedCells);
     }
 
+    @Override
+    public void celtium$setTextureRectTable(float[] packedRects) {
+        celtium$lane1().setTextureRectTable(packedRects);
+    }
+
     /** Lane 1 store/draw counters for the F3 panel and status reports; never starts the frontend. */
     public String celtium$lane1DiagnosticsSummary() {
         String base = this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();

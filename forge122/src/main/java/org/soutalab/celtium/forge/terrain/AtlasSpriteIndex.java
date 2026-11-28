@@ -58,6 +58,35 @@ public final class AtlasSpriteIndex {
         return table;
     }
 
+    /**
+     * A snapshot of the index-to-rectangle table, four floats {@code (minU, minV, sizeU,
+     * sizeV)} per index, for the backend's sprite-rectangle buffer - the general stream's
+     * UV restore source (UV ruling 5.4-2: real atlas rectangles, never a fixed cell size).
+     * Entry 0 (the unknown sprite) is the first 16-pixel cell's rectangle, mirroring the
+     * cell table's fallback; with no atlas size recorded it is the whole atlas.
+     */
+    public synchronized float[] rectTable() {
+        float[] table = new float[(nextIndex + 1) * 4];
+        if (atlasWidthPx > 0 && atlasHeightPx > 0) {
+            table[2] = 16.0f / atlasWidthPx;
+            table[3] = 16.0f / atlasHeightPx;
+        } else {
+            table[2] = 1.0f;
+            table[3] = 1.0f;
+        }
+        for (int i = 1; i <= nextIndex; i++) {
+            TextureAtlasSprite sprite = i < byIndex.size() ? byIndex.get(i) : null;
+            if (sprite == null) {
+                continue;
+            }
+            table[i * 4] = sprite.getMinU();
+            table[i * 4 + 1] = sprite.getMinV();
+            table[i * 4 + 2] = sprite.getMaxU() - sprite.getMinU();
+            table[i * 4 + 3] = sprite.getMaxV() - sprite.getMinV();
+        }
+        return table;
+    }
+
     /** The sprite's atlas cell, packed {@code cellU | (cellV << 8)}; 0 when unknown. */
     public synchronized int cellFor(TextureAtlasSprite sprite) {
         if (sprite == null || atlasWidthPx <= 0 || atlasHeightPx <= 0) {

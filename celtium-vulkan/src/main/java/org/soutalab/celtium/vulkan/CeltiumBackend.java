@@ -25,6 +25,15 @@ public interface CeltiumBackend {
     default void celtium$setTextureCellTable(int[] packedCells) {
     }
 
+    /**
+     * Hands the Lane 1 frontend the sprite index-to-atlas-rectangle table (four floats
+     * {@code uvMin.xy, uvSize.zw} per texture index, the cell table's index space) that the
+     * general stream's vertex shader restores per-corner atlas UVs through. Pushed together
+     * with the cell table whenever the sprite index grows.
+     */
+    default void celtium$setTextureRectTable(float[] packedRects) {
+    }
+
     // ---------------------------------------------------------------- Lane 1 terrain (S2-b)
 
     /** Uploads one meshed section's geometry to the Lane 1 resident store. */

@@ -89,6 +89,8 @@ public final class Lane1TerrainFrontend {
     /** Texture-cell table capacity: one uvec2 (cellU, cellV) per sprite texture index. */
     private static final int MAX_TEXTURE_CELLS = 8192;
     private static final long TEXTURE_CELL_BYTES = (long) MAX_TEXTURE_CELLS * 8L;
+    /** Sprite-rectangle table capacity: one vec4 (uvMin, uvSize) per sprite texture index. */
+    private static final long TEXTURE_RECT_BYTES = (long) MAX_TEXTURE_CELLS * 16L;
     /** Per-slot indirect-draw staging capacity: 16 B VkDrawIndirectCommand records. */
     private static final int MAX_INDIRECT_COMMANDS = 16384;
     private static final long INDIRECT_BYTES = (long) MAX_INDIRECT_COMMANDS * 16L;
@@ -107,6 +109,7 @@ public final class Lane1TerrainFrontend {
     private final VulkanHostBuffer lightBuffer;
     private final VulkanHostBuffer maskBuffer;
     private final VulkanHostBuffer textureCellBuffer;
+    private final VulkanHostBuffer textureRectBuffer;
     private final VulkanHostBuffer[] indirectBuffers = new VulkanHostBuffer[FRAME_SLOTS];
     private final int[] indirectCursor = new int[FRAME_SLOTS];
     private long indirectFrame = -1L;
@@ -153,6 +156,8 @@ public final class Lane1TerrainFrontend {
         this.world = new TerrainWorld(store);
         this.descBuffer = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.textureCellBuffer = new VulkanHostBuffer(context, TEXTURE_CELL_BYTES,
+                VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        this.textureRectBuffer = new VulkanHostBuffer(context, TEXTURE_RECT_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
             this.indirectBuffers[slot] = new VulkanHostBuffer(context, INDIRECT_BYTES,
@@ -237,6 +242,21 @@ public final class Lane1TerrainFrontend {
             segment.set(ValueLayout.JAVA_INT, (long) i * 8L + 4L, (packedCells[i] >> 8) & 0xFF);
         }
         this.textureCellCount = count;
+    }
+
+    /**
+     * Replaces the sprite-rectangle table the general stream's vertex shader reads
+     * (binding 9): one {@code (uvMin.xy, uvSize.zw)} vec4 per texture index, in the same
+     * index space and count as the cell table. The general stream restores atlas UVs from
+     * these real rectangles (UV ruling 5.4-2), never from a fixed cell size.
+     */
+    public synchronized void setTextureRectTable(float[] rects) {
+        int count = Math.min(rects.length / 4, MAX_TEXTURE_CELLS);
+        MemorySegment segment = MemorySegment.ofAddress(textureRectBuffer.mappedAddress())
+                .reinterpret(TEXTURE_RECT_BYTES);
+        for (int i = 0; i < count * 4; i++) {
+            segment.set(ValueLayout.JAVA_FLOAT, (long) i * 4L, rects[i]);
+        }
     }
 
 
@@ -493,6 +513,7 @@ public final class Lane1TerrainFrontend {
         int[] axisWords = words(ModShaderCompiler.compile(Lane1Shaders.AXIS_VERTEX, true));
         int[] generalWords = words(ModShaderCompiler.compile(Lane1Shaders.GENERAL_VERTEX, true));
         int[] fragmentWords = words(ModShaderCompiler.compile(Lane1Shaders.TERRAIN_FRAGMENT, false));
+        int[] generalFragmentWords = words(ModShaderCompiler.compile(Lane1Shaders.GENERAL_FRAGMENT, false));
         AttachmentFormatKey formats = AttachmentFormatKey.of(
                 new int[]{context.celtium$frameColorFormat()}, VulkanFormatDepth(), 0);
         DescriptorBindingPlan plan = bindingPlan();
@@ -505,7 +526,7 @@ public final class Lane1TerrainFrontend {
                     SpirvModuleBundle.of(axisWords, fragmentWords), formats, blend,
                     alphaCutoff(kind), !translucent, false, plan);
             generalPrograms[kind] = new TerrainStageProgram(passKind,
-                    SpirvModuleBundle.of(generalWords, fragmentWords), formats, blend,
+                    SpirvModuleBundle.of(generalWords, generalFragmentWords), formats, blend,
                     alphaCutoff(kind), !translucent, false, plan);
         }
     }
@@ -527,6 +548,7 @@ public final class Lane1TerrainFrontend {
         bindings.add(new DescriptorBindingPlan.Binding(6, DescriptorBindingPlan.Kind.COMBINED_IMAGE_SAMPLER, fragment, 1));
         bindings.add(new DescriptorBindingPlan.Binding(7, DescriptorBindingPlan.Kind.COMBINED_IMAGE_SAMPLER, fragment, 1));
         bindings.add(new DescriptorBindingPlan.Binding(8, DescriptorBindingPlan.Kind.UNIFORM_BUFFER, fragment, 1));
+        bindings.add(new DescriptorBindingPlan.Binding(9, DescriptorBindingPlan.Kind.STORAGE_BUFFER, vertex, 1));
         return new DescriptorBindingPlan(bindings);
     }
 
@@ -592,8 +614,11 @@ public final class Lane1TerrainFrontend {
                     .calloc(stack)
                     .sType(VK10.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO)
                     .polygonMode(VK10.VK_POLYGON_MODE_FILL)
-                    // The packed quad winding is not decodable (S2-a design note): no face culling.
-                    .cullMode(VK10.VK_CULL_MODE_NONE)
+                    // Axis stream: back-face culling is on - the vertex stage mirrors the
+                    // corner U by word0 bit 20 (negativeFacing), so every packed quad winds
+                    // CCW from its outward side (transmission item 14). The general stream
+                    // carries arbitrary model geometry and stays double-sided.
+                    .cullMode(general ? VK10.VK_CULL_MODE_NONE : VK10.VK_CULL_MODE_BACK_BIT)
                     .frontFace(VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE)
                     .lineWidth(1.0f);
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo
@@ -690,20 +715,21 @@ public final class Lane1TerrainFrontend {
 
     private long createSetLayout() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            int[] bindings = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+            int[] bindings = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
             VkDescriptorSetLayoutBinding.Buffer layoutBindings =
                     VkDescriptorSetLayoutBinding.calloc(bindings.length, stack);
             for (int i = 0; i < bindings.length; i++) {
                 int binding = bindings[i];
+                boolean storage = binding <= 5 || binding == 9;
                 layoutBindings.get(i)
                         .binding(binding)
                         .descriptorCount(1)
-                        .descriptorType(binding <= 5
+                        .descriptorType(storage
                                 ? VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
                                 : binding <= 7
                                 ? VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
                                 : VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .stageFlags(binding <= 5
+                        .stageFlags(storage
                                 ? VK10.VK_SHADER_STAGE_VERTEX_BIT
                                 : VK10.VK_SHADER_STAGE_FRAGMENT_BIT);
             }
@@ -739,7 +765,7 @@ public final class Lane1TerrainFrontend {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int setCount = FRAME_SLOTS * KIND_COUNT * 2;
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
-            sizes.get(0).type(VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(setCount * 6);
+            sizes.get(0).type(VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(setCount * 7);
             sizes.get(1).type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(setCount * 2);
             sizes.get(2).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(setCount);
             VkDescriptorPoolCreateInfo info = VkDescriptorPoolCreateInfo.calloc(stack)
@@ -790,6 +816,7 @@ public final class Lane1TerrainFrontend {
                                 stream == 0 ? AXIS_SLAB_BYTES : GENERAL_SLAB_BYTES));
                         writes.add(bufferWrite(stack, set, 2, auxSpace.bufferHandle(), AUX_SLAB_BYTES));
                         writes.add(bufferWrite(stack, set, 3, textureCellBuffer.buffer(), TEXTURE_CELL_BYTES));
+                        writes.add(bufferWrite(stack, set, 9, textureRectBuffer.buffer(), TEXTURE_RECT_BYTES));
                         writes.add(bufferWrite(stack, set, 4, lightBuffer.buffer(),
                                 LightGridBuilder.UBO_BYTES));
                         writes.add(bufferWrite(stack, set, 5, maskBuffer.buffer(),
@@ -893,6 +920,7 @@ public final class Lane1TerrainFrontend {
         }
         descBuffer.delete();
         textureCellBuffer.delete();
+        textureRectBuffer.delete();
         for (VulkanHostBuffer indirect : indirectBuffers) {
             indirect.delete();
         }

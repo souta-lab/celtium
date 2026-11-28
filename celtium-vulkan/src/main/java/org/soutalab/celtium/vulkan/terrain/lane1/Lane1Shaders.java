@@ -149,11 +149,20 @@ public final class Lane1Shaders {
             }
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
-                vec2 corner = CORNERS[gl_VertexIndex % 6];
                 uvec4 q = quads[quadIndex];
+                vec2 corner = CORNERS[gl_VertexIndex % 6];
                 SectionDesc d = descs[gl_InstanceIndex];
                 vec3 minCorner = vec3(float(q.x & 63u), float((q.x >> 6) & 63u), float((q.x >> 12) & 63u));
                 uint axis = (q.x >> 18) & 3u;
+                // Winding consistency for back-face culling (transmission item 14): the fixed
+                // (U, V) parametrization winds CCW seen from the -X / -Y / +Z side, so a quad
+                // whose outward side is the opposite one gets its U mirrored - position and
+                // UV derive from the same corner, so the rendered image is unchanged and only
+                // the triangle order flips. word0 bit 20 is PackedAxisQuad.negativeFacing.
+                bool negativeFacing = ((q.x >> 20) & 1u) != 0u;
+                if (negativeFacing == (axis == 2u)) {
+                    corner.x = 1.0 - corner.x;
+                }
                 uint extentU = (q.y & 63u) + 1u;
                 uint extentV = ((q.y >> 6) & 63u) + 1u;
                 uint textureIndex = q.y >> 12;
@@ -190,7 +199,10 @@ public final class Lane1Shaders {
             // array member cannot be indexed dynamically without GL_EXT_nonuniform_qualifier,
             // so the shader reads the same 80 B record through a flat float array instead.
             layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads { float generalWords[]; };
-            layout(std430, set = 0, binding = 3) readonly buffer TextureCells { uvec2 textureCells[]; };
+            // Per-sprite atlas rectangles (uvMin.xy, uvSize.zw), in the same index space as
+            // the cell table: the consumer-side restore of ruling 5.4-2 - no fixed cell size
+            // is assumed, so 32x32 / 64x64 / HD sprites keep their real extent.
+            layout(std430, set = 0, binding = 9) readonly buffer TextureRects { vec4 textureRects[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
                 ivec4 cameraSection;
@@ -201,12 +213,11 @@ public final class Lane1Shaders {
                 int pushPad2;
                 vec4 cameraFrac;
             } pc;
-            layout(location = 0) out vec2 fragCell;
+            layout(location = 0) out vec2 fragAtlasUv;
             layout(location = 1) out vec4 fragColor;
             layout(location = 2) out vec2 fragLightMap;
             layout(location = 3) out vec3 fragWorldPos;
             layout(location = 4) out vec3 fragDynamicLight;
-            layout(location = 5) out vec2 fragLocalUv;
             const int CORNER_INDEX[6] = int[](0, 1, 2, 0, 2, 3);
             void main() {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
@@ -219,19 +230,19 @@ public final class Lane1Shaders {
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
                 vec3 relative = relativeSectionOrigin(d.section, pc.cameraSection.xyz, pc.cameraFrac.xyz) + local;
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
-                // The quad's texture index resolves through the frontend's cell table; the corner
-                // maps onto the sprite's full extent (the S2-a full-sprite approximation: the
-                // mesher's 80 B record carries no per-vertex sprite UVs).
+                // The 80 B record's per-corner sprite-local UVs (words 16..19, Q1.15 packed:
+                // u in bits 0..15, v in bits 16..31) composed with the sprite's real atlas
+                // rectangle: atlasUv = uvMin + localUv * uvSize (UV ruling 5.4-2 / 5.4-3).
+                // Out-of-range indices fall back to entry 0, the first cell's rectangle,
+                // mirroring the cell table's fallback.
                 int textureIndex = floatBitsToInt(generalWords[wordBase + 12u]);
-                vec2 cell = vec2(0.0);
+                vec4 rect = textureRects[0];
                 if (textureIndex > 0 && textureIndex < pc.textureCellCount) {
-                    cell = vec2(textureCells[textureIndex]);
+                    rect = textureRects[textureIndex];
                 }
-                fragCell = cell;
-                // Just inside the sprite's far edge, so the fragment's fract() keeps the edge
-                // column instead of wrapping to the sprite's first column.
-                const vec2 GEN_UV[4] = vec2[](vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0));
-                fragLocalUv = GEN_UV[corner] * 0.99999;
+                int uvBits = floatBitsToInt(generalWords[wordBase + 16u + uint(corner)]);
+                vec2 localUv = vec2(float(uvBits & 0xFFFF), float((uvBits >> 16) & 0xFFFF)) / 32768.0;
+                fragAtlasUv = rect.xy + localUv * rect.zw;
                 int flags = floatBitsToInt(generalWords[wordBase + 15u]);
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
@@ -275,6 +286,57 @@ public final class Lane1Shaders {
                 // (measured at Gate G1 with a self-calibrating ramp displayed through this
                 // very sample path). fragLightMap carries (block, sky); sample texel
                 // centres - the raw light/15 coordinates land on the grid's dark edges.
+                vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
+                vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
+
+                if (fog.fogMode != 0) {
+                    float dist = length(fragWorldPos - fog.fogCameraPos);
+                    float factor;
+                    if (fog.fogMode == 1) {
+                        factor = clamp((dist - fog.fogStart) / max(fog.fogEnd - fog.fogStart, 0.001), 0.0, 1.0);
+                    } else if (fog.fogMode == 2) {
+                        factor = 1.0 - exp(-fog.fogDensity * dist);
+                    } else {
+                        float d = fog.fogDensity * dist;
+                        factor = 1.0 - exp(-d * d);
+                    }
+                    rgb = mix(rgb, fog.fogColor.rgb, clamp(factor, 0.0, 1.0));
+                }
+                outColor = vec4(rgb, texel.a * fragColor.a);
+            }
+            """;
+
+    /**
+     * The general stream's fragment stage: identical to {@link #TERRAIN_FRAGMENT} except the
+     * atlas UV arrives fully composed from the vertex stage (per-corner sprite-local UVs
+     * restored through the sprite rectangle table), so there is no cell arithmetic and no
+     * fract() tiling - a general quad is one face with its own UVs, partial rectangles
+     * included (UV ruling 5.4-3, the end-to-end sampling wiring).
+     */
+    public static final String GENERAL_FRAGMENT = "#version 450\n" + """
+            layout(set = 0, binding = 6) uniform sampler2D atlas;
+            layout(set = 0, binding = 7) uniform sampler2D lightMap;
+            layout(set = 0, binding = 8) uniform FogBlock {
+                vec4 fogColor;
+                vec3 fogCameraPos;
+                float fogStart;
+                float fogEnd;
+                float fogDensity;
+                int fogMode;
+                float alphaCutoff;
+                float atlasCellsAcross;
+            } fog;
+            layout(location = 0) in vec2 fragAtlasUv;
+            layout(location = 1) in vec4 fragColor;
+            layout(location = 2) in vec2 fragLightMap;
+            layout(location = 3) in vec3 fragWorldPos;
+            layout(location = 4) in vec3 fragDynamicLight;
+            layout(location = 0) out vec4 outColor;
+            void main() {
+                vec4 texel = texture(atlas, fragAtlasUv);
+                if (texel.a < fog.alphaCutoff) discard;
+                // Same lightmap sampling contract as the shared stage: texel centres of the
+                // 16x16 grid, (block, sky) carried by fragLightMap.
                 vec3 light = texture(lightMap, (fragLightMap * 15.0 + 0.5) / 16.0).rgb;
                 vec3 rgb = texel.rgb * fragColor.rgb * (light + fragDynamicLight);
 

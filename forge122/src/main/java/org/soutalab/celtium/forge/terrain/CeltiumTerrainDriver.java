@@ -259,6 +259,7 @@ public final class CeltiumTerrainDriver {
             return;
         }
         backend.celtium$setTextureCellTable(spriteIndex.cellTable());
+        backend.celtium$setTextureRectTable(spriteIndex.rectTable());
         pushedTextureCellCount = spriteIndex.size();
     }
 
