@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -29,9 +32,9 @@ class TextureCopyImageSubDataTest {
     private static final int UNSIGNED_BYTE = 0x1401;
 
     private static Object install() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        var installed = GlsmFrontend.class.getDeclaredField("installed");
+        var installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, ctor.newInstance());
@@ -39,21 +42,21 @@ class TextureCopyImageSubDataTest {
     }
 
     private static void restore(Object previous) throws Exception {
-        var installed = GlsmFrontend.class.getDeclaredField("installed");
+        var installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, previous);
     }
 
     /** Uploads a {@code width}x{@code height} RGBA level whose byte at index {@code i} is {@code i % 251}. */
-    private static void uploadPattern(int texture, int width, int height) {
-        GlsmFrontend.celtium$glBindTexture(GL_TEXTURE_2D, texture);
+    private static void uploadPattern(int texture, int width, int height) throws Exception {
+        call("glBindTexture", GL_TEXTURE_2D, texture);
         ByteBuffer pixels = MemoryUtil.memAlloc(width * height * 4);
         try {
             long address = MemoryUtil.memAddress(pixels);
             for (int i = 0; i < width * height * 4; i++) {
                 MemoryUtil.memPutByte(address + i, (byte) (i % 251));
             }
-            GlsmFrontend.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE,
+            call("glTexImage2D", GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE,
                     address);
         } finally {
             MemoryUtil.memFree(pixels);
@@ -61,13 +64,13 @@ class TextureCopyImageSubDataTest {
     }
 
     /** Allocates a level with no data, the render-target idiom the atlas starts from. */
-    private static void allocate(int texture, int width, int height) {
-        GlsmFrontend.celtium$glBindTexture(GL_TEXTURE_2D, texture);
-        GlsmFrontend.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE, 0L);
+    private static void allocate(int texture, int width, int height) throws Exception {
+        call("glBindTexture", GL_TEXTURE_2D, texture);
+        call("glTexImage2D", GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE, 0L);
     }
 
-    private static void copy(int src, int srcX, int dst, int dstX, int width, int height) {
-        GlsmFrontend.celtium$copyImageSubData(src, GL_TEXTURE_2D, 0, srcX, 0, 0,
+    private static void copy(int src, int srcX, int dst, int dstX, int width, int height) throws Exception {
+        call("glCopyImageSubData", src, GL_TEXTURE_2D, 0, srcX, 0, 0,
                 dst, GL_TEXTURE_2D, 0, dstX, 0, 0, width, height, 1);
     }
 
@@ -170,10 +173,10 @@ class TextureCopyImageSubDataTest {
             long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
 
             // A depth other than 1 is a 3D copy, which a 2D capture cannot serve.
-            GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_2D, 0, 0, 0, 0,
+            call("glCopyImageSubData", 600, GL_TEXTURE_2D, 0, 0, 0, 0,
                     601, GL_TEXTURE_2D, 0, 0, 0, 0, 16, 16, 2);
             // A non-2D target on either side is likewise outside the route.
-            GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_3D, 0, 0, 0, 0,
+            call("glCopyImageSubData", 600, GL_TEXTURE_3D, 0, 0, 0, 0,
                     601, GL_TEXTURE_2D, 0, 0, 0, 0, 16, 16, 1);
 
             assertEquals(allocated, VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0),
@@ -182,5 +185,16 @@ class TextureCopyImageSubDataTest {
         } finally {
             restore(previous);
         }
+    }
+
+    // E4-c: the monolith's celtium$* transformer doors delegate to the installed entry's
+    // dispatch now - same installed-instance semantics the doors themselves had.
+    private static void call(String name, long... callArgs) throws Exception {
+        var dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
+        dispatch.setAccessible(true);
+        long[] args = new long[16];
+        System.arraycopy(callArgs, 0, args, 0, callArgs.length);
+        dispatch.invoke(DirectGlCaptureEntry.installed(),
+                DirectGlCaptureEntry.row(DirectGlCaptureEntry.ids().get(name)), args);
     }
 }

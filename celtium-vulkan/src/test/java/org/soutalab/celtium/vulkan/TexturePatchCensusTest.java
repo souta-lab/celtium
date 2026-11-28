@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -13,7 +16,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link GlsmFrontend#textureCaptureSummary()} must accurately report patch keys and branch counts without boxed
+ * the entry-driven {@code TextureCaptureStore.textureCaptureSummary()} must accurately report patch keys and branch counts without boxed
  * per-patch map entries.
  */
 class TexturePatchCensusTest {
@@ -23,15 +26,13 @@ class TexturePatchCensusTest {
 
     @Test
     void reportsPatchKeysAndBranchesAcrossPasteAndLoneUploads() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        GlsmFrontend stub = ctor.newInstance();
-        Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        DirectGlCaptureEntry stub = ctor.newInstance();
+        Method dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         dispatch.setAccessible(true);
-        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
-        idsField.setAccessible(true);
-        Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-        Field installedField = GlsmFrontend.class.getDeclaredField("installed");
+                Map<String, Integer> ids = DirectGlCaptureEntry.ids();
+        Field installedField = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installedField.setAccessible(true);
         Object previous = installedField.get(null);
         installedField.set(null, stub);
@@ -65,10 +66,10 @@ class TexturePatchCensusTest {
         }
     }
 
-    private static void invoke(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, String name, long... args)
+    private static void invoke(Method dispatch, DirectGlCaptureEntry stub, Map<String, Integer> ids, String name, long... args)
             throws Exception {
         long[] c = new long[16];
         System.arraycopy(args, 0, c, 0, args.length);
-        dispatch.invoke(stub, ids.get(name), c);
+        dispatch.invoke(stub, DirectGlCaptureEntry.row(ids.get(name)), c);
     }
 }

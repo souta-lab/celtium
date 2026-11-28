@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.GlsmClientArrayState;
 
@@ -31,11 +34,11 @@ class VaoAttribRecordTest {
     private static final int BUFFER_BINDING = 0x889F;
     private static final int POINTER = 0x8645;
 
-    private static GlsmFrontend install() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+    private static DirectGlCaptureEntry install() throws Exception {
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        GlsmFrontend stub = ctor.newInstance();
-        Field installed = GlsmFrontend.class.getDeclaredField("installed");
+        DirectGlCaptureEntry stub = ctor.newInstance();
+        Field installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, stub);
         // The routes rewiring moved the legacy vertex-pointer tuple and the capability record
@@ -62,7 +65,7 @@ class VaoAttribRecordTest {
         // and refuses on the legacy pointer's size instead of by name (the main-promotion full gate's one
         // failure, 2026-11-25). Bind the default VAO and restore its records to GL's initial values, so the
         // unrecorded-draw premise is actually established.
-        GlsmFrontend.celtium$bindVertexArray(0);
+        call("glBindVertexArray", 0);
         for (GlsmClientArrayState.VaoAttrib attrib : GlsmClientArrayState.current().attribsFor(0)) {
             attrib.enabled = false;
             attrib.pointerSet = false;
@@ -78,31 +81,33 @@ class VaoAttribRecordTest {
     }
 
     private static void uninstall() throws Exception {
-        Field installed = GlsmFrontend.class.getDeclaredField("installed");
+        // E4-c: the unbind goes through the still-installed entry, then the install is dropped.
+        call("glBindBuffer", GL_ARRAY_BUFFER, 0);
+        Field installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, null);
-        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    private static void setCurrentProgram(GlsmFrontend stub, int program) {
-        // The current program is owned by GlsmShaderLedger (GAP-PROG-1); SEM_USE_PROGRAM writes it there.
-        GlsmShaderLedger.current().useProgram(program);
+    private static void setCurrentProgram(DirectGlCaptureEntry stub, int program) throws Exception {
+        // E4-c: the current program is written through the entry's own glUseProgram dispatch
+        // (SEM_USE_PROGRAM: GLSMPrograms + the Lane2 mirror register).
+        call("glUseProgram", program);
     }
 
-    private static int attribIv(int index, int pname) {
+    private static int attribIv(int index, int pname) throws Exception {
         ByteBuffer out = MemoryUtil.memAlloc(4);
         try {
-            GlsmFrontend.celtium$getVertexAttribiv(index, pname, MemoryUtil.memAddress(out));
+            call("glGetVertexAttribiv", index, pname, MemoryUtil.memAddress(out));
             return out.getInt(0);
         } finally {
             MemoryUtil.memFree(out);
         }
     }
 
-    private static long attribPointer(int index) {
+    private static long attribPointer(int index) throws Exception {
         ByteBuffer out = MemoryUtil.memAlloc(8);
         try {
-            GlsmFrontend.celtium$getVertexAttribPointer(index, POINTER, MemoryUtil.memAddress(out));
+            call("glGetVertexAttribPointerv", index, POINTER, MemoryUtil.memAddress(out));
             return out.getLong(0);
         } finally {
             MemoryUtil.memFree(out);
@@ -110,18 +115,18 @@ class VaoAttribRecordTest {
     }
 
     /** The quad's own setup sequence, through the same statics the transformer's hint calls. */
-    private static void setUpQuad(ByteBuffer vertices) {
-        GlsmFrontend.celtium$bindVertexArray(77);
-        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 78);
-        GlsmFrontend.celtium$bufferData(GL_ARRAY_BUFFER, 80L, MemoryUtil.memAddress(vertices), GL_STATIC_DRAW);
-        GlsmFrontend.celtium$vertexAttribPointer(0, 3, GL_FLOAT, false, 20, 0L);
-        GlsmFrontend.celtium$vertexAttribEnabled(0, true);
-        GlsmFrontend.celtium$vertexAttribPointer(1, 2, GL_FLOAT, false, 20, 12L);
-        GlsmFrontend.celtium$vertexAttribEnabled(1, true);
-        GlsmFrontend.celtium$vertexAttribPointer(2, 2, GL_FLOAT, false, 20, 12L);
-        GlsmFrontend.celtium$vertexAttribEnabled(2, true);
-        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
-        GlsmFrontend.celtium$bindVertexArray(0);
+    private static void setUpQuad(ByteBuffer vertices) throws Exception {
+        call("glBindVertexArray", 77);
+        call("glBindBuffer", GL_ARRAY_BUFFER, 78);
+        call("glBufferData", GL_ARRAY_BUFFER, 80L, MemoryUtil.memAddress(vertices), GL_STATIC_DRAW);
+        call("glVertexAttribPointer", 0, 3, GL_FLOAT, false ? 1 : 0, 20, 0L);
+        callVertexAttribEnabled(0, true);
+        call("glVertexAttribPointer", 1, 2, GL_FLOAT, false ? 1 : 0, 20, 12L);
+        callVertexAttribEnabled(1, true);
+        call("glVertexAttribPointer", 2, 2, GL_FLOAT, false ? 1 : 0, 20, 12L);
+        callVertexAttribEnabled(2, true);
+        call("glBindBuffer", GL_ARRAY_BUFFER, 0);
+        call("glBindVertexArray", 0);
     }
 
     private static ByteBuffer quadVertices() {
@@ -153,13 +158,13 @@ class VaoAttribRecordTest {
 
     @Test
     void quadSetupIsRecordedPerAttributeAndSurvivesRebind() throws Exception {
-        GlsmFrontend stub = install();
+        DirectGlCaptureEntry stub = install();
         ByteBuffer vertices = quadVertices();
         try {
             setUpQuad(vertices);
             // The default VAO was never given these attributes: its records stay at the defaults.
             assertEquals(0, attribIv(1, ENABLED), "attribute 1 of VAO 0 must not inherit the quad's enable");
-            GlsmFrontend.celtium$bindVertexArray(77);
+            call("glBindVertexArray", 77);
             assertEquals(1, attribIv(0, ENABLED));
             assertEquals(1, attribIv(1, ENABLED));
             assertEquals(1, attribIv(2, ENABLED));
@@ -170,11 +175,11 @@ class VaoAttribRecordTest {
             assertEquals(12L, attribPointer(1));
             assertEquals(12L, attribPointer(2));
             // A legacy pointer set on VAO 0 must not leak into the quad's VAO, nor the quad's into VAO 0.
-            GlsmFrontend.celtium$bindVertexArray(0);
-            GlsmFrontend.celtium$vertexPointer(3, GL_FLOAT, 12, 0L);
-            GlsmFrontend.celtium$bindVertexArray(77);
+            call("glBindVertexArray", 0);
+            call("glVertexPointer", 3, GL_FLOAT, 12, 0L);
+            call("glBindVertexArray", 77);
             assertEquals(20, attribIv(0, STRIDE), "VAO 77 keeps its own stride across the swap");
-            GlsmFrontend.celtium$bindVertexArray(0);
+            call("glBindVertexArray", 0);
             assertEquals(12, attribIv(0, STRIDE), "VAO 0 keeps the legacy pointer set on it");
         } finally {
             MemoryUtil.memFree(vertices);
@@ -184,13 +189,13 @@ class VaoAttribRecordTest {
 
     @Test
     void quadDrawDecodesToPositionTexFromTheRecordedBuffer() throws Exception {
-        GlsmFrontend stub = install();
+        DirectGlCaptureEntry stub = install();
         ByteBuffer vertices = quadVertices();
         try {
             setUpQuad(vertices);
-            GlsmFrontend.celtium$bindVertexArray(77);
+            call("glBindVertexArray", 77);
             setCurrentProgram(stub, 999);
-            String line = drawLine(999, () -> GlsmFrontend.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
+            String line = drawLine(999, () -> callUnchecked("glDrawArrays", GL_TRIANGLE_STRIP, 0, 4));
             assertTrue(line.contains("format=6"), "the stride-20 quad must decode as POSITION_TEX: " + line);
             assertTrue(line.contains("reason=null"),
                     "the decode must accept the draw (a backend refusal later is a different line): " + line);
@@ -202,14 +207,37 @@ class VaoAttribRecordTest {
 
     @Test
     void drawWithoutAnyEnabledAttributeKeepsTheNamedRefusal() throws Exception {
-        GlsmFrontend stub = install();
+        DirectGlCaptureEntry stub = install();
         try {
             setCurrentProgram(stub, 998);
-            String line = drawLine(998, () -> GlsmFrontend.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
+            String line = drawLine(998, () -> callUnchecked("glDrawArrays", GL_TRIANGLE_STRIP, 0, 4));
             assertTrue(line.contains("attribute 0 is not enabled"),
                     "an unrecorded draw must still refuse by name: " + line);
         } finally {
             uninstall();
         }
+    }
+
+    // E4-c: the monolith's celtium$* transformer doors delegate to the installed entry's
+    // dispatch now - same installed-instance semantics the doors themselves had.
+    private static void call(String name, long... callArgs) throws Exception {
+        var dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
+        dispatch.setAccessible(true);
+        long[] args = new long[16];
+        System.arraycopy(callArgs, 0, args, 0, callArgs.length);
+        dispatch.invoke(DirectGlCaptureEntry.installed(),
+                DirectGlCaptureEntry.row(DirectGlCaptureEntry.ids().get(name)), args);
+    }
+
+    private static void callUnchecked(String name, long... args) {
+        try {
+            call(name, args);
+        } catch (Exception failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static void callVertexAttribEnabled(int index, boolean enabled) throws Exception {
+        call(enabled ? "glEnableVertexAttribArray" : "glDisableVertexAttribArray", index);
     }
 }

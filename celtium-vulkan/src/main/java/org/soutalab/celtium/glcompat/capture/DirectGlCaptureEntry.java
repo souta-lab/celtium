@@ -40,7 +40,6 @@ import org.soutalab.celtium.vulkan.FramebufferClearState;
 import org.soutalab.celtium.vulkan.FramebufferViewportState;
 import org.soutalab.celtium.vulkan.GlsmBufferState;
 import org.soutalab.celtium.vulkan.GlsmClientArrayState;
-import org.soutalab.celtium.vulkan.GlsmDisplayListLedger;
 import org.soutalab.celtium.vulkan.GlsmEnableState;
 import org.soutalab.celtium.vulkan.GlsmImmediateState;
 import org.soutalab.celtium.vulkan.GlsmMatrixMode;
@@ -865,11 +864,12 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                         (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7]);
                 return 0L;
             case SEM_COPY_IMAGE_SUB_DATA:
-                // The trampoline carries 12 of the call's 15 slots; the z/depth tail is 0, which
-                // is the only shape the copy producer serves (2D level-to-level).
+                // All 15 slots ride the dispatch (the table row declares them); the size tail
+                // c[12..14] is the copy's width/height/depth - zeroing it made every copy a
+                // no-op (E4-c repair; the monolith passed the slots through).
                 CaptureUploadContext.current().copyImageSubData((int) c[0], (int) c[1], (int) c[2],
                         (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7], (int) c[8],
-                        (int) c[9], (int) c[10], (int) c[11], 0, 0, 0);
+                        (int) c[9], (int) c[10], (int) c[11], (int) c[12], (int) c[13], (int) c[14]);
                 return 0L;
             case SEM_TEX_PARAM_I:
                 CaptureUploadContext.current().setTextureParameterBound((int) c[0], (int) c[1],
@@ -899,27 +899,39 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return 0L;
             case SEM_CULL_FACE:
                 GLSMRasterizer.glCullFace((int) c[0]);
+                NativeRasterState.current().cullFace((int) c[0]);
                 return 0L;
             case SEM_FRONT_FACE:
                 GLSMRasterizer.glFrontFace((int) c[0]);
+                NativeRasterState.current().frontFace((int) c[0]);
                 return 0L;
             case SEM_POLYGON_OFFSET:
                 GLSMRasterizer.glPolygonOffset(f(c[0]), f(c[1]));
+                NativeRasterState.current().polygonOffset(f(c[0]), f(c[1]));
                 return 0L;
             case SEM_COLOR_MASK:
                 GLStateManager.glColorMask(c[0] != 0L, c[1] != 0L, c[2] != 0L, c[3] != 0L);
+                // E4-c seat repair: the entry's own queries and the attrib snapshot read the
+                // native raster seat (as the monolith's dispatch wrote it); the GLSM write above
+                // feeds the executor. Both seats are written, as the scissor case already does.
+                NativeRasterState.current().colorMask(((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
+                        | ((int) c[2] != 0 ? 0x4 : 0) | ((int) c[3] != 0 ? 0x8 : 0));
                 return 0L;
             case SEM_BLEND_FUNC:
                 GLSMBlend.glBlendFunc((int) c[0], (int) c[1]);
+                NativeRasterState.current().blendFunc((int) c[0], (int) c[1], (int) c[0], (int) c[1]);
                 return 0L;
             case SEM_BLEND_FUNC_SEPARATE:
                 GLSMBlend.glBlendFuncSeparate((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
+                NativeRasterState.current().blendFunc((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_BLEND_EQUATION:
                 GLSMBlend.glBlendEquation((int) c[0]);
+                NativeRasterState.current().blendEquation((int) c[0], (int) c[0]);
                 return 0L;
             case SEM_BLEND_EQUATION_SEPARATE:
                 GLSMBlend.glBlendEquationSeparate((int) c[0], (int) c[1]);
+                NativeRasterState.current().blendEquation((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_BEGIN:
                 GLSMDraws.glBegin((int) c[0]);
@@ -1747,6 +1759,16 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             } finally {
                 DirectGlDispatcher.exitLane3();
             }
+        }
+    }
+
+    /** {@code glIsList} from the transformer's route: the one display-list id space (C3). */
+    public static boolean isListRoute(int list) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            return GLSMDraws.glIsList(list);
+        } finally {
+            DirectGlDispatcher.exitLane3();
         }
     }
 
@@ -2625,6 +2647,10 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     // ---- dispatch helpers -------------------------------------------------------------------
 
     private static boolean isObject(String name, int id) {
+        if ("glIsList".equals(name)) {
+            // C3: list names live in the GLSM allocator's space, not the name ledger.
+            return GLSMDraws.glIsList(id);
+        }
         // The monolith's answer, unchanged: a name is an object when the shared ledger holds it
         // (or it is a live sync); a buffer name backed by a native geometry buffer counts too.
         return GlsmNameLedger.current().isLive(id) || GlsmNameLedger.current().isLiveSync(id)
@@ -2637,21 +2663,23 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
      * object kind - the mirrors key on names across kinds, so two windows both starting at 1
      * would hand two different resources the same name. The converter allocates its own ids
      * for calls that arrive transformed; this surface serves the provider's callers.
+     * Display-list names are the single exception (C3): they come out of the GLSM display-list
+     * allocator, the one space {@code glIsList}/{@code glDeleteLists} also answer from.
      */
     private long generate(GlFn fn, long[] c) {
+        if ("glGenLists".equals(fn.name) && fn.args.length == 1) {
+            // Display-list names are the one exception to the shared window below (C3, decoders
+            // ruling item 25): they live in the GLSM allocator's space - the same space
+            // glIsList and glDeleteLists answer from - so generation, query and deletion can
+            // never split. The allocator hands out a contiguous range, which Minecraft relies
+            // on (RenderGlobal's star lists are base, base+1, base+2). The spec: a range of
+            // zero (or less) generates nothing and returns 0.
+            int range = (int) c[0];
+            return range <= 0 ? 0 : GLSMDraws.glGenLists(range);
+        }
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
-            // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
-            // glGenLists is the one caller that asks for a *contiguous range*: it returns n such that n .. n+range-1
-            // are all free, and Minecraft relies on it - RenderGlobal holds starGLCallList = generateDisplayLists(3)
-            // and then uses starGLCallList + 1 and + 2 for glSkyList and glSkyList2. Advancing the counter by one for
-            // a range of three would hand those two names to the next caller instead.
+            // Scalar-return form (glCreateShader, glCreateProgram): the id is the return value.
             int range = 1;
-            if ("glGenLists".equals(fn.name) && fn.args.length == 1) {
-                range = (int) c[0];
-                if (range <= 0) {
-                    return 0; // The spec: a range of zero (or less) generates nothing and returns 0.
-                }
-            }
             if ("glCreateShader".equals(fn.name) || "glCreateShaderObjectARB".equals(fn.name)) {
                 // The program family has one id space, the converter's (family 5): a name from
                 // the shared window would be a second space for the same object.
@@ -2827,30 +2855,13 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         GLSMFramebuffer.glDeleteFramebuffers(name);
     }
 
-    /** Retires a display-list range: the model capture's lists, the ledger's payloads, the names. */
+    /** Retires a display-list range: the model capture's lists and the names. */
     private void deleteListsRange(int first, int range) {
         VulkanModelQuadCapture.listsDeleted(first, range);
         for (int i = 0; i < range; i++) {
-            int name = first + i;
-            GlsmDisplayListLedger.current().removeList(name);
-            GlsmNameLedger.current().removeName(name);
-            releaseListPayloads(name);
+            GlsmNameLedger.current().removeName(first + i);
         }
         GLSMDraws.glDeleteLists(first, range);
-    }
-
-    private static void releaseListPayloads(int list) {
-        java.util.List<NativeGeometryBuffer> geometry = GlsmDisplayListLedger.current().removeGeometry(list);
-        if (geometry != null) {
-            for (NativeGeometryBuffer buffer : geometry) buffer.close();
-        }
-        java.util.List<ByteBuffer> payloads = GlsmDisplayListLedger.current().removePayloads(list);
-        if (payloads == null) {
-            return;
-        }
-        for (int i = 0; i < payloads.size(); i++) {
-            MemoryUtil.memFree(payloads.get(i));
-        }
     }
 
     private long zeroAnswer(GlFn fn, long[] c) {

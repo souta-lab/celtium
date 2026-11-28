@@ -33,7 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class Stage7BarrierWiringTest {
 
     private static final String ROOT = "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/";
-    private static final String FRONTEND = ROOT + "gl/GlsmFrontend.java";
+    // E4-c: the dispatch and its static entrances live in the capture entry now.
+    private static final String FRONTEND =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java";
     private static final String BACKEND = ROOT + "VulkanTerrainGpuBackend.java";
     private static final String COPY_SIDE = ROOT + "CopyReadSide.java";
     private static final String COPY_SERVICE = ROOT + "TextureCopyService.java";
@@ -64,31 +66,31 @@ class Stage7BarrierWiringTest {
     void dispatchRoutesEveryBarrierTarget() throws IOException {
         String frontend = read(FRONTEND);
         assertTrue(segment(frontend, "case SEM_COPY_TEX_IMAGE:", "case SEM_COPY_TEX_SUB_IMAGE:")
-                        .contains("celtium$noteTextureCopy("),
+                        .contains("noteTextureCopy("),
                 "copyTexImage is served through the texture-copy handler");
         assertTrue(segment(frontend, "case SEM_COPY_TEX_SUB_IMAGE:", "case SEM_COPY_IMAGE_SUB_DATA:")
-                        .contains("celtium$noteTextureCopy("),
+                        .contains("noteTextureCopy("),
                 "copyTexSubImage (53, in the target set by adjudication) takes the same handler");
-        assertTrue(segment(frontend, "case SEM_COPY_IMAGE_SUB_DATA:", "case SEM_BLIT_FRAMEBUFFER:")
+        assertTrue(segment(frontend, "case SEM_COPY_IMAGE_SUB_DATA:", "case SEM_TEX_PARAM_I:")
                         .contains("copyImageSubData("),
                 "copyImageSubData takes the CPU-side copy handler");
-        assertTrue(segment(frontend, "case SEM_BLIT_FRAMEBUFFER:", "case SEM_READ_PIXELS:")
-                        .contains("celtium$noteBlitFramebuffer("),
+        assertTrue(segment(frontend, "case SEM_BLIT_FRAMEBUFFER:", "case SEM_COPY_TEX_IMAGE:")
+                        .contains("noteBlitFramebuffer("),
                 "blitFramebuffer takes the blit handler");
-        assertTrue(segment(frontend, "case SEM_READ_PIXELS:", "case SEM_TEX_PARAM_I:")
+        assertTrue(segment(frontend, "case SEM_READ_PIXELS:", "case SEM_FOG_I:")
                         .contains("serveReadPixels("),
                 "readPixels takes the readback handler");
-        assertTrue(segment(frontend, "case SEM_BIND_FRAMEBUFFER:", "case SEM_CLEAR:")
-                        .contains("bindFramebuffer((int) a0, (int) a1);"),
+        assertTrue(segment(frontend, "case SEM_BIND_FRAMEBUFFER:", "case SEM_BLIT_FRAMEBUFFER:")
+                        .contains("bindFramebuffer((int) c[0], (int) c[1]);"),
                 "bindFramebuffer takes the bind handler");
         assertTrue(segment(frontend, "case SEM_CLEAR:", "case SEM_CLEAR_COLOR:")
-                        .contains("this.recordClear((int) a0);"),
+                        .contains("recordClear((int) c[0]);"),
                 "clear takes the clear record");
         assertTrue(segment(frontend, "case SEM_CLEAR_COLOR:", "case SEM_CLEAR_DEPTH:")
-                        .contains("this.recordClearColor("),
+                        .contains("FramebufferClearState.current().clearColor("),
                 "clearColor takes the clear-colour record");
-        assertTrue(segment(frontend, "case SEM_CLEAR_DEPTH:", "case SEM_BUFFER_SUBDATA:")
-                        .contains("this.recordClearDepth("),
+        assertTrue(segment(frontend, "case SEM_CLEAR_DEPTH:", "case SEM_LINE_WIDTH:")
+                        .contains("FramebufferClearState.current().clearDepth("),
                 "clearDepth takes the clear-depth record");
     }
 
@@ -96,30 +98,24 @@ class Stage7BarrierWiringTest {
     @DisplayName("the copy family's static entrances funnel into the same handlers")
     void staticEntrancesFunnelToTheSameHandlers() throws IOException {
         String frontend = read(FRONTEND);
-        assertTrue(segment(frontend, "public static void celtium$copyTexSubImage2D",
-                        "public static void celtium$copyImageSubData")
-                        .contains("celtium$noteTextureCopy("),
-                "the copyTexSubImage2D transformer entrance reaches the texture-copy handler");
-        assertTrue(segment(frontend, "public static void celtium$copyImageSubData",
-                        "public static void celtium$copyTexImage2D")
-                        .contains("stub.copyImageSubData("),
-                "the copyImageSubData transformer entrance reaches the CPU-side copy handler");
-        assertTrue(segment(frontend, "public static void celtium$copyTexImage2D",
-                        "private static boolean isDepthInternalFormat")
-                        .contains("celtium$noteTextureCopy("),
-                "the copyTexImage2D transformer entrance reaches the texture-copy handler");
-        assertTrue(segment(frontend, "public static void celtium$bindFramebuffer",
-                        "private void bindFramebuffer(int target, int name)")
-                        .contains("stub.bindFramebuffer(target, name);"),
-                "the bindFramebuffer transformer entrance reaches the bind handler");
-        assertTrue(segment(frontend, "public static void celtium$readPixels",
-                        "private void serveReadPixels")
-                        .contains("stub.serveReadPixels("),
-                "the readPixels transformer entrance reaches the readback handler");
-        assertTrue(segment(frontend, "public static void celtium$getTexImage",
-                        "public static void celtium$readPixels")
-                        .contains("vulkan.celtium$getTexImage("),
-                "the getTexImage transformer entrance reaches the backend's readback entry");
+        // E4-c form: the entry's static entrances are its transformer routes, and they funnel
+        // into the same instance handlers the dispatch cases call.
+        assertTrue(segment(frontend, "public static void framebufferTexture2DRoute",
+                        "public static void namedFramebufferTexture")
+                        .contains("entry.framebufferTexture2D("),
+                "the framebufferTexture2D transformer route reaches the attachment handler");
+        assertTrue(segment(frontend, "public static void bindFramebufferRoute",
+                        "// ---- attribute stacks")
+                        .contains("entry.bindFramebuffer(target, name);"),
+                "the bindFramebuffer transformer route reaches the bind handler");
+        assertTrue(segment(frontend, "public static void bindFramebufferRoute",
+                        "// ---- attribute stacks")
+                        .contains("FramebufferBindings.current().bind(target, name);"),
+                "with no entry installed the route still lands on the bindings seat");
+        assertTrue(frontend.contains("vulkan.celtium$readPixels(FramebufferBindings.current().readFramebuffer()"),
+                "the readback serve reaches the backend's readPixels entry");
+        assertTrue(frontend.contains("vulkan.celtium$getTexImage(NativeTextureBindings.current().texture2d()"),
+                "the getTexImage serve reaches the backend's readback entry");
     }
 
     @Test
@@ -170,7 +166,7 @@ class Stage7BarrierWiringTest {
         String frontend = read(FRONTEND);
         String backend = read(BACKEND);
         assertTrue(segment(frontend, "private void recordClear(int mask)",
-                        "public static int celtium$effectiveClearMask(int mask)")
+                        "public static void setCapability")
                         .contains("vulkan.celtium$gameClear(mask, FramebufferBindings.current().drawFramebuffer());"),
                 "a non-main clear is handed to the backend at its queue position");
         assertTrue(backend.contains("public void flushBeforeClear(int mask)"),

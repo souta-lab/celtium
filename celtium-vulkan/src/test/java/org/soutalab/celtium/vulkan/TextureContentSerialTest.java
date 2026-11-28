@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -24,9 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TextureContentSerialTest {
     private static Object install() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        var installed = GlsmFrontend.class.getDeclaredField("installed");
+        var installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, ctor.newInstance());
@@ -34,7 +37,7 @@ class TextureContentSerialTest {
     }
 
     private static void restore(Object previous) throws Exception {
-        var installed = GlsmFrontend.class.getDeclaredField("installed");
+        var installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, previous);
     }
@@ -58,10 +61,10 @@ class TextureContentSerialTest {
         Object previous = install();
         try {
             int texture = 500;
-            GlsmFrontend.celtium$glBindTexture(0x0DE1, texture);
+            call("glBindTexture", 0x0DE1, texture);
             // The render-target idiom: glTexImage2D with a NULL data pointer. A surface exists (zeros) and is refused
             // as content, but the level's content changed, so the record the lookup made is no longer current.
-            GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 32, 16, 0, 0x1908, 0x1401, 0L);
+            call("glTexImage2D", 0x0DE1, 0, 0x8058, 32, 16, 0, 0x1908, 0x1401, 0L);
             long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
             assertNotEquals(Long.MIN_VALUE, allocated, "an allocation is a write to the level");
             assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(texture, 0, new int[2]));
@@ -76,7 +79,7 @@ class TextureContentSerialTest {
             ByteBuffer pixels = MemoryUtil.memAlloc(32 * 16 * 4);
             try {
                 MemoryUtil.memSet(MemoryUtil.memAddress(pixels), 0x5A, 32 * 16 * 4L);
-                GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 32, 16, 0, 0x1908, 0x1401,
+                call("glTexImage2D", 0x0DE1, 0, 0x8058, 32, 16, 0, 0x1908, 0x1401,
                         MemoryUtil.memAddress(pixels));
             } finally {
                 MemoryUtil.memFree(pixels);
@@ -97,15 +100,15 @@ class TextureContentSerialTest {
         Object previous = install();
         try {
             int texture = 500;
-            GlsmFrontend.celtium$glBindTexture(0x0DE1, texture);
-            GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 16, 16, 0, 0x1908, 0x1401, 0L);
+            call("glBindTexture", 0x0DE1, texture);
+            call("glTexImage2D", 0x0DE1, 0, 0x8058, 16, 16, 0, 0x1908, 0x1401, 0L);
             long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
             // The mod path the deferral must not swallow: a late glTexSubImage2D into a level allocated without data,
             // with no TextureUtil upload hook anywhere in it.
             ByteBuffer patch = MemoryUtil.memAlloc(4 * 4 * 4);
             try {
                 MemoryUtil.memSet(MemoryUtil.memAddress(patch), 0x7F, 4 * 4 * 4L);
-                GlsmFrontend.celtium$texSubImage2D(0x0DE1, 0, 0, 0, 4, 4, 0x1908, 0x1401,
+                call("glTexSubImage2D", 0x0DE1, 0, 0, 0, 4, 4, 0x1908, 0x1401,
                         MemoryUtil.memAddress(patch));
             } finally {
                 MemoryUtil.memFree(patch);
@@ -133,8 +136,8 @@ class TextureContentSerialTest {
             int texture = 501;
             assertTrue(VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(texture, 0),
                     "a name nothing has written has no record and no backlog, so an upload would throw");
-            GlsmFrontend.celtium$glBindTexture(0x0DE1, texture);
-            GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401, 0L);
+            call("glBindTexture", 0x0DE1, texture);
+            call("glTexImage2D", 0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401, 0L);
             assertFalse(VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(texture, 0),
                     "the render-target idiom records a zero surface, which the upload reads - not 'nothing'");
             assertFalse(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(texture, 0),
@@ -142,7 +145,7 @@ class TextureContentSerialTest {
             ByteBuffer pixels = MemoryUtil.memAlloc(8 * 8 * 4);
             try {
                 MemoryUtil.memSet(MemoryUtil.memAddress(pixels), 0x33, 8 * 8 * 4L);
-                GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                call("glTexImage2D", 0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
                         MemoryUtil.memAddress(pixels));
             } finally {
                 MemoryUtil.memFree(pixels);
@@ -167,17 +170,17 @@ class TextureContentSerialTest {
         Object previous = install();
         try {
             int texture = 502;
-            GlsmFrontend.celtium$glBindTexture(0x0DE1, texture);
+            call("glBindTexture", 0x0DE1, texture);
             ByteBuffer pixels = MemoryUtil.memAlloc(8 * 8 * 4);
             try {
                 MemoryUtil.memSet(MemoryUtil.memAddress(pixels), 0x41, 8 * 8 * 4L);
-                GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                call("glTexImage2D", 0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
                         MemoryUtil.memAddress(pixels));
                 long first = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
                 assertNotEquals(Long.MIN_VALUE, first, "the first upload is content and takes a serial");
 
                 // The same bytes again: GL's content did not change, so neither may the serial.
-                GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                call("glTexImage2D", 0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
                         MemoryUtil.memAddress(pixels));
                 assertEquals(first, VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0),
                         "an identical whole image is not a write to the level's content");
@@ -186,7 +189,7 @@ class TextureContentSerialTest {
 
                 // One byte different: the mirror's image is stale, so the serial has to move.
                 MemoryUtil.memPutByte(MemoryUtil.memAddress(pixels) + 17L, (byte) 0x42);
-                GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                call("glTexImage2D", 0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
                         MemoryUtil.memAddress(pixels));
                 assertTrue(VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0) > first,
                         "a changed whole image is a write, so the mirror must re-supply");
@@ -196,5 +199,16 @@ class TextureContentSerialTest {
         } finally {
             restore(previous);
         }
+    }
+
+    // E4-c: the monolith's celtium$* transformer doors delegate to the installed entry's
+    // dispatch now - same installed-instance semantics the doors themselves had.
+    private static void call(String name, long... callArgs) throws Exception {
+        var dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
+        dispatch.setAccessible(true);
+        long[] args = new long[16];
+        System.arraycopy(callArgs, 0, args, 0, callArgs.length);
+        dispatch.invoke(DirectGlCaptureEntry.installed(),
+                DirectGlCaptureEntry.row(DirectGlCaptureEntry.ids().get(name)), args);
     }
 }

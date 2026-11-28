@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -15,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * {@link GlsmFrontend#releaseSettledTextureCaptures()} (item 387 / 361-B) must drop exactly the settled
+ * the entry-driven {@code TextureCaptureStore.releaseSettledTextureCaptures()} (item 387 / 361-B) must drop exactly the settled
  * copies: a full upload a reader has already taken in full. A level that was ever patched, never supplied,
  * or allocated without data keeps its copy - a patch after a release would be pasted into a fresh undefined
  * surface and zero the rest of the level, and an unsupplied copy is the only one there is.
@@ -27,15 +30,13 @@ class TextureCaptureReleaseTest {
 
     @Test
     void releasesOnlySettledFullUploads() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        GlsmFrontend stub = ctor.newInstance();
-        Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        DirectGlCaptureEntry stub = ctor.newInstance();
+        Method dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         dispatch.setAccessible(true);
-        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
-        idsField.setAccessible(true);
-        Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-        Field installedField = GlsmFrontend.class.getDeclaredField("installed");
+                Map<String, Integer> ids = DirectGlCaptureEntry.ids();
+        Field installedField = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installedField.setAccessible(true);
         Object previous = installedField.get(null);
         installedField.set(null, stub);
@@ -76,17 +77,17 @@ class TextureCaptureReleaseTest {
         }
     }
 
-    private static void uploadFull(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, int name,
+    private static void uploadFull(Method dispatch, DirectGlCaptureEntry stub, Map<String, Integer> ids, int name,
             ByteBuffer pixels) throws Exception {
         invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, name);
         invoke(dispatch, stub, ids, "glTexImage2D", GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA,
                 GL_UNSIGNED_BYTE, MemoryUtil.memAddress(pixels));
     }
 
-    private static void invoke(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, String name, long... args)
+    private static void invoke(Method dispatch, DirectGlCaptureEntry stub, Map<String, Integer> ids, String name, long... args)
             throws Exception {
         long[] c = new long[16];
         System.arraycopy(args, 0, c, 0, args.length);
-        dispatch.invoke(stub, ids.get(name), c);
+        dispatch.invoke(stub, DirectGlCaptureEntry.row(ids.get(name)), c);
     }
 }

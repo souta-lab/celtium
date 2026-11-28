@@ -353,6 +353,23 @@ final class DirectGlExecutorTest {
     }
 
     @Test
+    void clearOnTheDefaultFramebufferCarriesTheCurrentScissor() {
+        FakeSink sink = new FakeSink();
+        DirectGlExecutor executor = executorWith(sink);
+        // G2-18's missing combination (E4-c): FBO 0 is the draw target and the scissor is
+        // enabled - the clear on the default framebuffer must carry the scissor box too,
+        // not only clears on a mod FBO.
+        executor.enable(GL_SCISSOR_TEST);
+        executor.scissor(7, 9, 40, 20);
+        executor.clearColor(0.1f, 0.2f, 0.3f, 1.0f);
+        executor.clear(GL_COLOR_BUFFER_BIT);
+
+        assertEquals(List.of(
+                new FakeSink.Clear(0, new ClearSpec(DirectGlVulkanSink.COLOR_ASPECT,
+                        0.1f, 0.2f, 0.3f, 1, 1.0f, 0, true, 7, 9, 40, 20))), sink.clears);
+    }
+
+    @Test
     void boundAndNamedBlitsKeepTheirEndpointsAndUseSinkFramebufferIds() {
         FakeSink sink = new FakeSink();
         DirectGlExecutor executor = executorWith(sink);

@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
@@ -13,26 +16,24 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Calls the real mod adapter's dispatcher, without creating a GL context or a Vulkan device. */
 class NativeBufferAdapterTest {
-    private final GlsmFrontend stub;
+    private final DirectGlCaptureEntry stub;
     private final Method dispatch;
-    private final Map<?, ?> ids;
+    private final Map<String, Integer> ids;
 
     NativeBufferAdapterTest() throws Exception {
-        var constructor = GlsmFrontend.class.getDeclaredConstructor();
+        var constructor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field table = GlsmFrontend.class.getDeclaredField("IDS");
-        table.setAccessible(true);
-        this.ids = (Map<?, ?>) table.get(null);
+                this.ids = DirectGlCaptureEntry.ids();
     }
 
     private long call(String name, long... args) throws Exception {
         assertTrue(this.ids.containsKey(name), "test must exercise a real adapter entry: " + name);
         long[] slots = new long[16];
         System.arraycopy(args, 0, slots, 0, args.length);
-        return (Long) this.dispatch.invoke(this.stub, this.ids.get(name), slots);
+        return (Long) this.dispatch.invoke(this.stub, DirectGlCaptureEntry.row(this.ids.get(name)), slots);
     }
 
     @Test

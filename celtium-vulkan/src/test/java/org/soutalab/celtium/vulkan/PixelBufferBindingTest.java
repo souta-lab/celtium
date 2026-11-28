@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
@@ -23,25 +26,23 @@ class PixelBufferBindingTest {
     private static final int GL_PIXEL_UNPACK_BUFFER_BINDING = 0x88EF;
     private static final int GL_STATIC_DRAW = 0x88E4;
 
-    private final GlsmFrontend stub;
+    private final DirectGlCaptureEntry stub;
     private final Method dispatch;
-    private final Map<?, ?> ids;
+    private final Map<String, Integer> ids;
 
     PixelBufferBindingTest() throws Exception {
-        var constructor = GlsmFrontend.class.getDeclaredConstructor();
+        var constructor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field table = GlsmFrontend.class.getDeclaredField("IDS");
-        table.setAccessible(true);
-        this.ids = (Map<?, ?>) table.get(null);
+                this.ids = DirectGlCaptureEntry.ids();
     }
 
     private long call(String name, long... args) throws Exception {
         long[] slots = new long[16];
         System.arraycopy(args, 0, slots, 0, args.length);
-        return (Long) this.dispatch.invoke(this.stub, this.ids.get(name), slots);
+        return (Long) this.dispatch.invoke(this.stub, DirectGlCaptureEntry.row(this.ids.get(name)), slots);
     }
 
     @Test
@@ -59,10 +60,10 @@ class PixelBufferBindingTest {
             assertEquals(pbo, out.getInt(0), "glBindBuffer(GL_PIXEL_UNPACK_BUFFER) must update pixelUnpackBuffer");
 
             call("glBufferData", GL_PIXEL_UNPACK_BUFFER, 4, MemoryUtil.memAddress(pixel), GL_STATIC_DRAW);
-            Method uploadToRgba8 = GlsmFrontend.class.getDeclaredMethod(
-                    "uploadToRgba8", int.class, int.class, int.class, int.class, long.class);
-            uploadToRgba8.setAccessible(true);
-            assertNotNull(uploadToRgba8.invoke(this.stub, 1, 1, 0x1908, 0x1401, 0L),
+            Method uploadToRgba8 = TextureCaptureStore.class.getMethod(
+                    "uploadToRgba8", TextureUploadContext.class, int.class, int.class, int.class, int.class, long.class);
+            assertNotNull(uploadToRgba8.invoke(VulkanTextureRegistry.captureStore(),
+                    CaptureUploadContext.current(), 1, 1, 0x1908, 0x1401, 0L),
                     "1x1 upload from bound PBO at offset 0 must resolve storage");
 
             call("glBindBuffer", GL_PIXEL_PACK_BUFFER, pbo);

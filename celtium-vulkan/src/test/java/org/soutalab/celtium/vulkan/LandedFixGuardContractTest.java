@@ -31,8 +31,8 @@ class LandedFixGuardContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainRenderer.java";
     private static final String MOD_COMPILER =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/ModShaderCompiler.java";
-    private static final String GL_STUB =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java";
+    private static final String GL_ENTRY =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java";
     private static final String FRAME_TARGET =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java";
     private static final String SWAPCHAIN =
@@ -175,10 +175,10 @@ class LandedFixGuardContractTest {
         assertTrue(compiler.contains("worker.join(COMPILE_TIMEOUT_MS)"),
                 "the compile worker is joined with the deadline, not unboundedly");
 
-        String stub = read(GL_STUB);
-        assertTrue(count(stub, "catch (Throwable") >= 5,
+        String entry = read(GL_ENTRY);
+        assertTrue(count(entry, "catch (Throwable") >= 5,
                 "the dispatch entries (and their compilation rollback) catch Throwable");
-        assertTrue(stub.contains("dispatchFailureSummary()"),
+        assertTrue(entry.contains("dispatchFailureSummary()"),
                 "dispatch failures are counted and summarised, not swallowed silently");
     }
 

@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
@@ -19,25 +22,23 @@ class BufferLogicalSizeBoundsTest {
     private static final int GL_ARRAY_BUFFER = 0x8892;
     private static final int GL_STATIC_DRAW = 0x88E4;
 
-    private final GlsmFrontend stub;
+    private final DirectGlCaptureEntry stub;
     private final Method dispatch;
-    private final Map<?, ?> ids;
+    private final Map<String, Integer> ids;
 
     BufferLogicalSizeBoundsTest() throws Exception {
-        var constructor = GlsmFrontend.class.getDeclaredConstructor();
+        var constructor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field table = GlsmFrontend.class.getDeclaredField("IDS");
-        table.setAccessible(true);
-        this.ids = (Map<?, ?>) table.get(null);
+                this.ids = DirectGlCaptureEntry.ids();
     }
 
     private long call(String name, long... args) throws Exception {
         long[] slots = new long[16];
         System.arraycopy(args, 0, slots, 0, args.length);
-        return (Long) this.dispatch.invoke(this.stub, this.ids.get(name), slots);
+        return (Long) this.dispatch.invoke(this.stub, DirectGlCaptureEntry.row(this.ids.get(name)), slots);
     }
 
     private int genAndBind(int size, byte fill) throws Exception {
@@ -76,12 +77,12 @@ class BufferLogicalSizeBoundsTest {
             call("glBindBuffer", GL_ARRAY_BUFFER, dst);
             call("glBufferData", GL_ARRAY_BUFFER, 16, MemoryUtil.memAddress(small), GL_STATIC_DRAW);
 
-            this.stub.readBuffer(src, 16L, 16L, MemoryUtil.memAddress(out));
+            readBuffer(src, 16L, 16L, MemoryUtil.memAddress(out));
             assertEquals((byte) 0x7F, out.get(0),
                     "readBuffer must not expose stale bytes past the shrunk logical size");
 
             // Valid read within [0, 16) still works.
-            this.stub.readBuffer(src, 0L, 16L, MemoryUtil.memAddress(out));
+            readBuffer(src, 0L, 16L, MemoryUtil.memAddress(out));
             assertEquals((byte) 0x33, out.get(0));
 
             // Writing/reading past shrunk logical size via copyBuffer must be refused.
@@ -94,10 +95,10 @@ class BufferLogicalSizeBoundsTest {
                 call("glBufferSubData", GL_ARRAY_BUFFER, 0L, 16L, MemoryUtil.memAddress(marker));
 
                 // Write past dst logical size (offset 16 in 16B logical buffer, backed by 64B): must be refused.
-                this.stub.copyBuffer(src, dst, 0L, 16L, 16L);
+                copyBuffer(src, dst, 0L, 16L, 16L);
                 // Read past src logical size into dst[0..16): must not overwrite dst's 0x33 bytes.
-                this.stub.copyBuffer(src, dst, 16L, 0L, 16L);
-                this.stub.readBuffer(dst, 0L, 16L, MemoryUtil.memAddress(out));
+                copyBuffer(src, dst, 16L, 0L, 16L);
+                readBuffer(dst, 0L, 16L, MemoryUtil.memAddress(out));
                 assertEquals((byte) 0x33, out.get(0),
                         "copyBuffer must not read past source logical size");
 
@@ -105,11 +106,11 @@ class BufferLogicalSizeBoundsTest {
                 for (int i = 0; i < 16; i++) {
                     out.put(i, (byte) 0x7F);
                 }
-                this.stub.readBuffer(src, 8L, Long.MAX_VALUE, MemoryUtil.memAddress(out));
+                readBuffer(src, 8L, Long.MAX_VALUE, MemoryUtil.memAddress(out));
                 assertEquals((byte) 0x7F, out.get(0),
                         "readBuffer must reject overflowing size instead of wrapping offset + size negative");
-                this.stub.copyBuffer(src, dst, 0L, 8L, Long.MAX_VALUE);
-                this.stub.readBuffer(dst, 0L, 16L, MemoryUtil.memAddress(out));
+                copyBuffer(src, dst, 0L, 8L, Long.MAX_VALUE);
+                readBuffer(dst, 0L, 16L, MemoryUtil.memAddress(out));
                 assertEquals((byte) 0x33, out.get(0),
                         "copyBuffer must reject overflowing write ranges");
             } finally {
@@ -131,13 +132,18 @@ class BufferLogicalSizeBoundsTest {
             call("glBindBuffer", 0x88EC, pbo); // GL_PIXEL_UNPACK_BUFFER
             call("glBufferData", 0x88EC, 4, MemoryUtil.memAddress(small), GL_STATIC_DRAW);
 
-            Method uploadToRgba8 = GlsmFrontend.class.getDeclaredMethod(
-                    "uploadToRgba8", int.class, int.class, int.class, int.class, long.class);
-            uploadToRgba8.setAccessible(true);
-            Object result = uploadToRgba8.invoke(this.stub, 4, 4, 0x1908, 0x1401, 0L);
+            // E4-c: the upload conversion lives on the capture store now, fed by the
+            // upload context (the monolith was both; the entry is neither).
+            Method uploadToRgba8 = TextureCaptureStore.class.getMethod(
+                    "uploadToRgba8", TextureUploadContext.class, int.class, int.class, int.class, int.class, long.class);
+            Object result = uploadToRgba8.invoke(VulkanTextureRegistry.captureStore(),
+                    CaptureUploadContext.current(), 4, 4, 0x1908, 0x1401, 0L);
             assertNull(result,
                     "PBO upload of 4x4 RGBA8 (64B) must be refused when buffer was shrunk to 4B logical size");
         } finally {
+            // The pixel-unpack binding is a singleton seat in the entry era: leaving the shrunk
+            // PBO bound would reroute every later test's pointer-less glTexImage2D through it.
+            call("glBindBuffer", 0x88EC, 0);
             MemoryUtil.memFree(small);
         }
     }
@@ -158,25 +164,42 @@ class BufferLogicalSizeBoundsTest {
 
             // 1. Offset + size past shrunk 16B logical size (still within 64B backing) must be refused.
             call("glBufferSubData", GL_ARRAY_BUFFER, 8L, 16L, MemoryUtil.memAddress(marker));
-            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
             assertEquals((byte) 0x33, out.get(8),
                     "glBufferSubData must not overwrite past shrunk logical size");
 
             // 2. Overflowing offset + size where (int) offset == 0 and (int) size == 8 must not wrap negative and clobber offset 0.
             call("glBufferSubData", GL_ARRAY_BUFFER, 0x7FFF_FFFF_0000_0000L, 0x0000_0001_0000_0008L,
                     MemoryUtil.memAddress(marker));
-            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
             assertEquals((byte) 0x33, out.get(0),
                     "glBufferSubData must reject overflowing offset + size without clobbering offset 0");
 
             // 3. Overflowing offset near Long.MAX_VALUE must return cleanly instead of throwing IllegalArgumentException.
             call("glBufferSubData", GL_ARRAY_BUFFER, Long.MAX_VALUE - 4L, 16L, MemoryUtil.memAddress(marker));
-            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
             assertEquals((byte) 0x33, out.get(0));
         } finally {
             MemoryUtil.memFree(small);
             MemoryUtil.memFree(marker);
             MemoryUtil.memFree(out);
         }
+    }
+
+    // E4-c: the monolith's instance doors are the entry's private statics now; same
+    // bounds logic, reached reflectively (the public routes resolve by target, these by name).
+    private static void readBuffer(int name, long offset, long size, long out) throws Exception {
+        var m = DirectGlCaptureEntry.class.getDeclaredMethod("readBuffer",
+                int.class, long.class, long.class, long.class);
+        m.setAccessible(true);
+        m.invoke(null, name, offset, size, out);
+    }
+
+    private static void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size)
+            throws Exception {
+        var m = DirectGlCaptureEntry.class.getDeclaredMethod("copyBuffer",
+                int.class, int.class, long.class, long.class, long.class);
+        m.setAccessible(true);
+        m.invoke(null, readName, writeName, readOffset, writeOffset, size);
     }
 }

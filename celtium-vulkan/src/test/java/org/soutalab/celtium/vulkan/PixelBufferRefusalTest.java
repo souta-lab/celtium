@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,13 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PixelBufferRefusalTest {
     @Test
     void proceedsWhenNoPixelBufferIsBound() {
-        assertNull(GlsmFrontend.pixelBufferRefusal(0, 0x7f000000L, "glReadPixels"));
-        assertNull(GlsmFrontend.pixelBufferRefusal(0, 0L, "texture upload"));
+        assertNull(TextureCaptureStore.pixelBufferRefusal(0, 0x7f000000L, "glReadPixels"));
+        assertNull(TextureCaptureStore.pixelBufferRefusal(0, 0L, "texture upload"));
     }
 
     @Test
     void refusesWithAPackBufferBound() {
-        String refusal = GlsmFrontend.pixelBufferRefusal(7, 16L, "glReadPixels");
+        String refusal = TextureCaptureStore.pixelBufferRefusal(7, 16L, "glReadPixels");
         assertNotNull(refusal);
         assertTrue(refusal.contains("buffer=7"), refusal);
         assertTrue(refusal.contains("offset=16"), refusal);
@@ -28,19 +28,19 @@ class PixelBufferRefusalTest {
 
     @Test
     void refusesWithAnUnpackBufferBound() {
-        assertNotNull(GlsmFrontend.pixelBufferRefusal(3, 0L, "texture upload"));
+        assertNotNull(TextureCaptureStore.pixelBufferRefusal(3, 0L, "texture upload"));
     }
 
     @Test
     void offsetZeroIntoAnUnpackBufferIsData() {
-        assertTrue(GlsmFrontend.carriesPixels(0L, 5));
-        assertTrue(GlsmFrontend.carriesPixels(0x7f000000L, 0));
-        org.junit.jupiter.api.Assertions.assertFalse(GlsmFrontend.carriesPixels(0L, 0));
+        assertTrue(TextureCaptureStore.carriesPixels(0L, 5));
+        assertTrue(TextureCaptureStore.carriesPixels(0x7f000000L, 0));
+        org.junit.jupiter.api.Assertions.assertFalse(TextureCaptureStore.carriesPixels(0L, 0));
     }
 
     @Test
     void theOffsetIsReportedVerbatim() {
         // The diagnostic has to carry the offset: a clamped or formatted one makes the refused call unidentifiable.
-        assertTrue(GlsmFrontend.pixelBufferRefusal(1, 4096L, "op").contains("offset=4096"));
+        assertTrue(TextureCaptureStore.pixelBufferRefusal(1, 4096L, "op").contains("offset=4096"));
     }
 }
