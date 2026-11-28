@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.vulkan.VulkanDiagnostics;
@@ -8,7 +8,7 @@ import java.lang.reflect.Method;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * {@code celtium$paramSite()} must follow {@link VulkanDiagnostics#withinLimit(int, int)} so default runs without
+ * The capture entry's {@code paramSite()} must follow {@link VulkanDiagnostics#withinLimit(int, int)} so default runs without
  * {@code -Dceltium.vulkan.diagnostics=true} never capture stack traces on every {@code glTexParameter*} call.
  */
 class TextureParameterSiteGuardTest {
@@ -17,7 +17,7 @@ class TextureParameterSiteGuardTest {
         if (VulkanDiagnostics.withinLimit(0, 24)) {
             return;
         }
-        Method paramSite = GlsmFrontend.class.getDeclaredMethod("celtium$paramSite");
+        Method paramSite = DirectGlCaptureEntry.class.getDeclaredMethod("paramSite");
         paramSite.setAccessible(true);
         assertEquals("", paramSite.invoke(null));
     }

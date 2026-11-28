@@ -239,6 +239,15 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     private final DispatchThreadGate dispatchGate = new DispatchThreadGate();
 
     private DirectGlCaptureEntry() {
+        // A new entrance is a new GL context: the registry's capture store starts empty for it.
+        VulkanTextureRegistry.captureStore().clear();
+        // The framebuffer bindings seat likewise starts from a fresh context's values.
+        FramebufferBindings.current().reset();
+        // The capture store's allocation producers act through the entrance's upload context.
+        VulkanTextureRegistry.captureStore().uploadContext(CaptureUploadContext.current());
+        // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
+        // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
+        GlsmEnableState.current().set(GL_DEPTH_WRITEMASK_CAP, true);
     }
 
     /** {@return whether {@link #install()} has installed the entry}. */
@@ -923,16 +932,25 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                         (int) c[5], c[6]);
                 return 0L;
             case SEM_FOG_I:
-                GLSMFog.glFogi((int) c[0], (int) c[1]);
+                org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_FOG_F:
-                GLSMFog.glFogf((int) c[0], f(c[1]));
+                org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], f(c[1]));
                 return 0L;
             case SEM_FOG_FV:
-                GLSMFog.glFog((int) c[0], MemoryUtil.memFloatBuffer(c[1], 4));
-                return 0L;
             case SEM_FOG_IV:
-                GLSMFog.glFog((int) c[0], MemoryUtil.memIntBuffer(c[1], 4));
+                if (c[1] != 0L) {
+                    org.soutalab.celtium.vulkan.ImmediateFogState fog =
+                            org.soutalab.celtium.vulkan.ImmediateFogState.current();
+                    boolean ints = fn.semantics == SEM_FOG_IV;
+                    if ((int) c[0] == 0x0B66) {
+                        // Integer fog colours are normalized signed integers, unlike the enum/scalar parameters.
+                        fog.color(ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1]) / 2147483647.0) : MemoryUtil.memGetFloat(c[1]),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 4) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 4),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 8) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 8),
+                                ints ? (float) Math.max(-1.0, MemoryUtil.memGetInt(c[1] + 12) / 2147483647.0) : MemoryUtil.memGetFloat(c[1] + 12));
+                    } else fog.parameter((int) c[0], ints ? MemoryUtil.memGetInt(c[1]) : MemoryUtil.memGetFloat(c[1]));
+                }
                 return 0L;
             case SEM_TEX_ENV_I:
                 org.soutalab.celtium.vulkan.NativeTextureEnvironment.current()
@@ -1478,6 +1496,36 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             MemoryUtil.memPutLong(out, value);
         } else {
             MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
+    /** The recorded level parameter of the texture a target resolves to (the stub's glGetTexLevelParameter answer). */
+    private int texLevelParam(int target, int level, int pname) {
+        int name = CaptureUploadContext.current().uploadTargetName(target);
+        int[] dims = VulkanTextureRegistry.captureStore().texLevels()
+                .get(CaptureUploadContext.texLevelKey(name, level));
+        if (dims == null) {
+            return 0;
+        }
+        switch (pname) {
+            case 0x1000: // GL_TEXTURE_WIDTH
+                return dims[0];
+            case 0x1001: // GL_TEXTURE_HEIGHT
+                return dims[1];
+            case 0x1003: // GL_TEXTURE_INTERNAL_FORMAT
+                return dims[2];
+            case 0x1005: // GL_TEXTURE_BORDER
+                return 0;
+            // GL_TEXTURE_RED/GREEN/BLUE/ALPHA/LUMINANCE/INTENSITY_SIZE.
+            case 0x805C:
+            case 0x805D:
+            case 0x805E:
+            case 0x805F:
+            case 0x8060:
+            case 0x8061:
+                return 8;
+            default:
+                return 0;
         }
     }
 
@@ -2894,6 +2942,21 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             if (c[3] != 0L) {
                 MemoryUtil.memPutInt(c[3], framebufferAttachmentAnswer(
                         fn.name.startsWith("glGetNamed"), (int) c[0], (int) c[1], (int) c[2]));
+            }
+            return;
+        }
+        if (fn.name.startsWith("glGetTexLevelParameter")) {
+            // (target, level, pname, params*) - the one status row whose out slot is c[3] besides
+            // the framebuffer-attachment one above. The generic arm below would write through
+            // c[2], which here holds the pname itself. The answer is the recorded level parameter
+            // of the texture the target resolves to, as the shipped stub answered it.
+            if (c[3] != 0L) {
+                int value = texLevelParam((int) c[0], (int) c[1], (int) c[2]);
+                if (fn.name.endsWith("fv")) {
+                    MemoryUtil.memPutFloat(c[3], value);
+                } else {
+                    MemoryUtil.memPutInt(c[3], value);
+                }
             }
             return;
         }

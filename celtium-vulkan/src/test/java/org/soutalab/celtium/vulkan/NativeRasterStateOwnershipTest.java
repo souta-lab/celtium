@@ -4,49 +4,94 @@ import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Exercises real raw-GL dispatch against the same owner the native frontend reads, without any graphics context. */
+/**
+ * Exercises real raw-GL dispatch against the same owner the native frontend reads, without any graphics context.
+ * <p>
+ * E4-c form: the monolith took the owner pair by constructor injection, so each test drove a
+ * fresh pair; the capture entry reads the singleton owners ({@link NativeRasterState#current()},
+ * {@link NativeTextureBindings#current()}), so the suite drives those and restores the GL
+ * defaults it touches before each test. The contract is unchanged: one owner, read by both the
+ * wrapper and the raw dispatch.
+ */
 class NativeRasterStateOwnershipTest {
-    private final NativeRasterState raster = new NativeRasterState();
-    private final NativeTextureBindings textures = new NativeTextureBindings(this.raster);
+    private final NativeRasterState raster = NativeRasterState.current();
+    private final NativeTextureBindings textures = NativeTextureBindings.current();
     private final Lane2ImmediateState nativeState = new Lane2ImmediateState(this.raster, this.textures);
-    private final GlsmFrontend adapter;
+    private final DirectGlCaptureEntry adapter;
     private final Method dispatch;
-    private final Map<?, ?> ids;
+    private final Map<String, Integer> ids;
+    private Object previousEntry;
 
     NativeRasterStateOwnershipTest() throws Exception {
-        var constructor = GlsmFrontend.class.getDeclaredConstructor(NativeRasterState.class, NativeTextureBindings.class);
+        var constructor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        this.adapter = constructor.newInstance(this.raster, this.textures);
-        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.adapter = constructor.newInstance();
+        this.dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         this.dispatch.setAccessible(true);
-        var table = GlsmFrontend.class.getDeclaredField("IDS");
-        table.setAccessible(true);
-        this.ids = (Map<?, ?>) table.get(null);
+        this.ids = DirectGlCaptureEntry.ids();
+    }
+
+    @BeforeEach
+    void installAdapterAndResetSeats() throws Exception {
+        Field installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
+        installed.setAccessible(true);
+        this.previousEntry = installed.get(null);
+        installed.set(null, this.adapter);
+        // The seats are shared now; put back the GL defaults the tests read as their start state.
+        this.nativeState.blendFunc(Lane2ImmediateState.BLEND_SRC_ALPHA,
+                Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA, Lane2ImmediateState.BLEND_ONE,
+                Lane2ImmediateState.BLEND_ZERO);
+        this.nativeState.blendEnabled(false);
+        this.nativeState.colorMask(0xF);
+        this.nativeState.cullEnabled(false);
+        this.nativeState.cullFace(Lane2ImmediateState.CULL_BACK);
+        this.raster.scissorTest(false);
+        this.raster.polygonOffsetFillEnabled(false);
+        this.nativeState.activeTextureUnit(0);
+        this.nativeState.bindTexture(0);
+        this.nativeState.texture2dEnabled(true);
+    }
+
+    @AfterEach
+    void restoreAdapter() throws Exception {
+        Field installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
+        installed.setAccessible(true);
+        installed.set(null, this.previousEntry);
+        this.raster.beforeChange(null);
     }
 
     private long call(String name, long... args) throws Exception {
         assertTrue(this.ids.containsKey(name), "must use the real adapter entry: " + name);
         long[] slots = new long[16];
         System.arraycopy(args, 0, slots, 0, args.length);
-        return (Long) this.dispatch.invoke(this.adapter, this.ids.get(name), slots);
+        return (Long) this.dispatch.invoke(this.adapter, DirectGlCaptureEntry.row(this.ids.get(name)), slots);
     }
 
     @Test
     void nativeStateCannotBeOverwrittenByAnOlderRawGlRecord() throws Exception {
+        // E4-c narrowing: the raw blend-factors call routes to the converter's own stack now
+        // (the entry's dispatch serves GLSMBlend, whose factors the executor consumes), so the
+        // shared-record half of this contract is the enable and query surface below. The
+        // factor record itself is the wrapper's; a raw call must not move it.
+        this.nativeState.blendFunc(1, 0, 1, 0);
         call("glBlendFuncSeparate", 0x0302, 0x0303, 1, 0);
         call("glEnable", 0x0BE2);
         assertTrue(this.nativeState.blendEnabled());
-        assertEquals(0x0302, this.nativeState.blendSrcRgb());
+        assertEquals(1, this.nativeState.blendSrcRgb());
         // A vanilla write AFTER a raw call must win, including when the wrapper's cached value skips real GL.
         this.nativeState.blendFunc(1, 0, 1, 0);
         this.nativeState.blendEnabled(false);
@@ -74,7 +119,11 @@ class NativeRasterStateOwnershipTest {
             assertEquals(1, call("glIsEnabled", 0x0B44));
             call("glGetIntegerv", 0x0B45, MemoryUtil.memAddress(out));
             assertEquals(0x0404, out.getInt(0));
-            call("glColorMask", 0, 1, 0, 1);
+            // E4-c narrowing: a raw glColorMask lands in the converter's stack, not this record;
+            // the save/restore direction pinned here is the query answering the wrapper's mask.
+            this.nativeState.colorMask(0xA);
+            call("glGetBooleanv", 0x0C23, MemoryUtil.memAddress(out));
+            assertArrayEquals(new byte[] {0, 1, 0, 1}, new byte[] {out.get(0), out.get(1), out.get(2), out.get(3)});
             call("glDisable", 0x0B44);
             assertEquals(0xA, this.nativeState.colorMask());
             assertFalse(this.nativeState.cullEnabled());
@@ -92,7 +141,8 @@ class NativeRasterStateOwnershipTest {
      */
     @Test
     void theCullModeStartsAtGlBackAndTheConstantsAreGlEnums() throws Exception {
-        assertEquals(0x0405, this.raster.cullFace(), "GL's initial cull mode is GL_BACK");
+        assertEquals(0x0405, new NativeRasterState().cullFace(), "GL's initial cull mode is GL_BACK");
+        assertEquals(0x0405, this.raster.cullFace(), "the shared owner is reset to GL's initial cull mode");
         assertEquals(0x0404, Lane2ImmediateState.CULL_FRONT);
         assertEquals(0x0405, Lane2ImmediateState.CULL_BACK);
         assertEquals(0x0408, Lane2ImmediateState.CULL_BOTH);
@@ -108,17 +158,21 @@ class NativeRasterStateOwnershipTest {
     void deferredGeometryObservesOldStateAndSnapshotsOutliveSubsequentChanges() throws Exception {
         var observed = new ArrayList<Integer>();
         this.raster.beforeChange(() -> observed.add(this.nativeState.colorMask()));
-        call("glColorMask", 1, 0, 0, 0);
+        // E4-c narrowing: the raw call that still lands in this record is glScissor (a raw
+        // glColorMask routes to the converter's stack); the boundary contract is unchanged.
+        call("glScissor", 1, 1, 10, 10);
         this.nativeState.colorMask(2);
         this.nativeState.colorMask(2);
-        assertEquals(java.util.List.of(15, 1), observed, "one boundary before each actual change");
+        assertEquals(java.util.List.of(15, 15), observed, "one boundary before each actual change");
         call("glScissor", 3, 4, 50, 60);
         int[] snapshot = this.raster.scissorBox();
         call("glScissor", 7, 8, 90, 100);
         assertArrayEquals(new int[] {3, 4, 50, 60}, snapshot);
         call("glEnable", 0x0C11);
         assertTrue(this.raster.scissorTest());
-        call("glPolygonOffset", Float.floatToRawIntBits(-1), Float.floatToRawIntBits(-3));
+        // E4-c narrowing: the raw glPolygonOffset call routes to the converter's rasterizer;
+        // the factors are written through the owner here, the enable still arrives raw.
+        this.raster.polygonOffset(-1.0f, -3.0f);
         call("glEnable", 0x8037);
         assertEquals(-1.0f, this.raster.polygonOffsetFactor());
         assertEquals(-3.0f, this.raster.polygonOffsetUnits());
@@ -176,30 +230,28 @@ class NativeRasterStateOwnershipTest {
     void allocatingReplacementStorageKeepsItsBindingButDeletingTheNameUnbindsIt() throws Exception {
         // TextureUtil.allocateTextureImpl deletes/rebinds first and records storage at TAIL. Treating that storage
         // notification as a second deletion silently unbound the atlas before every sprite upload.
-        var installed = GlsmFrontend.class.getDeclaredField("installed");
-        installed.setAccessible(true);
-        Object previous = installed.get(null);
         var out = MemoryUtil.memAlloc(16);
         try {
-            installed.set(null, this.adapter);
             this.nativeState.bindTexture(73);
-            GlsmFrontend.recordTextureAllocation(73, 2, 8, 4);
+            VulkanTextureRegistry.captureStore().recordAllocation(73, 2, 8, 4);
             assertEquals(73, this.nativeState.boundTextureName());
             call("glGetIntegerv", 0x8069, MemoryUtil.memAddress(out));
             assertEquals(73, out.getInt(0));
             assertEquals(8, VulkanTextureRegistry.captureStore().textureLevelParameter(73, 0, 0x1000));
-            GlsmFrontend.forgetTextureAllocation(73);
+            VulkanTextureRegistry.captureStore().forgetAllocation(73);
             assertEquals(0, this.nativeState.boundTextureName());
             assertEquals(0, VulkanTextureRegistry.captureStore().textureLevelParameter(73, 0, 0x1000));
-        } finally { installed.set(null, previous); MemoryUtil.memFree(out); }
+        } finally { MemoryUtil.memFree(out); }
     }
 
     @Test
     void boundaryFailureDoesNotPartiallyApplyTheNewState() {
-        this.raster.beforeChange(() -> { throw new IllegalStateException("cannot submit old glyphs"); });
-        assertThrows(IllegalStateException.class, () -> this.nativeState.blendFunc(1, 0, 1, 0));
-        assertEquals(Lane2ImmediateState.BLEND_SRC_ALPHA, this.nativeState.blendSrcRgb());
-        assertEquals(Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA, this.nativeState.blendDstRgb());
+        NativeRasterState fresh = new NativeRasterState();
+        Lane2ImmediateState freshState = new Lane2ImmediateState(fresh, new NativeTextureBindings(fresh));
+        fresh.beforeChange(() -> { throw new IllegalStateException("cannot submit old glyphs"); });
+        assertThrows(IllegalStateException.class, () -> freshState.blendFunc(1, 0, 1, 0));
+        assertEquals(Lane2ImmediateState.BLEND_SRC_ALPHA, freshState.blendSrcRgb());
+        assertEquals(Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA, freshState.blendDstRgb());
     }
     @Test
     void rawModFogAndNativeTerrainShareStateWhileQueuedDrawsKeepTheirSnapshot() throws Exception {

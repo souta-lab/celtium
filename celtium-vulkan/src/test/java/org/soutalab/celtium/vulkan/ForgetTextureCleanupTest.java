@@ -1,4 +1,7 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
+import org.soutalab.celtium.glcompat.capture.GlFn;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
@@ -28,15 +31,13 @@ class ForgetTextureCleanupTest {
 
     @Test
     void deletesAllRecordedMipLevelsCapturesAndParameters() throws Exception {
-        var ctor = GlsmFrontend.class.getDeclaredConstructor();
+        var ctor = DirectGlCaptureEntry.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        GlsmFrontend stub = ctor.newInstance();
-        Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        DirectGlCaptureEntry stub = ctor.newInstance();
+        Method dispatch = DirectGlCaptureEntry.class.getDeclaredMethod("dispatchArgs", GlFn.class, long[].class);
         dispatch.setAccessible(true);
-        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
-        idsField.setAccessible(true);
-        Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-        Field installedField = GlsmFrontend.class.getDeclaredField("installed");
+        Map<String, Integer> ids = DirectGlCaptureEntry.ids();
+        Field installedField = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installedField.setAccessible(true);
         Object previous = installedField.get(null);
         installedField.set(null, stub);
@@ -44,7 +45,7 @@ class ForgetTextureCleanupTest {
         ByteBuffer pixels = MemoryUtil.memAlloc(4 * 4 * 4);
         try {
             invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, 25);
-            GlsmFrontend.recordTextureAllocation(25, 4, 16, 16);
+            VulkanTextureRegistry.captureStore().recordAllocation(25, 4, 16, 16);
             invoke(dispatch, stub, ids, "glTexParameteri", GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             invoke(dispatch, stub, ids, "glTexImage2D", GL_TEXTURE_2D, 5, GL_RGBA, 1, 1, 0, GL_RGBA,
                     GL_UNSIGNED_BYTE, MemoryUtil.memAddress(pixels));
@@ -54,9 +55,9 @@ class ForgetTextureCleanupTest {
 
             // Keep a second texture intact while forgetting texture 25.
             invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, 26);
-            GlsmFrontend.recordTextureAllocation(26, 2, 8, 8);
+            VulkanTextureRegistry.captureStore().recordAllocation(26, 2, 8, 8);
 
-            GlsmFrontend.forgetTextureAllocation(25);
+            VulkanTextureRegistry.captureStore().forgetAllocation(25);
 
             assertFalse(VulkanTextureRegistry.captureStore().textureParameterRecorded(25, GL_TEXTURE_WRAP_S),
                     "recorded texture parameter must be cleared on delete");
@@ -80,10 +81,10 @@ class ForgetTextureCleanupTest {
         }
     }
 
-    private static void invoke(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, String name, long... args)
-            throws Exception {
+    private static void invoke(Method dispatch, DirectGlCaptureEntry stub, Map<String, Integer> ids,
+            String name, long... args) throws Exception {
         long[] c = new long[16];
         System.arraycopy(args, 0, c, 0, args.length);
-        dispatch.invoke(stub, ids.get(name), c);
+        dispatch.invoke(stub, DirectGlCaptureEntry.row(ids.get(name)), c);
     }
 }

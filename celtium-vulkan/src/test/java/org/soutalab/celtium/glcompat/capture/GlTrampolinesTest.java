@@ -1,6 +1,6 @@
 package org.soutalab.celtium.glcompat.capture;
 
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+import org.soutalab.celtium.glcompat.capture.GlFunctionTable;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.Callback;
 
@@ -64,32 +64,32 @@ class GlTrampolinesTest {
     void ffmCompatibilityExcludesFloatAndDoubleSignatures() {
         assertTrue(GlTrampolines.celtium$ffmCompatible(new byte[0]));
         assertTrue(GlTrampolines.celtium$ffmCompatible(
-                new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_LONG, GlsmFrontend.A_PTR}));
-        assertFalse(GlTrampolines.celtium$ffmCompatible(new byte[] {GlsmFrontend.A_FLOAT}));
+                new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_LONG, GlFunctionTable.A_PTR}));
+        assertFalse(GlTrampolines.celtium$ffmCompatible(new byte[] {GlFunctionTable.A_FLOAT}));
         assertFalse(GlTrampolines.celtium$ffmCompatible(
-                new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_DOUBLE}));
+                new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_DOUBLE}));
     }
 
     @Test
     void trampolineTypeFollowsWhereTheArgumentsLand() {
         assertSame(GlTrampolines.GlTrampolineDoubleI.class,
-                GlTrampolines.trampolineType(new byte[] {GlsmFrontend.A_DOUBLE}));
+                GlTrampolines.trampolineType(new byte[] {GlFunctionTable.A_DOUBLE}));
         assertSame(GlTrampolines.GlTrampolineDoubleI.class, GlTrampolines.trampolineType(
-                new byte[] {GlsmFrontend.A_FLOAT, GlsmFrontend.A_DOUBLE}));
+                new byte[] {GlFunctionTable.A_FLOAT, GlFunctionTable.A_DOUBLE}));
         assertSame(GlTrampolines.GlTrampolineFloatI.class,
-                GlTrampolines.trampolineType(new byte[] {GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT}));
+                GlTrampolines.trampolineType(new byte[] {GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT}));
         assertSame(GlTrampolines.GlTrampolineI.class,
-                GlTrampolines.trampolineType(new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_PTR}));
+                GlTrampolines.trampolineType(new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_PTR}));
         assertSame(GlTrampolines.GlTrampolineI.class, GlTrampolines.trampolineType(new byte[0]));
     }
 
     @Test
     void descriptorsAreCachedPerSignatureShape() {
         Callback.Descriptor first = GlTrampolines.descriptorFor(
-                new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_PTR});
+                new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_PTR});
         assertSame(first, GlTrampolines.descriptorFor(
-                new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_PTR}));
-        assertNotSame(first, GlTrampolines.descriptorFor(new byte[] {GlsmFrontend.A_FLOAT}));
+                new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_PTR}));
+        assertNotSame(first, GlTrampolines.descriptorFor(new byte[] {GlFunctionTable.A_FLOAT}));
     }
 
     @Test
@@ -97,7 +97,7 @@ class GlTrampolinesTest {
         RecordingDispatch dispatch = new RecordingDispatch();
         RecordingLegacy legacy = new RecordingLegacy();
         GlTrampolines trampolines = new GlTrampolines(dispatch, legacy);
-        byte[] args = {GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT};
+        byte[] args = {GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT};
 
         Callback callback = trampolines.libffiTrampoline("glClearColor", 7, args);
         assertSame(callback, trampolines.libffiTrampoline("glClearColor", 7, args));
@@ -125,7 +125,7 @@ class GlTrampolinesTest {
         RecordingDispatch dispatch = new RecordingDispatch();
         GlTrampolines trampolines = new GlTrampolines(dispatch, new RecordingLegacy());
 
-        Callback callback = trampolines.libffiTrampoline("glClearDepth", 9, new byte[] {GlsmFrontend.A_DOUBLE});
+        Callback callback = trampolines.libffiTrampoline("glClearDepth", 9, new byte[] {GlFunctionTable.A_DOUBLE});
         assertTrue(callback instanceof GlTrampolines.GlTrampolineDoubleI);
 
         GlTrampolines.GlTrampolineDoubleI entry = (GlTrampolines.GlTrampolineDoubleI) callback;
@@ -143,7 +143,7 @@ class GlTrampolinesTest {
         GlTrampolines trampolines = new GlTrampolines(dispatch, legacy);
 
         Callback callback = trampolines.libffiTrampoline("glTexImage2D", 5,
-                new byte[] {GlsmFrontend.A_INT, GlsmFrontend.A_PTR});
+                new byte[] {GlFunctionTable.A_INT, GlFunctionTable.A_PTR});
         assertTrue(callback instanceof GlTrampolines.GlTrampolineI);
 
         GlTrampolines.GlTrampolineI entry = (GlTrampolines.GlTrampolineI) callback;
@@ -161,13 +161,13 @@ class GlTrampolinesTest {
     @Test
     void addressForReturnsAStableNonZeroAddressPerName() {
         GlTrampolines trampolines = new GlTrampolines(new RecordingDispatch(), new RecordingLegacy());
-        byte[] floatArgs = {GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT, GlsmFrontend.A_FLOAT,
-                GlsmFrontend.A_FLOAT};
+        byte[] floatArgs = {GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT, GlFunctionTable.A_FLOAT,
+                GlFunctionTable.A_FLOAT};
         long first = trampolines.addressFor("glClearColor", 7, floatArgs);
         assertTrue(first != 0L);
         assertEquals(first, trampolines.addressFor("glClearColor", 7, floatArgs));
 
-        byte[] intArgs = {GlsmFrontend.A_INT};
+        byte[] intArgs = {GlFunctionTable.A_INT};
         long resolved = trampolines.addressFor("glSomeIntegerCall", 3, intArgs);
         assertTrue(resolved != 0L);
         assertEquals(resolved, trampolines.addressFor("glSomeIntegerCall", 3, intArgs));
