@@ -311,9 +311,27 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         }
         t.generalOffset[id] = meta.size() / 3;
         int written = 0;
+        boolean liquid = state.getMaterial().isLiquid();
+        TextureAtlasSprite liquidStill = liquid ? fluidSprite(state, true) : null;
+        TextureAtlasSprite liquidFlow = liquid ? fluidSprite(state, false) : null;
         for (BakedQuad quad : all) {
             if (appendQuad(positions, meta, uvs, atlasUvs, needsCorrection, sprites, quad)) {
                 written++;
+                if (liquid && quad.getSprite() != null
+                        && "missingno".equals(quad.getSprite().getIconName())) {
+                    // A liquid state's model quads carry the missing sprite (vanilla
+                    // renders fluids from texture-map sprites, never from the model),
+                    // so substitute the fluid's own sprite in the pool record: still
+                    // for the horizontal faces, flowing for the sides. A model that
+                    // offers a real sprite (a modded fluid's own model) keeps it.
+                    int normalPacked = meta.get(meta.size() - 2);
+                    float ny = org.soutalab.celtium.core.geometry.GeneralQuad
+                            .unpackNormalComponent(normalPacked, 10);
+                    TextureAtlasSprite sprite = Math.abs(ny) > 0.5f ? liquidStill : liquidFlow;
+                    if (sprite != null) {
+                        meta.set(meta.size() - 3, sprites.indexFor(sprite));
+                    }
+                }
             }
         }
         t.generalCount[id] = written;
