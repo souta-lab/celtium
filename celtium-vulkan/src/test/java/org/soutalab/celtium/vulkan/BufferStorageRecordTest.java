@@ -1,6 +1,5 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.BufferStorageRecord;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;

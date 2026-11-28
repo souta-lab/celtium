@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan.shader;
 
 import org.soutalab.celtium.vulkan.shader.ModPushConstantLimit;
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
