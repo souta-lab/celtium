@@ -50,6 +50,48 @@ class CeltiumGllessNativeTransformerShaderQueryTest {
     }
 
     /**
+     * Compilation must reach the hint, not the counted no-op: the no-op branch answers with a
+     * surface-noop count and a bare return, which left the shader record's compiled flag down and
+     * the status query above honestly answering 0. Both spellings are pinned - the core name on a
+     * GL20C-shaped class, the ARB name on an ARBShaderObjects-shaped one.
+     */
+    @Test
+    void compileShaderRoutesToTheHintNotTheCountedNoop() {
+        assertCompileRoutes("org.lwjgl.opengl.GL20C", "org/lwjgl/opengl/GL20C", "glCompileShader");
+    }
+
+    @Test
+    void compileShaderArbRoutesToTheHintNotTheCountedNoop() {
+        assertCompileRoutes("org.lwjgl.opengl.ARBShaderObjects",
+                "org/lwjgl/opengl/ARBShaderObjects", "glCompileShaderARB");
+    }
+
+    private static void assertCompileRoutes(String className, String internalName, String nativeName) {
+        byte[] input = syntheticSingleNative(internalName, nativeName);
+        byte[] result = new CeltiumGllessNativeTransformer().transform(className, null, input);
+        if (!asm9VisitorsSupported()) {
+            assertSame(input, result,
+                    "with no ASM9 support the native transformer must fail open");
+            return;
+        }
+        List<String> calls = methodCalls(result);
+        assertEquals(1, Collections.frequency(calls, HINT + "glCompileShader (I)V"),
+                nativeName + " must route to the hint's compile entry point");
+        assertEquals(0, Collections.frequency(calls, HINT + "noteSurfaceNoop (I)V"),
+                nativeName + " must not be answered as a counted surface no-op");
+    }
+
+    /** A minimal LWJGL3-shaped class holding one {@code (I)V} native, and nothing else. */
+    private static byte[] syntheticSingleNative(String internalName, String nativeName) {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null,
+                "java/lang/Object", null);
+        nativeMethod(writer, nativeName, "(I)V");
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /**
      * Whether this runtime's ASM accepts ASM9 visitors. The api level is the literal
      * {@code 9 << 16}, not {@code Opcodes.ASM9}: ASM 5.2's Opcodes has no such field, so
      * naming it would fail the probe with a linkage error instead of the answer.

@@ -289,6 +289,10 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.glcompat.GLSMPrograms.glShaderSource(shader, source.toString());
     }
 
+    public static void glCompileShader(int shader) {
+        org.soutalab.celtium.glcompat.GLSMPrograms.glCompileShader(shader);
+    }
+
     public static void glAttachShader(int program, int shader) {
         org.soutalab.celtium.glcompat.GLSMPrograms.glAttachShader(program, shader);
     }

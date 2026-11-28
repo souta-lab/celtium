@@ -107,6 +107,36 @@ class CeltiumGllessSurfaceNoopTest {
                 "the surface report aggregates the hint's instanced drops");
     }
 
+    /**
+     * Compilation is routed to the converter's program machine, not counted as a no-op: the shader
+     * record's compiled flag is what the status query reads, so a compile answered by the no-op set
+     * left every mod shader reporting GL_FALSE with an empty log. Pinned as a source contract for the
+     * same reason as the instanced routes above - the route lands in GLSMPrograms, whose classes this
+     * module's test classpath cannot load.
+     */
+    @Test
+    void compileIsRoutedToTheProgramMachineNotCountedAsANoop() throws IOException {
+        String transformer = Files.readString(findRepoFile(
+                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java"));
+        int setStart = transformer.indexOf("VOID_NOOPS = new java.util.HashSet<>");
+        int setEnd = transformer.indexOf("));", setStart);
+        assertTrue(setStart >= 0 && setEnd > setStart, "the no-op set definition exists");
+        assertTrue(!transformer.substring(setStart, setEnd).contains("\"glCompileShader\""),
+                "a name with a route must not be listed in the no-op set");
+        assertTrue(transformer.contains("name.equals(\"glCompileShader\")")
+                        && transformer.contains("name.equals(\"glCompileShaderARB\")"),
+                "the program route carries the compile branch in both spellings");
+        assertTrue(transformer.contains(
+                        "method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, \"glCompileShader\", \"(I)V\", false)"),
+                "the compile branch forwards the shader to the hint");
+        String hint = Files.readString(findRepoFile(
+                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java"));
+        assertTrue(hint.contains("public static void glCompileShader(int shader)"),
+                "the hint carries the compile entry point");
+        assertTrue(hint.contains("org.soutalab.celtium.glcompat.GLSMPrograms.glCompileShader(shader);"),
+                "the hint delegates compilation to the converter's program machine");
+    }
+
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
     private static Path findRepoFile(String repoRelative) {
         Path direct = Paths.get(repoRelative);
