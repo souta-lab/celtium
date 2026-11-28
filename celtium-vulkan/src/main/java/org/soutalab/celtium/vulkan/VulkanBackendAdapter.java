@@ -112,11 +112,11 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     }
 
     /** Alignment required for dynamic uniform buffer offsets. Tightened at construction from the device limits. */
-    private static final int MIN_UNIFORM_ALIGNMENT = 256;
+    static final int MIN_UNIFORM_ALIGNMENT = 256;
 
-    private DynamicLightService dynamicLightService;
+    DynamicLightService dynamicLightService;
 
-    private final int uniformAlignment;
+    final int uniformAlignment;
 
     /**
      * UI passes retired by a frame-format change (Stage 1 BGRA ignition): kept, not destroyed, until
@@ -150,7 +150,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
 
 
     /** The loading screen's own surface (S3-b addendum 4-1): owns the native screen and its dump state. */
-    private final LoadingScreenSurface loadingSurface = new LoadingScreenSurface();
+    final LoadingScreenSurface loadingSurface = new LoadingScreenSurface();
 
 
     /**
@@ -179,7 +179,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
 
 
     /** True while this instance exists only for the window and no world renderer has adopted it yet. */
-    private boolean windowBackend;
+    boolean windowBackend;
 
     /**
      * True for the instance the window created, for the life of the process.
@@ -191,7 +191,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * second chance - the creation hook is latched. So a window-owned instance releases its terrain resources and
      * detaches, and keeps everything a menu frame needs.
      */
-    private boolean windowOwned;
+    boolean windowOwned;
 
 
     /** {@return whether this instance was created at window creation and no world renderer has adopted it yet}. */
@@ -205,7 +205,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return "windowOwned=" + this.windowOwned + " windowBackend=" + this.windowBackend + " deletes=" + this.deleteCalls;
     }
 
-    private int deleteCalls;
+    int deleteCalls;
 
 
     /**
@@ -216,7 +216,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * path is a per-world release and is called once per world by design, and the stalled / settle-failed
      * exits do not set it either, because a later delete may still have the settle succeed.
      */
-    private boolean fullyDeleted;
+    boolean fullyDeleted;
 
 
     /**
@@ -292,21 +292,21 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
                 + " recordPass=" + this.lane1RecordPasses;
     }
 
-    private long lane1DrawCalls;
+    long lane1DrawCalls;
 
-    private long lane1GuardCmd;
+    long lane1GuardCmd;
 
-    private long lane1GuardStall;
+    long lane1GuardStall;
 
-    private long lane1GuardTarget;
+    long lane1GuardTarget;
 
-    private long lane1GuardPass;
+    long lane1GuardPass;
 
-    private long lane1GuardViews;
+    long lane1GuardViews;
 
-    private long lane1RecordPasses;
+    long lane1RecordPasses;
 
-    private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend celtium$lane1() {
+    org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend celtium$lane1() {
         if (this.lane1 == null) {
             this.lane1 = new org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend(this.context);
         }
@@ -436,7 +436,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * camera position itself, the dynamic lights gathered through the adopted service, and the
      * immediate path's fog state.
      */
-    private void celtium$lane1PrepareFrame(
+    void celtium$lane1PrepareFrame(
             org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend,
             float[] projection, float[] modelView, double cameraX, double cameraY, double cameraZ) {
         // S1 of the fixed template: this publication is the frame's cull + light-grid
@@ -802,7 +802,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * below - the terrain host's paired reset above all - is sound only
      * under all three.
      */
-    private boolean celtium$terrainQuiescent() {
+    boolean celtium$terrainQuiescent() {
         return !this.context.celtium$recordingOpen()
                 && !this.context.celtium$hasPendingBatchedSubmits()
                 && this.context.celtium$isSubmissionCompleted();
@@ -931,7 +931,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * drawing into a stopped GPU backend until the factory happens to install a successor. The windowOwned exit
      * is the one exception: that instance stays alive as the window backend, so its registration must stay.
      */
-    private void celtium$detachRegistration() {
+    void celtium$detachRegistration() {
         if (org.soutalab.celtium.vulkan.CeltiumBackends.current() == this) {
             org.soutalab.celtium.vulkan.CeltiumBackends.install(null);
         }
@@ -1006,7 +1006,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * stalled or several slow frees accumulated - these brackets are what separates the two on the next leg,
      * segment by segment, without waiting for a dump.
      */
-    private static long celtium$deleteSegment(String segment, long segmentStartedNanos) {
+    static long celtium$deleteSegment(String segment, long segmentStartedNanos) {
         long now = System.nanoTime();
         long took = now - segmentStartedNanos;
         if (took > 50_000_000L) {
@@ -1030,7 +1030,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * segment names itself in the log instead of hiding inside the gap before
      * {@code CELTIUM_BACKEND_DELETE} prints.
      */
-    private void celtium$deleteSettled() {
+    void celtium$deleteSettled() {
         long segmentStarted = System.nanoTime();
         this.funnel.recordsPipelines.celtium$releaseAll();
         segmentStarted = celtium$deleteSegment("indirect", segmentStarted);
@@ -1197,7 +1197,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.fullyDeleted = true;
     }
 
-    private boolean ensureSwapchain() {
+    boolean ensureSwapchain() {
         return this.presentSwapchain.ensureSwapchain();
     }
 
@@ -1285,7 +1285,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.copyReadSide.setLightmapCoords(x, y);
     }
 
-    private float[] lightmapCoords() {
+    float[] lightmapCoords() {
         return this.copyReadSide.lightmapCoords();
     }
 
@@ -1345,7 +1345,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.copyReadSide.ensureFrameTarget(width, height);
     }
 
-    private void refreshTextures() {
+    void refreshTextures() {
         this.copyReadSide.refreshTextures();
     }
 

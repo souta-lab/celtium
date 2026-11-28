@@ -697,16 +697,16 @@ public void setLastFrameReachedQueue(boolean reached) {
      * actually waits on a pending submission is one attempt, confirmed by the timeline wait (fast) or
      * by the fence wait it falls through to (fallback). Counting only - rendering behaviour is unchanged.
      */
-    private static final FallbackPaths.Handle TIMELINE_WAIT_PATH =
+    static final FallbackPaths.Handle TIMELINE_WAIT_PATH =
             FallbackPaths.register(FallbackPaths.SYNC_TIMELINE);
 
-    private long commandPool;
+    long commandPool;
 
     VkCommandBuffer commandBuffer;
 
-    private long fence;
+    long fence;
 
-    private long frameIndex;
+    long frameIndex;
 
     /** The arena's own frame counter: advanced at every frame boundary, world pass or not. */
     long arenaFrameId;
@@ -714,23 +714,23 @@ public void setLastFrameReachedQueue(boolean reached) {
     /** Whether a world snapshot ran since the last frame boundary, so the menu-only resets know to stay out. */
     boolean frameSnapshotSinceBoundary;
 
-    private long readbackBuffer;
+    long readbackBuffer;
 
     /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
     static final int READBACK_SLOTS = 32;
 
     /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
-    private static final int READBACK_COPY_BYTES = 64;
+    static final int READBACK_COPY_BYTES = 64;
 
     /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
-    private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
+    final boolean[] readbackValid = new boolean[READBACK_SLOTS];
 
     /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
 
 
-    private long readbackMemory;
+    long readbackMemory;
 
-    private long readbackMapped;
+    long readbackMapped;
 
     /**
      * The frame the renderer last finished, for diagnostics that run outside it (the swapchain's flicker sampler).
@@ -747,7 +747,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     final java.util.List<ImmediateGroup> recordedImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
 
-    private int failImmediateSubmits;
+    int failImmediateSubmits;
 
 
     /** Restricted to the small validation scene, so retry is exercised after a real batch was accepted. */
@@ -788,22 +788,22 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
-    private static final int TIMESTAMP_SLOTS = 320;
+    static final int TIMESTAMP_SLOTS = 320;
 
     /**
      * Labelled single timestamps along the last command buffer (queries {@code MARK_BASE..}), written only while the
      * GPU pass report collects: the delta between two marks is the GPU time of the commands recorded between them -
      * barriers and clears included, which no pass bracket owns.
      */
-    private static final int MARK_BASE = 64;
+    static final int MARK_BASE = 64;
 
-    private static final int MARKS = 240;
+    static final int MARKS = 240;
 
     static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
 
-    private int gpuMarkCount;
+    int gpuMarkCount;
 
-    private final String[] gpuMarkLabels = new String[MARKS];
+    final String[] gpuMarkLabels = new String[MARKS];
 
     String gpuMarkTimeline = "";
 
@@ -837,7 +837,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * while the frame takes nine, so the question the per-pass numbers cannot answer is whether the GPU is busy for
      * the rest or idle while the host waits. This one pair answers exactly that.
      */
-    private static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
+    static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
 
     long timestampPool;
 
@@ -849,56 +849,56 @@ public void setLastFrameReachedQueue(boolean reached) {
      * bounds uniform blocks, not passes. A pass that finds no free query is counted in
      * {@link #statisticsDroppedPasses}, never silently skipped.
      */
-    private static final int STATS_PER_SLOT = 8;
+    static final int STATS_PER_SLOT = 8;
 
     /** The statistics pool: a query type of its own, so it cannot share the timestamp pool. */
-    private long statisticsPool;
+    long statisticsPool;
 
     /** Queries written per frame slot in that slot's current recording, and the bitmask of those already read. */
-    private final int[] statisticsSlotCounts = new int[FRAME_SLOTS];
+    final int[] statisticsSlotCounts = new int[FRAME_SLOTS];
 
-    private final int[] statisticsSlotConsumed = new int[FRAME_SLOTS];
+    final int[] statisticsSlotConsumed = new int[FRAME_SLOTS];
 
     /** Per-slot, per-query snapshots taken at record time: the pass, its logical draws, sections and charge. */
-    private final String[][] statisticsSlotPasses = new String[FRAME_SLOTS][STATS_PER_SLOT];
+    final String[][] statisticsSlotPasses = new String[FRAME_SLOTS][STATS_PER_SLOT];
 
-    private final long[][] statisticsSlotDraws = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    final long[][] statisticsSlotDraws = new long[FRAME_SLOTS][STATS_PER_SLOT];
 
-    private final long[][] statisticsSlotSections = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    final long[][] statisticsSlotSections = new long[FRAME_SLOTS][STATS_PER_SLOT];
 
-    private final long[][] statisticsSlotCharges = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    final long[][] statisticsSlotCharges = new long[FRAME_SLOTS][STATS_PER_SLOT];
 
     /** The open query's accumulated unsorted budget charge, summed as its batches are charged. */
-    private long statisticsChargeAccum;
+    long statisticsChargeAccum;
 
     /** Window (since the last printed line) and cumulative totals, per pass; see TerrainStatisticsReport. */
-    private final java.util.Map<String, long[]> statisticsWindowTotals =
+    final java.util.Map<String, long[]> statisticsWindowTotals =
             new Reference2ObjectOpenHashMap<>();
 
-    private long statisticsWindowStartFrame = -1L;
+    long statisticsWindowStartFrame = -1L;
 
-    private long statisticsLastPrintFrame = -1L;
+    long statisticsLastPrintFrame = -1L;
 
     long statisticsSamples;
 
-    private long statisticsDroppedPasses;
+    long statisticsDroppedPasses;
 
-    private long statisticsDroppedSamples;
+    long statisticsDroppedSamples;
 
-    private long statisticsReadFailures;
+    long statisticsReadFailures;
 
     /** The immediate window pass's last measured GPU time, in nanoseconds. */
     long immediatePassGpuNanos;
 
-    private boolean immediatePassTimed;
+    boolean immediatePassTimed;
 
     /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
     long frameGpuNanos;
 
-    private boolean frameGpuTimed;
+    boolean frameGpuTimed;
 
     /** Whether this frame's end timestamp has been written, so a frame that takes both end paths writes it once. */
-    private boolean frameEndTimestampWritten;
+    boolean frameEndTimestampWritten;
 
     /**
      * The part of the frame's GPU time that happens before the first pass starts and after the last one ends.
@@ -912,7 +912,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     long frameTailNanos;
 
-    private float timestampPeriod = 1.0f;
+    float timestampPeriod = 1.0f;
 
 
     // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
@@ -922,7 +922,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
      * on hardware that can: {@code -Dceltium.vulkan.forceNoTimestamps=true}.
      */
-    private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
+    static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
 
     final Reference2ReferenceMap<String, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
 
@@ -933,9 +933,9 @@ public void setLastFrameReachedQueue(boolean reached) {
      */
     final java.util.Map<String, Long> packPassTimings = new java.util.LinkedHashMap<>();
 
-    private int readbackSlots;
+    int readbackSlots;
 
-    private long readbackOffset;
+    long readbackOffset;
 
     final Reference2ReferenceMap<Integer, String> timestampPasses = new Reference2ReferenceOpenHashMap<>();
 
@@ -954,16 +954,16 @@ public void setLastFrameReachedQueue(boolean reached) {
      * consumes a snapshot only once the scheduler confirms its submission. See TerrainTimingReadback
      * for why reading the live state instead filed zero for every frame.
      */
-    private final TerrainTimingReadback timingReadback = new TerrainTimingReadback();
+    final TerrainTimingReadback timingReadback = new TerrainTimingReadback();
 
     /** The readback's census: snapshots consumed, and timestamp slots a consumed read found unavailable. */
-    private long timingSnapshotsRead;
+    long timingSnapshotsRead;
 
-    private long timingSlotsUnavailable;
+    long timingSlotsUnavailable;
 
-    private boolean readbackPending;
+    boolean readbackPending;
 
-    private boolean readbackDone;
+    boolean readbackDone;
 
     /** A completed frame's content is in the shared image and has not been presented yet. */
     boolean lastFrameReachedQueue;
@@ -987,14 +987,14 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     final long[] submitToFenceRing = new long[DISTRIBUTION_SAMPLES];
 
-    private int submitToFenceRingAt;
+    int submitToFenceRingAt;
 
     int submitToFenceRingCount;
 
     /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
-    private final long[] slotSubmitNanos = new long[FRAME_SLOTS];
+    final long[] slotSubmitNanos = new long[FRAME_SLOTS];
 
-    private void celtium$noteSubmitToFence(int slot, long nanos) {
+    void celtium$noteSubmitToFence(int slot, long nanos) {
         if (nanos <= 0L) {
             return;
         }
@@ -1020,7 +1020,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     }
 
     /** Bounded probe counter for the frame-queued setter. */
-    private int celtium$lastFrameReachedQueueLogs;
+    int celtium$lastFrameReachedQueueLogs;
 
 
     /**
@@ -1028,9 +1028,9 @@ public void setLastFrameReachedQueue(boolean reached) {
      * shared flag: a late watchdog must be able to tell "my wait is still running" from "a later wait is running now"
      * (audit A05).
      */
-    private long deviceWaitFinishedToken = -1L;
+    long deviceWaitFinishedToken = -1L;
 
-    private final Object deviceWaitLock = new Object();
+    final Object deviceWaitLock = new Object();
 
 
     /** The submission domain's counters (refactoring plan R2). */
@@ -1090,7 +1090,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     }
 
     /** One-shot count for the injected device-lost fence result. */
-    private int injectedDeviceLosses;
+    int injectedDeviceLosses;
 
     /**
      * The immediate path's vertex and index memory for the frame being recorded (OPT-05).
@@ -1105,7 +1105,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
     static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
 
-    private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
+    static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
 
     /**
      * A real frame identity (audit S11).
@@ -1132,12 +1132,12 @@ public void setLastFrameReachedQueue(boolean reached) {
      * The 0.0169 seen between two runs of this setting is the path-dependent batch variation measured separately, not a
      * staleness error.
      */
-    private static final int MIRROR_REFRESH_FRAMES =
+    static final int MIRROR_REFRESH_FRAMES =
             Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 0).intValue();
 
-    private int mirrorRefreshCounter;
+    int mirrorRefreshCounter;
 
-    private int mirrorRefreshes;
+    int mirrorRefreshes;
 
     /**
      * Whether this frame's submission actually reached the queue.
@@ -1202,7 +1202,7 @@ public void setLastFrameReachedQueue(boolean reached) {
         }
     }
 
-    private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
+    void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
         this.funnel.fog.tracePeriodically(this.frameId);
         try {
             // The boundary's own flush is the frame-end trigger for the window census.
@@ -1293,7 +1293,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
-    private void celtium$recordFrameWait(long startedNanos) {
+    void celtium$recordFrameWait(long startedNanos) {
         long waitedNanos = System.nanoTime() - startedNanos;
         long millis = waitedNanos / 1_000_000L;
         FrameBudgetTimings.addFenceWait(waitedNanos);
@@ -1338,7 +1338,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** The original timing update, called once per frame from the wrapper above. */
-    private void updateTimingsBody() {
+    void updateTimingsBody() {
         if (this.timestampPool == 0 || !this.timestampsUsable) {
             return;
         }
@@ -1541,7 +1541,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      *         pool is absent or the report switch is off - or when the slot's queries are exhausted, which
      *         is counted rather than silent
      */
-    private int beginTerrainStatistics(String pass) {
+    int beginTerrainStatistics(String pass) {
         if (this.statisticsPool == 0L || !TerrainStatisticsReport.enabled() || this.commandBuffer == null) {
             return -1;
         }
@@ -1558,7 +1558,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** Adds one charged batch to the open query's unsorted charge - the V4 identity's CPU side. */
-    private void noteTerrainStatisticsCharge(int query, long chargeVertices, boolean sortedPass) {
+    void noteTerrainStatisticsCharge(int query, long chargeVertices, boolean sortedPass) {
         if (query >= 0 && !sortedPass) {
             this.statisticsChargeAccum += chargeVertices;
         }
@@ -1570,7 +1570,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * counters: the pass's logical draws and sections (the existing per-pass counters, reset at the head of
      * every pass) and its accumulated unsorted budget charge.
      */
-    private void endTerrainStatistics(int query, String pass) {
+    void endTerrainStatistics(int query, String pass) {
         if (query < 0) {
             return;
         }
@@ -1588,7 +1588,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * that is reset while some of its queries were never read counts them as dropped samples - the three
      * counters the summary prints exist so a silent instrument is never read as an empty scene.
      */
-    private void readPipelineStatistics() {
+    void readPipelineStatistics() {
         if (this.statisticsPool == 0L) {
             return;
         }
@@ -1631,7 +1631,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** Folds one landed sample into the window and cumulative totals, beside its record-time snapshots. */
-    private void accumulateStatistics(int slot, int query, long[] values) {
+    void accumulateStatistics(int slot, int query, long[] values) {
         String pass = this.statisticsSlotPasses[slot][query];
         if (pass == null) {
             return;
@@ -1657,7 +1657,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** The vertex-level diagnostics (layout, drawn sections, GPU readback): one switch, quiet by default. */
-    private static final boolean VERTEX_DIAGNOSTICS =
+    static final boolean VERTEX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.vertexDiagnostics");
 
 
@@ -1683,7 +1683,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     /** Hash of the current frame's batch traffic, and the previous frame's, to count identical frames. */
     long frameBatchSignature;
 
-    private long previousFrameBatchSignature;
+    long previousFrameBatchSignature;
 
     long identicalFrameSignatures;
 
@@ -1702,25 +1702,25 @@ public void setLastFrameReachedQueue(boolean reached) {
     /** Every terrain batch captured this frame, in recording order; the map is drawn from all of them. */
 
 
-    private long boundarySubmitNanos;
+    long boundarySubmitNanos;
 
-    private long slotWaitNanos;
+    long slotWaitNanos;
 
-    private int boundaryFrames;
+    int boundaryFrames;
 
     /**
      * Forces the slot wait to report a timeout, so the post-submit failure path can be exercised (lab switch).
      * The wait it falsifies is the timeline await on a timeline device and the fence wait on the fallback path
      * (R-56: the exercise moved with the wait).
      */
-    private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
+    static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
 
     /**
      * Makes the slot wait report {@code VK_ERROR_DEVICE_LOST} instead of its real result - the case of a submission
      * that was queued and then lost with the device, which the pre-submit fault cannot produce. Lab switch. The
      * wait it falsifies is the timeline await on a timeline device and the fence wait on the fallback path (R-56).
      */
-    private static final boolean DEVICE_LOST_FAULT = Boolean.getBoolean("celtium.vulkan.failDeviceLost");
+    static final boolean DEVICE_LOST_FAULT = Boolean.getBoolean("celtium.vulkan.failDeviceLost");
 
 
     // ------------------------------------------------------------------ command resources
@@ -1728,9 +1728,9 @@ public void setLastFrameReachedQueue(boolean reached) {
     /** The frame slots, owned by the scheduler (refactoring plan R6). */
     static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
 
-    private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
+    final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
 
-    private final long[] slotFences = new long[FRAME_SLOTS];
+    final long[] slotFences = new long[FRAME_SLOTS];
 
     /**
      * When a frame recording's submission goes into the batched deferred queue instead of vkQueueSubmit, the token
@@ -1739,7 +1739,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * armed {@link #slotFences} the ordinary way. Cleared at {@link #celtium$noteSlotConfirmed}: the reclaim runs
      * that confirmation, so the map's lifetime is "queued until confirmed", never reset independently.
      */
-    private final long[] slotDeferredTokens = new long[FRAME_SLOTS];
+    final long[] slotDeferredTokens = new long[FRAME_SLOTS];
 
     /**
      * The unified frame buffer's open state: when the target carries no frame semaphores, the first
@@ -1766,16 +1766,16 @@ public void setLastFrameReachedQueue(boolean reached) {
      * that guarded "the backend command buffer" now guards "the command buffer this recording owns" - the same
      * statement now that several submissions may be in flight at once.
      */
-    private final VulkanCommandBufferState[] slotCommandStates = new VulkanCommandBufferState[FRAME_SLOTS];
+    final VulkanCommandBufferState[] slotCommandStates = new VulkanCommandBufferState[FRAME_SLOTS];
 
     /** Slot this recording belongs to, and the slot the next recording will take. */
     int frameSlot;
 
-    private int nextFrameSlot;
+    int nextFrameSlot;
 
     /** Waits spent on a slot whose previous submission had not completed when it was reused. */
 
-    private void createCommandResources() {
+    void createCommandResources() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandPoolCreateInfo poolInfo = VkCommandPoolCreateInfo.calloc(stack).sType$Default()
                     .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
@@ -1875,7 +1875,7 @@ public void setLastFrameReachedQueue(boolean reached) {
         }
     }
 
-    private void destroyCommandResources() {
+    void destroyCommandResources() {
         if (this.timestampPool != 0) {
             vkDestroyQueryPool(this.context.device(), this.timestampPool, null);
             this.timestampPool = 0;
@@ -2015,7 +2015,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * do is leave evidence and set the flag the failure paths already key on. It is created per call and exits after
      * firing once, so a normal run costs one short-lived thread per teardown.
      */
-    private void celtium$watchDeviceWait(String reason) {
+    void celtium$watchDeviceWait(String reason) {
         // Per-call token, not a shared boolean (audit A05). With one flag, a watchdog from an earlier wait that fires
         // late reads the flag a NEWER wait has already cleared and declares a stall for a wait that has only just
         // started - a false stall, and a false stall is expensive here because gpuStalled makes every later path
@@ -2274,7 +2274,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * could still sample it has completed. The peek form is deliberate: a frame that never created
      * the binding has nothing to drain.
      */
-    private void celtium$drainBindlessReleases() {
+    void celtium$drainBindlessReleases() {
         org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
                 this.context.celtium$bindlessBindingOrNull();
         if (binding != null) {
@@ -2379,7 +2379,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * snapshot and files nothing, which is what keeps its terrain column at zero rather than at a
      * stale sum.
      */
-    private void celtium$snapshotTimingState() {
+    void celtium$snapshotTimingState() {
         if (this.funnel.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed) {
             return;
         }
@@ -2418,7 +2418,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * here is exactly the reset gate's precondition (Stage 2), and a route that confirms without passing
      * here does not exist.
      */
-    private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
+    void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
         long submitNanos = this.slotSubmitNanos[slot];
         if (submitNanos != 0L) {
             this.slotSubmitNanos[slot] = 0L;
@@ -2450,7 +2450,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * The shared "a submission was confirmed" tail: the arena's completion epoch advances, and every retired group
      * whose submission sequence is covered by the watermark may be released now.
      */
-    private void celtium$onSubmissionConfirmed() {
+    void celtium$onSubmissionConfirmed() {
         if (this.frameArena != null) {
             this.frameArena.completed(VulkanContext.completedEpoch(), this.scheduler.completedSubmitSequence());
         }
@@ -2470,21 +2470,21 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */
-    private static final long IDLE_TIMEOUT_NANOS = 5_000_000_000L;
+    static final long IDLE_TIMEOUT_NANOS = 5_000_000_000L;
 
     /**
      * How many times a timed-out fence wait is retried before the renderer latches. A resize or a swapchain rebuild
      * produces transient timeouts; a device that has genuinely stopped produces one on every attempt. Counted as
      * {@code idleWaitTimeouts}/{@code idleWaitRetries} so the report says which of the two happened.
      */
-    private static final int IDLE_WAIT_RETRIES = 3;
+    static final int IDLE_WAIT_RETRIES = 3;
 
 
     /**
      * Debug aid: copies the first vertices of the buffer the first draw uses into host-visible memory and decodes
      * them. It answers the one question the CPU-side logs cannot: what the GPU actually holds.
      */
-    private void ensureReadback() {
+    void ensureReadback() {
         if (this.readbackBuffer != 0) {
             return;
         }
@@ -2527,7 +2527,7 @@ public void setLastFrameReachedQueue(boolean reached) {
         }
     }
 
-    private void readBackAndLog() {
+    void readBackAndLog() {
         this.readbackPending = false;
         this.readbackDone = true;
         if (!this.funnel.waitForIdle()) throw new IllegalStateException("readback fence did not complete");
