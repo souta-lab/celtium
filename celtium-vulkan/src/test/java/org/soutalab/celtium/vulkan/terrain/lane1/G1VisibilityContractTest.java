@@ -161,8 +161,10 @@ class G1VisibilityContractTest {
                 + triangleArea(corner[index[3]], corner[index[4]], corner[index[5]]);
         assertEquals(1.0, area, 1e-9, "the two triangles must cover the unit quad's area");
         // Every quadrant centre is covered exactly once: the bowtie split (0,1,2)+(2,1,3)
-        // double-covers two quadrants and leaves the other two bare.
-        double[][] probes = {{0.25, 0.75}, {0.75, 0.75}, {0.25, 0.25}, {0.75, 0.25}};
+        // double-covers two quadrants and leaves the other two bare. The probes sit just
+        // off the shared 0-2 diagonal (the y=x line): a probe exactly on the diagonal is on
+        // both triangles' boundary and counts twice under any correct split.
+        double[][] probes = {{0.25, 0.75}, {0.75, 0.70}, {0.25, 0.30}, {0.75, 0.25}};
         for (double[] probe : probes) {
             int cover = 0;
             if (insideTriangle(probe, corner[index[0]], corner[index[1]], corner[index[2]])) {
