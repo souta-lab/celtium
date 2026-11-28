@@ -16,6 +16,20 @@ final class BackendDiagnostics {
         this.b = backend;
     }
 
+    /** The snapshot lines {@link #diagnostics()} builds and {@code record} appends to. */
+    private final List<String> lines = new ArrayList<>();
+
+    /** {@return the current snapshot lines (what the backend's describe() appends).} */
+    List<String> lines() {
+        return this.lines;
+    }
+
+    /** Appends one recorded line (the backend's record() seat). */
+    void addLine(String diagnostic) {
+        this.lines.add(diagnostic);
+    }
+
+
     /**
      * The bindless binding's state for the summary line: how many textures the array holds and how
      * many releases are still waiting on the completion currency. "absent" when the binding was
@@ -1612,5 +1626,130 @@ final class BackendDiagnostics {
         } catch (RuntimeException | LinkageError error) {
             b.record("group diagnostic failed: " + b.describe(error));
         }
+    }
+    List<String> diagnostics() {
+        // Each call builds the current snapshot rather than appending to the last one. The audit (C13.5) measured that
+        // the list grew by a fixed block on every call, so a repeatedly queried renderer (F3, the report, a watchdog)
+        // accumulated its own history and the strings described older states as well as the current one. The stable
+        // configuration and the current counters belong in the snapshot; a history, if one is ever wanted, is a
+        // separate bounded structure and not this list.
+        this.lines.clear();
+        // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
+        // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
+        // Which depth format this device ended up with, and how: the choice is made once, from the device's own
+        // answers, and a run that does not say which format it used cannot be compared with one on another GPU.
+        this.lines.add("depthFormat: " + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
+                + " (" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + ")");
+        // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
+        this.lines.add("stateMirror: stubTransformCalls="
+                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary());
+        // Unconditional for the same reason: these counters were kept but read by nothing outside tests, so a
+        // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
+        // descriptor-set collisions that no log ever showed.
+        this.lines.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary()
+                + " unmatchedUniformWrites=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.unmatchedUniformWrites()
+                + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions());
+        if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS) {
+            // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
+            // changes which batches are taken, so a run has to say how many it refused and why.
+            // How many transform calls reached the stub. Not a hook-failure count on its own - the mirror hooks at
+            // the head of the GlStateManager method and does not cancel the GL body - but the denominator for the
+            // mirror's own application counts, which is the comparison that found the missing float translate.
+            this.lines.add("stateMirror: stubTransformCalls="
+                    + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary());
+            this.lines.add("acceptance: refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
+                    + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
+                + " submitFaultInjections=" + VulkanSubmitFault.injections()
+                + " submitRequests=" + VulkanSubmitFault.requests()
+                + " textureFaultInjections=" + VulkanTextureFault.injections()
+                + " textureUploadFailures=" + b.textureUploadFailures
+                + " lastTextureUploadFailure=" + b.lastTextureUploadFailure
+                + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
+                + " descriptorRequests=" + VulkanDescriptorFault.requests()
+                + b.modelStats.run0(b.modelDraws)
+                + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
+                + " modelDrawRefusals=" + b.modelDrawRefusals
+                + " modelRecordedReplays=" + b.modelRecordedReplayCalls
+                + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
+                + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary() + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
+                + " modelLastRefusal=" + b.modelLastRefusal
+                + " modelMeshLists=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
+                + " " + VulkanDynamicMesh.describeModel()
+                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
+                + b.modelStats.run2()
+                + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
+                + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
+                + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
+                + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
+                + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
+                + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
+                + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
+                + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
+                + " textureDeletions=" + b.glTextureDeletions
+                + " atlasReestablished=" + b.atlasReestablished
+                + " lightmapReestablished=" + b.lightmapReestablished
+                + " texturePatchCost=" + (b.textureRegistry == null ? "-" : b.textureRegistry.patchCostSummary())
+                + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
+                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
+                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
+                + " prepareDescriptorFailures=" + b.prepareDescriptorFailures
+                + " lastPrepareFailure=" + b.lastPrepareFailure
+                + " groupsQueued=" + b.immediateGroups.size()
+                + " groupsRecorded=" + b.recordedImmediateGroups.size()
+                + " groupsRetired=" + b.retiredImmediateGroups.size()
+                + " groupsStaleTargetGeneration=" + b.immediateStatistics.groupsStaleTargetGeneration()
+                + " targetGeneration=" + b.targetRegistry.generation()
+                + " groupsStaleWorldEpoch=" + b.immediateStatistics.groupsStaleWorldEpoch()
+                + " worldEpoch=" + b.worldEpoch
+                + " groupsDiscardedAtWorldTeardown=" + b.immediateStatistics.groupsDiscardedAtWorldTeardown()
+                + " groupsDiscardedAtFullTeardown=" + b.immediateStatistics.groupsDiscardedAtFullTeardown()
+                + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
+                + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
+                + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
+                + " displayListReplaysClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameClosed()
+                + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
+                + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
+                + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
+                + " modelDraws=" + b.modelDraws
+                + b.modelStats.run1(b.modelDrawRefusals, b.modelLastRefusal)
+                + " " + VulkanDynamicMesh.describeModel()
+                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
+                + " modelMeshQuads=" + b.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + b.modelGeometry.modelMeshFailure()
+                + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
+                + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
+                + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
+                + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
+                + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
+                + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
+                + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
+                + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
+                + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
+                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
+                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
+                + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
+                + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
+                + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
+                + " displayListReplaysClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameClosed()
+                + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
+                + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
+                + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
+                + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
+                + " shaderProgramRefusedIds=" + b.shaderProgramRefusedIds
+                + " shaderProgramRefusedPrograms=" + b.programRefusalsText()
+                + " terrainPassesToBoundTarget=" + b.terrainPassesToBoundTarget
+                + b.boundTargetCensusSummary()
+                    + " textureRefusals=" + b.textureStats.textureRefusalsBeforeAccept()
+                    + " accepted=" + b.immediateStatistics.frameAccepted());
+        }
+        if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS && b.frameTarget != null) {
+            String timings = b.frameTarget.takeTimingSummary();
+            if (timings != null) {
+                this.lines.add(timings);
+            }
+        }
+        return this.lines;
     }
 }
