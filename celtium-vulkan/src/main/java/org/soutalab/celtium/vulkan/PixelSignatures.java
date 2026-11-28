@@ -2,7 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 /**
  * Text signatures of a frame's pixels and a mesh's first vertices, for the diagnostic log lines that compare a
- * picture without dumping it. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * picture without dumping it. Moved out of {@link Lane2ImmediateRecorder} unchanged (2026-11-06).
  */
 final class PixelSignatures {
     private PixelSignatures() {
@@ -43,7 +43,7 @@ final class PixelSignatures {
                 if (k > 0) {
                     preview.append(',');
                 }
-                preview.append(VulkanTerrainGpuBackend.round3(org.lwjgl.system.MemoryUtil.memGetFloat(base + (long) i * stride + k * 4L)));
+                preview.append(Lane2ImmediateRecorder.round3(org.lwjgl.system.MemoryUtil.memGetFloat(base + (long) i * stride + k * 4L)));
             }
             // The colour attribute is four unsigned bytes at 20, and the shader multiplies the texel by it: read as a
             // float it prints as 0.0 for both 0x00000000 and 0xFFFFFFFF, which is exactly the difference between a

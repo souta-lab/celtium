@@ -907,7 +907,7 @@ final class CopyReadSide {
     public static String celtium$mirrorDims(int glTextureId) {
         org.soutalab.celtium.vulkan.CeltiumBackend backend =
                 org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+        if (backend instanceof VulkanBackendAdapter vulkan) {
             return vulkan.celtium$registry().celtium$entryDims(glTextureId);
         }
         return "nobackend";
@@ -921,7 +921,7 @@ final class CopyReadSide {
     public static String celtium$mirrorProbe(int glTextureId) {
         org.soutalab.celtium.vulkan.CeltiumBackend backend =
                 org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (!(backend instanceof VulkanTerrainGpuBackend vulkan)) {
+        if (!(backend instanceof VulkanBackendAdapter vulkan)) {
             return "nobackend";
         }
         String spec = MIRROR_DUMP_SPEC;

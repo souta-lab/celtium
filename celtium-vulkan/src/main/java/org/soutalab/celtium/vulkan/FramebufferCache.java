@@ -471,7 +471,7 @@ final class FramebufferCache {
                     .height(height)
                     .layers(1);
             LongBuffer handle = stack.mallocLong(1);
-            VulkanTerrainGpuBackend.check(vkCreateFramebuffer(this.context.device(), create, null, handle),
+            FrameCoordinator.check(vkCreateFramebuffer(this.context.device(), create, null, handle),
                     what == null ? "vkCreateFramebuffer" : "vkCreateFramebuffer(" + what + ")");
             long created = handle.get(0);
             this.framebufferGenerations.put(created, ++this.nextFramebufferGeneration);

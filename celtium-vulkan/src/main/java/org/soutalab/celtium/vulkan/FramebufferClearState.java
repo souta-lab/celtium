@@ -170,7 +170,7 @@ public final class FramebufferClearState {
     private static boolean depthWritesEnabled() {
         try {
             Object backend = CeltiumBackends.current();
-            return !(backend instanceof VulkanTerrainGpuBackend vulkan)
+            return !(backend instanceof VulkanBackendAdapter vulkan)
                     || vulkan.celtium$depthWritesLive();
         } catch (RuntimeException | LinkageError error) {
             return true;

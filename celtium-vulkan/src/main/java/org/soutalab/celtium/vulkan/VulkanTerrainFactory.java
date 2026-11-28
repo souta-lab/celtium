@@ -67,7 +67,7 @@ public final class VulkanTerrainFactory {
         VulkanContext context = null;
         try {
             context = VulkanContext.create("Celtium window renderer");
-            VulkanTerrainGpuBackend backend = VulkanTerrainGpuBackend.createForWindow(context);
+            VulkanBackendAdapter backend = VulkanBackendAdapter.createForWindow(context);
             return backend;
         } catch (RuntimeException | LinkageError error) {
             if (context != null) {

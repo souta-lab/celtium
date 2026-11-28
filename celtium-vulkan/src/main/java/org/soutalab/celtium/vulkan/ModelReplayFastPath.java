@@ -47,7 +47,7 @@ final class ModelReplayFastPath {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.replayValueVersions", "true"));
 
     /**
-     * The raw inputs the sixteen-int state array is a function of, in the order {@link VulkanTerrainGpuBackend}
+     * The raw inputs the sixteen-int state array is a function of, in the order {@link Lane2ImmediateRecorder}
      * fills them: the blend enable and its four factors and two equations, the colour mask, the alpha test's enable,
      * reference and function, the cull enable, the culled face and the front-face winding, depth
      * enable/write/function, lighting, unit 0's texture environment mode and RGB function, and whether the current
@@ -91,42 +91,42 @@ final class ModelReplayFastPath {
      */
     static long pipelineKeyOf(int[] signature) {
         return PipelineStateKey.pack(0,
-                signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] != 0,
-                signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] != 0,
-                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] != 0,
-                VulkanCullState.encode(signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] != 0,
-                        signature[VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE],
-                        signature[VulkanTerrainGpuBackend.SIGNATURE_FRONT_FACE]),
-                signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] != 0,
-                signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC],
-                signature[VulkanTerrainGpuBackend.SIGNATURE_LIGHTING] != 0,
+                signature[Lane2ImmediateRecorder.SIGNATURE_BLEND] != 0,
+                signature[Lane2ImmediateRecorder.SIGNATURE_SRC_RGB],
+                signature[Lane2ImmediateRecorder.SIGNATURE_DST_RGB],
+                signature[Lane2ImmediateRecorder.SIGNATURE_SRC_ALPHA],
+                signature[Lane2ImmediateRecorder.SIGNATURE_DST_ALPHA],
+                signature[Lane2ImmediateRecorder.SIGNATURE_EQ_RGB],
+                signature[Lane2ImmediateRecorder.SIGNATURE_EQ_ALPHA],
+                signature[Lane2ImmediateRecorder.SIGNATURE_COLOR_MASK],
+                signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_TEST] != 0,
+                signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC],
+                signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_WRITE] != 0,
+                VulkanCullState.encode(signature[Lane2ImmediateRecorder.SIGNATURE_CULL] != 0,
+                        signature[Lane2ImmediateRecorder.SIGNATURE_CULL_FACE],
+                        signature[Lane2ImmediateRecorder.SIGNATURE_FRONT_FACE]),
+                signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_TEST] != 0,
+                signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC],
+                signature[Lane2ImmediateRecorder.SIGNATURE_LIGHTING] != 0,
                 0).value();
     }
 
     /** Copies the residual inputs of one signature into a tuple's residual slots. */
     private static void copyResidual(int[] signature, int[] residual) {
-        residual[RESIDUAL_ALPHA_REF] = signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF];
-        residual[RESIDUAL_ALPHA_FUNC] = signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC];
-        residual[RESIDUAL_DEPTH_FUNC] = signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC];
-        residual[RESIDUAL_ENV_MODE] = signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE];
-        residual[RESIDUAL_ENV_RGB] = signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB];
+        residual[RESIDUAL_ALPHA_REF] = signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF];
+        residual[RESIDUAL_ALPHA_FUNC] = signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC];
+        residual[RESIDUAL_DEPTH_FUNC] = signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC];
+        residual[RESIDUAL_ENV_MODE] = signature[Lane2ImmediateRecorder.SIGNATURE_ENV_MODE];
+        residual[RESIDUAL_ENV_RGB] = signature[Lane2ImmediateRecorder.SIGNATURE_ENV_RGB];
     }
 
     /** {@return whether a live signature's residual inputs are the tuple's}. */
     private static boolean residualMatches(int[] signature, int[] residual) {
-        return signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] == residual[RESIDUAL_ALPHA_REF]
-                && signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] == residual[RESIDUAL_ALPHA_FUNC]
-                && signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC] == residual[RESIDUAL_DEPTH_FUNC]
-                && signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_MODE] == residual[RESIDUAL_ENV_MODE]
-                && signature[VulkanTerrainGpuBackend.SIGNATURE_ENV_RGB] == residual[RESIDUAL_ENV_RGB];
+        return signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_REF] == residual[RESIDUAL_ALPHA_REF]
+                && signature[Lane2ImmediateRecorder.SIGNATURE_ALPHA_FUNC] == residual[RESIDUAL_ALPHA_FUNC]
+                && signature[Lane2ImmediateRecorder.SIGNATURE_DEPTH_FUNC] == residual[RESIDUAL_DEPTH_FUNC]
+                && signature[Lane2ImmediateRecorder.SIGNATURE_ENV_MODE] == residual[RESIDUAL_ENV_MODE]
+                && signature[Lane2ImmediateRecorder.SIGNATURE_ENV_RGB] == residual[RESIDUAL_ENV_RGB];
     }
 
     /**

@@ -1103,7 +1103,7 @@ public final class VulkanSwapchain {
         // The decision, written down because the audit asks for a decision rather than an omission: **one queue is
         // used for both submission and presentation, and a configuration where the chosen family cannot present is
         // refused, not worked around.** The reasons, in the order they matter:
-        //   1. `VulkanTerrainGpuBackend` submits through `context.queue()` and presents through the same `VkQueue`
+        //   1. `VulkanBackendAdapter` submits through `context.queue()` and presents through the same `VkQueue`
         //      from `VulkanSwapchain`. A second, present-only family would mean either a separate present queue whose
         //      submissions must be externally synchronised against the submit queue (semaphores on both sides, and the
         //      frame's render-finished signal re-pointed), or `VK_SHARING_MODE_CONCURRENT` images with two queue
@@ -2178,7 +2178,7 @@ public final class VulkanSwapchain {
                         writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
                     }
                     System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen
-                            + " frame=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.lastFinishedFrameId
+                            + " frame=" + org.soutalab.celtium.vulkan.FrameCoordinator.lastFinishedFrameId
                             + " changed=" + changed + "/" + count
                             + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
                                     (double) changed / (double) count)

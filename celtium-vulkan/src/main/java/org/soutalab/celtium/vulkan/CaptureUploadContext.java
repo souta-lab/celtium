@@ -205,7 +205,7 @@ public final class CaptureUploadContext implements TextureUploadContext {
         NativeImageBindings.current().delete(name);
         if (name != 0) {
             Object backend = CeltiumBackends.current();
-            if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+            if (backend instanceof VulkanBackendAdapter vulkan) {
                 for (Integer fbo : FramebufferAttachmentTable.current().framebuffersWithColorTexture(name)) {
                     vulkan.celtium$rawAttachmentTextureDeleted(fbo.intValue());
                 }
@@ -279,7 +279,7 @@ public final class CaptureUploadContext implements TextureUploadContext {
         String servedFrom;
         try {
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+            servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan
                     ? vulkan.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
                             FramebufferBindings.current().readFramebuffer())
                     : "refused-no-vulkan-backend";
