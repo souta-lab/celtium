@@ -518,7 +518,8 @@ public final class CeltiumTerrainDriver {
                 List.copyOf(buffers.generalLayerList(0)),
                 List.copyOf(buffers.generalLayerList(1)),
                 List.copyOf(buffers.generalLayerList(2)),
-                aux);
+                aux,
+                buffers.cornerLightColumn());
     }
 
     // ------------------------------------------------------------------

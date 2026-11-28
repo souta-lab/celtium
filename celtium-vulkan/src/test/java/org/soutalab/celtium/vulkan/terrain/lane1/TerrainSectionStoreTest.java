@@ -121,6 +121,41 @@ class TerrainSectionStoreTest {
     }
 
     @Test
+    void cornerLightColumnIsUploadedAndAccounted() {
+        TerrainSectionStore store = newStore();
+        // 3 axis + 1 general = 4 quads, a distinct word per quad in the column.
+        int[] column = {10, 11, 20, 21, 30, 31, 40, 41};
+        java.util.List<PackedAxisQuad> solid = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            solid.add(quad(i));
+        }
+        SectionGeometry geometry = new SectionGeometry(solid, List.of(), List.of(),
+                List.of(general()), List.of(), List.of(), new short[]{7, 8, 9}, column);
+        SectionDesc desc = store.upload(0, 0, 0, geometry, 1L);
+        assertEquals(4L * 8L, store.auxUsedBytes(), "8 B of corner light per quad");
+        MemorySegment light = store.auxSpace().segment((long) desc.lightDataBase() * 4L, 32L);
+        for (int i = 0; i < column.length; i++) {
+            assertEquals(column[i], light.get(ValueLayout.JAVA_INT, (long) i * 4L));
+        }
+
+        // A second section's column lands right after the first (offset in 4-byte words).
+        SectionDesc second = store.upload(1, 0, 0, geometry(2, new short[0]), 1L);
+        assertEquals(desc.lightDataBase() + column.length, second.lightDataBase());
+
+        // A requirements change rewrites only the mc_Entity base; the light base is stable.
+        store.setRequirements(MC_ENTITY, 2L);
+        assertEquals(desc.lightDataBase(), store.descriptor(0, 0, 0).lightDataBase());
+        store.setRequirements(TerrainVertexRequirements.NONE, 3L);
+        assertEquals(desc.lightDataBase(), store.descriptor(0, 0, 0).lightDataBase());
+
+        // Removal returns the light bytes with the rest of the residency.
+        assertTrue(store.remove(0, 0, 0, 4L));
+        assertTrue(store.remove(1, 0, 0, 4L));
+        store.collectCompleted(4L);
+        assertEquals(0L, store.auxUsedBytes());
+    }
+
+    @Test
     void descriptorsRoundTripThroughTheBuffer() {
         TerrainSectionStore store = newStore();
         store.upload(1, 0, 0, geometry(1, new short[0]), 1L);

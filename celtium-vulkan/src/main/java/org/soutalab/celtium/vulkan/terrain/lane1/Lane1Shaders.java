@@ -197,8 +197,20 @@ public final class Lane1Shaders {
                 vec3 tint = ((q.w & (1u << 24)) != 0u)
                         ? vec3(float(q.w & 255u), float((q.w >> 8) & 255u), float((q.w >> 16) & 255u)) / 255.0
                         : vec3(1.0);
-                fragColor = vec4(tint * shade, 1.0);
-                fragLightMap = vec2(float((q.z >> 20) & 15u), float((q.z >> 16) & 15u)) / 15.0;
+                // Per-corner smooth light (R-107): the corner-light column in the auxiliary
+                // slab (uint index d.lightBase, two words per quad in section-local axis
+                // order) carries per corner the sums of vanilla's four light samples and the
+                // AO step - the averaged lightmap coordinate is sum/60, the AO multiplier is
+                // step/15. The slot follows the post-mirror corner above, i.e. the vertex's
+                // actual position on the face. (word2's per-quad light stays in the record
+                // for the pack path, which computes its own per-vertex light.)
+                uint localQuad = quadIndex - uint(d.axisOffset / 16u);
+                uint slot = uint(corner.x) + 2u * uint(corner.y);
+                uint lightWord = auxWords[uint(d.lightBase) + localQuad * 2u + (slot >> 1u)];
+                uint field = (lightWord >> ((slot & 1u) * 16u)) & 0xFFFFu;
+                float aoFactor = float((field >> 12) & 15u) / 15.0;
+                fragColor = vec4(tint * shade * aoFactor, 1.0);
+                fragLightMap = vec2(float((field >> 6) & 63u), float(field & 63u)) / 60.0;
                 fragWorldPos = worldPos;
                 // V2-5: the vertex stage evaluates the cluster's dynamic lights (findLSB walk).
                 fragDynamicLight = evaluateLights(worldPos + vec3(0.5));
@@ -215,6 +227,7 @@ public final class Lane1Shaders {
             // array member cannot be indexed dynamically without GL_EXT_nonuniform_qualifier,
             // so the shader reads the same 80 B record through a flat float array instead.
             layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads { float generalWords[]; };
+            layout(std430, set = 0, binding = 2) readonly buffer AuxColumn { uint auxWords[]; };
             // Per-sprite atlas rectangles (uvMin.xy, uvSize.zw), in the same index space as
             // the cell table: the consumer-side restore of ruling 5.4-2 - no fixed cell size
             // is assumed, so 32x32 / 64x64 / HD sprites keep their real extent.
@@ -263,9 +276,18 @@ public final class Lane1Shaders {
                 vec3 tint = ((flags & 1) != 0)
                         ? vec3(float((flags >> 8) & 255), float((flags >> 16) & 255), float((flags >> 24) & 255)) / 255.0
                         : vec3(1.0);
-                fragColor = vec4(tint, 1.0);
-                int lightWord = floatBitsToInt(generalWords[wordBase + 13u]);
-                fragLightMap = vec2(float((lightWord >> 8) & 255), float(lightWord & 255)) / 255.0;
+                // Per-corner smooth light (R-107): in the section's corner-light column the
+                // general quads' words follow all axis quads; the slot is the model corner
+                // index itself. Sums and AO step as in the axis shader (sum/60, step/15).
+                // (The record's per-quad lightWord stays for the pack path.)
+                uint localQuad = quadIndex - uint(d.generalOffset / 80u);
+                uint gslot = uint(corner);
+                uint glightWord = auxWords[uint(d.lightBase)
+                        + (uint(d.axisCount) + localQuad) * 2u + (gslot >> 1u)];
+                uint gfield = (glightWord >> ((gslot & 1u) * 16u)) & 0xFFFFu;
+                float aoFactor = float((gfield >> 12) & 15u) / 15.0;
+                fragColor = vec4(tint * aoFactor, 1.0);
+                fragLightMap = vec2(float((gfield >> 6) & 63u), float(gfield & 63u)) / 60.0;
                 fragWorldPos = worldPos;
                 fragDynamicLight = vec3(0.0);
             }

@@ -27,6 +27,17 @@ import org.soutalab.celtium.core.geometry.PackedAxisQuad;
  * real sub-rectangle / rotated UVs from the face table, and the synthetic fluid faces below
  * carry the canonical full-sprite assignment in corner order.
  * <p>
+ * Per-corner smooth light (ledger R-107): alongside every quad the mesher emits two ints of
+ * corner light - corner {@code c} at word {@code c >> 1}, bits {@code (c & 1) * 16}, holding
+ * the sky sum (bits 0..5), the block sum (bits 6..11) and the AO step (bits 12..15). The sums
+ * are the four vanilla sample values of {@code BlockModelRenderer}'s unweighted (full-cube)
+ * branch added without the {@code >> 2}: the shader divides by 60 to recover the averaged
+ * lightmap coordinate, and by 15 for the AO multiplier (the average of the four sampled
+ * {@code getAmbientOcclusionLightValue}s, quantised to steps of 1/15 - exact for the vanilla
+ * value set {0.2, 0.4, 0.6, 0.8, 1.0}). The 16 B / 80 B quad records are untouched: the column
+ * rides the slab's auxiliary space (see {@link MeshBuffers#cornerLightColumn()}), and the pack
+ * path, which reads the per-quad light out of the records as before, never sees it.
+ * <p>
  * One instance is one worker's mesher: it holds scratch bitboards and allocates nothing per
  * section once warm. Not thread-safe; the build scheduler gives each platform thread its own.
  */
@@ -51,6 +62,10 @@ public final class SectionMesher {
 
     private final BlockFaceData.ModelQuadView quadView = new BlockFaceData.ModelQuadView();
     private final float[] generalPositions = new float[12];
+    /** Scratch for the quad currently being emitted: its four packed corner-light fields. */
+    private final int[] cornerFields = new int[4];
+    /** Scratch cell coordinates for the corner-light sampling of an axis rectangle. */
+    private final int[] cornerCell = new int[3];
 
     /** Meshes one snapshot into {@code out} (reset first). */
     public void mesh(WorldSectionSnapshot snapshot, BlockFaceData data, MesherOptions options, MeshBuffers out) {
@@ -398,7 +413,207 @@ public final class SectionMesher {
                 tint != WorldSectionSnapshot.NO_TINT ? tint & 0xFF : 0,
                 flags);
         short aux = options.requirements().mcEntity() ? data.mcEntityId(state) : 0;
-        out.addAxisQuad(layer, quad, aux);
+        axisCornerFields(snapshot, data, dir, cellX, cellY, cellZ, extentU, extentV);
+        out.addAxisQuad(layer, quad, aux,
+                cornerFields[0] | (cornerFields[1] << 16),
+                cornerFields[2] | (cornerFields[3] << 16));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Per-corner smooth light (R-107): vanilla BlockModelRenderer's unweighted branch
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Vanilla {@code EnumNeighborInfo.corners[0]} per face direction, as {@link TerrainDirs}
+     * indices: the "A" tangent reference. DOWN {WEST, ...}, UP {EAST, ...}, NORTH {UP, ...},
+     * SOUTH {WEST, ...}, WEST {UP, ...}, EAST {DOWN, ...} (decompiled 1.12.2
+     * {@code BlockModelRenderer.EnumNeighborInfo}, read from the MCP sources jar).
+     */
+    private static final int[] VANILLA_CORNER_A = {
+            TerrainDirs.WEST, TerrainDirs.EAST, TerrainDirs.UP,
+            TerrainDirs.WEST, TerrainDirs.UP, TerrainDirs.DOWN};
+
+    /** Vanilla {@code EnumNeighborInfo.corners[2]} per face direction: the "B" tangent reference. */
+    private static final int[] VANILLA_CORNER_B = {
+            TerrainDirs.NORTH, TerrainDirs.NORTH, TerrainDirs.EAST,
+            TerrainDirs.DOWN, TerrainDirs.NORTH, TerrainDirs.NORTH};
+
+    private static int dirComponent(int dir, int axis) {
+        return axis == 0 ? TerrainDirs.DX[dir] : axis == 1 ? TerrainDirs.DY[dir] : TerrainDirs.DZ[dir];
+    }
+
+    /**
+     * One light sample, packed as {@code sky | block << 8}: the snapshot's stored light at the
+     * cell (the scanner's arrays already carry vanilla's neighbour-brightness rule), with the
+     * block channel floored at the face block's own emission - {@code World.getCombinedLight}
+     * semantics.
+     */
+    private static int sampleLight(WorldSectionSnapshot snapshot, int index, int emission) {
+        int sky = snapshot.skyLightAt(index);
+        int block = Math.max(snapshot.blockLightAt(index), emission);
+        return sky | (block << 8);
+    }
+
+    /**
+     * Translucency of the cell at snapshot coordinates {@code (x, y, z)} for the diagonal
+     * sample's gate. Coordinates outside the captured 18&sup3; read as translucent: the gate
+     * cells one step beyond the apron are the only out-of-range reads the corner computation
+     * makes, and vanilla (which reads the real world there) takes the diagonal sample unless
+     * both beyond cells are opaque - the translucent reading keeps a section-edge corner from
+     * darkening on missing evidence.
+     */
+    private static boolean isTranslucentAt(WorldSectionSnapshot snapshot, BlockFaceData data,
+                                           int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 || x >= WorldSectionSnapshot.SIZE
+                || y >= WorldSectionSnapshot.SIZE || z >= WorldSectionSnapshot.SIZE) {
+            return true;
+        }
+        return data.isTranslucent(snapshot.stateAt(WorldSectionSnapshot.index(x, y, z)));
+    }
+
+    /**
+     * The packed corner-light field of one face corner, vanilla's unweighted branch
+     * ({@code BlockModelRenderer.updateVertexBrightness} with shape bits 0 set / 1 clear - the
+     * shape every full-cube face takes): the corner averages the face cell F (the cell the
+     * face points into), the two edge cells F + A-side and F + B-side, and the quadrant
+     * diagonal, with a sample whose packed light is 0 replaced by F's sample
+     * ({@code getAoBrightness}). The diagonal is taken only when the cell just beyond at
+     * least one edge cell (one more step along the face direction) is translucent; otherwise
+     * the A-side edge sample stands in for it - for both the light and the AO value, as in
+     * vanilla. {@code (fx, fy, fz)} are F's snapshot coordinates; {@code signA}/{@code signB}
+     * say which side of F the corner sits on along vanilla's A/B tangent axes (+1 toward
+     * {@code corners[0]}/{@code corners[2]}, -1 toward their opposites, 0 centred).
+     */
+    private int cornerLightField(WorldSectionSnapshot snapshot, BlockFaceData data,
+                                 int fx, int fy, int fz, int dir, int signA, int signB,
+                                 int emission) {
+        int a0 = VANILLA_CORNER_A[dir];
+        int b0 = VANILLA_CORNER_B[dir];
+        int sax = signA > 0 ? TerrainDirs.DX[a0] : signA < 0 ? -TerrainDirs.DX[a0] : 0;
+        int say = signA > 0 ? TerrainDirs.DY[a0] : signA < 0 ? -TerrainDirs.DY[a0] : 0;
+        int saz = signA > 0 ? TerrainDirs.DZ[a0] : signA < 0 ? -TerrainDirs.DZ[a0] : 0;
+        int sbx = signB > 0 ? TerrainDirs.DX[b0] : signB < 0 ? -TerrainDirs.DX[b0] : 0;
+        int sby = signB > 0 ? TerrainDirs.DY[b0] : signB < 0 ? -TerrainDirs.DY[b0] : 0;
+        int sbz = signB > 0 ? TerrainDirs.DZ[b0] : signB < 0 ? -TerrainDirs.DZ[b0] : 0;
+        int fIndex = WorldSectionSnapshot.index(fx, fy, fz);
+        int eaIndex = WorldSectionSnapshot.index(fx + sax, fy + say, fz + saz);
+        int ebIndex = WorldSectionSnapshot.index(fx + sbx, fy + sby, fz + sbz);
+        int diagIndex = WorldSectionSnapshot.index(fx + sax + sbx, fy + say + sby, fz + saz + sbz);
+        boolean diagUsed = isTranslucentAt(snapshot, data,
+                fx + sax + TerrainDirs.DX[dir], fy + say + TerrainDirs.DY[dir],
+                fz + saz + TerrainDirs.DZ[dir])
+                || isTranslucentAt(snapshot, data,
+                fx + sbx + TerrainDirs.DX[dir], fy + sby + TerrainDirs.DY[dir],
+                fz + sbz + TerrainDirs.DZ[dir]);
+        int center = sampleLight(snapshot, fIndex, emission);
+        int ea = sampleLight(snapshot, eaIndex, emission);
+        int eb = sampleLight(snapshot, ebIndex, emission);
+        int dg = diagUsed ? sampleLight(snapshot, diagIndex, emission) : ea;
+        if (ea == 0) {
+            ea = center;
+        }
+        if (eb == 0) {
+            eb = center;
+        }
+        if (dg == 0) {
+            dg = center;
+        }
+        int skySum = (center & 0xFF) + (ea & 0xFF) + (eb & 0xFF) + (dg & 0xFF);
+        int blockSum = (center >> 8) + (ea >> 8) + (eb >> 8) + (dg >> 8);
+        float aoEa = data.aoLightValue(snapshot.stateAt(eaIndex));
+        float aoSum = data.aoLightValue(snapshot.stateAt(fIndex)) + aoEa
+                + data.aoLightValue(snapshot.stateAt(ebIndex))
+                + (diagUsed ? data.aoLightValue(snapshot.stateAt(diagIndex)) : aoEa);
+        int ao = Math.max(0, Math.min(15, Math.round(aoSum * 0.25f * 15.0f)));
+        return skySum | (blockSum << 6) | (ao << 12);
+    }
+
+    /**
+     * The corner fields of an axis rectangle, in slot order {@code cu + 2 * cv} (cu along the
+     * face's +U axis, cv along +V, from the rectangle's minimum corner) - the order the axis
+     * vertex shader's post-mirror corner indexes. Each slot samples at the rectangle's own
+     * corner cell: merged rectangles therefore carry the true corner values of their four
+     * outer corners and the GPU interpolates between them, where vanilla (which never merges)
+     * would interpolate per unit face.
+     */
+    private void axisCornerFields(WorldSectionSnapshot snapshot, BlockFaceData data, int dir,
+                                  int cellX, int cellY, int cellZ, int extentU, int extentV) {
+        int uAxis = TerrainDirs.uAxis(dir);
+        int vAxis = TerrainDirs.vAxis(dir);
+        int a0 = VANILLA_CORNER_A[dir];
+        int b0 = VANILLA_CORNER_B[dir];
+        int axisA = TerrainDirs.AXIS[a0];
+        int axisB = TerrainDirs.AXIS[b0];
+        int compA = dirComponent(a0, axisA);
+        int compB = dirComponent(b0, axisB);
+        int[] cc = cornerCell;
+        cc[0] = cellX;
+        cc[1] = cellY;
+        cc[2] = cellZ;
+        for (int cv = 0; cv <= 1; cv++) {
+            for (int cu = 0; cu <= 1; cu++) {
+                cc[uAxis] = (uAxis == 0 ? cellX : uAxis == 1 ? cellY : cellZ) + (cu == 1 ? extentU - 1 : 0);
+                cc[vAxis] = (vAxis == 0 ? cellX : vAxis == 1 ? cellY : cellZ) + (cv == 1 ? extentV - 1 : 0);
+                int emission = data.lightValue(snapshot.stateAt(
+                        WorldSectionSnapshot.index(cc[0] + 1, cc[1] + 1, cc[2] + 1)));
+                int signU = cu == 1 ? 1 : -1;
+                int signV = cv == 1 ? 1 : -1;
+                int signA = (axisA == uAxis ? signU : signV) * compA;
+                int signB = (axisB == uAxis ? signU : signV) * compB;
+                cornerFields[cu + 2 * cv] = cornerLightField(snapshot, data,
+                        cc[0] + 1 + TerrainDirs.DX[dir], cc[1] + 1 + TerrainDirs.DY[dir],
+                        cc[2] + 1 + TerrainDirs.DZ[dir], dir, signA, signB, emission);
+            }
+        }
+    }
+
+    /**
+     * The corner fields of a general quad, in the quad's own corner order (the order the
+     * general vertex shader's {@code CORNER_INDEX} walks). {@code faceIndex} is the snapshot
+     * index of the face cell F (the same cell the quad's flat light is read from);
+     * {@code positions} are the quad's section-local corner positions and
+     * {@code (originX, originY, originZ)} its block's section-local minimum corner, so a
+     * corner's quadrant signs fall out of its position relative to the block centre. A corner
+     * centred on a tangent axis (a mid-face vertex of a partial quad) takes that axis' edge
+     * sample at F itself. Vanilla computes partial quads through its weighted branch; the
+     * geometric corner form here is the same four-sample average evaluated at the corner's
+     * actual quadrant, which is exact for the flush full-face quads models overwhelmingly
+     * emit and a strict improvement over one flat value for the rest.
+     */
+    private void generalCornerFields(WorldSectionSnapshot snapshot, BlockFaceData data,
+                                     int faceIndex, int dir, int emission, float[] positions,
+                                     int originX, int originY, int originZ) {
+        if (dir < 0) {
+            int center = sampleLight(snapshot, faceIndex, emission);
+            int ao = Math.max(0, Math.min(15, Math.round(
+                    data.aoLightValue(snapshot.stateAt(faceIndex)) * 15.0f)));
+            int flat = ((center & 0xFF) * 4) | (((center >> 8) * 4) << 6) | (ao << 12);
+            cornerFields[0] = cornerFields[1] = cornerFields[2] = cornerFields[3] = flat;
+            return;
+        }
+        int fx = faceIndex % WorldSectionSnapshot.SIZE;
+        int fz = (faceIndex / WorldSectionSnapshot.SIZE) % WorldSectionSnapshot.SIZE;
+        int fy = faceIndex / (WorldSectionSnapshot.SIZE * WorldSectionSnapshot.SIZE);
+        int a0 = VANILLA_CORNER_A[dir];
+        int b0 = VANILLA_CORNER_B[dir];
+        int axisA = TerrainDirs.AXIS[a0];
+        int axisB = TerrainDirs.AXIS[b0];
+        int compA = dirComponent(a0, axisA);
+        int compB = dirComponent(b0, axisB);
+        for (int c = 0; c < 4; c++) {
+            float da = (positions[c * 3 + axisA] - originAlong(axisA, originX, originY, originZ)
+                    - 0.5f) * compA;
+            float db = (positions[c * 3 + axisB] - originAlong(axisB, originX, originY, originZ)
+                    - 0.5f) * compB;
+            int signA = da > 1.0e-4f ? 1 : da < -1.0e-4f ? -1 : 0;
+            int signB = db > 1.0e-4f ? 1 : db < -1.0e-4f ? -1 : 0;
+            cornerFields[c] = cornerLightField(snapshot, data, fx, fy, fz, dir,
+                    signA, signB, emission);
+        }
+    }
+
+    private static int originAlong(int axis, int originX, int originY, int originZ) {
+        return axis == 0 ? originX : axis == 1 ? originY : originZ;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -422,7 +637,8 @@ public final class SectionMesher {
                     int tint = snapshot.tintAt(i);
                     for (int q = 0; q < count; q++) {
                         data.readGeneralQuad(state, q, quadView);
-                        int lightIndex = lightIndexForNormal(snapshot, i, quadView.normalPacked);
+                        int faceDir = dominantDir(quadView.normalPacked);
+                        int lightIndex = faceDir < 0 ? i : i + WorldSectionSnapshot.offset(faceDir);
                         int sky = snapshot.skyLightAt(lightIndex);
                         int block = snapshot.blockLightAt(lightIndex);
                         int lightWord = (sky * 17) | ((block * 17) << 8);
@@ -435,34 +651,40 @@ public final class SectionMesher {
                             generalPositions[c * 3 + 1] = quadView.positions[c * 3 + 1] + (y - 1);
                             generalPositions[c * 3 + 2] = quadView.positions[c * 3 + 2] + (z - 1);
                         }
+                        generalCornerFields(snapshot, data, lightIndex, faceDir,
+                                data.lightValue(state), generalPositions, x - 1, y - 1, z - 1);
                         out.addGeneralQuad(layer, generalPositions, quadView.textureIndex,
-                                lightWord, quadView.normalPacked, flags, quadView.uvPacked);
+                                lightWord, quadView.normalPacked, flags, quadView.uvPacked,
+                                cornerFields[0] | (cornerFields[1] << 16),
+                                cornerFields[2] | (cornerFields[3] << 16));
                     }
                 }
             }
         }
     }
 
-    /** The cell whose light a general quad takes: the neighbour its normal points into. */
-    private static int lightIndexForNormal(WorldSectionSnapshot snapshot, int index, int normalPacked) {
+    /**
+     * The face direction a general quad's light is read along: the dominant axis of its
+     * normal, or -1 when the normal is (near-)zero and the quad takes its own cell's light.
+     * The light cell is the neighbour in this direction - the cell the quad's face points
+     * into.
+     */
+    private static int dominantDir(int normalPacked) {
         float nx = GeneralQuad.unpackNormalComponent(normalPacked, 0);
         float ny = GeneralQuad.unpackNormalComponent(normalPacked, 10);
         float nz = GeneralQuad.unpackNormalComponent(normalPacked, 20);
         float ax = Math.abs(nx);
         float ay = Math.abs(ny);
         float az = Math.abs(nz);
-        int dir;
         if (ax >= ay && ax >= az) {
             if (ax < 0.01f) {
-                return index;
+                return -1;
             }
-            dir = nx > 0 ? TerrainDirs.EAST : TerrainDirs.WEST;
+            return nx > 0 ? TerrainDirs.EAST : TerrainDirs.WEST;
         } else if (ay >= az) {
-            dir = ny > 0 ? TerrainDirs.UP : TerrainDirs.DOWN;
-        } else {
-            dir = nz > 0 ? TerrainDirs.SOUTH : TerrainDirs.NORTH;
+            return ny > 0 ? TerrainDirs.UP : TerrainDirs.DOWN;
         }
-        return index + WorldSectionSnapshot.offset(dir);
+        return nz > 0 ? TerrainDirs.SOUTH : TerrainDirs.NORTH;
     }
 
     /**
@@ -511,10 +733,14 @@ public final class SectionMesher {
                         int block = snapshot.blockLightAt(ni);
                         int lightWord = (sky * 17) | ((block * 17) << 8);
                         writeFluidFace(x - 1, y - 1, z - 1, dir, top);
+                        generalCornerFields(snapshot, data, ni, dir, data.lightValue(fluid),
+                                generalPositions, x - 1, y - 1, z - 1);
                         out.addGeneralQuad(layer, generalPositions, data.faceTexture(fluid, dir),
                                 lightWord, GeneralQuad.packNormal(
                                         TerrainDirs.DX[dir], TerrainDirs.DY[dir], TerrainDirs.DZ[dir]), flags,
-                                GeneralQuad.FULL_SPRITE_UV_PACKED);
+                                GeneralQuad.FULL_SPRITE_UV_PACKED,
+                                cornerFields[0] | (cornerFields[1] << 16),
+                                cornerFields[2] | (cornerFields[3] << 16));
                     }
                 }
             }
