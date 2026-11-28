@@ -30,9 +30,30 @@ import org.soutalab.celtium.glcompat.GLSMTextures;
 import org.soutalab.celtium.glcompat.GLSMVertexInput;
 import org.soutalab.celtium.glcompat.GLStateManager;
 import org.soutalab.celtium.vulkan.BackendCallCounters;
+import org.soutalab.celtium.vulkan.BufferStorageRecord;
+import org.soutalab.celtium.vulkan.CaptureUploadContext;
+import org.soutalab.celtium.vulkan.CeltiumBackends;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
+import org.soutalab.celtium.vulkan.FramebufferClearState;
+import org.soutalab.celtium.vulkan.FramebufferViewportState;
+import org.soutalab.celtium.vulkan.GlsmBufferState;
+import org.soutalab.celtium.vulkan.GlsmClientArrayState;
+import org.soutalab.celtium.vulkan.GlsmDisplayListLedger;
+import org.soutalab.celtium.vulkan.GlsmEnableState;
+import org.soutalab.celtium.vulkan.GlsmImmediateState;
+import org.soutalab.celtium.vulkan.GlsmMatrixMode;
 import org.soutalab.celtium.vulkan.GlsmNameLedger;
+import org.soutalab.celtium.vulkan.ImmediateFogState;
+import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
+import org.soutalab.celtium.vulkan.NativeImageBindings;
 import org.soutalab.celtium.vulkan.NativeRasterState;
+import org.soutalab.celtium.vulkan.NativeTextureBindings;
 import org.soutalab.celtium.vulkan.PixelUnpackState;
+import org.soutalab.celtium.vulkan.RenderObjectIds;
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
+import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
 import org.soutalab.celtium.vulkan.lane2.Lane2StateMirror;
 
 /**
@@ -189,6 +210,26 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     /** The installed entry - one per process; GL capabilities are process-global so this is a singleton. */
     private static volatile DirectGlCaptureEntry installed;
     private static volatile boolean capabilitiesInstalled;
+
+    // The provider's own small records, ported from the monolith's dispatch fields (E4-b2): the
+    // pixel pack binding (the unpack binding lives in PixelUnpackState) and the depth/alpha
+    // function record the attribute stack and the hint's note doors write, whose query answers
+    // fall back to them when no backend mirror exists.
+    private volatile int pixelPackBuffer;
+    private volatile boolean attribDepthWrites = true;
+    private volatile int attribDepthFunc = 0x0201;
+    private volatile int attribAlphaFunc = 0x0207;
+    private volatile float attribAlphaReference;
+
+    /** Vanilla-bracket suppression of the raw-framebuffer bind registration (see {@link #bindFramebuffer}). */
+    private static int bindReportSuppression;
+
+    // Capability constants the query router answers from (the monolith's GlStateQueries values).
+    static final int TEXTURE_UNITS_PER_STAGE = 32;
+    static final int TEXTURE_UNITS_COMBINED = 64;
+    static final int COLOR_ATTACHMENT_SLOTS = 8;
+    /** The index the enable record uses for {@code glDepthMask}, which GL has no capability for. */
+    static final int GL_DEPTH_WRITEMASK_CAP = 0x0B72;
 
     private final GlTrampolines glTrampolines = new GlTrampolines(this::dispatch, this::legacyDispatch);
     private final DispatchThreadGate dispatchGate = new DispatchThreadGate();
@@ -637,23 +678,21 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case SEM_GET_STRINGI:
                 return GlsmStringState.current().intern(GLStateManager.glGetStringi((int) c[0], (int) c[1]));
             case SEM_IS_ENABLED:
-                return c.length > 1 && fn.args.length > 1
-                        ? (GLSMEnable.glIsEnabledi((int) c[0], (int) c[1]) ? 1L : 0L)
-                        : (GLSMEnable.glIsEnabled((int) c[0]) ? 1L : 0L);
+                return sharedEnabled((int) c[0]) ? 1L : 0L;
             case SEM_ENABLE:
-                GLSMEnable.glEnable((int) c[0]);
+                setCapability((int) c[0], true);
                 return 0L;
             case SEM_DISABLE:
-                GLSMEnable.glDisable((int) c[0]);
+                setCapability((int) c[0], false);
                 return 0L;
             case SEM_GET_INTEGERV:
                 getInts((int) c[0], c[1]);
                 return 0L;
             case SEM_GET_FLOATV:
-                getFloats((int) c[0], c[1]);
+                getFloats(fn, (int) c[0], c[1]);
                 return 0L;
             case SEM_GET_BOOLEANV:
-                getBooleans((int) c[0], c[1]);
+                routeBooleans((int) c[0], c[1]);
                 return 0L;
             case SEM_GET_INTEGER64V:
                 getLongs((int) c[0], c[1]);
@@ -668,9 +707,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case SEM_ZERO:
                 return zeroAnswer(fn, c);
             case SEM_FBO_COMPLETE:
-                return GLSMFramebuffer.glCheckFramebufferStatus((int) c[0]);
+                // The provider's framebuffer names are HAL-seat names, not converter names, so
+                // the converter has no status to report for them; the shipped answer stands.
+                return 0x8CD5L; // GL_FRAMEBUFFER_COMPLETE
             case SEM_SIGNALED:
-                return GLSMBuffers.glClientWaitSync(c[0], (int) c[1], c[2]);
+                return 0x911AL; // GL_ALREADY_SIGNALED - the frame-slot fence is the wait (see the hint's fence doors)
             case SEM_MAP:
                 return mapBuffer(fn, c);
             case SEM_UNMAP:
@@ -679,9 +720,9 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 bufferData(fn, c);
                 return 0L;
             case SEM_BUFFER_SUBDATA:
-                if (c[3] != 0L) {
+                bufferSubDataFor(bufferFor(fn, c), c[1], c[2], c[3]);
+                if (c[3] != 0L && !fn.namedObject) {
                     GLSMBuffers.glBufferSubData((int) c[0], c[1], bytes(c[3], (int) c[2]));
-                    filePboBytes((int) c[0], c[1], c[3], (int) c[2]);
                 }
                 return 0L;
             case SEM_STATUS:
@@ -691,23 +732,32 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 infoLogAnswer(fn, c);
                 return 0L;
             case SEM_BIND_BUFFER:
+                bindBuffer((int) c[0], (int) c[1]);
                 GLSMBuffers.glBindBuffer((int) c[0], (int) c[1]);
-                if (c[0] == 0x88EBL) {
-                    PixelUnpackState.current().pixelUnpackBuffer((int) c[1]);
-                }
                 return 0L;
             case SEM_BIND_TEXTURE:
-                GLSMTextures.glBindTexture((int) c[0], (int) c[1]);
+                NativeTextureBindings.current().bindTexture((int) c[0], (int) c[1]);
+                if (Lane2StateMirror.current().register().activeProgramId() != 0) {
+                    GLSMTextures.glBindTexture((int) c[0], (int) c[1]);
+                }
                 return 0L;
             case SEM_ACTIVE_TEXTURE:
-                GLSMTextures.glActiveTexture((int) c[0]);
+                // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
+                // every save/restore round trip add another base (measured as the 0x84C0 ladder in the game's own
+                // active-unit reads), which sent every unit-keyed binding record to a key no reader looked up.
+                NativeTextureBindings.current().activeUnit((int) c[0] - 0x84C0);
+                if (Lane2StateMirror.current().register().activeProgramId() != 0) {
+                    GLSMTextures.glActiveTexture((int) c[0]);
+                }
                 return 0L;
             case SEM_TEXIMAGE:
+                CaptureUploadContext.current().recordExtent((int) c[0], 0, (int) c[2], (int) c[3], (int) c[4]);
+                return 0L;
             case SEM_TEXIMAGE_PIXELS:
-                texImage(fn, c);
+                texImagePixels(fn, c);
                 return 0L;
             case SEM_TEXSUBIMAGE:
-                texSubImage(fn, c);
+                VulkanTextureRegistry.captureStore().texSubImage(CaptureUploadContext.current(), c);
                 return 0L;
             case SEM_COMPRESSED_TEXIMAGE:
                 // The converter holds no compressed-image form; the old stub recorded the
@@ -715,37 +765,32 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return 0L;
             case SEM_PIXEL_STORE:
                 if (fn.name.indexOf('f') == fn.name.length() - 1) {
-                    GLSMTextures.glPixelStoref((int) c[0], f(c[1]));
                     PixelUnpackState.current().pixelStore((int) c[0], (int) f(c[1]));
                 } else {
-                    GLSMTextures.glPixelStorei((int) c[0], (int) c[1]);
                     PixelUnpackState.current().pixelStore((int) c[0], (int) c[1]);
                 }
                 return 0L;
             case SEM_VIEWPORT:
-                GLSMRasterizer.glViewport((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
+                FramebufferViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_SCISSOR:
-                GLSMRasterizer.glScissor((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
+                NativeRasterState.current().scissor((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_CLEAR:
-                GLSMFramebuffer.glClear((int) c[0]);
+                recordClear((int) c[0]);
                 return 0L;
             case SEM_CLEAR_COLOR:
-                GLStateManager.glClearColor(f(c[0]), f(c[1]), f(c[2]), f(c[3]));
+                FramebufferClearState.current().clearColor(f(c[0]), f(c[1]), f(c[2]), f(c[3]));
                 return 0L;
             case SEM_CLEAR_DEPTH:
-                if ("glClearDepth".equals(fn.name)) {
-                    GLSMDepthStencilAlpha.glClearDepth(d(c[0]));
-                } else {
-                    GLSMDepthStencilAlpha.glClearDepth((double) f(c[0]));
-                }
+                FramebufferClearState.current().clearDepth("glClearDepth".equals(fn.name) ? d(c[0]) : (double) f(c[0]));
                 return 0L;
             case SEM_LINE_WIDTH:
-                GLSMRasterizer.glLineWidth(f(c[0]));
+                GlsmImmediateState.current().lineWidth(f(c[0]));
                 return 0L;
             case SEM_USE_PROGRAM:
                 GLSMPrograms.glUseProgram((int) c[0]);
+                Lane2StateMirror.current().register().setActiveProgramId((int) c[0]);
                 return 0L;
             case SEM_NEW_LIST:
                 GLSMDraws.glNewList((int) c[0], (int) c[1]);
@@ -766,6 +811,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMVertexInput.glBindVertexArray((int) c[0]);
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
+                bindFramebuffer((int) c[0], (int) c[1]);
                 GLSMFramebuffer.glBindFramebuffer((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_BLIT_FRAMEBUFFER:
@@ -817,6 +863,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 }
                 return 0L;
             case SEM_MATRIX_MODE:
+                GlsmMatrixMode.current().set((int) c[0]);
                 GLSMMatrices.glMatrixMode((int) c[0]);
                 return 0L;
             case SEM_CULL_FACE:
@@ -890,6 +937,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMDraws.glDrawArrays((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
             case SEM_BIND_IMAGE_TEXTURE:
+                NativeImageBindings.current().bind((int) c[0], (int) c[1], (int) c[2],
+                        c[3] != 0L, (int) c[4], (int) c[5], (int) c[6]);
                 GLSMTextures.glBindImageTexture((int) c[0], (int) c[1], (int) c[2], c[3] != 0L,
                         (int) c[4], (int) c[5], (int) c[6]);
                 return 0L;
@@ -898,113 +947,464 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
-    // ---- dispatch helpers -------------------------------------------------------------------
+    // ---- seat writes the dispatch shares with the hint doors --------------------------------
+    //
+    // These are the monolith's door bodies with the monolith removed: each writes the seat that
+    // owns the record (family table, adjudication §2), and the hint doors call the static forms
+    // so a transformed call and a provider call land in the same place.
 
-    private static boolean isObject(String name, int id) {
-        switch (name) {
-            case "glIsProgram": case "glIsProgramARB": return GLSMPrograms.glIsProgram(id);
-            case "glIsShader": case "glIsShaderARB": return GLSMPrograms.glIsShader(id);
-            case "glIsFramebuffer": return GLSMFramebuffer.glIsFramebuffer(id);
-            case "glIsRenderbuffer": return GLSMFramebuffer.glIsRenderbuffer(id);
-            case "glIsQuery": case "glIsQueryARB": return GLSMQueries.glIsQuery(id);
-            default: return GlsmNameLedger.current().isLive(id);
+    /** The buffer binding record: the array seat, the two pixel seats, or the flat binding map. */
+    private void bindBuffer(int target, int name) {
+        if (target == 0x8892) { // GL_ARRAY_BUFFER
+            NativeGeometryBuffer.bindId(name);
+        } else if (target == 0x88EB) { // GL_PIXEL_PACK_BUFFER
+            this.pixelPackBuffer = name;
+            return;
+        } else if (target == 0x88EC) { // GL_PIXEL_UNPACK_BUFFER
+            PixelUnpackState.current().pixelUnpackBuffer(name);
+            return;
+        }
+        GlsmBufferState.current().bind(target, name);
+    }
+
+    /** The framebuffer binding record plus the raw-bind registration with the renderer. */
+    private void bindFramebuffer(int target, int name) {
+        FramebufferBindings.current().bind(target, name);
+        // The registration the renderer makes from a raw bind (identity, records, pair, shared-depth borrow)
+        // is triggered here rather than in the hint's report: every raw bind lands in this record, including
+        // the ones GLSM's state cache and the vanilla-bracket suppression kept the hint's report from ever
+        // seeing for the shadow framebuffers (legs 14/15: served native-depth copies = 0). The hint suppresses
+        // the trigger while a vanilla Framebuffer method runs, because those binds are the object's own and the
+        // mixin reports them by object identity.
+        if (target != 0x8CA8 && bindReportSuppression == 0) {
+            Object backend = CeltiumBackends.current();
+            if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$registerRawFramebuffer(name, true);
+            }
         }
     }
 
-    private long generate(GlFn fn, long[] c) {
-        String name = fn.name;
-        if (name.equals("glCreateShader") || name.equals("glCreateShaderObjectARB")) {
-            int id = GLSMPrograms.glCreateShader((int) c[0]);
-            GlsmNameLedger.current().addName(id);
-            return id;
+    /** Suppresses the bind registration for the duration of one vanilla-bracketed bind. */
+    public static void pushBindReportSuppression() {
+        bindReportSuppression++;
+    }
+
+    /** Ends one {@link #pushBindReportSuppression}. */
+    public static void popBindReportSuppression() {
+        if (bindReportSuppression > 0) bindReportSuppression--;
+    }
+
+    /** Registers a raw framebuffer with the renderer without a bind (the hint's unbind-on-delete path). */
+    public static void registerRawFramebuffer(int framebuffer) {
+        Object backend = CeltiumBackends.current();
+        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$registerRawFramebuffer(framebuffer, true);
         }
-        if (name.equals("glCreateProgram") || name.equals("glCreateProgramObjectARB")) {
-            int id = GLSMPrograms.glCreateProgram();
-            GlsmNameLedger.current().addName(id);
-            return id;
-        }
-        if (name.equals("glGenLists")) {
-            return GLSMDraws.glGenLists((int) c[0]);
-        }
-        if (name.equals("glGenSync") || name.equals("glFenceSync")) {
-            return GLSMBuffers.glFenceSync((int) c[0], (int) c[1]);
-        }
-        if (fn.args.length < 2) {
-            return 0L;
-        }
-        int n = (int) c[0];
-        long out = c[1];
-        if (out == 0L || n <= 0) {
-            return 0L;
-        }
-        for (int i = 0; i < n; i++) {
-            int id;
-            switch (name) {
-                case "glGenTextures": case "glGenTexturesARB": id = GLSMTextures.glGenTextures(); break;
-                case "glGenBuffers": case "glGenBuffersARB": id = GLSMBuffers.glGenBuffers(); break;
-                case "glGenFramebuffers": case "glGenFramebuffersEXT": case "glGenFramebuffersARB":
-                    id = GLSMFramebuffer.glGenFramebuffers(); break;
-                case "glGenRenderbuffers": case "glGenRenderbuffersEXT": case "glGenRenderbuffersARB":
-                    id = GLSMFramebuffer.glGenRenderbuffers(); break;
-                case "glGenVertexArrays": case "glGenVertexArraysARB": id = GLSMVertexInput.glGenVertexArrays(); break;
-                case "glGenQueries": case "glGenQueriesARB": id = GLSMQueries.glGenQueries(); break;
-                case "glGenSamplers": id = GLSMTextures.glGenSamplers(); break;
-                default: id = org.soutalab.celtium.vulkan.RenderObjectIds.reserve(1); break;
+    }
+
+    /** {@return how many framebuffer binds the seat has recorded}. */
+    public static long framebufferBindSerial() {
+        return FramebufferBindings.current().bindSerial();
+    }
+
+    /** The bound pixel pack buffer record (the unpack half lives in {@link PixelUnpackState}). */
+    public static int pixelPackBuffer() {
+        DirectGlCaptureEntry entry = installed;
+        return entry == null ? 0 : entry.pixelPackBuffer;
+    }
+
+    /** The clear latch: the HAL clear seat issues the mask against the bound draw framebuffer. */
+    private void recordClear(int mask) {
+        mask = FramebufferClearState.effectiveClearMask(mask);
+        FramebufferClearState.current().issue(mask, FramebufferBindings.current().drawFramebuffer(),
+                FramebufferBindings.current().drawIsMain());
+        if (FramebufferBindings.current().drawIsMain()) {
+            // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
+            // attached it to the last queued group of the frame image when the ordering flush was asked for
+            // (VulkanTerrainGpuBackend.flushBeforeClear), and this consumes the pending mask so the latch and the
+            // window acquire do not apply the same clear a second time. A mask the backend did not carry is left
+            // pending, so the frame machinery still applies it at the next pass begin.
+            try {
+                Object backend = CeltiumBackends.current();
+                if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+                    vulkan.celtium$takeCarriedMainClear(mask);
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // The pending mask stays set, so the next bind's latch still carries the clear as before.
             }
-            GlsmNameLedger.current().addName(id);
-            MemoryUtil.memPutInt(out + (long) i * 4L, id);
+        } else {
+            // A non-main framebuffer's clear has no other carrier: the latch only runs on the next vanilla
+            // bindFramebuffer, and a readback that binds by raw GL name never trips it - measured as a
+            // framebufferClear() whose drawn quad survived through glReadPixels. Recording it at the clear call
+            // keeps it between the draws before it and the draws after it, which is GL's own ordering; the
+            // main-framebuffer case keeps the latch path, which the frame machinery already owns.
+            try {
+                Object backend = CeltiumBackends.current();
+                if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+                    vulkan.celtium$gameClear(mask, FramebufferBindings.current().drawFramebuffer());
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // The pending mask stays set, so the next bind's latch still carries the clear as before.
+            }
+        }
+    }
+
+    /**
+     * Records one capability enable/disable, from the dispatch or the transformer's route.
+     * <p>
+     * The capabilities whose state the immediate pipeline reads go to their mirrors (fog, the
+     * backend's depth/alpha/lighting switches, the raster seat, the texture-unit record); every
+     * capability also lands in the flat enable record the queries answer from.
+     */
+    public static void setCapability(int capability, boolean enabled) {
+        if (capability < 0 || capability >= 0x10000) {
+            return;
+        }
+        switch (capability) {
+            case 0x0B60: // GL_FOG
+                ImmediateFogState.current().enabled(enabled);
+                break;
+            case 0x0B71: { // GL_DEPTH_TEST
+                org.soutalab.celtium.vulkan.CeltiumBackend backend = CeltiumBackends.current();
+                if (backend != null) backend.setDepthTest(enabled);
+                break;
+            }
+            case 0x0B86: { // GL_ALPHA_TEST
+                org.soutalab.celtium.vulkan.CeltiumBackend backend = CeltiumBackends.current();
+                if (backend != null) backend.setAlphaTestEnabled(enabled);
+                break;
+            }
+            case 0x0B50: { // GL_LIGHTING
+                org.soutalab.celtium.vulkan.CeltiumBackend backend = CeltiumBackends.current();
+                if (backend != null) backend.setLightingEnabled(enabled);
+                break;
+            }
+            case 0x0BE2: NativeRasterState.current().blendEnabled(enabled); break; // GL_BLEND
+            case 0x0B44: NativeRasterState.current().cullEnabled(enabled); break; // GL_CULL_FACE
+            case 0x0C11: NativeRasterState.current().scissorTest(enabled); break; // GL_SCISSOR_TEST
+            case 0x8037: NativeRasterState.current().polygonOffsetFillEnabled(enabled); break; // GL_POLYGON_OFFSET_FILL
+            case 0x0DE1: NativeTextureBindings.current().enabled2d(enabled); break; // GL_TEXTURE_2D
+            default: break;
+        }
+        GlsmEnableState.current().set(capability, enabled);
+    }
+
+    /** {@return whether a capability is enabled}, answered from the same records {@link #setCapability} writes. */
+    public static boolean sharedEnabled(int cap) {
+        switch (cap) {
+            case 0x0B60: return ImmediateFogState.current().enabled(); // GL_FOG
+            case 0x0BE2: return NativeRasterState.current().blendEnabled(); // GL_BLEND
+            case 0x0B44: return NativeRasterState.current().cullEnabled(); // GL_CULL_FACE
+            case 0x0C11: return NativeRasterState.current().scissorTest(); // GL_SCISSOR_TEST
+            case 0x8037: return NativeRasterState.current().polygonOffsetFillEnabled(); // GL_POLYGON_OFFSET_FILL
+            case 0x0DE1: { // GL_TEXTURE_2D
+                NativeTextureBindings textures = NativeTextureBindings.current();
+                return textures.enabled2d(textures.activeUnit());
+            }
+            // The mirror is the authority for these three: vanilla's GlStateManager cache can skip the native
+            // glEnable/glDisable entirely, so a private enable record never sees the change - the model state
+            // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
+            case 0x0B71: { // GL_DEPTH_TEST
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$depthTestEnabled() : GlsmEnableState.current().enabled(0x0B71);
+            }
+            case 0x0B86: { // GL_ALPHA_TEST
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : GlsmEnableState.current().enabled(0x0B86);
+            }
+            case 0x0B50: { // GL_LIGHTING
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$lightingEnabled() : GlsmEnableState.current().enabled(0x0B50);
+            }
+            default: break;
+        }
+        return GlsmEnableState.current().enabled(cap);
+    }
+
+    /** {@return the live Vulkan backend, or null when another renderer (or none) is installed. */
+    static VulkanTerrainGpuBackend vulkanBackend() {
+        Object backend = CeltiumBackends.current();
+        return backend instanceof VulkanTerrainGpuBackend vulkan ? vulkan : null;
+    }
+
+    /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
+    public static void noteDepthMask(boolean mask) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.attribDepthWrites = mask;
+        }
+        GlsmEnableState.current().set(GL_DEPTH_WRITEMASK_CAP, mask);
+    }
+
+    /** The record of a raw {@code glDepthFunc}, for the query fallback when no backend mirror exists. */
+    public static void noteDepthFunc(int func) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.attribDepthFunc = func;
+        }
+    }
+
+    /** The record of a raw {@code glAlphaFunc}, for the query fallback when no backend mirror exists. */
+    public static void noteAlphaFunc(int func, float reference) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.attribAlphaFunc = func;
+            entry.attribAlphaReference = reference;
+        }
+    }
+
+    // Texture-unit query census: one line per pname for the life of this JVM.
+    private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<Integer> IMGUNIT_ANSWER_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Hands one texture-unit answer to the census (one line per pname). */
+    public static void noteTextureUnitAnswer(int pname, int value) {
+        if (pname != 0x8872 && pname != 0x8B4C && pname != 0x8B4D && pname != 0x8F39) {
+            return;
+        }
+        if (TEXUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname))) {
+            System.out.println("[Celtium] CELTIUM_TEXUNIT_ANSWER pname=0x" + Integer.toHexString(pname)
+                    + " value=" + value);
+        }
+    }
+
+    /** Hands one image-unit answer to the census (one line for the sole pname). */
+    static void noteImageUnitAnswer(int pname, int value) {
+        if (pname == 0x8F38 && IMGUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname))) {
+            System.out.println("[Celtium] CELTIUM_IMGUNIT_ANSWER pname=0x8f38 value=" + value);
+        }
+    }
+
+    // ---- dispatch helpers -------------------------------------------------------------------
+
+    private static boolean isObject(String name, int id) {
+        // The monolith's answer, unchanged: a name is an object when the shared ledger holds it
+        // (or it is a live sync); a buffer name backed by a native geometry buffer counts too.
+        return GlsmNameLedger.current().isLive(id) || GlsmNameLedger.current().isLiveSync(id)
+                || ("glIsBuffer".equals(name) && NativeGeometryBuffer.find(id) != null);
+    }
+
+    /**
+     * Name allocation, ported from the monolith's dispatch: every name comes out of the one
+     * shared window ({@link RenderObjectIds}) and is entered in the name ledger, whatever the
+     * object kind - the mirrors key on names across kinds, so two windows both starting at 1
+     * would hand two different resources the same name. The converter allocates its own ids
+     * for calls that arrive transformed; this surface serves the provider's callers.
+     */
+    private long generate(GlFn fn, long[] c) {
+        if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
+            // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
+            // glGenLists is the one caller that asks for a *contiguous range*: it returns n such that n .. n+range-1
+            // are all free, and Minecraft relies on it - RenderGlobal holds starGLCallList = generateDisplayLists(3)
+            // and then uses starGLCallList + 1 and + 2 for glSkyList and glSkyList2. Advancing the counter by one for
+            // a range of three would hand those two names to the next caller instead.
+            int range = 1;
+            if ("glGenLists".equals(fn.name) && fn.args.length == 1) {
+                range = (int) c[0];
+                if (range <= 0) {
+                    return 0; // The spec: a range of zero (or less) generates nothing and returns 0.
+                }
+            }
+            if ("glCreateShader".equals(fn.name) || "glCreateShaderObjectARB".equals(fn.name)) {
+                // The program family has one id space, the converter's (family 5): a name from
+                // the shared window would be a second space for the same object.
+                int id = GLSMPrograms.glCreateShader((int) c[0]);
+                GlsmNameLedger.current().addName(id);
+                return id;
+            }
+            if ("glCreateProgram".equals(fn.name) || "glCreateProgramObjectARB".equals(fn.name)) {
+                int id = GLSMPrograms.glCreateProgram();
+                GlsmNameLedger.current().addName(id);
+                return id;
+            }
+            int scalar = RenderObjectIds.reserve(range);
+            for (int i = 0; i < range; i++) {
+                GlsmNameLedger.current().addName(scalar + i);
+            }
+            return scalar;
+        }
+        if (fn.ret == R_LONG) {
+            // Sync object (glFenceSync): ids come from the 64-bit space.
+            long sync = GlsmNameLedger.current().newSync();
+            GlsmNameLedger.current().addName((int) sync);
+            return sync;
+        }
+        // Array form (glGenTextures, glCreateTextures...): the out[] is the LAST pointer arg; the count is the
+        // int immediately before it.
+        int outIndex = lastPointerArg(fn);
+        if (outIndex < 0) {
+            int scalar = RenderObjectIds.reserve(1);
+            GlsmNameLedger.current().addName(scalar);
+            return scalar;
+        }
+        long out = c[outIndex];
+        if (out == 0L) {
+            return 0L;
+        }
+        int n = countFromArgs(fn, c, outIndex);
+        for (int i = 0; i < n; i++) {
+            int name = RenderObjectIds.reserve(1);
+            GlsmNameLedger.current().addName(name);
+            MemoryUtil.memPutInt(out + (long) i * 4L, name);
         }
         return 0L;
     }
 
-    private void delete(GlFn fn, long[] c) {
-        String name = fn.name;
-        switch (name) {
-            case "glDeleteShader": case "glDeleteObjectARB":
-                GLSMPrograms.glDeleteShader((int) c[0]);
-                GlsmNameLedger.current().removeName((int) c[0]);
-                return;
-            case "glDeleteProgram":
-                GLSMPrograms.glDeleteProgram((int) c[0]);
-                GlsmNameLedger.current().removeName((int) c[0]);
-                return;
-            case "glDeleteSync":
-                GLSMBuffers.glDeleteSync(c[0]);
-                return;
-            case "glDeleteLists":
-                GLSMDraws.glDeleteLists((int) c[0], (int) c[1]);
-                return;
-            default:
-                break;
+    private static int lastPointerArg(GlFn fn) {
+        for (int i = fn.args.length - 1; i >= 0; i--) {
+            if (fn.args[i] == GlFunctionTable.A_PTR) {
+                return i;
+            }
         }
-        int n = (int) c[0];
-        long ptr = c[1];
-        if (ptr == 0L || n <= 0) {
+        return -1;
+    }
+
+    /** The count before the out array: the last int arg before the out pointer, or 1 when there is none. */
+    private static int countFromArgs(GlFn fn, long[] c, int outIndex) {
+        for (int i = outIndex - 1; i >= 0; i--) {
+            if (fn.args[i] == GlFunctionTable.A_INT || fn.args[i] == GlFunctionTable.A_UINT) {
+                return (int) c[i];
+            }
+        }
+        return 1;
+    }
+
+    /**
+     * Deletion, ported from the monolith's dispatch: the ledger entry goes, and each kind's
+     * records settle with it - texture captures through the capture context, buffer storage
+     * through {@link #forgetBuffer}, framebuffers through {@link #forgetFramebuffer}, VAO and
+     * renderbuffer records through the client-array state, list ranges through
+     * {@link #deleteListsRange}. Program and shader names also retire in the converter
+     * (family 5's seat), whose records carry the lowered forms.
+     */
+    private void delete(GlFn fn, long[] c) {
+        boolean textures = "glDeleteTextures".equals(fn.name);
+        if (fn.args.length == 2 && fn.args[0] == GlFunctionTable.A_INT && fn.args[1] == GlFunctionTable.A_PTR) {
+            int count = (int) c[0];
+            long names = c[1];
+            if (names == 0L) {
+                return;
+            }
+            boolean buffers = "glDeleteBuffers".equals(fn.name);
+            boolean framebuffers = "glDeleteFramebuffers".equals(fn.name);
+            boolean vertexArrays = "glDeleteVertexArrays".equals(fn.name);
+            boolean renderbuffers = "glDeleteRenderbuffers".equals(fn.name);
+            for (int i = 0; i < count; i++) {
+                int name = MemoryUtil.memGetInt(names + (long) i * 4L);
+                GlsmNameLedger.current().removeName(name);
+                if (vertexArrays) {
+                    GlsmClientArrayState.current().removeAttribs(name);
+                    if (GlsmClientArrayState.current().boundVertexArray() == name) {
+                        GlsmClientArrayState.current().bindVertexArray(0);
+                    }
+                }
+                if (renderbuffers) {
+                    GlsmClientArrayState.current().removeRenderbufferSize(name);
+                    if (GlsmClientArrayState.current().boundRenderbuffer() == name) {
+                        GlsmClientArrayState.current().bindRenderbuffer(0);
+                    }
+                }
+                if (textures) {
+                    CaptureUploadContext.current().deleteTextureRecords(name);
+                }
+                if (buffers) {
+                    forgetBuffer(name);
+                }
+                if (framebuffers) {
+                    forgetFramebuffer(name);
+                }
+            }
             return;
         }
-        for (int i = 0; i < n; i++) {
-            int id = MemoryUtil.memGetInt(ptr + (long) i * 4L);
-            switch (name) {
-                case "glDeleteTextures": case "glDeleteTexturesARB":
-                    GLSMTextures.glDeleteTextures(id); break;
-                case "glDeleteBuffers": case "glDeleteBuffersARB":
-                    GLSMBuffers.glDeleteBuffers(id);
-                    PixelUnpackState.current().forgetFallbackStorage(id);
-                    break;
-                case "glDeleteFramebuffers": case "glDeleteFramebuffersEXT": case "glDeleteFramebuffersARB":
-                    GLSMFramebuffer.glDeleteFramebuffers(id); break;
-                case "glDeleteRenderbuffers": case "glDeleteRenderbuffersEXT": case "glDeleteRenderbuffersARB":
-                    GLSMFramebuffer.glDeleteRenderbuffers(id); break;
-                case "glDeleteVertexArrays": case "glDeleteVertexArraysARB":
-                    GLSMVertexInput.glDeleteVertexArrays(id); break;
-                case "glDeleteQueries": case "glDeleteQueriesARB":
-                    GLSMQueries.glDeleteQueries(id); break;
-                case "glDeleteSamplers":
-                    GLSMTextures.glDeleteSamplers(id); break;
-                default:
-                    break;
+        if ("glDeleteLists".equals(fn.name)) {
+            // Display-list names are a range of their own: glDeleteLists(list, range) retires range names, and each one
+            // that this provider compiled owns payload buffers that go with it (#394). The name is retired too, so
+            // glIsList answers false afterwards (#395).
+            deleteListsRange((int) c[0], (int) c[1]);
+            return;
+        }
+        if (fn.args.length == 1) {
+            if (fn.args[0] == GlFunctionTable.A_LONG) {
+                GlsmNameLedger.current().removeSync(c[0]);
+                GLSMBuffers.glDeleteSync(c[0]);
+            } else {
+                int name = (int) c[0];
+                GlsmNameLedger.current().removeName(name);
+                if ("glDeleteBuffers".equals(fn.name)) {
+                    forgetBuffer(name);
+                }
+                if ("glDeleteProgram".equals(fn.name)) {
+                    GLSMPrograms.glDeleteProgram(name);
+                }
+                if ("glDeleteShader".equals(fn.name)) {
+                    GLSMPrograms.glDeleteShader(name);
+                }
             }
-            GlsmNameLedger.current().removeName(id);
+        }
+    }
+
+    /**
+     * Retires a buffer's storage and its bindings.
+     * <p>
+     * Deleting a buffer left the byte store holding its direct memory and the bindings still
+     * naming it, so a later {@code glMapBuffer} answered with a pointer into the deleted
+     * buffer's storage and every delete-then-create cycle kept another megabyte alive (#386).
+     */
+    private void forgetBuffer(int name) {
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) nativeBuffer.close();
+        if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
+        GlsmBufferState.current().removeStorage(name);
+        BufferStorageRecord.current().forget(name);
+        PixelUnpackState.current().forgetFallbackStorage(name);
+        if (this.pixelPackBuffer == name) {
+            this.pixelPackBuffer = 0;
+        }
+        if (PixelUnpackState.current().pixelUnpackBuffer() == name) {
+            PixelUnpackState.current().pixelUnpackBuffer(0);
+        }
+        GlsmBufferState.current().unbindName(name);
+        GLSMBuffers.glDeleteBuffers(name);
+    }
+
+    /** Retires a framebuffer's attachment record and binding, and notifies the backend. */
+    private void forgetFramebuffer(int name) {
+        if (name == 0) return;
+        int color = org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().colorTexture(name);
+        Object backend = CeltiumBackends.current();
+        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawFramebufferDeleted(name, color);
+        }
+        org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().framebufferDeleted(name);
+        FramebufferBindings.current().forgetName(name);
+        GLSMFramebuffer.glDeleteFramebuffers(name);
+    }
+
+    /** Retires a display-list range: the model capture's lists, the ledger's payloads, the names. */
+    private void deleteListsRange(int first, int range) {
+        VulkanModelQuadCapture.listsDeleted(first, range);
+        for (int i = 0; i < range; i++) {
+            int name = first + i;
+            GlsmDisplayListLedger.current().removeList(name);
+            GlsmNameLedger.current().removeName(name);
+            releaseListPayloads(name);
+        }
+        GLSMDraws.glDeleteLists(first, range);
+    }
+
+    private static void releaseListPayloads(int list) {
+        java.util.List<NativeGeometryBuffer> geometry = GlsmDisplayListLedger.current().removeGeometry(list);
+        if (geometry != null) {
+            for (NativeGeometryBuffer buffer : geometry) buffer.close();
+        }
+        java.util.List<ByteBuffer> payloads = GlsmDisplayListLedger.current().removePayloads(list);
+        if (payloads == null) {
+            return;
+        }
+        for (int i = 0; i < payloads.size(); i++) {
+            MemoryUtil.memFree(payloads.get(i));
         }
     }
 
@@ -1019,29 +1419,60 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
-    private long mapBuffer(GlFn fn, long[] c) {
-        ByteBuffer mapped;
-        switch (fn.name) {
-            case "glMapBuffer": case "glMapBufferARB":
-                mapped = GLSMBuffers.glMapBuffer((int) c[0], (int) c[1]);
-                break;
-            case "glMapBufferRange":
-                mapped = GLSMBuffers.glMapBufferRange((int) c[0], c[1], c[2], (int) c[3]);
-                break;
+    /** The buffer a target-form call names: the bound buffer, with the pixel and array seats resolved. */
+    private int boundBuffer(int target) {
+        switch (target) {
+            case 0x8892: // GL_ARRAY_BUFFER
+                return NativeGeometryBuffer.boundId();
+            case 0x88EB: // GL_PIXEL_PACK_BUFFER
+                return this.pixelPackBuffer;
+            case 0x88EC: // GL_PIXEL_UNPACK_BUFFER
+                return PixelUnpackState.current().pixelUnpackBuffer();
             default:
-                return 0L;
+                return GlsmBufferState.current().bound(target);
         }
-        return mapped == null ? 0L : MemoryUtil.memAddress(mapped);
+    }
+
+    private int bufferFor(GlFn fn, long[] c) {
+        return fn.namedObject ? (int) c[0] : boundBuffer((int) c[0]);
+    }
+
+    /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
+    private void bufferSubDataFor(int name, long offset, long size, long data) {
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) {
+            if (data != 0L && size > 0 && offset >= 0 && size <= nativeBuffer.byteSize()
+                    && offset <= nativeBuffer.byteSize() - size) {
+                nativeBuffer.write(offset, MemoryUtil.memByteBuffer(data, (int) size));
+            }
+            return;
+        }
+        ByteBuffer storage = GlsmBufferState.current().storage(name);
+        int logicalSize = BufferStorageRecord.current().logicalSizeOf(name, storage == null ? 0 : storage.capacity());
+        if (storage == null || data == 0L || BufferStorageRecord.mapRangeOffset(offset, size, logicalSize) < 0L) {
+            return;
+        }
+        ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
+        int position = storage.position();
+        storage.position((int) offset);
+        storage.put(source);
+        storage.position(position);
+    }
+
+    private long mapBuffer(GlFn fn, long[] c) {
+        boolean range = fn.args.length == 4;
+        return BufferStorageRecord.current().mapBufferFor(bufferFor(fn, c), range,
+                range ? c[1] : 0L, range ? c[2] : 0L, range ? c[3] : 0L);
     }
 
     private long unmapBuffer(GlFn fn, long[] c) {
-        if (fn.name.startsWith("glUnmapNamedBuffer")) {
-            return 1L;
-        }
-        return GLSMBuffers.glUnmapBuffer((int) c[0]) ? 1L : 0L;
+        NativeGeometryBuffer mapped = NativeGeometryBuffer.find(bufferFor(fn, c));
+        return mapped == null || mapped.unmap() ? 1L : 0L;
     }
 
     private void bufferData(GlFn fn, long[] c) {
+        // The seat producer first: the byte store and logical size the mirrors read.
+        BufferStorageRecord.current().bufferDataFor(bufferFor(fn, c), c[1], c[2]);
         int target = (int) c[0];
         long size = c[1];
         long data = c[2];
@@ -1055,41 +1486,6 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         } else {
             GLSMBuffers.nglBufferData(target, size, data, usage);
         }
-        if (target == 0x88EB && data != 0L && size > 0L) {
-            filePboBytes(target, 0L, data, (int) Math.min(size, Integer.MAX_VALUE - 8));
-        }
-    }
-
-    /** Files a copy of bytes written into the bound pixel unpack buffer, for the capture store's reads. */
-    private static void filePboBytes(int target, long offset, long data, int size) {
-        if (target != 0x88EB || data == 0L || size <= 0) {
-            return;
-        }
-        PixelUnpackState state = PixelUnpackState.current();
-        int bound = state.pixelUnpackBuffer();
-        if (bound == 0) {
-            return;
-        }
-        ByteBuffer existing = state.storage(bound);
-        int needed = (int) offset + size;
-        ByteBuffer copy;
-        if (existing != null && existing.capacity() >= needed) {
-            copy = existing;
-        } else {
-            copy = ByteBuffer.allocate(Math.max(needed, 1));
-            if (existing != null) {
-                ByteBuffer view = existing.duplicate();
-                view.position(0);
-                view.limit(Math.min(existing.capacity(), copy.capacity()));
-                copy.put(view);
-            }
-        }
-        ByteBuffer source = MemoryUtil.memByteBuffer(data, size);
-        ByteBuffer targetView = copy.duplicate();
-        targetView.position((int) offset);
-        targetView.limit(needed);
-        targetView.put(source);
-        state.fileFallbackStorage(bound, copy);
     }
 
     private void statusAnswer(GlFn fn, long[] c) {
@@ -1189,108 +1585,628 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
+
     // ---- duty 3: the glGet* composite router --------------------------------------------------
     //
-    // Each pname is answered by the seat that owns the record: the current program from the
-    // Lane 2 register (the same read point 6 of the adjudication fixed for the monolith's
-    // boundProgram gate), the scissor box from the raster seat, the bound texture from the
-    // converter's texture state, and everything else from GLStateManager, which holds the
-    // shared fixed-function state. No pname falls through to a bulk zero.
+    // Ported from the monolith's GlStateQueries with the monolith removed: each pname is
+    // answered by the seat that owns the record - the raster seat, the texture bindings, the
+    // buffer state, the HAL framebuffer seats, the backend's mirrors, the Lane 2 register -
+    // and no pname falls through to a bulk zero. The static forms are the hint doors' surface:
+    // the same router answers the transformer's LWJGL3 query natives.
+
+    /** {@return the scalar answer for a tracked pname}, or {@link Integer#MIN_VALUE} when untracked. */
+    public static int getInteger(int pname) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null) {
+            return Integer.MIN_VALUE;
+        }
+        int value = entry.getIntegerValue(pname);
+        noteTextureUnitAnswer(pname, value);
+        noteImageUnitAnswer(pname, value);
+        return value;
+    }
+
+    /**
+     * Answers tracked integer state for LWJGL3's replaced native query. Untracked capability
+     * limits are left to the caller, which can also answer them before this provider is installed.
+     *
+     * @return whether the pname was answered
+     */
+    public static boolean getIntegers(int pname, long out) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || out == 0L) {
+            return false;
+        }
+        if (pname != 0x0BA2 && pname != 0x0C10 && entry.getIntegerValue(pname) == Integer.MIN_VALUE) {
+            return false;
+        }
+        entry.getInts(pname, out);
+        return true;
+    }
+
+    /** The same float router for LWJGL3's replaced native query. */
+    public static void getFloats(int pname, long out, boolean asDouble) {
+        if (out == 0L) {
+            return;
+        }
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.routeFloats(pname, out, asDouble);
+        } else {
+            putFloatOrDouble(out, 0, 0.0f, asDouble);
+        }
+    }
+
+    /** {@return whether the boolean query was answered}; the caller's buffer receives one byte per component. */
+    public static boolean getBooleans(int pname, long out) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || out == 0L) {
+            return false;
+        }
+        entry.routeBooleans(pname, out);
+        return true;
+    }
+
+    /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
+    private int getIntegerValue(int pname) {
+        NativeRasterState raster = NativeRasterState.current();
+        NativeTextureBindings textures = NativeTextureBindings.current();
+        switch (pname) {
+            case 0x0BE1: // GL_BLEND_SRC
+            case 0x80C9: return raster.blendSrcRgb(); // GL_BLEND_SRC_RGB
+            case 0x0BE0: // GL_BLEND_DST
+            case 0x80C8: return raster.blendDstRgb(); // GL_BLEND_DST_RGB
+            case 0x80CB: return raster.blendSrcAlpha();
+            case 0x80CA: return raster.blendDstAlpha();
+            case 0x8009: return raster.blendEquationRgb();
+            case 0x883D: return raster.blendEquationAlpha();
+            case 0x0B45: return raster.cullFace();
+            case 0x0B46: return raster.frontFace();
+
+            case 0x8068: // GL_TEXTURE_BINDING_1D
+                return textureBindingOrZero(0x0DE0);
+            case 0x806A: // GL_TEXTURE_BINDING_3D
+                return textureBindingOrZero(0x806F);
+            case 0x8514: // GL_TEXTURE_BINDING_CUBE_MAP
+                return textureBindingOrZero(0x8513);
+            case 0x8CA7: // GL_RENDERBUFFER_BINDING
+                return GlsmClientArrayState.current().boundRenderbuffer();
+            case 0x8919: // GL_SAMPLER_BINDING - sampler objects are not modelled
+                return 0;
+            case 0x8A28: { // GL_UNIFORM_BUFFER_BINDING - the generic binding record
+                int bound = GlsmBufferState.current().bound(0x8A11);
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x8F36: { // GL_COPY_READ_BUFFER_BINDING
+                int bound = GlsmBufferState.current().bound(0x8F36);
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x8F37: { // GL_COPY_WRITE_BUFFER_BINDING
+                int bound = GlsmBufferState.current().bound(0x8F37);
+                return bound < 0 ? 0 : bound;
+            }
+            case 0x8895: // GL_ELEMENT_ARRAY_BUFFER_BINDING - the binding the indexed decode reads
+                return GlsmBufferState.current().bound(0x8893);
+            case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
+                return this.pixelPackBuffer;
+            case 0x88EF: // GL_PIXEL_UNPACK_BUFFER_BINDING
+                return PixelUnpackState.current().pixelUnpackBuffer();
+            case 0x8894: // GL_ARRAY_BUFFER_BINDING, including a native API resource's opaque identity
+                return NativeGeometryBuffer.boundId();
+            case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
+                return textures.texture2d();
+            }
+            case 0x84E0: // GL_ACTIVE_TEXTURE
+                return 0x84C0 + textures.activeUnit();
+            case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
+                return FramebufferBindings.current().drawFramebuffer();
+            case 0x8CAA: // GL_READ_FRAMEBUFFER_BINDING
+                return FramebufferBindings.current().readFramebuffer();
+            case 0x8CA5: // GL_STENCIL_BACK_WRITEMASK - no stencil state is kept; GL's default makes every bit writable
+                return 0xFF;
+            case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
+                return Lane2StateMirror.current().register().compilingListId();
+            case 0x8B8D: // GL_CURRENT_PROGRAM
+                return Lane2StateMirror.current().register().activeProgramId();
+            case 0x0BC1: { // GL_ALPHA_TEST_FUNC
+                // The mirror is the authority while a backend exists; without one the recorded value is, which is
+                // what the attribute stack puts back and what a mod's raw glAlphaFunc reported here.
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
+            }
+            case 0x0BC2: { // GL_ALPHA_TEST_REF
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
+                return reference >= 0.5f ? 1 : 0;
+            }
+            case 0x0B50: return sharedEnabled(0x0B50) ? 1 : 0; // GL_LIGHTING
+            case 0x0B60: return sharedEnabled(0x0B60) ? 1 : 0; // GL_FOG
+            case 0x0B71: return sharedEnabled(0x0B71) ? 1 : 0; // GL_DEPTH_TEST
+            case 0x0BC0: return sharedEnabled(0x0B86) ? 1 : 0; // GL_ALPHA_TEST
+            case 0x0C11: return sharedEnabled(0x0C11) ? 1 : 0; // GL_SCISSOR_TEST
+            // The delivered frame is RGBA8 colour with D24 depth and no stencil. Mods probe these to pick a format or
+            // a shadow path; the old answer was zero for every one of them, which reads as "no colour bits at all".
+            // The colour answers describe the frame, so while a non-default chain pair is the current target
+            // they are stale for the target actually being drawn into - QUEUE 405 (S6) counts that mismatch
+            // (targetFormatBitsAnsweredStale) rather than changing an answer mods pick formats by.
+            case 0x0D52: noteBitsAnswer(0x0D52, 8); return 8; // GL_RED_BITS
+            case 0x0D53: noteBitsAnswer(0x0D53, 8); return 8; // GL_GREEN_BITS
+            case 0x0D54: noteBitsAnswer(0x0D54, 8); return 8; // GL_BLUE_BITS
+            case 0x0D55: noteBitsAnswer(0x0D55, 8); return 8; // GL_ALPHA_BITS
+            case 0x0D56: return 24; // GL_DEPTH_BITS
+            case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
+            // Display/format probes: the window is double buffered, not stereo, and the delivered frame has no MSAA.
+            case 0x0C32: return 1; // GL_DOUBLEBUFFER
+            case 0x0C33: return 0; // GL_STEREO
+            case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
+            case 0x80A9: return 0; // GL_SAMPLES
+            case 0x8D57: return 0; // GL_MAX_SAMPLES
+            case 0x0B40: // GL_POLYGON_MODE - the rasterizer only fills, and glPolygonMode is a recorded no-op
+                return 0x1B02; // GL_FILL
+            case 0x0C40: // GL_RENDER_MODE - no feedback or selection mode is ever entered
+                return 0x1C00; // GL_RENDER
+            case 0x0D50: // GL_SUBPIXEL_BITS - the 8-bit subpixel precision Vulkan rasterization reports
+                return 8;
+            case 0x0B54: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
+                return 0x1D01;
+            case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
+                return 0;
+            case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
+                return FramebufferBindings.current().drawFramebuffer() == 0 ? 0x0405 : 0x8CE0;
+            case 0x0C02: // GL_READ_BUFFER
+                return FramebufferBindings.current().readFramebuffer() == 0 ? 0x0405 : 0x8CE0;
+            case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
+                return GlsmMatrixMode.current().get();
+            case 0x0B74: { // GL_DEPTH_FUNC
+                // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
+                // touches this provider's own record. With no backend the record is the answer, the same one
+                // glPushAttrib(GL_DEPTH_BUFFER_BIT) saves and glPopAttrib puts back.
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
+            }
+            case 0x0D05: // GL_PACK_ALIGNMENT
+                return 4;
+            case 0x0CF5: // GL_UNPACK_ALIGNMENT - the recorded value the upload conversion reads rows with
+                return GlsmBufferState.current().unpackAlignment();
+            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
+                return GlsmBufferState.current().unpackRowLength();
+            case 0x0CF3: // GL_UNPACK_SKIP_ROWS - the same pnames the pixelStore setter uses
+                return GlsmBufferState.current().unpackSkipRows();
+            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
+                return GlsmBufferState.current().unpackSkipPixels();
+            case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
+            case 0x0D03: // GL_PACK_SKIP_ROWS
+            case 0x0D04: // GL_PACK_SKIP_PIXELS
+                return 0;
+            case 0x0B65: // GL_FOG_MODE
+                return ImmediateFogState.current().glMode();
+            case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
+                return 16;
+            case 0x85B5: // GL_VERTEX_ARRAY_BINDING - the bound vertex-array name is owned by GlsmClientArrayState
+                return GlsmClientArrayState.current().boundVertexArray();
+            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size: a chain target holds a colour image
+                // per slot up to COLOR_ATTACHMENT_SLOTS, and a pass is built with that many attachments
+                return COLOR_ATTACHMENT_SLOTS;
+            case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger
+                return COLOR_ATTACHMENT_SLOTS;
+            case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
+            }
+            case 0x0D33: { // GL_MAX_TEXTURE_SIZE
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
+            }
+            case 0x8869: // GL_MAX_VERTEX_ATTRIBS
+                return 16;
+            case 0x8DFB: // GL_MAX_VERTEX_UNIFORM_VECTORS - a quarter of the component count
+                return 1024;
+            case 0x8DFD: // GL_MAX_FRAGMENT_UNIFORM_VECTORS
+                return 1024;
+            case 0x821B: // GL_MAJOR_VERSION
+                // Kept consistent with the version string this provider advertises; a capability claim has to be
+                // one story (see GlContextTerms and the monolith's measured note on the 4.4 support test).
+                return GlContextTerms.current().major();
+            case 0x821C: // GL_MINOR_VERSION
+                return GlContextTerms.current().minor();
+            case 0x9126: { // GL_CONTEXT_PROFILE_MASK
+                // Answered only when the latched terms make a profile claim; the default terms predate the
+                // profile concept, so the query keeps falling through to the MIN_VALUE answer.
+                int mask = GlContextTerms.current().profileMask();
+                return mask >= 0 ? mask : Integer.MIN_VALUE;
+            }
+            case 0x821D: // GL_NUM_EXTENSIONS
+                return 1;
+            case 0x8F38: // GL_MAX_IMAGE_UNITS - the native image binding ledger size
+                return NativeImageBindings.IMAGE_UNITS_PER_PROGRAM;
+            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically
+                return 1;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
+                return TEXTURE_UNITS_PER_STAGE;
+            case 0x8B4C: // GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS - the pipeline binds vertex-stage samplers too
+                return TEXTURE_UNITS_PER_STAGE;
+            case 0x8F39: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - per-stage x the two stages served
+                return TEXTURE_UNITS_COMBINED;
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS as LWJGL2 names it (GL20's constant is 35661)
+                return TEXTURE_UNITS_COMBINED;
+            default:
+                return Integer.MIN_VALUE;
+        }
+    }
+
+    /** The texture bound to {@code target} on the active unit, or 0 when the binding record holds none. */
+    private static int textureBindingOrZero(int target) {
+        int bound = NativeTextureBindings.current().boundTexture(target);
+        return bound < 0 ? 0 : bound;
+    }
 
     private void getInts(int pname, long out) {
         if (out == 0L) {
             return;
         }
-        if (pname == 0x8B8D /* GL_CURRENT_PROGRAM */) {
-            MemoryUtil.memPutInt(out, Lane2StateMirror.current().register().activeProgramId());
-            return;
-        }
-        if (pname == 0x0C10 /* GL_SCISSOR_BOX */) {
-            int[] box = NativeRasterState.current().scissorBox();
-            for (int i = 0; i < 4; i++) {
-                MemoryUtil.memPutInt(out + (long) i * 4L, box[i]);
+        int value;
+        switch (pname) {
+            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - two limits
+                int dimension = 16384;
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                if (vulkan != null) {
+                    dimension = vulkan.celtium$maxTextureSize();
+                }
+                MemoryUtil.memPutInt(out, dimension);
+                MemoryUtil.memPutInt(out + 4, dimension);
+                return;
             }
-            return;
+            case 0x0BA2: // GL_VIEWPORT
+                MemoryUtil.memPutInt(out, FramebufferViewportState.current().x());
+                MemoryUtil.memPutInt(out + 4, FramebufferViewportState.current().y());
+                MemoryUtil.memPutInt(out + 8, FramebufferViewportState.current().width());
+                MemoryUtil.memPutInt(out + 12, FramebufferViewportState.current().height());
+                return;
+            case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
+                int mask = NativeRasterState.current().colorMask();
+                for (int i = 0; i < 4; i++) {
+                    MemoryUtil.memPutInt(out + (long) i * 4L, (mask >>> i) & 1);
+                }
+                return;
+            }
+            case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
+                MemoryUtil.memPutInt(out, NativeRasterState.current().scissorX());
+                MemoryUtil.memPutInt(out + 4, NativeRasterState.current().scissorY());
+                MemoryUtil.memPutInt(out + 8, NativeRasterState.current().scissorWidth());
+                MemoryUtil.memPutInt(out + 12, NativeRasterState.current().scissorHeight());
+                return;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS
+                value = TEXTURE_UNITS_PER_STAGE;
+                break;
+            case 0x8F38: // GL_MAX_IMAGE_UNITS
+                value = NativeImageBindings.IMAGE_UNITS_PER_PROGRAM;
+                break;
+            case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
+                value = Lane2StateMirror.current().register().compilingListId();
+                break;
+            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
+                value = Lane2StateMirror.current().register().compilingListId() == 0 ? 0
+                        : DisplayListManager.isCompileAndExecute() ? 0x1301 : 0x1300;
+                break;
+            default:
+                value = getIntegerValue(pname);
+                if (value == Integer.MIN_VALUE) {
+                    value = 0;
+                }
         }
-        if (pname == 0x8069 /* GL_TEXTURE_BINDING_2D */) {
-            MemoryUtil.memPutInt(out, GLSMTextures.getBoundTextureForServerState());
-            return;
-        }
-        GLStateManager.glGetInteger(pname, MemoryUtil.memIntBuffer(out, 16));
-    }
-
-    private void getFloats(int pname, long out) {
-        if (out == 0L) {
-            return;
-        }
-        GLStateManager.glGetFloat(pname, MemoryUtil.memFloatBuffer(out, 16));
-    }
-
-    private void getBooleans(int pname, long out) {
-        if (out == 0L) {
-            return;
-        }
-        if (pname == 0x0C11 /* GL_SCISSOR_TEST */) {
-            MemoryUtil.memPutByte(out, (byte) (NativeRasterState.current().scissorTest() ? 1 : 0));
-            return;
-        }
-        GLStateManager.glGetBoolean(pname, MemoryUtil.memByteBuffer(out, 16));
+        noteTextureUnitAnswer(pname, value);
+        noteImageUnitAnswer(pname, value);
+        MemoryUtil.memPutInt(out, value);
     }
 
     private void getLongs(int pname, long out) {
-        if (out == 0L) {
-            return;
-        }
-        java.nio.IntBuffer ints = java.nio.IntBuffer.allocate(4);
-        GLStateManager.glGetInteger(pname, ints);
-        for (int i = 0; i < 4; i++) {
-            MemoryUtil.memPutLong(out + (long) i * 8L, ints.get(i));
+        if (out != 0L) {
+            MemoryUtil.memPutLong(out, 0L);
         }
     }
 
-    private void texImage(GlFn fn, long[] c) {
-        String name = fn.name;
-        if (name.equals("glTexStorage2D")) {
-            GLSMTextures.glTexStorage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4]);
-            return;
-        }
-        if (name.equals("glTexImage2D") || name.equals("glTextureImage2DEXT")) {
-            int format = (int) c[6];
-            int type = (int) c[7];
-            long pixels = c[8];
-            if (pixels == 0L) {
-                GLSMTextures.glTexImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                        (int) c[5], format, type, 0L);
-            } else if (PixelUnpackState.current().pixelUnpackBuffer() != 0) {
-                GLSMTextures.glTexImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                        (int) c[5], format, type, pixels);
+    private void getFloats(GlFn fn, int pname, long out) {
+        routeFloats(pname, out, "glGetDoublev".equals(fn.name));
+    }
+
+    /**
+     * Answers a float query with the number of components its pname has.
+     * <p>
+     * One float was written for every pname before this, which left the rest of the caller's buffer uninitialised: a
+     * sixteen-float matrix read produced one zero and fifteen words of whatever the allocation held, and every
+     * transform built from it was garbage. Matrices read the renderer's live state mirror (identity only before a
+     * backend exists); scalar and vector queries write exactly the number of components implied by their pname.
+     */
+    private void routeFloats(int pname, long out, boolean asDouble) {
+        ImmediateFogState fog = ImmediateFogState.current();
+        if (out != 0L && pname >= 0x0B62 && pname <= 0x0B66) {
+            if (pname == 0x0B66) {
+                float[] color = fog.getFogColor();
+                for (int i = 0; i < 4; i++) putFloatOrDouble(out, i, i == 3 ? fog.colorAlpha() : color[i], asDouble);
             } else {
-                GLSMTextures.glTexImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                        (int) c[5], format, type, bytes(pixels, texBytes(format, type, (int) c[3], (int) c[4])));
+                float value = pname == 0x0B62 ? fog.getFogDensity() : pname == 0x0B63 ? fog.getFogStart()
+                        : pname == 0x0B64 ? fog.getFogEnd() : fog.glMode();
+                putFloatOrDouble(out, 0, value, asDouble);
             }
             return;
         }
-        // glTexImage1D/3D and the remaining storage forms keep the old stub's extent-only
-        // answer: the call is counted by the fn census and no pixels are read.
-    }
 
-    private void texSubImage(GlFn fn, long[] c) {
-        if (!fn.name.equals("glTexSubImage2D")) {
+        if (out == 0L) {
             return;
         }
-        int format = (int) c[6];
-        int type = (int) c[7];
-        long pixels = c[8];
-        if (pixels == 0L) {
-            GLSMTextures.glTexSubImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                    (int) c[5], format, type, 0L);
-        } else if (PixelUnpackState.current().pixelUnpackBuffer() != 0) {
-            GLSMTextures.glTexSubImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                    (int) c[5], format, type, pixels);
-        } else {
-            GLSMTextures.glTexSubImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                    (int) c[5], format, type, bytes(pixels, texBytes(format, type, (int) c[4], (int) c[5])));
+        NativeRasterState raster = NativeRasterState.current();
+        switch (pname) {
+            case 0x8038: { // GL_POLYGON_OFFSET_FACTOR
+                putFloatOrDouble(out, 0, raster.polygonOffsetFactor(), asDouble);
+                return;
+            }
+            case 0x2A00: { // GL_POLYGON_OFFSET_UNITS
+                putFloatOrDouble(out, 0, raster.polygonOffsetUnits(), asDouble);
+                return;
+            }
+            case 0x0BA2: { // GL_VIEWPORT
+                putFloatOrDouble(out, 0, FramebufferViewportState.current().x(), asDouble);
+                putFloatOrDouble(out, 1, FramebufferViewportState.current().y(), asDouble);
+                putFloatOrDouble(out, 2, FramebufferViewportState.current().width(), asDouble);
+                putFloatOrDouble(out, 3, FramebufferViewportState.current().height(), asDouble);
+                return;
+            }
+            case 0x0C10: { // GL_SCISSOR_BOX
+                putFloatOrDouble(out, 0, raster.scissorX(), asDouble);
+                putFloatOrDouble(out, 1, raster.scissorY(), asDouble);
+                putFloatOrDouble(out, 2, raster.scissorWidth(), asDouble);
+                putFloatOrDouble(out, 3, raster.scissorHeight(), asDouble);
+                return;
+            }
+            case 0x0C23: { // GL_COLOR_WRITEMASK, as glGetFloatv reports the four channels
+                int mask = raster.colorMask();
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, ((mask >>> i) & 1), asDouble);
+                }
+                return;
+            }
+            case 0x0B72: { // GL_DEPTH_WRITEMASK, the same boolean state through the float query
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
+                putFloatOrDouble(out, 0, mask ? 1.0f : 0.0f, asDouble);
+                return;
+            }
+            case 0x0C22: { // GL_COLOR_CLEAR_VALUE
+                float[] clearScratch = new float[4];
+                FramebufferClearState.current().mainClearValues(clearScratch);
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, clearScratch[i], asDouble);
+                }
+                return;
+            }
+            case 0x0B73: { // GL_DEPTH_CLEAR_VALUE
+                putFloatOrDouble(out, 0, (float) FramebufferClearState.current().depth(), asDouble);
+                return;
+            }
+            case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - no stencil state is recorded, GL's default is 0
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                return;
+            }
+            case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float func = vulkan != null ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
+                putFloatOrDouble(out, 0, func, asDouble);
+                return;
+            }
+            case 0x0BC2: { // GL_ALPHA_TEST_REF
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
+                putFloatOrDouble(out, 0, reference, asDouble);
+                return;
+            }
+            case 0x0BA6: // GL_MODELVIEW_MATRIX
+            case 0x0BA7: // GL_PROJECTION_MATRIX
+            case 0x0BA8: // GL_TEXTURE_MATRIX
+                // The renderer's own mirror when it has one. Vanilla reads the terrain's projection and model-view
+                // through exactly this call (ActiveRenderInfo.updateRenderInfo -> GlStateManager.getFloat), and it
+                // builds the frustum the chunk traversal culls with from the same two reads (ClippingHelperImpl). An
+                // identity here therefore does two things at once: every section but the camera's own is culled, and
+                // the surviving geometry is drawn with clip coordinates equal to camera-relative world coordinates.
+                float[] mirrored = mirroredMatrix(pname);
+                for (int i = 0; i < 16; i++) {
+                    putFloatOrDouble(out, i, mirrored != null ? mirrored[i] : (i % 5 == 0 ? 1.0f : 0.0f), asDouble);
+                }
+                return;
+            case 0x0B00: // GL_CURRENT_COLOR
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().red(), asDouble);
+                putFloatOrDouble(out, 1, GlsmImmediateState.current().green(), asDouble);
+                putFloatOrDouble(out, 2, GlsmImmediateState.current().blue(), asDouble);
+                putFloatOrDouble(out, 3, GlsmImmediateState.current().alpha(), asDouble);
+                return;
+            case 0x0B70: // GL_DEPTH_RANGE
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x0B21: // GL_LINE_WIDTH
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().lineWidth(), asDouble);
+                return;
+            case 0x0B11: // GL_POINT_SIZE
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().pointSize(), asDouble);
+                return;
+            case 0x8005: // GL_BLEND_COLOR - the constant blend colour is never recorded; GL's initial value is black
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                putFloatOrDouble(out, 1, 0.0f, asDouble);
+                putFloatOrDouble(out, 2, 0.0f, asDouble);
+                putFloatOrDouble(out, 3, 0.0f, asDouble);
+                return;
+            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the float spelling of the int answer
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                float[] ambient = vulkan == null ? GlsmImmediateState.current().lightAmbientDefault() : vulkan.celtium$lightAmbient();
+                for (int i = 0; i < 4; i++) {
+                    putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
+                }
+                return;
+            }
+            case 0x0B12: // GL_POINT_SIZE_RANGE - points are not rasterized, so the one supported size is one
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x0B13: // GL_POINT_SIZE_GRANULARITY
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0B23: // GL_LINE_WIDTH_GRANULARITY
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, lineWidthRangeMax(), asDouble);
+                return;
+            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS
+                int dimension = 16384;
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                if (vulkan != null) {
+                    dimension = vulkan.celtium$maxTextureSize();
+                }
+                putFloatOrDouble(out, 0, dimension, asDouble);
+                putFloatOrDouble(out, 1, dimension, asDouble);
+                return;
+            }
+            case 0x846D: // GL_ALIASED_POINT_SIZE_RANGE - points are not rasterized; one supported size
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x8129: // GL_POINT_DISTANCE_ATTENUATION - GL's initial value, in all three components
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, 0.0f, asDouble);
+                putFloatOrDouble(out, 2, 0.0f, asDouble);
+                return;
+            case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE - the device's range, not the width currently set
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, lineWidthRangeMax(), asDouble);
+                return;
+            default:
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
         }
+    }
+
+    /**
+     * The matrix the renderer's mirror holds for a GL matrix pname, or null when no mirror is published.
+     * <p>
+     * The provider is the only thing that can answer these reads, and answering the identity is not a neutral choice -
+     * it is a culling frustum and a camera transform. The backend publishes what its own hooks observed, so the two
+     * agree on what the frame's matrices are.
+     */
+    private static float[] mirroredMatrix(int pname) {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        if (vulkan == null) {
+            return null;
+        }
+        // Peeked, not copied: the caller writes the sixteen values out at once, and vanilla asks per entity.
+        switch (pname) {
+            case 0x0BA6:
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
+            case 0x0BA7:
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState.MATRIX_MODE_PROJECTION);
+            case 0x0BA8:
+                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState.MATRIX_MODE_TEXTURE);
+            default:
+                return null;
+        }
+    }
+
+    private static void putFloatOrDouble(long out, int index, float value, boolean asDouble) {
+        if (asDouble) {
+            MemoryUtil.memPutDouble(out + (long) index * 8L, value);
+        } else {
+            MemoryUtil.memPutFloat(out + (long) index * 4L, value);
+        }
+    }
+
+    /** {@return the max of the line-width range the queries answer}: the device's limit, or 1.0 before a backend exists. */
+    private static float lineWidthRangeMax() {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$lineWidthRangeMax() : 1.0f;
+    }
+
+    /**
+     * Hands one framebuffer bit-count answer to the format census (QUEUE 405, S6): the answer is this
+     * provider's flat value for the delivered frame, and the backend counts it when the current target's
+     * pair class carries different bits. Without a Vulkan backend there is no pair class to disagree
+     * with, so nothing is counted.
+     */
+    private static void noteBitsAnswer(int pname, int answeredBits) {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        if (vulkan != null) {
+            vulkan.celtium$noteTargetFormatBitsAnswer(pname, answeredBits);
+        }
+    }
+
+    private void routeBooleans(int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        // The query used to write a single false byte and nothing else, whatever was asked. Callers that save and restore
+        // GL state read the whole vector: glColorMask(true,true,true,true) is recorded here, and the readback answered
+        // [0,85,85,85] because only the first byte was written and it was false (#388).
+        switch (pname) {
+            case 0x0C23: { // GL_COLOR_WRITEMASK
+                int mask = NativeRasterState.current().colorMask();
+                for (int i = 0; i < 4; i++) {
+                    MemoryUtil.memPutByte(out + i, (byte) (((mask >>> i) & 1) != 0 ? 1 : 0));
+                }
+                return;
+            }
+            case 0x0B72: { // GL_DEPTH_WRITEMASK
+                // GL's default is enabled. The mirror is the authority: glDepthMask goes through the hint to the backend
+                // and never reaches this provider's enable record.
+                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive() : sharedEnabled(GL_DEPTH_WRITEMASK_CAP);
+                MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
+                return;
+            }
+            case 0x0BD0: { // GL_DITHER
+                // GL's default is enabled and dithering has no effect in this renderer, so the answer stays true.
+                MemoryUtil.memPutByte(out, (byte) 1);
+                return;
+            }
+            case 0x0BE2: // GL_BLEND
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0BE2) ? 1 : 0));
+                return;
+            case 0x0B90: // GL_STENCIL_TEST
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B90) ? 1 : 0));
+                return;
+            case 0x0B71: // GL_DEPTH_TEST
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B71) ? 1 : 0));
+                return;
+            case 0x0C11: // GL_SCISSOR_TEST
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0C11) ? 1 : 0));
+                return;
+            case 0x8037: // GL_POLYGON_OFFSET_FILL
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x8037) ? 1 : 0));
+                return;
+            case 0x0B44: // GL_CULL_FACE
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B44) ? 1 : 0));
+                return;
+            case 0x0B50: // GL_LIGHTING
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B50) ? 1 : 0));
+                return;
+            case 0x0B60: // GL_FOG
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B60) ? 1 : 0));
+                return;
+            case 0x0BC0: // GL_ALPHA_TEST
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0B86) ? 1 : 0));
+                return;
+            case 0x0DE1: // GL_TEXTURE_2D
+                MemoryUtil.memPutByte(out, (byte) (sharedEnabled(0x0DE1) ? 1 : 0));
+                return;
+            default:
+                // A query this provider has no record for: the spec says the value is undefined, and writing false over
+                // the caller's whole destination would destroy whatever it had laid out next. One byte stays, as before.
+                MemoryUtil.memPutByte(out, (byte) 0);
+        }
+    }
+
+    /** The tex-image producer the dispatch lands on: the capture store files the upload (family 3, seat B). */
+    private void texImagePixels(GlFn fn, long[] c) {
+        VulkanTextureRegistry.captureStore().texImagePixels(CaptureUploadContext.current(), fn.name, c);
     }
 
     private void readPixels(long[] c) {
