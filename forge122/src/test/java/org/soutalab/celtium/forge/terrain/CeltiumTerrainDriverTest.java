@@ -1,7 +1,12 @@
 package org.soutalab.celtium.forge.terrain;
 
 import org.junit.jupiter.api.Test;
+import org.soutalab.celtium.core.geometry.PackedAxisQuad;
+import org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometryRaw;
 
+import java.lang.reflect.Method;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -65,6 +70,38 @@ class CeltiumTerrainDriverTest {
         assertNotEquals(CeltiumTerrainDriver.fingerprintWords(patterned(2048)),
                 CeltiumTerrainDriver.fingerprintWords(patterned(2051)),
                 "different lengths must not collide on this pattern");
+    }
+
+    @Test
+    void toRawCarriesTheCornerLightColumnInStoreLayout() throws Exception {
+        // R-107, ruling #15648 condition 1: the driver's toRaw handoff must carry the
+        // per-corner light column into the raw carrier, in the store's layout - every
+        // axis quad's two words in layer order, then every general quad's.
+        MeshBuffers buffers = new MeshBuffers();
+        buffers.reset(false);
+        PackedAxisQuad quad = PackedAxisQuad.of(0, 0, 0, 1, false, 1, 1, 3, 0, 0, 15, 15,
+                255, 0, 0, 0, 0);
+        buffers.addAxisQuad(0, quad, (short) 0, 1000, 1001);
+        buffers.addAxisQuad(0, quad, (short) 0, 1010, 1011);
+        buffers.addAxisQuad(1, quad, (short) 0, 1100, 1101);
+        float[] positions = new float[12];
+        int[] uv = new int[4];
+        buffers.addGeneralQuad(0, positions, 1, 0, 0, 0, uv, 2000, 2001);
+        buffers.addGeneralQuad(2, positions, 1, 0, 0, 0, uv, 2200, 2201);
+
+        SectionGeometryRaw raw = toRaw(buffers);
+        assertEquals(3, raw.axisQuadCount());
+        assertEquals(2, raw.generalQuadCount());
+        assertArrayEquals(new int[]{1000, 1001, 1010, 1011, 1100, 1101, 2000, 2001, 2200, 2201},
+                raw.cornerLight(), "axis layers first, then general layers, two words per quad");
+        assertArrayEquals(buffers.cornerLightColumn(), raw.cornerLight(),
+                "the carrier holds the buffers' concatenated column itself");
+    }
+
+    private static SectionGeometryRaw toRaw(MeshBuffers buffers) throws Exception {
+        Method toRaw = CeltiumTerrainDriver.class.getDeclaredMethod("toRaw", MeshBuffers.class);
+        toRaw.setAccessible(true);
+        return (SectionGeometryRaw) toRaw.invoke(null, buffers);
     }
 
     private static byte[] patterned(int length) {
