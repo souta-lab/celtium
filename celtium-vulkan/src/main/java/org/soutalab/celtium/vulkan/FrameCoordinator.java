@@ -46,6 +46,13 @@ public final class FrameCoordinator {
          */
         void recordFrameEndTimestamp();
 
+        /**
+         * Records the frame's S3 Hi-Z build (the fixed template's last stage) into the still-open
+         * command buffer, at the seat {@link #celtium$finishFrameBuffer} marks HIZ_BUILD: after the
+         * main stage's depth exists, before the frame-end timestamp.
+         */
+        void recordHiZBuild();
+
         /** Stamps the direct submit path for the submit-to-fence distribution the summary reports. */
         void celtium$noteDirectSubmit();
         VulkanCommandBufferState commandState();
@@ -306,10 +313,10 @@ public final class FrameCoordinator {
         this.host.context().celtium$supplyUploadBudgetFrameKey(this.host.frameId());
         this.host.context().flushUploads();
         // S3 HiZBuild's seat: the fixed template's last stage records here, after the main
-        // stage's depth exists and before the buffer ends. D8 wires the actual half-res
-        // MAX-reduction record into this bracket; until then the mark states the stage's
-        // place in the frame so the stage record is complete.
+        // stage's depth exists and before the buffer ends. The host records the actual
+        // MAX-reduction pyramid build into this bracket (D8-a).
         markStage(Stage.HIZ_BUILD);
+        this.host.recordHiZBuild();
         // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
         this.host.recordFrameEndTimestamp();
         // Direct present path: when the frame renders into a borrowed swapchain image, the first

@@ -77,6 +77,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         @Override public void recordFrameEndTimestamp() {
             VulkanTerrainGpuBackend.this.recordFrameEndTimestamp();
         }
+        @Override public void recordHiZBuild() {
+            VulkanTerrainGpuBackend.this.celtium$recordHiZBuild();
+        }
         @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
         @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
         @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }
@@ -1337,6 +1340,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
     private long lane1PreparedFrame = -1L;
+    /** The frame whose S1 cull dispatch has been recorded (once per frame, first main layer). */
+    private long lane1CullDispatchedFrame = -1L;
 
     @Override
     public void celtium$setTextureCellTable(int[] packedCells) {
@@ -1379,6 +1384,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.lane1.clearWorld();
         }
         this.lane1PreparedFrame = -1L;
+        this.lane1CullDispatchedFrame = -1L;
     }
 
     @Override
@@ -1448,6 +1454,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.lane1GuardViews++;
             return;
         }
+        if (this.lane1CullDispatchedFrame != this.frameId) {
+            // S1 of the fixed template records here, once per frame, ahead of the first main
+            // layer pass: the GPU cull dispatch fills the indirect regions the layer passes
+            // consume (the CPU visible-set scan is the fallback the frontend keeps when the
+            // dispatch does not arm). Bracketed by the stage's G0 timestamp pair (G2-30).
+            this.lane1CullDispatchedFrame = this.frameId;
+            int cullSlot = celtium$beginNamedPassTimestamp();
+            try {
+                frontend.recordCullDispatch(this.commandBuffer, this.frameSlot);
+            } finally {
+                celtium$closeNamedPassTimestamp(cullSlot, "S1_cull_lightgrid");
+            }
+        }
         celtium$preflushBeforeTerrain();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
@@ -1455,19 +1474,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             long framebuffer = ensureFramebuffer(renderPass);
             org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                     celtium$terrainBeginInfo(renderPass, framebuffer, this.targetWidth, this.targetHeight);
+            org.soutalab.celtium.core.shader.TerrainPassKind kind =
+                    org.soutalab.celtium.core.shader.TerrainPassKind.values()[layerOrdinal];
+            int passSlot = celtium$beginNamedPassTimestamp();
             vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
             this.commandState.beginPass(this.activeImmediateTarget);
             try {
                 setViewportAndScissor(stack, this.targetWidth, this.targetHeight);
                 this.lane1RecordPasses++;
-                frontend.recordPass(
-                        org.soutalab.celtium.core.shader.TerrainPassKind.values()[layerOrdinal],
-                        this.commandBuffer, renderPass, this.frameSlot,
-                        this.atlasTexture.view(), this.lightmapTexture.view(),
-                        this.atlasTexture.width() / 16.0f);
+                // G2-30's named Lane 1 CPU bracket: the regular rewiring of the existing
+                // terrainRecord slot onto the seated recordPass call.
+                FramePassTimings.begin("terrainRecord");
+                try {
+                    frontend.recordPass(
+                            kind,
+                            this.commandBuffer, renderPass, this.frameSlot,
+                            this.atlasTexture.view(), this.lightmapTexture.view(),
+                            this.atlasTexture.width() / 16.0f);
+                } finally {
+                    FramePassTimings.end("terrainRecord");
+                }
             } finally {
                 vkCmdEndRenderPass(this.commandBuffer);
                 this.commandState.endPass();
+                celtium$closeNamedPassTimestamp(passSlot, celtium$lane1PassTimingName(kind));
             }
         }
     }
@@ -16697,6 +16727,7 @@ this.frameBufferOpen = false;
             consumed = true;
             long terrainGpuNanos = 0L;
             java.util.Map<String, Long> framePackNanos = new java.util.LinkedHashMap<>();
+            java.util.Map<String, Long> frameNativeNanos = new java.util.LinkedHashMap<>();
             for (int slot = 0; slot < snapshot.passSlots; slot++) {
                 long startAvailable = data.get((slot * 2 * 2) + 1);
                 long endAvailable = data.get((slot * 2 * 2) + 3);
@@ -16717,8 +16748,11 @@ this.frameBufferOpen = false;
                         // A pack stage's subpasses share one name: the stage's frame total is their sum,
                         // filed under the name once, beside the native passes' own entries.
                         framePackNanos.merge(packName, Long.valueOf(passNanos), Long::sum);
-                    } else {
-                        this.passTimings.put(snapshot.passes.get(slot), passNanos);
+                    } else if (snapshot.passes.get(slot) != null) {
+                        // A native stage can record several slots under one name in a frame
+                        // (segmented recording revisits a layer): the name's frame total is
+                        // their sum, filed into the persistent map once, like the pack branch.
+                        frameNativeNanos.merge(snapshot.passes.get(slot), Long.valueOf(passNanos), Long::sum);
                     }
                     // The frame budget's terrain column is this frame's passes summed fresh from the readback:
                     // the maps above keep a pass's last measured value across frames, so summing them would file
@@ -16728,6 +16762,9 @@ this.frameBufferOpen = false;
             }
             if (!framePackNanos.isEmpty()) {
                 this.packPassTimings.putAll(framePackNanos);
+            }
+            if (!frameNativeNanos.isEmpty()) {
+                this.passTimings.putAll(frameNativeNanos);
             }
             FrameBudgetTimings.setTerrainGpuPass(terrainGpuNanos);
             if (snapshot.frameTimed) {
@@ -18091,6 +18128,66 @@ this.frameBufferOpen = false;
                 celtium$timestampPoolBase() + (slot * 2) + 1);
         this.timestampPackPassNames.put(Integer.valueOf(slot), shadowStage ? "shadow" : "gbuffers");
         this.timestampSlots++;
+    }
+
+    /**
+     * Opens a named native-route timed slot (G2-30's permanent G0 instruments on the fixed
+     * stages): the same slot discipline as the pack pair — the begin reserves the current slot
+     * index with a top-of-pipe write, the close in {@link #celtium$closeNamedPassTimestamp}
+     * registers the name and advances the count. Returns -1 when the pool is unusable, in which
+     * case the close is a no-op and nothing is registered.
+     */
+    private int celtium$beginNamedPassTimestamp() {
+        if (this.timestampPool == 0L || !this.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
+            return -1;
+        }
+        int slot = this.timestampSlots;
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
+                celtium$timestampPoolBase() + (slot * 2));
+        return slot;
+    }
+
+    /** Closes a slot opened by {@link #celtium$beginNamedPassTimestamp} under the given stage name. */
+    private void celtium$closeNamedPassTimestamp(int slot, String name) {
+        if (slot < 0) {
+            return;
+        }
+        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                celtium$timestampPoolBase() + (slot * 2) + 1);
+        if (name != null) {
+            this.timestampPasses.put(Integer.valueOf(slot), name);
+        }
+        this.timestampSlots++;
+    }
+
+    /** The G2-30 report name of a main terrain layer pass, or null for kinds the report does not name. */
+    private static String celtium$lane1PassTimingName(
+            org.soutalab.celtium.core.shader.TerrainPassKind kind) {
+        return switch (kind) {
+            case MAIN_SOLID -> "lane1_solid";
+            case MAIN_CUTOUT -> "lane1_cutout";
+            case MAIN_TRANSLUCENT -> "lane1_translucent";
+            default -> null;
+        };
+    }
+
+    /**
+     * The host seat for the fixed template's S3 stage (FrameCoordinator calls this at its
+     * HIZ_BUILD mark, buffer still recording, no pass open): brackets the frontend's Hi-Z
+     * pyramid build with the stage's G0 timestamp pair. A missing target or buffer leaves the
+     * stage unrecorded, the same as a frame the finish path abandons.
+     */
+    void celtium$recordHiZBuild() {
+        if (this.commandBuffer == null || this.frameTarget == null || this.gpuStalled
+                || this.lane1 == null) {
+            return;
+        }
+        int slot = celtium$beginNamedPassTimestamp();
+        try {
+            this.lane1.recordHiZBuild(this.commandBuffer, this.frameTarget, this.frameSlot);
+        } finally {
+            celtium$closeNamedPassTimestamp(slot, "S3_hiz");
+        }
     }
 
 
