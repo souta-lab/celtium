@@ -58,14 +58,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // These texcoord/vertex names also have legacy-capture routes: the route is consulted before this set,
             // so an entry here never answers them (the listing is kept for the names that have no route).
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
-            // The uniform setters, the shader source, attachment and link are routed to the converter's
-            // program machine (GLSMPrograms over DirectGlRuntime) and are therefore absent.
+            // The uniform setters, the shader source, compilation, attachment and link are routed to the converter's
+            // program machine (GLSMPrograms over DirectGlRuntime) and are therefore absent. Compilation joined them
+            // last: it stayed listed here on the old premise that a mod's GL program is a stub whose uniforms
+            // nothing reads, and a shader whose compile was counted away kept its record's compiled flag down, so
+            // the status query honestly answered 0 for a program the machine could have run.
             "glVertex2i", "glLineStipple",
-            // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
-            // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
-            // in the measured session was 3.4e3.
-            // glPushAttrib/glPopAttrib and the client pair are routed below to their state records.
-            "glCompileShader",
             // Spellings whose only route belongs to the legacy capture, which runs above this set. The route is
             // consulted first, so the listing cannot shadow it. The unconditional routes are
             // the different case the note at the top of this set names: those names must not be listed at all.
@@ -852,10 +850,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             java.util.regex.Pattern.compile("nglUniformMatrix([2-4])fv(ARB)?");
 
     /**
-     * A mod's own program: its sources, attachment, link and uniform values reach
+     * A mod's own program: its sources, compilation, attachment, link and uniform values reach
      * the converter's program machine (GLSMPrograms over DirectGlRuntime). Until now these were listed no-ops, so a program bound for a draw was an
      * empty id and its batch could only be refused; GTCEu's bloom programs are the measured case. The ARB spellings
-     * (glShaderSourceARB, glAttachObjectARB, glLinkProgramARB, glUniform*ARB) take the same arguments.
+     * (glShaderSourceARB, glCompileShaderARB, glAttachObjectARB, glLinkProgramARB, glUniform*ARB) take the same arguments.
      */
     private static boolean celtium$routeModProgram(MethodVisitor method, String name, String descriptor) {
         String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
@@ -874,6 +872,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(Opcodes.LLOAD, 2);
             method.visitVarInsn(Opcodes.LLOAD, 4);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glShaderSource", "(IIJJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        if ((name.equals("glCompileShader") || name.equals("glCompileShaderARB")) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glCompileShader", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return true;
         }
