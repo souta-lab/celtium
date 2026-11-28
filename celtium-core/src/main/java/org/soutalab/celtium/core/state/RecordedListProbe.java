@@ -8,8 +8,8 @@ package org.soutalab.celtium.core.state;
  * list a replay is currently executing. Both answers live in the capture layer's own store, and
  * the non-terrain lane must not reach into that store directly: G2-07 keeps the recorded-list
  * boundary explicitly separated, and the G2-14 wiring contract forbids Lane 2 classes from
- * referencing the converter ({@code org.soutalab.celtium.glcompat}) or the old capture package
- * ({@code org.soutalab.celtium.vulkan.gl}) at all. This narrow predicate is the whole surface:
+ * referencing the converter ({@code org.soutalab.celtium.glcompat}) or the retired monolith
+ * GL package at all. This narrow predicate is the whole surface:
  * the composition root installs the query over the real store (see {@link RecordedListProbes}),
  * and readers here stay free of both packages.
  * <p>

@@ -18,13 +18,16 @@ The fix is a boundary at the mutation site, not at the next append:
 
 * the mirror setters flush the pending run before writing ({@code celtium$fontDrawStateBoundary}), and only
   when the value actually changes - {@code GlStateManager} calls its setters on its own cache misses too;
-* the stub fires the same boundary before its records change, for the capabilities and calls the group
-  capture reads live (blend enable/factors/equation, cull enable/face, colour mask, scissor box and test,
-  depth test), because callers that bypass {@code GlStateManager} land in the records directly.
+* the capture entry holds no draw-state records of its own (E4-c removed the monolith that did): its
+  dispatch routes the capabilities and calls the group capture reads live (blend enable/factors/equation,
+  cull enable/face, colour mask, scissor box and test, depth test) to the owners that fire the same
+  boundary before their records change - the raster owner's before-change hook inside its setters, the
+  backend's mirror setters, and the GLSM executor doors that apply state through the backend runtime -
+  because callers that bypass {@code GlStateManager} land in those records directly.
 
 This check pins that wiring: every setter that mutates a state the capture reads must pass through the
-boundary, and the stub's tracked record writes must fire it. A setter added later without the flush is the
-regression this exists to catch.
+boundary, and the entry's dispatch must keep routing to the owners that fire it rather than growing a
+record of its own. A setter added later without the flush is the regression this exists to catch.
 
     python3 scripts/cpu-contract/font-state-boundary-check.py
 
@@ -37,7 +40,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
-STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java'
+ENTRY = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java'
+GLSM_BLEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/GLSMBlend.java'
+GLSM_RASTERIZER = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/GLSMRasterizer.java'
 RASTER = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java'
 
 # (setter name, mutation call that must come after the boundary) in VulkanTerrainGpuBackend.
@@ -54,23 +59,44 @@ MIRROR_SETTERS = [
     ('blendFunc(int sourceFactor', 'immediateState.blendFunc('),
 ]
 
-# Stub record writes that must fire noteDrawStateBoundary() first: dispatch case label -> assignment text.
-STUB_SITES = [
-    ('SEM_ENABLE', 'enables[(int) a0] = 1'),
-    ('SEM_DISABLE', 'enables[(int) a0] = 0'),
-    ('SEM_CULL_FACE', 'cullFaceValue ='),
-    ('SEM_BLEND_FUNC:', 'blendSrcRgb ='),
-    ('SEM_BLEND_FUNC_SEPARATE', 'blendSrcRgb = (int) c[0]'),
-    ('SEM_BLEND_EQUATION:', 'blendEquationRgb = (int) a0'),
-    ('SEM_BLEND_EQUATION_SEPARATE', 'blendEquationAlpha = (int) a1'),
-    ('SEM_COLOR_MASK', 'colorMaskBits ='),
-    ('SEM_SCISSOR', 'scissorBox[0] ='),
+# Entry dispatch cases whose state the group capture reads live: case label -> the routing door
+# the case body must call. The doors land on owners that fire the boundary before they mutate
+# (the raster owner's hook, the backend's mirror setters, the GLSM executor's runtime), so the
+# contract follows the route rather than a record write inside the entry - the entry has none.
+ENTRY_SITES = [
+    ('SEM_ENABLE', 'setCapability('),
+    ('SEM_DISABLE', 'setCapability('),
+    ('SEM_CULL_FACE', 'GLSMRasterizer.glCullFace('),
+    ('SEM_BLEND_FUNC:', 'GLSMBlend.glBlendFunc('),
+    ('SEM_BLEND_FUNC_SEPARATE', 'GLSMBlend.glBlendFuncSeparate('),
+    ('SEM_BLEND_EQUATION:', 'GLSMBlend.glBlendEquation('),
+    ('SEM_BLEND_EQUATION_SEPARATE', 'GLSMBlend.glBlendEquationSeparate('),
+    ('SEM_COLOR_MASK', 'GLStateManager.glColorMask('),
+    ('SEM_SCISSOR', 'NativeRasterState.current().scissor('),
+]
+
+# The GLSM executor doors behind the entry's routes: each must apply through the executor
+# (EXECUTOR.), which is what carries the write to the backend runtime's boundary-firing setters.
+GLSM_DOORS = [
+    (GLSM_RASTERIZER, 'glCullFace'),
+    (GLSM_BLEND, 'glBlendFunc'),
+    (GLSM_BLEND, 'glBlendFuncSeparate'),
+    (GLSM_BLEND, 'glBlendEquation'),
+    (GLSM_BLEND, 'glBlendEquationSeparate'),
+    (GLSM_BLEND, 'glColorMask'),
+]
+
+# NativeRasterState setters the capture reads live: each must fire the owner's before-change
+# hook (changing()) before it stores, which is where the stub-side boundary now lives.
+RASTER_SETTERS = [
+    'scissor', 'scissorTest', 'cullFace', 'cullEnabled', 'blendEnabled', 'blendFunc',
+    'blendEquation', 'colorMask', 'frontFace', 'polygonOffsetFillEnabled',
 ]
 
 
 def method_body(text, name):
     """Return the body of `[modifier] void name(...)` ... } by brace matching, or None."""
-    match = re.search(r'(?:public|private|protected) void ' + re.escape(name), text)
+    match = re.search(r'(?:public|private|protected)(?:\s+(?:static|final))*' + r'\s+void\s+' + re.escape(name), text)
     if not match:
         return None
     start = text.index('{', match.end() - 1)
@@ -109,61 +135,67 @@ def check_backend(text, failures):
         failures.append('backend: the stub boundary hook is never registered')
 
 
-def check_stub(text, failures):
-    # Since the clouds' fix the two capability cases write through one producer (`setCapability`), which is also where
-    # the boundary fires. The contract follows the write rather than the case: what it must keep saying is that the
-    # boundary precedes the record change.
+def check_entry(text, failures):
+    raster_text = RASTER.read_text(encoding='utf-8')
+    # The raster owner's setters fire the boundary through the before-change hook the backend
+    # registers (check_backend verifies the registration); a setter that stores without firing
+    # it is the gap this half exists to catch.
+    for setter in RASTER_SETTERS:
+        body = method_body(raster_text, setter)
+        if body is None:
+            failures.append('entry: NativeRasterState.%s not found' % setter)
+        elif 'changing()' not in body:
+            failures.append('entry: NativeRasterState.%s stores without firing the boundary hook' % setter)
+    # The capability producer: its raster writes must name boundary-firing setters, and its one
+    # flat write is the enable sheet the queries answer from (no group-capture state of its own).
     producer = method_body(text, 'setCapability')
-    for case, write in STUB_SITES:
+    if producer is None:
+        failures.append('entry: setCapability not found')
+    else:
+        if 'GlsmEnableState.current().set(capability, enabled)' not in producer:
+            failures.append('entry: setCapability no longer lands the flat enable record')
+        for setter in re.findall(r'NativeRasterState\.current\(\)\.(\w+)\(', producer):
+            if setter.startswith('note'):
+                continue  # diagnostic counters, not state writes
+            body = method_body(raster_text, setter)
+            if body is None or 'changing()' not in body:
+                failures.append('entry: setCapability writes through NativeRasterState.%s, '
+                                'which fires no boundary' % setter)
+    # Every capture-read case must route through its door; a case that grows a record write of
+    # its own inside the entry bypasses every boundary-firing owner at once.
+    for case, door in ENTRY_SITES:
         match = re.search(r'case ' + re.escape(case), text)
         if not match:
-            failures.append('stub: case %s not found' % case)
+            failures.append('entry: case %s not found' % case)
             continue
         # The case body runs to the next 'case ' label.
         nxt = text.find('case SEM_', match.end())
         body = text[match.end():nxt if nxt > 0 else len(text)]
-        if write not in body and 'setCapability(' in body:
-            # The producer's own record write: the enables array before the GLSM rewiring
-            # (GAP-ST-1: `enables[capability] = next`), GlsmEnableState's set since. The boundary
-            # call the default branch makes on a real draw-state change must precede that write;
-            # capabilities routed to NativeRasterState fire the same boundary through the raster
-            # owner's before-change hook inside its setters, before their stores.
-            enable_write = 'GlsmEnableState.current().set(capability, enabled)'
-            if producer is None:
-                failures.append('stub: %s writes through setCapability, which the contract cannot find' % case)
-            elif 'noteDrawStateBoundary()' not in producer:
-                failures.append('stub: %s writes through setCapability, which fires no boundary' % case)
-            elif enable_write not in producer:
-                failures.append('stub: %s writes through setCapability, whose enable write the contract cannot find'
-                                % case)
-            elif producer.index('noteDrawStateBoundary()') > producer.index(enable_write):
-                failures.append('stub: %s boundary fires AFTER the write in setCapability' % case)
-            continue
-        # Since the raster records moved into NativeRasterState, a case writes through `this.raster.<setter>(`, and
-        # it is the setter that fires the boundary (on a real change) before it stores the value.
-        setter = re.search(r'this\.raster\.(\w+)\(', body)
-        if setter is not None:
-            raster_body = method_body(RASTER.read_text(encoding='utf-8'), setter.group(1))
-            if raster_body is None or 'changing()' not in raster_body:
-                failures.append('stub: %s writes through NativeRasterState.%s, which fires no boundary'
-                                % (case, setter.group(1)))
-            continue
-        if 'noteDrawStateBoundary()' not in body:
-            failures.append('stub: %s record changes without the boundary' % case)
-        elif write in body and body.index('noteDrawStateBoundary()') > body.index(write):
-            failures.append('stub: %s fires the boundary AFTER the write' % case)
+        if door not in body:
+            failures.append('entry: case %s no longer routes through %s' % (case, door))
+    # The GLSM doors must apply through their boundary-firing machinery - the state stack's
+    # beforeModify hook, the executor that carries the write to the backend runtime, or a
+    # delegation to a sibling door that does; a door that starts storing state bare would
+    # bypass every boundary at once.
+    for path, door in GLSM_DOORS:
+        body = method_body(path.read_text(encoding='utf-8'), door)
+        if body is None:
+            failures.append('entry: GLSM door %s not found in %s' % (door, path.name))
+        elif ('EXECUTOR.' not in body and 'beforeModify(' not in body
+                and 'tryBlend' not in body and 'GLSMBlend.' not in body):
+            failures.append('entry: GLSM door %s no longer applies through its boundary machinery' % door)
 
 
 def main():
     failures = []
     check_backend(BACKEND.read_text(encoding='utf-8'), failures)
-    check_stub(STUB.read_text(encoding='utf-8'), failures)
+    check_entry(ENTRY.read_text(encoding='utf-8'), failures)
     if failures:
         for failure in failures:
             print('FAIL', failure)
         print('%d wiring gap(s): a deferred font run can outlive the state it was drawn under' % len(failures))
         return 1
-    print('font draw-state boundary: every mirror setter and stub record flushes before it mutates - PASS')
+    print('font draw-state boundary: every mirror setter and entry route flushes before it mutates - PASS')
     return 0
 
 

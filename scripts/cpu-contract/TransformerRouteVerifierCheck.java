@@ -65,7 +65,7 @@ public class TransformerRouteVerifierCheck {
         // custom-program refusal could never fire and a mod's full-screen composite was drawn with the world
         // transform. Both spellings are listed because LWJGL declares the JNI and the C form separately.
         "glUseProgram", "nglUseProgram",
-        // A mod's own program: source, attachment, link and uniform values (ModProgramRegistry, 2026-11-05).
+        // A mod's own program: source, attachment, link and uniform values (the capture entry's program family, 2026-11-05).
         "nglShaderSource", "glAttachShader", "glLinkProgram", "glDeleteProgram",
         "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f", "glUniform1i", "glUniform2i", "glUniform3i",
         "glUniform4i", "nglUniform1fv", "nglUniform2fv", "nglUniform4fv", "nglUniform1iv", "nglUniformMatrix4fv",
@@ -442,26 +442,22 @@ public class TransformerRouteVerifierCheck {
         // so a harness that fails it is failing its own marshalling rather than the route.
         int queryAnswerFailures = 0;
         try {
-            Class<?> stubClass = Class.forName("org.soutalab.celtium.vulkan.gl.GlsmFrontend");
-            Class<?> rasterClass = Class.forName("org.soutalab.celtium.vulkan.NativeRasterState");
-            Class<?> bindingsClass = Class.forName("org.soutalab.celtium.vulkan.NativeTextureBindings");
-            Object raster = rasterClass.getMethod("current").invoke(null);
-            Object bindings = bindingsClass.getMethod("current").invoke(null);
-            var constructor = stubClass.getDeclaredConstructor(rasterClass, bindingsClass);
+            Class<?> stubClass = Class.forName("org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry");
+            var constructor = stubClass.getDeclaredConstructor();
             constructor.setAccessible(true);
-            Object stub = constructor.newInstance(raster, bindings);
+            Object stub = constructor.newInstance();
             var installedField = stubClass.getDeclaredField("installed");
             installedField.setAccessible(true);
             installedField.set(null, stub);
             try {
-                var dispatch = stubClass.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+                var rowMethod = stubClass.getMethod("row", int.class);
+                var dispatch = stubClass.getDeclaredMethod("dispatchArgs", rowMethod.getReturnType(), long[].class);
                 dispatch.setAccessible(true);
-                var idsField = stubClass.getDeclaredField("IDS");
-                idsField.setAccessible(true);
-                Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-                dispatch.invoke(stub, ids.get("glColorMask"), new long[] {1, 0, 1, 0});
-                dispatch.invoke(stub, ids.get("glBindTexture"), new long[] {0x0DE1, 7});
-                dispatch.invoke(stub, ids.get("glTexParameteri"), new long[] {0x0DE1, 0x2801, 0x2601});
+                Map<?, ?> ids = (Map<?, ?>) stubClass.getMethod("ids").invoke(null);
+                dispatch.invoke(stub, rowMethod.invoke(null, ids.get("glColorMask")), new long[] {1, 0, 1, 0});
+                dispatch.invoke(stub, rowMethod.invoke(null, ids.get("glBindTexture")), new long[] {0x0DE1, 7});
+                dispatch.invoke(stub, rowMethod.invoke(null, ids.get("glTexParameteri")),
+                        new long[] {0x0DE1, 0x2801, 0x2601});
                 var buffer = org.lwjgl.system.MemoryUtil.memAlloc(64);
                 try {
                     long address = org.lwjgl.system.MemoryUtil.memAddress(buffer);
