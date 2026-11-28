@@ -385,6 +385,37 @@ final class DirectGlExecutorTest {
     }
 
     @Test
+    void infoLogLengthAnswersTheRecordedLogLength() {
+        FakeSink sink = new FakeSink();
+        DirectGlExecutor executor = executorWith(sink);
+        int program = executor.createProgram();
+        int fs = executor.createShader(GL_FRAGMENT_SHADER);
+        executor.shaderSource(fs, "neither is this");
+        executor.attachShader(program, fs);
+        executor.linkProgram(program);
+        // The query the legacy registry answered for glGetProgramiv (GL_INFO_LOG_LENGTH):
+        // the recorded log's length, matching what getProgramInfoLog hands back.
+        int length = executor.getProgrami(program, 0x8B84);
+        assertTrue(length > 0, "a failed link records a non-empty info log");
+        assertEquals(length, executor.getProgramInfoLog(program, 4096).length());
+    }
+
+    @Test
+    void deletingTheBoundProgramReturnsThePublishedProgramToZero() {
+        FakeSink sink = new FakeSink();
+        DirectGlExecutor executor = executorWith(sink);
+        LightStateRegister register = new LightStateRegister();
+        int program = executor.createProgram();
+        executor.useProgram(program);
+        executor.syncToRegister(register);
+        assertEquals(program, register.activeProgramId());
+        executor.deleteProgram(program);
+        executor.syncToRegister(register);
+        assertEquals(0, register.activeProgramId(),
+                "deleting the bound program unbinds it (ruling item 21 publish contract)");
+    }
+
+    @Test
     void failedShaderLinkIsReportedNotThrown() {
         FakeSink sink = new FakeSink();
         DirectGlExecutor executor = executorWith(sink);
