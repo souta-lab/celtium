@@ -404,12 +404,17 @@ dependencies {
     // which Cleanroom supplies at runtime and the main source set therefore only
     // compile-links (compileOnly above). Unit tests that load the feeder class need
     // the core jar on the test runtime classpath; nothing here ships in the mod jar.
-    "testRuntimeOnly"("org.lwjgl:lwjgl:3.4.1")
-    // T3 (E4-c) constructs the capture entry, whose trampoline initialiser loads
-    // liblwjgl through LWJGL's own loader. The core jar alone cannot locate the
-    // library - the host's natives artifact has to ride the test runtime classpath
-    // too, with the classifier picked for the host the same way :celtium-vulkan
-    // picks it. Nothing here ships in the mod jar either.
+    // The version is the one :celtium-vulkan builds against (celtium_mod_lwjgl_version),
+    // not Cleanroom's 3.4.1: T3 (E4-c) initialises the capture entry's trampolines,
+    // whose Callback descriptors exist only in the newer line - with 3.4.1 the class
+    // loads and then dies on NoSuchMethodError. The mod itself still compile-links
+    // and runs against Cleanroom's LWJGL; this is test classpath only.
+    val lwjglTestVersion = rootProject.findProperty("celtium_mod_lwjgl_version")
+    "testRuntimeOnly"("org.lwjgl:lwjgl:$lwjglTestVersion")
+    // The trampoline initialiser loads liblwjgl through LWJGL's own loader, and the
+    // core jar alone cannot locate the library - the host's natives artifact has to
+    // ride along, with the classifier picked for the host the same way
+    // :celtium-vulkan picks it.
     val lwjglTestNatives = when {
         System.getProperty("os.name").lowercase().contains("win") -> "natives-windows"
         System.getProperty("os.name").lowercase().contains("mac") ->
@@ -417,7 +422,7 @@ dependencies {
         System.getProperty("os.arch").lowercase().contains("aarch64") -> "natives-linux-arm64"
         else -> "natives-linux"
     }
-    "testRuntimeOnly"("org.lwjgl:lwjgl:3.4.1:$lwjglTestNatives")
+    "testRuntimeOnly"("org.lwjgl:lwjgl:$lwjglTestVersion:$lwjglTestNatives")
 }
 tasks.named<JavaCompile>("compileTestJava") {
     options.release = 21
