@@ -1357,6 +1357,22 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.funnel;
     }
 
+    public void celtium$noteFramebufferHintFailure(String seat, Throwable error) {
+        this.funnel.celtium$noteFramebufferHintFailure(seat, error);
+    }
+
+    public void celtium$setFontPreFlush(Runnable hook) {
+        this.funnel.celtium$setFontPreFlush(hook);
+    }
+
+    public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
+        this.funnel.celtium$setFontCaptureWork(probe);
+    }
+
+    public void celtium$setFontCaptureSummary(java.util.function.Supplier<String> supplier) {
+        this.funnel.celtium$setFontCaptureSummary(supplier);
+    }
+
     @Override
     public void setBlendEnabled(boolean enabled) {
         this.funnel.setBlendEnabled(enabled);
@@ -1375,6 +1391,14 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     @Override
     public void colorMask(int mask) {
         this.funnel.colorMask(mask);
+    }
+
+    public float[] celtium$lightDirections() {
+        return this.funnel.celtium$lightDirections();
+    }
+
+    public float[] celtium$lightDiffuse() {
+        return this.funnel.celtium$lightDiffuse();
     }
 
     public boolean celtium$depthWritesLive() {
@@ -1509,6 +1533,14 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.invalidateTexture(glTextureId);
     }
 
+    public void onGlTextureReallocated(int glTextureId) {
+        this.funnel.onGlTextureReallocated(glTextureId);
+    }
+
+    public void onGlTextureReallocated(int glTextureId, int width, int height) {
+        this.funnel.onGlTextureReallocated(glTextureId, width, height);
+    }
+
     @Override
     public void invalidateBoundTexture() {
         this.funnel.invalidateBoundTexture();
@@ -1638,12 +1670,24 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.blendFunc(sourceFactor, destinationFactor);
     }
 
+    public void celtium$noteBindSize(int width, int height, boolean mainFramebuffer) {
+        this.funnel.celtium$noteBindSize(width, height, mainFramebuffer);
+    }
+
     public void celtium$noteGameFramebuffer(long identity, int colorTexture, int depthTexture) {
         this.funnel.celtium$noteGameFramebuffer(identity, colorTexture, depthTexture);
     }
 
+    public void celtium$forgetDeletedFramebuffer(long identity) {
+        this.funnel.celtium$forgetDeletedFramebuffer(identity);
+    }
+
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
         this.funnel.celtium$rawAttachmentTextureDeleted(framebuffer);
+    }
+
+    public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
+        this.funnel.celtium$rawFramebufferDeleted(framebuffer, colorTexture);
     }
 
     public void celtium$rawTextureDeleted(int texture) {
@@ -1686,6 +1730,31 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     @Override
     public void captureWorldSnapshot() {
         this.funnel.captureWorldSnapshot();
+    }
+
+    public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+            int vertexCount, int drawMode) {
+        return this.funnel.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode);
+    }
+
+    public String celtium$fontBatchSummary() {
+        return this.funnel.celtium$fontBatchSummary();
+    }
+
+    public String celtium$fontRetentionSummary() {
+        return this.funnel.celtium$fontRetentionSummary();
+    }
+
+    public String celtium$fontStateSummary() {
+        return this.funnel.celtium$fontStateSummary();
+    }
+
+    public float[] celtium$mirroredModelView() {
+        return this.funnel.celtium$mirroredModelView();
+    }
+
+    public float[] celtium$mirroredProjection() {
+        return this.funnel.celtium$mirroredProjection();
     }
 
     @Override
