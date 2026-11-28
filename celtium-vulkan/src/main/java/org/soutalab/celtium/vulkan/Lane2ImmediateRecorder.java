@@ -1775,7 +1775,7 @@ public final class Lane2ImmediateRecorder {
 
 
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
-    final ModelStatistics modelStats = new ModelStatistics(this.owner.modelGeometry);
+    ModelStatistics modelStats;
 
 
     /** The texture domain's counters (refactoring plan R2, stage 3). */

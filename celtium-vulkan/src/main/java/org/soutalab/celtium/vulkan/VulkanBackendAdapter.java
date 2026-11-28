@@ -76,8 +76,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.frameCoordinator.presentSwapchain = this.presentSwapchain;
         this.funnel.presentSwapchain = this.presentSwapchain;
         this.funnel.owner = this;
+        this.funnel.modelStats = new ModelStatistics(this.modelGeometry);
         this.copyReadSide = new CopyReadSide(this.frameCoordinator, this.funnel, this.presentSwapchain);
         this.copyReadSide.seatOwner = this;
+        this.textureCopyService = this.copyReadSide.textureCopyService;
         this.presentSwapchain.seatOwner = this;
         this.frameStats = new FrameStatsReport(this.frameCoordinator, this.funnel);
         this.frameStats.seatOwner = this;
@@ -1242,7 +1244,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * The texture-copy path's service, built by {@link #copyReadSide}. Kept as a field under this name
      * because the frame summary, the diagnostics and the teardown read it here - one of them reflectively.
      */
-    final TextureCopyService textureCopyService = this.copyReadSide.textureCopyService;
+    final TextureCopyService textureCopyService;
 
     void celtium$dumpOwnedImage(String stage, long image, String base, String identity, int width,
             int height) {
