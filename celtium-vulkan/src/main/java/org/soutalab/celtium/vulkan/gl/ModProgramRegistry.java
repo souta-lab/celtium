@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;

@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan.shader;
 
 import org.soutalab.celtium.vulkan.gl.GlsmPackState;
+import org.soutalab.celtium.vulkan.gl.ModPushConstantLimit;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -864,8 +865,8 @@ public final class ModGlslTranslator {
         return RESERVED_IN_450.contains(glName) ? RENAMED + glName : glName;
     }
 
-    /** Package-private for {@link ModProgramRegistry}'s fallback stage heuristic, which reads the same cleaned text. */
-    static String strip(String source) {
+    /** Public for {@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}'s fallback stage heuristic, which reads the same cleaned text (cross-package since the G2-06 move). */
+    public static String strip(String source) {
         if (source == null) {
             throw new IllegalArgumentException("a stage has no source");
         }
@@ -2451,8 +2452,8 @@ public final class ModGlslTranslator {
         };
     }
 
-    /** {@return {alignment, size}} of a std140 member. Arrays round every element up to 16 bytes. */
-    static int[] std140(String type, int arrayLength) {
+    /** {@return {alignment, size}} of a std140 member. Arrays round every element up to 16 bytes. Public for {@link org.soutalab.celtium.vulkan.gl.GlsmPackState}'s layout walk (cross-package since the G2-06 move). */
+    public static int[] std140(String type, int arrayLength) {
         int align;
         int size;
         switch (type) {
