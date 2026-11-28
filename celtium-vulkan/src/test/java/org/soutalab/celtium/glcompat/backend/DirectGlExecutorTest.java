@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.core.glcompat.ComputeProgramHandle;
 import org.soutalab.celtium.core.glcompat.DirectGlDrawState;
 import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.BlitRegion;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.ClearSpec;
 import org.soutalab.celtium.core.glcompat.DrawCommand;
 import org.soutalab.celtium.core.glcompat.IndexSpan;
 import org.soutalab.celtium.core.glcompat.PrimitiveTopology;
@@ -50,6 +52,14 @@ final class DirectGlExecutorTest {
     private static final int GL_RGBA8 = 0x8058;
     private static final int GL_UNSIGNED_BYTE = 0x1401;
     private static final int GL_FRAMEBUFFER = 0x8D40;
+    private static final int GL_READ_FRAMEBUFFER = 0x8CA8;
+    private static final int GL_DRAW_FRAMEBUFFER = 0x8CA9;
+    private static final int GL_COLOR_BUFFER_BIT = 0x4000;
+    private static final int GL_DEPTH_BUFFER_BIT = 0x0100;
+    private static final int GL_STENCIL_BUFFER_BIT = 0x0400;
+    private static final int GL_SCISSOR_TEST = 0x0C11;
+    private static final int GL_NEAREST = 0x2600;
+    private static final int GL_LINEAR = 0x2601;
     private static final int GL_COLOR_ATTACHMENT0 = 0x8CE0;
     private static final int GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
     private static final int GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT = 0x8CD7;
@@ -72,7 +82,15 @@ final class DirectGlExecutorTest {
         final List<ExtendedFixedState> extendedStates = new ArrayList<>();
         final Map<Long, AttribDesc[]> programAttribs = new HashMap<>();
         final Map<Long, ByteBuffer> uniformUpdates = new HashMap<>();
+        final List<Clear> clears = new ArrayList<>();
+        final List<Blit> blits = new ArrayList<>();
         int computeDispatches;
+
+        record Clear(long target, ClearSpec spec) {
+        }
+
+        record Blit(long source, long destination, BlitRegion region) {
+        }
 
         record Draw(DirectGlDrawState state, VertexBindingSpan vertices, IndexSpan indices,
                     DrawCommand command) {
@@ -151,6 +169,16 @@ final class DirectGlExecutorTest {
 
                 @Override
                 public void destroyFramebuffer(long framebufferId) {
+                }
+
+                @Override
+                public void clearFramebuffer(long framebufferId, ClearSpec spec) {
+                    clears.add(new Clear(framebufferId, spec));
+                }
+
+                @Override
+                public void blitFramebuffer(long source, long destination, BlitRegion region) {
+                    blits.add(new Blit(source, destination, region));
                 }
             };
         }
@@ -283,6 +311,76 @@ final class DirectGlExecutorTest {
         executor.texStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 64, 32);
         executor.framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
         assertEquals(GL_FRAMEBUFFER_COMPLETE, executor.checkFramebufferStatus(GL_FRAMEBUFFER));
+    }
+
+    @Test
+    void clearAndClearBufferUseTheDrawTargetAndCurrentScissor() {
+        FakeSink sink = new FakeSink();
+        DirectGlExecutor executor = executorWith(sink);
+        int fbo = framebufferWithColor(executor);
+        executor.clearDepth(0.5);
+        executor.clear(GL_DEPTH_BUFFER_BIT);
+
+        executor.bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+        executor.enable(GL_SCISSOR_TEST);
+        executor.scissor(-3, 5, 10, 12);
+        executor.clearColor(0.25f, 0.5f, 0.75f, 1.0f);
+        executor.clearStencil(4);
+        executor.clear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        FloatBuffer buffer = FloatBuffer.wrap(new float[] {-1, 1, 0.75f, 0.5f, 0.25f});
+        buffer.position(1);
+        executor.clearBufferfv(0x1800, 0, buffer); // GL_COLOR
+        executor.clearBufferfi(0x84F9, 0, 0.75f, 9); // GL_DEPTH_STENCIL
+        executor.clearBufferiv(0x1802, 0, IntBuffer.wrap(new int[] {13})); // GL_STENCIL
+        executor.clear(GL_COLOR_BUFFER_BIT);
+
+        assertEquals(1, buffer.position());
+        ClearSpec modClear = new ClearSpec(DirectGlVulkanSink.COLOR_ASPECT | DirectGlVulkanSink.STENCIL_ASPECT,
+                0.25f, 0.5f, 0.75f, 1, 0.5f, 4, true, -3, 5, 10, 12);
+        assertEquals(List.of(
+                new FakeSink.Clear(0, new ClearSpec(DirectGlVulkanSink.DEPTH_ASPECT,
+                        0, 0, 0, 0, 0.5f, 0, false, 0, 0, 0, 0)),
+                new FakeSink.Clear(300, modClear),
+                new FakeSink.Clear(300, new ClearSpec(DirectGlVulkanSink.COLOR_ASPECT,
+                        1, 0.75f, 0.5f, 0.25f, 0, 0, true, -3, 5, 10, 12)),
+                new FakeSink.Clear(300, new ClearSpec(DirectGlVulkanSink.DEPTH_ASPECT | DirectGlVulkanSink.STENCIL_ASPECT,
+                        0, 0, 0, 0, 0.75f, 9, true, -3, 5, 10, 12)),
+                new FakeSink.Clear(300, new ClearSpec(DirectGlVulkanSink.STENCIL_ASPECT,
+                        0, 0, 0, 0, 0, 13, true, -3, 5, 10, 12)),
+                new FakeSink.Clear(300, new ClearSpec(DirectGlVulkanSink.COLOR_ASPECT,
+                        0.25f, 0.5f, 0.75f, 1, 0.5f, 4, true, -3, 5, 10, 12))), sink.clears);
+    }
+
+    @Test
+    void boundAndNamedBlitsKeepTheirEndpointsAndUseSinkFramebufferIds() {
+        FakeSink sink = new FakeSink();
+        DirectGlExecutor executor = executorWith(sink);
+        int fbo = framebufferWithColor(executor);
+        executor.bindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        executor.blitFramebuffer(2, 3, 30, 14, 44, 8, 4, 24, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        executor.blitNamedFramebuffer(0, fbo, 7, 8, 29, 20, 1, 2, 23, 14,
+                GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+
+        int incomplete = executor.genFramebuffers();
+        executor.bindFramebuffer(GL_DRAW_FRAMEBUFFER, incomplete);
+        executor.clear(GL_COLOR_BUFFER_BIT);
+        executor.blitNamedFramebuffer(incomplete, 0, 0, 0, 8, 8, 0, 0, 8, 8, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+        assertTrue(sink.clears.isEmpty());
+        assertEquals(List.of(
+                new FakeSink.Blit(300, 0, new BlitRegion(2, 3, 30, 14, 44, 8, 4, 24,
+                        DirectGlVulkanSink.COLOR_ASPECT, true)),
+                new FakeSink.Blit(0, 300, new BlitRegion(7, 8, 29, 20, 1, 2, 23, 14,
+                        DirectGlVulkanSink.DEPTH_ASPECT | DirectGlVulkanSink.STENCIL_ASPECT, false))), sink.blits);
+    }
+
+    private static int framebufferWithColor(DirectGlExecutor executor) {
+        int fbo = executor.genFramebuffers();
+        int texture = executor.genTextures();
+        executor.bindTexture(GL_TEXTURE_2D, texture);
+        executor.texStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 64, 32);
+        executor.namedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, texture, 0);
+        return fbo;
     }
 
     @Test

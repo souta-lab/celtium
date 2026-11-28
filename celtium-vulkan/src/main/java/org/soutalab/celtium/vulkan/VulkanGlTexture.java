@@ -323,6 +323,7 @@ public final class VulkanGlTexture {
      * masks by this aspect.
      */
     private int foreignAspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    private boolean directGlAttachment;
     /**
      * Whether this wrapper's sampler compares against a reference value (hardware shadow filtering), taken from
      * the source GL texture's recorded {@code GL_TEXTURE_COMPARE_MODE} at publication. Only a depth wrapper is
@@ -1102,6 +1103,11 @@ public final class VulkanGlTexture {
      */
     public static VulkanGlTexture create(VulkanContext context, int width, int height, boolean nearestFilter,
             boolean wrapRepeatU, boolean wrapRepeatV) {
+        return create(context, width, height, nearestFilter, wrapRepeatU, wrapRepeatV, false);
+    }
+
+    static VulkanGlTexture create(VulkanContext context, int width, int height, boolean nearestFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV, boolean colorAttachment) {
         if (context == null) {
             throw new NullPointerException("context");
         }
@@ -1110,6 +1116,7 @@ public final class VulkanGlTexture {
         result.wrapRepeatU = wrapRepeatU;
         result.wrapRepeatV = wrapRepeatV;
         result.nearestMinFilter = nearestFilter;
+        result.colorAttachment = colorAttachment;
         try {
             // Dimensions are validated before any GPU object exists - and before mipLevelsFor, whose shift loop is
             // meaningless for a rejected size (audit #347: an int shift masks its distance to 0..31, so a dimension
@@ -1200,10 +1207,26 @@ public final class VulkanGlTexture {
                 compareEnable, compareOp);
     }
 
+    /** Wraps a Lane 3 depth attachment whose first transition will be recorded by its owner. */
+    static VulkanGlTexture shareDirectGlDepthAttachment(VulkanContext context, long image, long view,
+            int width, int height, int aspects, boolean nearestFilter, boolean nearestMinFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV, boolean compareEnable, int compareOp) {
+        return shareExternalInternal(context, image, view, width, height, VK_IMAGE_LAYOUT_UNDEFINED,
+                aspects, nearestFilter, nearestMinFilter, wrapRepeatU, wrapRepeatV, compareEnable, compareOp, true);
+    }
+
     /** The one foreign-wrapper construction both factories share; only the aspect and the sampler spec differ. */
     private static VulkanGlTexture shareExternalInternal(VulkanContext context, long image, long view, int width,
             int height, int declaredLayout, int aspect, boolean nearestFilter, boolean nearestMinFilter,
             boolean wrapRepeatU, boolean wrapRepeatV, boolean compareEnable, int compareOp) {
+        return shareExternalInternal(context, image, view, width, height, declaredLayout, aspect,
+                nearestFilter, nearestMinFilter, wrapRepeatU, wrapRepeatV, compareEnable, compareOp, false);
+    }
+
+    private static VulkanGlTexture shareExternalInternal(VulkanContext context, long image, long view, int width,
+            int height, int declaredLayout, int aspect, boolean nearestFilter, boolean nearestMinFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV, boolean compareEnable, int compareOp,
+            boolean allowUninitializedAttachment) {
         if (context == null) {
             throw new NullPointerException("context");
         }
@@ -1215,7 +1238,7 @@ public final class VulkanGlTexture {
             throw new IllegalArgumentException("A shared external image of " + width + "x" + height
                     + " pixels is not usable");
         }
-        if (declaredLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        if (declaredLayout == VK_IMAGE_LAYOUT_UNDEFINED && !allowUninitializedAttachment) {
             // Publishing an image whose content the caller has not established would sample undefined texels; the
             // first transition could not name a preserving oldLayout either, and declaring UNDEFINED would discard
             // whatever the frame drew. Refused rather than guessed.
@@ -1238,6 +1261,7 @@ public final class VulkanGlTexture {
         result.fullContentArrived = true;
         result.generation = SHARED_GENERATIONS.incrementAndGet();
         result.foreignAspect = aspect;
+        result.directGlAttachment = allowUninitializedAttachment;
         result.nearestFilter = nearestFilter;
         result.nearestMinFilter = nearestMinFilter;
         result.wrapRepeatU = wrapRepeatU;
@@ -1273,7 +1297,7 @@ public final class VulkanGlTexture {
 
     /** {@return whether this wrapper stands for a foreign depth image} (see {@link #shareExternalDepth}). */
     public boolean isDepthExternal() {
-        return !this.ownsImage && this.foreignAspect == VK_IMAGE_ASPECT_DEPTH_BIT;
+        return !this.ownsImage && (this.foreignAspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
     }
 
     /**
@@ -1382,7 +1406,7 @@ public final class VulkanGlTexture {
             throw new IllegalStateException(what + " is for an image this class does not own; a mirrored texture's"
                     + " layouts are recorded by its own upload path");
         }
-        if (this.foreignState == null || this.foreignState.confirmed == VK_IMAGE_LAYOUT_UNDEFINED) {
+        if (this.foreignState == null || (!this.directGlAttachment && this.foreignState.confirmed == VK_IMAGE_LAYOUT_UNDEFINED)) {
             throw new IllegalStateException(what + ": the shared image's layout was never declared");
         }
     }
@@ -1428,12 +1452,12 @@ public final class VulkanGlTexture {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            boolean depth = this.foreignAspect == VK_IMAGE_ASPECT_DEPTH_BIT;
+            boolean depth = (this.foreignAspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
             int stages = depth ? DEPTH_WORKING_STAGES : WORKING_STAGES;
             int access = depth ? DEPTH_WORKING_ACCESS : WORKING_ACCESS;
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
-                    .srcAccessMask(access)
+                    .srcAccessMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : access)
                     .dstAccessMask(access)
                     .oldLayout(oldLayout)
                     .newLayout(newLayout)
@@ -3060,6 +3084,8 @@ public final class VulkanGlTexture {
         }
     }
 
+    private boolean colorAttachment;
+
     private void createImageResources(int newWidth, int newHeight) {
         requireOwned("creating an image");
         requireSupportedDimensions(context, newWidth, newHeight);
@@ -3084,7 +3110,8 @@ public final class VulkanGlTexture {
                     .arrayLayers(1)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     .tiling(VK_IMAGE_TILING_OPTIMAL)
-                    .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                    .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                            | (this.colorAttachment ? org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0))
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
             createImage.extent().set(newWidth, newHeight, 1);

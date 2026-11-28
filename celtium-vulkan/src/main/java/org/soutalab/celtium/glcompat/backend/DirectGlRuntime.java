@@ -17,6 +17,8 @@ import org.joml.Matrix4f;
 import org.soutalab.celtium.core.glcompat.ComputeProgramHandle;
 import org.soutalab.celtium.core.glcompat.DirectGlDrawState;
 import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.BlitRegion;
+import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink.ClearSpec;
 import org.soutalab.celtium.core.glcompat.DrawCommand;
 import org.soutalab.celtium.core.glcompat.IndexSpan;
 import org.soutalab.celtium.core.glcompat.PrimitiveTopology;
@@ -41,9 +43,7 @@ import org.soutalab.celtium.vulkan.DirectGlSinkExtensions;
  * they do not, the referenced vertices are re-packed from the CPU shadows into a streaming
  * buffer. Either way the sink sees exactly one span per draw, as its contract fixes.
  * <p>
- * Known limits, stated once here and again in the stage's landing record: clears and blits have
- * no sink op (the main target's clear belongs to Lane 2; a mod framebuffer's clear is dropped),
- * {@code readPixels}/{@code getTexImage} answer zeros for content only the GPU holds, instanced
+ * Known limits: {@code readPixels}/{@code getTexImage} answer zeros for content only the GPU holds, instanced
  * attributes (divisor &gt; 0) are fetched per-vertex, and compute programs are refused by the
  * inherited shader compiler.
  */
@@ -619,8 +619,71 @@ final class DirectGlRuntime {
     }
 
     public void clear(int mask) {
-        // No sink op exists for clears (see the class doc): the main target's clear is Lane 2's,
-        // and a mod framebuffer's clear is a recorded limitation of this stage.
+        int aspects = framebufferAspects(mask);
+        clearFramebuffer(aspects, this.clearColor[0], this.clearColor[1], this.clearColor[2],
+                this.clearColor[3], (float) this.clearDepth, this.clearStencil);
+    }
+
+    void clearBufferfv(int buffer, int drawBuffer, FloatBuffer values) {
+        if (drawBuffer != 0) {
+            return;
+        }
+        int offset = values.position();
+        if (buffer == 0x1800 && values.remaining() >= 4) { // GL_COLOR
+            clearFramebuffer(DirectGlVulkanSink.COLOR_ASPECT, values.get(offset), values.get(offset + 1),
+                    values.get(offset + 2), values.get(offset + 3), 0, 0);
+        } else if (buffer == 0x1801 && values.hasRemaining()) { // GL_DEPTH
+            clearFramebuffer(DirectGlVulkanSink.DEPTH_ASPECT, 0, 0, 0, 0, values.get(offset), 0);
+        }
+    }
+
+    void clearBufferiv(int buffer, int drawBuffer, IntBuffer values) {
+        if (buffer == 0x1802 && drawBuffer == 0 && values.hasRemaining()) { // GL_STENCIL
+            clearFramebuffer(DirectGlVulkanSink.STENCIL_ASPECT, 0, 0, 0, 0, 0, values.get(values.position()));
+        }
+    }
+
+    void clearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
+        if (buffer == 0x84F9 && drawBuffer == 0) { // GL_DEPTH_STENCIL
+            clearFramebuffer(DirectGlVulkanSink.DEPTH_ASPECT | DirectGlVulkanSink.STENCIL_ASPECT,
+                    0, 0, 0, 0, depth, stencil);
+        }
+    }
+
+    private void clearFramebuffer(int aspects, float r, float g, float b, float a, float depth, int stencil) {
+        if (!this.depthMask) {
+            aspects &= ~DirectGlVulkanSink.DEPTH_ASPECT;
+        }
+        if (this.stencilWriteMask == 0) {
+            aspects &= ~DirectGlVulkanSink.STENCIL_ASPECT;
+        }
+        if (!this.colorMask[0] && !this.colorMask[1] && !this.colorMask[2] && !this.colorMask[3]) {
+            aspects &= ~DirectGlVulkanSink.COLOR_ASPECT;
+        }
+        if (this.sink == null || aspects == 0) {
+            return;
+        }
+        int drawFramebuffer = boundFramebufferId(GL_DRAW_FRAMEBUFFER);
+        long target = ensureSinkFramebuffer(drawFramebuffer);
+        if (drawFramebuffer == 0 || target != 0) {
+            this.sink.framebufferOps().clearFramebuffer(target, new ClearSpec(aspects, r, g, b, a,
+                    Math.clamp(depth, 0.0f, 1.0f), stencil, this.enabledCaps.contains(GL_SCISSOR_TEST),
+                    this.scissor[0], this.scissor[1], this.scissor[2], this.scissor[3]));
+        }
+    }
+
+    private static int framebufferAspects(int mask) {
+        int aspects = 0;
+        if ((mask & 0x4000) != 0) { // GL_COLOR_BUFFER_BIT
+            aspects |= DirectGlVulkanSink.COLOR_ASPECT;
+        }
+        if ((mask & 0x0100) != 0) { // GL_DEPTH_BUFFER_BIT
+            aspects |= DirectGlVulkanSink.DEPTH_ASPECT;
+        }
+        if ((mask & 0x0400) != 0) { // GL_STENCIL_BUFFER_BIT
+            aspects |= DirectGlVulkanSink.STENCIL_ASPECT;
+        }
+        return aspects;
     }
 
     public void lineWidth(float width) {
@@ -1896,13 +1959,13 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        rec.renderbufferAttachments.remove(attachment);
         if (texture == 0) {
             rec.textureAttachments.remove(attachment);
         } else {
             rec.textureAttachments.put(attachment, texture);
         }
-        rec.sinkCreated = false;
-        updateFboExtent(rec);
+        invalidateFramebuffer(rec);
     }
 
     private void attachRenderbuffer(int fboId, int attachment, int renderbuffer) {
@@ -1910,33 +1973,42 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        rec.textureAttachments.remove(attachment);
         if (renderbuffer == 0) {
             rec.renderbufferAttachments.remove(attachment);
         } else {
             rec.renderbufferAttachments.put(attachment, renderbuffer);
         }
-        rec.sinkCreated = false;
-        updateFboExtent(rec);
+        invalidateFramebuffer(rec);
     }
 
-    private void updateFboExtent(DirectGlRecords.Framebuffer rec) {
-        int width = 0, height = 0;
+    private void invalidateFramebuffer(DirectGlRecords.Framebuffer rec) {
+        if (rec.sinkCreated && this.sink != null) {
+            this.sink.framebufferOps().destroyFramebuffer(rec.sinkId);
+        }
+        rec.sinkCreated = false;
+        rec.sinkId = 0L;
+        updateFramebufferExtent(rec);
+    }
+
+    private void updateFramebufferExtent(DirectGlRecords.Framebuffer rec) {
+        int width = Integer.MAX_VALUE, height = Integer.MAX_VALUE;
         for (int textureId : rec.textureAttachments.values()) {
             DirectGlRecords.Texture texture = this.textures.get(textureId);
             if (texture != null) {
-                width = Math.max(width, texture.width);
-                height = Math.max(height, texture.height);
+                width = Math.min(width, texture.width);
+                height = Math.min(height, texture.height);
             }
         }
         for (int rbId : rec.renderbufferAttachments.values()) {
             DirectGlRecords.Renderbuffer rb = this.renderbuffers.get(rbId);
             if (rb != null) {
-                width = Math.max(width, rb.width);
-                height = Math.max(height, rb.height);
+                width = Math.min(width, rb.width);
+                height = Math.min(height, rb.height);
             }
         }
-        rec.width = width;
-        rec.height = height;
+        rec.width = width == Integer.MAX_VALUE ? 0 : width;
+        rec.height = height == Integer.MAX_VALUE ? 0 : height;
     }
 
     public void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
@@ -2007,12 +2079,23 @@ final class DirectGlRuntime {
 
     public void blitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1, int dstX0, int dstY0,
                                 int dstX1, int dstY1, int mask, int filter) {
-        // No sink op exists for blits in this stage (see the class doc's limits).
+        blitNamedFramebuffer(boundFramebufferId(GL_READ_FRAMEBUFFER), boundFramebufferId(GL_DRAW_FRAMEBUFFER),
+                srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
     }
 
     public void blitNamedFramebuffer(int readFramebuffer, int drawFramebuffer, int srcX0, int srcY0,
                                      int srcX1, int srcY1, int dstX0, int dstY0, int dstX1, int dstY1,
                                      int mask, int filter) {
+        int aspects = framebufferAspects(mask);
+        if (this.sink == null || aspects == 0 || (filter != 0x2600 && filter != 0x2601)) {
+            return;
+        }
+        long source = ensureSinkFramebuffer(readFramebuffer);
+        long destination = ensureSinkFramebuffer(drawFramebuffer);
+        if ((readFramebuffer == 0 || source != 0) && (drawFramebuffer == 0 || destination != 0)) {
+            this.sink.framebufferOps().blitFramebuffer(source, destination, new BlitRegion(
+                    srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, aspects, filter == 0x2601));
+        }
     }
 
     public void namedFramebufferReadBuffer(int framebuffer, int mode) {
@@ -2067,7 +2150,17 @@ final class DirectGlRuntime {
     }
 
     public void deleteRenderbuffers(int renderbuffer) {
-        this.renderbuffers.remove(renderbuffer);
+        DirectGlRecords.Renderbuffer rec = this.renderbuffers.remove(renderbuffer);
+        if (rec != null) {
+            for (DirectGlRecords.Framebuffer fbo : this.framebuffers.values()) {
+                if (fbo.renderbufferAttachments.values().removeIf(id -> id == renderbuffer)) {
+                    invalidateFramebuffer(fbo);
+                }
+            }
+            if (this.sink != null && rec.sinkTextureId != 0L) {
+                this.sink.textureOps().destroyTexture(rec.sinkTextureId);
+            }
+        }
         if (this.boundRenderbuffer == renderbuffer) {
             this.boundRenderbuffer = 0;
         }
@@ -2091,13 +2184,20 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        long previous = rec.sinkTextureId;
+        rec.sinkTextureId = this.sink == null || width <= 0 || height <= 0 ? 0L
+                : this.sink.textureOps().createTexture2D(width, height, internalformat, 1);
         rec.internalFormat = internalformat;
         rec.width = width;
         rec.height = height;
         rec.samples = samples;
-        if (this.sink != null && rec.sinkTextureId == 0L) {
-            // A renderbuffer is a sink texture the framebuffer assembly references by id.
-            rec.sinkTextureId = this.sink.textureOps().createTexture2D(width, height, internalformat, 1);
+        for (DirectGlRecords.Framebuffer fbo : this.framebuffers.values()) {
+            if (fbo.renderbufferAttachments.containsValue(this.boundRenderbuffer)) {
+                invalidateFramebuffer(fbo);
+            }
+        }
+        if (this.sink != null && previous != 0L) {
+            this.sink.textureOps().destroyTexture(previous);
         }
     }
 
@@ -2137,13 +2237,14 @@ final class DirectGlRuntime {
                 colorSinkId = rb.sinkTextureId;
             }
         }
+        updateFramebufferExtent(rec);
         if (rec.width <= 0 || rec.height <= 0) {
             return 0L;
         }
         rec.sinkId = this.sink.framebufferOps().createFramebuffer(
                 colorSinkId == 0L ? new long[0] : new long[] {colorSinkId},
                 depthSinkId, rec.width, rec.height);
-        rec.sinkCreated = true;
+        rec.sinkCreated = rec.sinkId != 0L;
         return rec.sinkId;
     }
 

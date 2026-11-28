@@ -2667,6 +2667,14 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferfv(buffer, drawBuffer, value);
     }
 
+    public static void glClearBufferiv(int buffer, int drawBuffer, long value) {
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferiv(buffer, drawBuffer, value);
+    }
+
+    public static void glClearBufferuiv(int buffer, int drawBuffer, long value) {
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferuiv(buffer, drawBuffer, value);
+    }
+
     public static void glClearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferfi(buffer, drawBuffer, depth, stencil);
     }

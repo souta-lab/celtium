@@ -241,6 +241,18 @@ public final class DirectGlExecutor {
         this.runtime.clear(mask);
     }
 
+    public void clearBufferfv(int buffer, int drawBuffer, FloatBuffer values) {
+        this.runtime.clearBufferfv(buffer, drawBuffer, values);
+    }
+
+    public void clearBufferiv(int buffer, int drawBuffer, IntBuffer values) {
+        this.runtime.clearBufferiv(buffer, drawBuffer, values);
+    }
+
+    public void clearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
+        this.runtime.clearBufferfi(buffer, drawBuffer, depth, stencil);
+    }
+
     public void lineWidth(float width) {
         this.runtime.lineWidth(width);
     }
