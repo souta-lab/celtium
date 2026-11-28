@@ -4207,8 +4207,36 @@ public final class GlsmFrontend implements FunctionProvider {
         return count;
     }
 
+    // TEMP G1 Step 2 diagnostic (NEON-G1-DEPTH-RULING section 3.2): per-frame count of
+    // celtium$clear calls naming the depth bit (0x0100), split by whether the Lane 1 SOLID
+    // layer has drawn in the current frame window. The window is prepareFrame to
+    // prepareFrame, so the game's own frame-start clear lands in the previous window's
+    // "post" bucket (baseline 1 per frame there). Strip after the G1 run.
+    public static int tempDepthClearPre;
+    public static int tempDepthClearPost;
+    public static boolean tempSolidDrawn;
+
+    /** TEMP G1 diagnostic: reset the per-frame clear counters (called once per frame). */
+    public static void tempFrameReset() {
+        tempDepthClearPre = 0;
+        tempDepthClearPost = 0;
+        tempSolidDrawn = false;
+    }
+
+    /** TEMP G1 diagnostic: mark that the Lane 1 SOLID layer has drawn this frame. */
+    public static void tempNoteSolidDrawn() {
+        tempSolidDrawn = true;
+    }
+
     /** Records a clear through the same producer used by callback dispatch. */
     public static void celtium$clear(int mask) {
+        if ((mask & 0x0100) != 0) {
+            if (tempSolidDrawn) {
+                tempDepthClearPost++;
+            } else {
+                tempDepthClearPre++;
+            }
+        }
         GlsmFrontend stub = installed;
         if (stub != null) {
             stub.recordClear(mask);

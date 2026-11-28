@@ -51,6 +51,10 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     private final DrawSink drawSink;
     private long lastDrawnQuads;
     private int lastVisibleSections;
+    // TEMP G1 Step 2 diagnostic (NEON-G1-DEPTH-RULING section 3.2): whether the forward
+    // surface section (8,4,0) is in the main view's visible set. Strip after the G1 run.
+    private boolean tempG1Section840Visible;
+    private boolean tempG1Section840EverVisible;
 
     // The visible set and its layer ranges, computed once per (view, store generation):
     // the three main-layer passes of a frame share one frustum and one residency, and the
@@ -124,6 +128,18 @@ public final class TerrainDrawStage implements PackTerrainDriver {
             cachedVisible = visible;
             cachedRanges = ranges;
             cachedSlots = slots.stream().mapToInt(Integer::intValue).toArray();
+            if (!kind.isShadow()) {
+                // TEMP G1 Step 2 diagnostic: see the field declaration.
+                boolean found840 = false;
+                for (SectionDesc desc : visible) {
+                    if (desc.sectionX() == 8 && desc.sectionY() == 4 && desc.sectionZ() == 0) {
+                        found840 = true;
+                        break;
+                    }
+                }
+                tempG1Section840Visible = found840;
+                tempG1Section840EverVisible |= found840;
+            }
         }
         // Opaque kinds are depth-tested and order-free, so their commands are grouped by
         // stream (all axis, then all general): the sink binds a pipeline per stream switch,
@@ -181,7 +197,9 @@ public final class TerrainDrawStage implements PackTerrainDriver {
                 + " axisBytes=" + world.store().axisUsedBytes()
                 + " generalBytes=" + world.store().generalUsedBytes()
                 + " auxBytes=" + world.store().auxUsedBytes()
-                + " blockEntities=" + world.blockEntityCount();
+                + " blockEntities=" + world.blockEntityCount()
+                + " temp840now=" + tempG1Section840Visible
+                + " temp840ever=" + tempG1Section840EverVisible;
     }
 
     /** Pass kind to store layer: SOLID kinds draw layer 0, CUTOUT layer 1, TRANSLUCENT layer 2. */
