@@ -41,8 +41,8 @@ public final class ForgeSectionScanner {
         // virtual calls per section). A null entry means "no array": for block light that
         // cannot happen on a live storage, and for sky light it is exactly the dimensions
         // whose provider has no sky light - the case getLightFor answers 0 for.
-        byte[][][] skyLightData = new byte[3][3][3][];
-        byte[][][] blockLightData = new byte[3][3][3][];
+        byte[][][][] skyLightData = new byte[3][3][3][];
+        byte[][][][] blockLightData = new byte[3][3][3][];
         Chunk[][] chunks = new Chunk[3][3];
         if (realWorld != null) {
             for (int cx = 0; cx < 3; cx++) {
