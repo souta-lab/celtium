@@ -133,8 +133,9 @@ class TextureUploadFaultTest {
 
     @Test
     void noStageIsAddedForTextureUploads() {
-        assertEquals(2, StageGate.Stage.values().length,
-                "the stage registry stays terrain pipelines + post chain: texture failure is per-texture, "
+        assertEquals(1, StageGate.Stage.values().length,
+                "the stage registry is terrain pipelines only (POST_CHAIN abolished in S3-b step 4): "
+                        + "texture failure is per-texture, "
                         + "and one bad texture must not switch off every upload (item 432 decision record)");
         assertNull(StageGate.stageNamed("textureUpload"), "no texture-upload stage exists to be switched off");
     }
