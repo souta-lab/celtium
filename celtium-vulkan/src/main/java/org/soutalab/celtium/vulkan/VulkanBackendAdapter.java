@@ -138,7 +138,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * installed". The same instance is later adopted by the world renderer
      * ({@link #celtium$adoptTerrainState}), so one renderer serves the whole process instead of one per configuration.
      */
-    public static VulkanTerrainGpuBackend createForWindow(VulkanContext context) {
+    public static VulkanBackendAdapter createForWindow(VulkanContext context) {
         VulkanBackendAdapter backend = new VulkanBackendAdapter(context);
         backend.windowBackend = true;
         backend.windowOwned = true;
@@ -1386,6 +1386,11 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
 
     private void refreshTextures() {
         this.copyReadSide.refreshTextures();
+    }
+
+    /** {@return the Lane 2 recording funnel (the seat the direct-GL capture entry records through). */
+    public Lane2ImmediateRecorder funnel() {
+        return this.funnel;
     }
 
     @Override

@@ -55,7 +55,8 @@ import org.soutalab.celtium.vulkan.RenderObjectIds;
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
-import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
+import org.soutalab.celtium.vulkan.Lane2ImmediateRecorder;
+import org.soutalab.celtium.vulkan.VulkanBackendAdapter;
 import org.soutalab.celtium.vulkan.lane2.Lane2StateMirror;
 
 /**
@@ -1044,7 +1045,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         // mixin reports them by object identity.
         if (target != 0x8CA8 && bindReportSuppression == 0) {
             Object backend = CeltiumBackends.current();
-            if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+            Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
                 vulkan.celtium$registerRawFramebuffer(name, true);
             }
         }
@@ -1063,7 +1065,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     /** Registers a raw framebuffer with the renderer without a bind (the hint's unbind-on-delete path). */
     public static void registerRawFramebuffer(int framebuffer) {
         Object backend = CeltiumBackends.current();
-        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
             vulkan.celtium$registerRawFramebuffer(framebuffer, true);
         }
     }
@@ -1087,12 +1090,13 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         if (FramebufferBindings.current().drawIsMain()) {
             // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
             // attached it to the last queued group of the frame image when the ordering flush was asked for
-            // (VulkanTerrainGpuBackend.flushBeforeClear), and this consumes the pending mask so the latch and the
+            // (Lane2ImmediateRecorder.flushBeforeClear), and this consumes the pending mask so the latch and the
             // window acquire do not apply the same clear a second time. A mask the backend did not carry is left
             // pending, so the frame machinery still applies it at the next pass begin.
             try {
                 Object backend = CeltiumBackends.current();
-                if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
                     vulkan.celtium$takeCarriedMainClear(mask);
                 }
             } catch (RuntimeException | LinkageError ignored) {
@@ -1106,7 +1110,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             // main-framebuffer case keeps the latch path, which the frame machinery already owns.
             try {
                 Object backend = CeltiumBackends.current();
-                if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
                     vulkan.celtium$gameClear(mask, FramebufferBindings.current().drawFramebuffer());
                 }
             } catch (RuntimeException | LinkageError ignored) {
@@ -1172,15 +1177,15 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             // glEnable/glDisable entirely, so a private enable record never sees the change - the model state
             // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
             case 0x0B71: { // GL_DEPTH_TEST
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$depthTestEnabled() : GlsmEnableState.current().enabled(0x0B71);
             }
             case 0x0B86: { // GL_ALPHA_TEST
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$alphaTestEnabled() : GlsmEnableState.current().enabled(0x0B86);
             }
             case 0x0B50: { // GL_LIGHTING
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$lightingEnabled() : GlsmEnableState.current().enabled(0x0B50);
             }
             default: break;
@@ -1189,9 +1194,9 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     }
 
     /** {@return the live Vulkan backend, or null when another renderer (or none) is installed. */
-    static VulkanTerrainGpuBackend vulkanBackend() {
+    static Lane2ImmediateRecorder vulkanBackend() {
         Object backend = CeltiumBackends.current();
-        return backend instanceof VulkanTerrainGpuBackend vulkan ? vulkan : null;
+        return backend instanceof VulkanBackendAdapter adapter ? adapter.funnel() : null;
     }
 
     /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
@@ -1341,8 +1346,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         } else {
             try {
                 Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-                servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                        ? vulkan.celtium$serveDepthCopy(sourceTexture, destTexture, srcX0, srcY0, width, height,
+                servedFrom = vulkanBackend() != null
+                        ? vulkanBackend().celtium$serveDepthCopy(sourceTexture, destTexture, srcX0, srcY0, width, height,
                                 dstX0, dstY0)
                         : "refused-no-vulkan-backend";
             } catch (RuntimeException | LinkageError error) {
@@ -1382,8 +1387,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
         try {
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
-                    && vulkan.celtium$readPixels(FramebufferBindings.current().readFramebuffer(), x, y, width, height, format, type, address);
+            boolean served = vulkanBackend() != null
+                    && vulkanBackend().celtium$readPixels(FramebufferBindings.current().readFramebuffer(), x, y, width, height, format, type, address);
             if (!served && readPixelsRefusals < 8) {
                 readPixelsRefusals++;
                 System.out.println("[Celtium] CELTIUM_READ_PIXELS refused readFbo=" + FramebufferBindings.current().readFramebuffer()
@@ -2203,7 +2208,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             capacity = logicalSize - address;
             address = MemoryUtil.memAddress(storage) + address;
         }
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         if (vulkan != null) {
             vulkan.celtium$getTexImage(NativeTextureBindings.current().texture2d(), level, format, type,
                     address, capacity);
@@ -2249,7 +2254,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             // registration point too: a framebuffer whose binds never reach the renderer's bind report still
             // gets its identity, pair and shared-depth borrow from here.
             Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
                 vulkan.celtium$rawAttachmentChanged(framebuffer);
             }
             return;
@@ -2266,7 +2272,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         // After the record update, not before: the backend's registration reads the record this call just wrote
         // (it used to be notified first and so registered the previous attachment, or none).
         Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
         if (texture == 0) return;
@@ -2310,7 +2317,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             }
             FramebufferAttachmentTable.current().attachColor(framebuffer, slot, texture);
         }
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         if (vulkan != null) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
@@ -2360,22 +2367,22 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     };
 
     private boolean attribDepthWritesLive() {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
     }
 
     private int attribDepthFuncLive() {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
     }
 
     private int attribAlphaFuncLive() {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
     }
 
     private float attribAlphaReferenceLive() {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
     }
 
@@ -2439,7 +2446,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
         // game's GlStateManager path and the raw glLightfv route both write; this stub keeps no second copy, and
         // reading one would be the "restore a copy of a copy" shape the rest of this push avoids.
-        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting = vulkanBackend();
+        org.soutalab.celtium.vulkan.Lane2ImmediateRecorder lighting = vulkanBackend();
         if (lighting != null) {
             System.arraycopy(lighting.celtium$lightDirections(), 0, snapshot.lightDirections, 0, 6);
             System.arraycopy(lighting.celtium$lightDiffuse(), 0, snapshot.lightDiffuse, 0, 6);
@@ -2554,7 +2561,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             // offers outside the full-target contract are refused against, and its own viewport writer updates the
             // packed rectangle and this stub's fields. Without a backend the packed value is still what the capture
             // reads, so it is written directly rather than left describing the popped block's rectangle.
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
                 vulkan.viewport(snapshot.viewportX, snapshot.viewportY,
                         snapshot.viewportWidth, snapshot.viewportHeight);
             } else {
@@ -2573,7 +2581,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             restored |= LegacyAttribSnapshot.TEXTURE_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIGHTING_BIT) && snapshot.lightingCaptured
-                && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting) {
+                && vulkanBackend() != null) {
+            Lane2ImmediateRecorder lighting = vulkanBackend();
             // The group is restored in part (see LegacyAttribSnapshot.PARTIAL_GROUPS): the two directions, the two
             // diffuse colours, the scene ambient and the shade model. The material and per-light ambient/specular/spot
             // terms GL also keeps in this group do not exist in this renderer's payload, so they are counted as the
@@ -2857,7 +2866,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         if (name == 0) return;
         int color = org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().colorTexture(name);
         Object backend = CeltiumBackends.current();
-        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
+            if (vulkan != null) {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
         org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().framebufferDeleted(name);
@@ -3276,11 +3286,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC
                 // The mirror is the authority while a backend exists; without one the recorded value is, which is
                 // what the attribute stack puts back and what a mod's raw glAlphaFunc reported here.
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
             }
             case 0x0BC2: { // GL_ALPHA_TEST_REF
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
                 return reference >= 0.5f ? 1 : 0;
             }
@@ -3326,7 +3336,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this provider's own record. With no backend the record is the answer, the same one
                 // glPushAttrib(GL_DEPTH_BUFFER_BIT) saves and glPopAttrib puts back.
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
             }
             case 0x0D05: // GL_PACK_ALIGNMENT
@@ -3355,11 +3365,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger
                 return COLOR_ATTACHMENT_SLOTS;
             case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
             }
             case 0x0D33: { // GL_MAX_TEXTURE_SIZE
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
             }
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
@@ -3413,7 +3423,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         switch (pname) {
             case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - two limits
                 int dimension = 16384;
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 if (vulkan != null) {
                     dimension = vulkan.celtium$maxTextureSize();
                 }
@@ -3531,7 +3541,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return;
             }
             case 0x0B72: { // GL_DEPTH_WRITEMASK, the same boolean state through the float query
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
                 putFloatOrDouble(out, 0, mask ? 1.0f : 0.0f, asDouble);
                 return;
@@ -3553,13 +3563,13 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return;
             }
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 float func = vulkan != null ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
                 putFloatOrDouble(out, 0, func, asDouble);
                 return;
             }
             case 0x0BC2: { // GL_ALPHA_TEST_REF
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
                 putFloatOrDouble(out, 0, reference, asDouble);
                 return;
@@ -3603,7 +3613,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
                 return;
             case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 float[] ambient = vulkan == null ? GlsmImmediateState.current().lightAmbientDefault() : vulkan.celtium$lightAmbient();
                 for (int i = 0; i < 4; i++) {
                     putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
@@ -3626,7 +3636,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return;
             case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS
                 int dimension = 16384;
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 if (vulkan != null) {
                     dimension = vulkan.celtium$maxTextureSize();
                 }
@@ -3660,7 +3670,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
      * agree on what the frame's matrices are.
      */
     private static float[] mirroredMatrix(int pname) {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         if (vulkan == null) {
             return null;
         }
@@ -3687,7 +3697,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
 
     /** {@return the max of the line-width range the queries answer}: the device's limit, or 1.0 before a backend exists. */
     private static float lineWidthRangeMax() {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$lineWidthRangeMax() : 1.0f;
     }
 
@@ -3698,7 +3708,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
      * with, so nothing is counted.
      */
     private static void noteBitsAnswer(int pname, int answeredBits) {
-        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        Lane2ImmediateRecorder vulkan = vulkanBackend();
         if (vulkan != null) {
             vulkan.celtium$noteTargetFormatBitsAnswer(pname, answeredBits);
         }
@@ -3722,7 +3732,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case 0x0B72: { // GL_DEPTH_WRITEMASK
                 // GL's default is enabled. The mirror is the authority: glDepthMask goes through the hint to the backend
                 // and never reaches this provider's enable record.
-                VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                Lane2ImmediateRecorder vulkan = vulkanBackend();
                 boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive() : sharedEnabled(GL_DEPTH_WRITEMASK_CAP);
                 MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
                 return;
