@@ -1,5 +1,6 @@
 package org.soutalab.celtium.glcompat.capture;
 
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.Callback;
 
