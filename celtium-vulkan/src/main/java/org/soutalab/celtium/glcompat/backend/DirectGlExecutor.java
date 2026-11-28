@@ -1728,19 +1728,23 @@ public final class DirectGlExecutor {
     }
 
     public void drawElements(int mode, int count, int type, ByteBuffer indices) {
-        drawElements(mode, count, type, MemoryUtilities.memAddress0(indices));
+        // Buffer form: the indices live in client memory, not in an element buffer - hand
+        // the buffer itself to the runtime's client-indices path. Flattening it to a raw
+        // address here would route it down the EBO-offset overload, where an unbound
+        // element buffer makes the draw drop unread.
+        this.runtime.drawElements(mode, count, type, indices);
     }
 
     public void drawElements(int mode, ByteBuffer indices) {
-        drawElements(mode, indices.remaining(), GL11.GL_UNSIGNED_BYTE, MemoryUtilities.memAddress0(indices));
+        this.runtime.drawElements(mode, indices.remaining(), GL11.GL_UNSIGNED_BYTE, indices);
     }
 
     public void drawElements(int mode, ShortBuffer indices) {
-        drawElements(mode, indices.remaining(), GL11.GL_UNSIGNED_SHORT, MemoryUtilities.memAddress0(indices));
+        this.runtime.drawElements(mode, indices);
     }
 
     public void drawElements(int mode, IntBuffer indices) {
-        drawElements(mode, indices.remaining(), GL11.GL_UNSIGNED_INT, MemoryUtilities.memAddress0(indices));
+        this.runtime.drawElements(mode, indices);
     }
 
     public void texSubImage2D(int target, int level, int xoffset, int yoffset, int width, int height, int format, int type, long pixels) {
