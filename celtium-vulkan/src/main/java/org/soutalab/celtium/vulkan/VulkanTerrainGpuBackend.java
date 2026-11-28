@@ -11415,17 +11415,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // recorded, and the draw-time census reported 3 retained groups a frame against 197 total.
                     if (retained != null) {
                         this.retainedAccept++;
-                    } else if (celtium$allowPreTransform(false, modDrawProgram != null,
+                    } else if (celtium$allowPreTransform(false, false,
                             celtium$preTransformable(formatId, state))) {
                         this.preTransformEligible++;
                     }
                 }
-                // Mod programs are arbitrary GLSL vertex shaders (e.g. Iris/Demonica deferred/composite/final
-                // fullscreen quads whose vertex shader reads gl_Vertex directly as [0..1] NDC or consumes
-                // gl_ModelViewMatrix separately): baking glModelView into gl_Vertex and replacing modelView with
-                // identity clips or distorts fullscreen passes whenever glModelView is non-identity axis-aligned or
-                // affine, leaving the frame image untouched at the vanilla clear colour.
-                this.currentGroupPreTransformed = celtium$allowPreTransform(retained != null, modDrawProgram != null,
+                // The pre-transform gate's mod-program input is always false here: a batch offered with a
+                // program bound is refused at the offer site above, so no group that reaches this point is a
+                // mod program's (their arbitrary GLSL vertex shaders were why the gate existed).
+                this.currentGroupPreTransformed = celtium$allowPreTransform(retained != null, false,
                         celtium$preTransformable(formatId, state));
                 if (this.currentGroupPreTransformed) {
                     this.immediateStatistics.notePreTransformedGroups();
