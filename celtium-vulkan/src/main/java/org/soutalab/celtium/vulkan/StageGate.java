@@ -30,9 +30,7 @@ public final class StageGate {
     /** A native stage that can fail - and therefore be switched off or quarantined - independently. */
     public enum Stage {
         /** Terrain pipeline creation ({@code TerrainRenderer.pipelineFor}); degradation is a skipped pass. */
-        TERRAIN_PIPELINES("terrainPipelines", Integer.MAX_VALUE),
-        /** The native post chain ({@code PostChainBridge}); degradation is the caller's GL chain. */
-        POST_CHAIN("postChain", 3);
+        TERRAIN_PIPELINES("terrainPipelines", Integer.MAX_VALUE);
 
         private final String id;
         private final int failureThreshold;

@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
+import org.soutalab.celtium.vulkan.pack.ShaderPackRuntime;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
@@ -100,6 +101,77 @@ public final class FrameCoordinator {
         this.host = host;
     }
 
+    public enum VanillaPostOutcome { EXECUTED, REFUSED_CREATION, REFUSED_UNSUPPORTED }
+
+    private VanillaPostExecutor vanillaPost;
+    private VulkanContext vanillaPostContext;
+    private PublishedFrameTextures vanillaPostPublications;
+    private long chainInputFlushFailures;
+    private String lastVanillaPostRefusal;
+
+    /** Installs the renderer's existing framebuffer publications. */
+    void setVanillaPostPublications(PublishedFrameTextures publications) {
+        this.vanillaPostPublications = publications;
+    }
+
+    /** Call outside a rendering instance, after the target's pending Lane 2 draws are recorded. */
+    public VanillaPostOutcome runVanillaPostChain(java.util.List<VanillaPostPassSpec> specs) {
+        // The mixin checks applicability before taking ownership of the group's render call.
+        if (!isBundledVanillaPostChain(specs)) {
+            this.lastVanillaPostRefusal = "non-vanilla-program";
+            return VanillaPostOutcome.REFUSED_UNSUPPORTED;
+        }
+        this.lastVanillaPostRefusal = null;
+        if (this.vanillaPost == null) {
+            this.vanillaPost = new VanillaPostExecutor();
+        }
+        VanillaPostExecutor executor = this.vanillaPost;
+        // The frame owner opens the seat before it knows whether a pack will use it.
+        if (ShaderPackRuntime.builtInPackActive() && ShaderPackRuntime.nativeFrameOpen()) {
+            return executor.refuseUnsupported("pack-frame-open");
+        }
+        VulkanContext context = this.host.context();
+        VulkanCommandBufferState state = this.host.commandState();
+        if (context == null || context.device() == null || this.host.gpuStalled()
+                || this.host.frameTarget() == null || this.host.commandBuffer() == null
+                || state == null || !state.recording() || state.inRenderPass()) {
+            return executor.refuseUnsupported("vanilla post requires a frame recording outside a rendering instance");
+        }
+        if (this.vanillaPostContext == null) {
+            this.vanillaPostContext = context;
+            context.setVanillaPostTeardown(() -> {
+                executor.destroyIdle(context.device());
+                this.vanillaPostContext = null;
+            });
+        }
+        return executor.run(context, this.host.commandBuffer(), this.host.frameSlot(), this.host.frameTarget(),
+                this.host.targetRegistry(), this.vanillaPostPublications, specs);
+    }
+
+    public static boolean isBundledVanillaPostChain(java.util.List<VanillaPostPassSpec> specs) {
+        if (specs == null || specs.isEmpty()) return false;
+        for (VanillaPostPassSpec spec : specs) {
+            if (spec == null || !VanillaPostExecutor.isBundled(spec.program())) return false;
+        }
+        return true;
+    }
+
+    public String lastVanillaPostRefusalReason() {
+        if (this.lastVanillaPostRefusal != null) return this.lastVanillaPostRefusal;
+        return this.vanillaPost == null ? null : this.vanillaPost.lastRefusalReason();
+    }
+
+    long vanillaPostRuns() { return this.vanillaPost == null ? 0 : this.vanillaPost.runs(); }
+    long vanillaPostPasses() { return this.vanillaPost == null ? 0 : this.vanillaPost.passes(); }
+    long postChainCreationFailures() { return this.vanillaPost == null ? 0 : this.vanillaPost.creationFailures(); }
+    long postChainUnsupportedRefusals() { return this.vanillaPost == null ? 0 : this.vanillaPost.unsupportedRefusals(); }
+    long chainInputFlushFailures() { return this.chainInputFlushFailures; }
+
+    /** The caller must report a pending-input flush exception exactly once. */
+    public void noteChainInputFlushFailure() {
+        this.chainInputFlushFailures++;
+    }
+
     // -- fixed stage template (plan section 2.2, S3-b seating) ------------------
 
     /**
@@ -143,6 +215,8 @@ public final class FrameCoordinator {
      * host's stage marks; the pick is recorded so the frame's shape is stated either way.
      */
     void beginFrame(boolean packActive, boolean modFboRequested) {
+        VulkanContext context = this.host == null ? null : this.host.context();
+        if (context != null) context.setDirectGlFrameSlot(this.host.frameSlot());
         this.frameTemplate = selectTemplate(packActive, modFboRequested);
         this.frameModFboRequested = modFboRequested;
         java.util.Arrays.fill(this.stageEntered, false);

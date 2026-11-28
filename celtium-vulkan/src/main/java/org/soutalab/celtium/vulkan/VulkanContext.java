@@ -3246,6 +3246,14 @@ public final class VulkanContext {
                             + " confirm idle) and were dropped; the resources are left to the process teardown");
                 }
             }
+            if (ringDrained && this.directGlTeardown != null) {
+                this.directGlTeardown.run();
+                this.directGlTeardown = null;
+            }
+            if (ringDrained && this.vanillaPostTeardown != null) {
+                this.vanillaPostTeardown.run();
+                this.vanillaPostTeardown = null;
+            }
             for (int i = 0; i < this.idleDeferredFenceCount; i++) {
                 vkDestroyFence(this.device, this.idleDeferredFences[i], null);
             }
@@ -4066,6 +4074,11 @@ public final class VulkanContext {
      * The per-frame linear ring (Stage 2), created on first use: frame-lifetime temporaries live here instead
      * of in the persistent-resource allocators. Null until first asked for, and again after {@link #delete()}.
      */
+    private int directGlFrameSlot = -1;
+
+    void setDirectGlFrameSlot(int slot) { this.directGlFrameSlot = slot; }
+    int directGlFrameSlot() { return this.directGlFrameSlot; }
+
     private org.soutalab.celtium.vulkan.hal.FrameLinearRing frameLinearRing;
     /**
      * The bindless texture binding (Stage 5 stage 3), created on first use: the one descriptor array
@@ -5503,6 +5516,17 @@ public final class VulkanContext {
             this.site = site;
             this.destroy = destroy;
         }
+    }
+
+    private Runnable vanillaPostTeardown;
+    private Runnable directGlTeardown;
+
+    void setDirectGlTeardown(Runnable teardown) {
+        this.directGlTeardown = teardown;
+    }
+
+    void setVanillaPostTeardown(Runnable teardown) {
+        this.vanillaPostTeardown = teardown;
     }
 
     private final java.util.ArrayList<RetiredCleanup> retiredCleanups = new java.util.ArrayList<RetiredCleanup>();

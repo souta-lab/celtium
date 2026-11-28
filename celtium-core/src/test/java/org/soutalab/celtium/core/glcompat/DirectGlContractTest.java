@@ -59,6 +59,39 @@ class DirectGlContractTest {
     }
 
     @Test
+    void shaderOpsReceivesThePackedBlockAndRetainsItsOwnSnapshot() {
+        class ShaderSeat implements DirectGlVulkanSink.ShaderOps {
+            long program;
+            byte[] snapshot;
+
+            @Override
+            public long createProgram(org.soutalab.celtium.core.shader.SpirvModuleBundle bundle) { return 42; }
+
+            @Override
+            public ComputeProgramHandle createComputeProgram(org.soutalab.celtium.core.shader.SpirvModuleBundle bundle) {
+                return ComputeProgramHandle.NONE;
+            }
+
+            @Override
+            public void uploadUniforms(long handle, java.lang.foreign.MemorySegment values) {
+                program = handle;
+                snapshot = values.toArray(java.lang.foreign.ValueLayout.JAVA_BYTE);
+            }
+
+            @Override
+            public void destroyProgram(long handle) {}
+        }
+        var sink = new ShaderSeat();
+        byte[] block = new byte[32];
+        block[16] = 9;
+        sink.uploadUniforms(42, java.lang.foreign.MemorySegment.ofArray(block));
+        block[16] = 12;
+        assertEquals(42, sink.program);
+        assertEquals(32, sink.snapshot.length);
+        assertEquals(9, sink.snapshot[16]);
+    }
+
+    @Test
     void framebufferOpsCarryClearAndBlitValuesToBothTargets() {
         record Clear(long target, ClearSpec spec) {}
         record Blit(long source, long destination, BlitRegion region) {}

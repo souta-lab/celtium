@@ -3,7 +3,8 @@ package org.soutalab.celtium.vulkan;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+import static org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.Reason.*;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -42,6 +43,7 @@ import org.lwjgl.vulkan.VkImageCopy;
 import org.lwjgl.vulkan.VkMemoryBarrier2;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
+import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolSize;
 import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
@@ -85,6 +87,9 @@ import org.soutalab.celtium.core.glcompat.VertexBindingSpan;
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
 import org.soutalab.celtium.core.state.RenderStateKey;
 import org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab;
+import org.soutalab.celtium.vulkan.hal.FrameLinearRing;
+import org.soutalab.celtium.vulkan.hal.FrameLinearRingAccess;
+import org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus;
 import org.soutalab.celtium.vulkan.hal.VulkanDynamicRendering;
 
 /**
@@ -106,8 +111,8 @@ import org.soutalab.celtium.vulkan.hal.VulkanDynamicRendering;
  *   runtime) and a delete hands the slab range back as a timeline-deferred release instead of
  *   freeing memory under a possibly in-flight submission;</li>
  *   <li>per-program uniform blocks: the executor packs a program's uniform values into one block
- *   and hands it over through {@link DirectGlSinkExtensions}; the sink keeps it in a per-program
- *   uniform buffer bound at set 0, binding 0 of every converter pipeline.</li>
+ *   and hands it over through {@link ShaderOps#uploadUniforms}. Each draw snapshots the packed
+ *   bytes into its own aligned slice at set 0, binding 0.</li>
  * </ul>
  * Draws record into the frame's own command buffer, published per frame through
  * {@link DirectGlFrameBridge}: a draw whose target is the frame's main target continues the
@@ -123,6 +128,9 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     /** The converter's uniform-block convention: set 0, binding 0, one block per program. */
     static final int UNIFORM_SET = 0;
     static final int UNIFORM_BINDING = 0;
+    private static final int SAMPLER_SET = 1;
+    private static final int MAX_SAMPLERS = 16;
+    private static final int SAMPLER_SETS = 512;
 
     private final VulkanContext context;
     private final VkDevice device;
@@ -138,8 +146,12 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     private long nextFramebufferId = 1L;
     private long nextProgramHandle = 1L;
 
+    private long uniformAlignment;
+    private int maxUniformRange;
     private long uniformSetLayout;
     private long pipelineLayout;
+    private long samplerSetLayout;
+    private long samplerPool;
     /**
      * Every descriptor pool created for program uniform sets, oldest first. Pools are only ever
      * appended, never destroyed or replaced while the sink lives: a set allocated from an earlier
@@ -159,6 +171,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         this.device = context.device();
         this.textures = textures;
         this.attachmentSlab = attachmentSlab;
+        this.context.setDirectGlTeardown(this::destroyShaderResourcesIdle);
     }
 
     // -- draws ---------------------------------------------------------------
@@ -168,93 +181,179 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                            DrawCommand draw) {
         BackendCallCounters.noteLane3SinkCall();
         VkCommandBuffer cmd = DirectGlFrameBridge.commandBuffer();
-        if (cmd == null) {
-            BackendCallCounters.noteLane3DroppedDraw();
+        int slot = cmd == null ? -1 : this.context.directGlFrameSlot();
+        if (slot < 0) {
+            refuseDraw(NO_FRAME, "draw outside a frame recording");
             return;
         }
         ProgramRec program = this.programs.get(state.programHandle());
         BufferRec vertexBuffer = vertices == null ? null : this.buffers.get(vertices.bufferHandle());
-        if (program == null || vertexBuffer == null) {
-            BackendCallCounters.noteLane3DroppedDraw();
+        BufferRec indexBuffer = !draw.indexed() || indices == null ? null : this.buffers.get(indices.bufferHandle());
+        if (program == null || vertexBuffer == null || (draw.indexed() && indexBuffer == null)) {
+            refuseDraw(TARGET_INCOMPATIBLE, "program or geometry unavailable");
             return;
         }
-        ActiveRenderTargets main = DirectGlFrameBridge.mainTargets();
         boolean mainTarget = state.renderTargetId() == 0;
-        FboRec fbo = null;
-        ActiveRenderTargets targets;
-        if (mainTarget) {
-            targets = main;
-        } else {
-            fbo = this.framebuffers.get((long) state.renderTargetId());
-            if (fbo == null) {
-                BackendCallCounters.noteLane3DroppedDraw();
-                return;
-            }
-            targets = fbo.targets;
-        }
-        if (targets == null) {
-            BackendCallCounters.noteLane3DroppedDraw();
+        ActiveRenderTargets main = DirectGlFrameBridge.mainTargets();
+        FboRec fbo = mainTarget ? null : this.framebuffers.get((long) state.renderTargetId());
+        ActiveRenderTargets targets = mainTarget ? main : fbo == null ? null : fbo.targets;
+        if (targets == null || targets.colorAttachments().size() > 1 || program.fragmentOutputs > 1) {
+            refuseDraw(TARGET_INCOMPATIBLE, "color target or fragment output tuple unsupported");
             return;
         }
-        long pipeline = pipelineFor(state, program, targets, vertices);
+        VulkanGlTexture[] samplers = null;
+        if (program.samplerCount > 0) {
+            samplers = resolveSamplers(cmd, program, fbo);
+            if (samplers == null) return;
+        }
+        long pipeline;
+        try {
+            pipeline = pipelineFor(state, program, targets, vertices);
+        } catch (RuntimeException | LinkageError failure) {
+            refuseDraw(PIPELINE_FAILED, failure.toString());
+            return;
+        }
         if (pipeline == VK_NULL_HANDLE) {
-            BackendCallCounters.noteLane3DroppedDraw();
+            refuseDraw(PIPELINE_FAILED, "graphics pipeline creation failed");
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            UniformDraw uniforms;
+            long samplerSet;
+            try {
+                uniforms = snapshotUniforms(program, slot, stack);
+                samplerSet = samplers == null ? VK_NULL_HANDLE : allocateSamplerSet(stack, samplers);
+            } catch (RuntimeException | LinkageError failure) {
+                refuseDraw(DESCRIPTOR_EXHAUSTED, failure.toString());
+                return;
+            }
             if (!mainTarget) {
                 suspendMain(cmd, main);
                 beginSideRendering(cmd, stack, fbo);
             }
-            VK10.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            applyDynamicState(cmd, stack, targets);
-            if (program.descriptorSet != VK_NULL_HANDLE) {
-                VK10.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
-                        UNIFORM_SET, stack.longs(program.descriptorSet), null);
-            }
-            VK10.vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertexBuffer.buffer.buffer()),
-                    stack.longs(vertices.offsetBytes()));
-            if (draw.indexed()) {
-                BufferRec indexBuffer = this.buffers.get(indices.bufferHandle());
-                if (indexBuffer == null) {
-                    if (!mainTarget) {
-                        finishSideRendering(cmd, stack, fbo, main);
-                    }
-                    BackendCallCounters.noteLane3DroppedDraw();
-                    return;
+            try {
+                VK10.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                applyDynamicState(cmd, stack, targets);
+                if (uniforms != null) {
+                    VK10.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                            UNIFORM_SET, stack.longs(uniforms.set()), stack.ints(uniforms.offset()));
                 }
-                VK10.vkCmdBindIndexBuffer(cmd, indexBuffer.buffer.buffer(), indices.offsetBytes(),
-                        indices.indexType() == IndexSpan.IndexType.UINT32
-                                ? VK10.VK_INDEX_TYPE_UINT32 : VK10.VK_INDEX_TYPE_UINT16);
-                VK10.vkCmdDrawIndexed(cmd, draw.indexCount(), draw.instanceCount(), draw.firstIndex(),
-                        draw.vertexOffset(), draw.firstInstance());
-            } else {
-                VK10.vkCmdDraw(cmd, draw.vertexCount(), draw.instanceCount(), draw.firstVertex(),
-                        draw.firstInstance());
-            }
-            if (!mainTarget) {
-                finishSideRendering(cmd, stack, fbo, main);
+                if (samplerSet != VK_NULL_HANDLE) {
+                    VK10.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                            SAMPLER_SET, stack.longs(samplerSet), null);
+                }
+                VK10.vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertexBuffer.buffer.buffer()),
+                        stack.longs(vertices.offsetBytes()));
+                if (draw.indexed()) {
+                    VK10.vkCmdBindIndexBuffer(cmd, indexBuffer.buffer.buffer(), indices.offsetBytes(),
+                            indices.indexType() == IndexSpan.IndexType.UINT32
+                                    ? VK10.VK_INDEX_TYPE_UINT32 : VK10.VK_INDEX_TYPE_UINT16);
+                    VK10.vkCmdDrawIndexed(cmd, draw.indexCount(), draw.instanceCount(), draw.firstIndex(),
+                            draw.vertexOffset(), draw.firstInstance());
+                } else {
+                    VK10.vkCmdDraw(cmd, draw.vertexCount(), draw.instanceCount(), draw.firstVertex(),
+                            draw.firstInstance());
+                }
+            } finally {
+                if (!mainTarget) finishSideRendering(cmd, stack, fbo, main);
             }
         }
         BackendCallCounters.noteLane3Draw();
+    }
+
+    private VulkanGlTexture[] resolveSamplers(VkCommandBuffer cmd, ProgramRec program, FboRec fbo) {
+        if (program.samplerCount > MAX_SAMPLERS || program.samplerTextures == null) {
+            refuseDraw(SAMPLER_UNBOUND, "sampler bindings are missing or exceed the available layout");
+            return null;
+        }
+        VulkanGlTexture[] resolved = new VulkanGlTexture[program.samplerCount];
+        var main = DirectGlFrameBridge.mainImages();
+        for (int i = 0; i < resolved.length; i++) {
+            long id = program.samplerTextures[i];
+            VulkanGlTexture texture = id == 0 ? null : this.textures.existing((int) id);
+            if (!VulkanDescriptorWrites.celtium$isLive(texture) || texture.isDepthExternal()) {
+                refuseDraw(SAMPLER_UNBOUND, "sampler " + i + " lacks a live color texture");
+                return null;
+            }
+            long image = texture.image();
+            if ((fbo != null && (fbo.color != null && fbo.color.handle() == image
+                    || fbo.depth != null && fbo.depth.handle() == image))
+                    || (fbo == null && main != null && (main.colorImage() == image || main.depthImage() == image))) {
+                refuseDraw(FEEDBACK, "sampler " + i + " aliases the draw attachment");
+                return null;
+            }
+            if (texture.isExternal()
+                    && VulkanGlTexture.foreignTransitionFrom(cmd.address(), image, texture.samplingLayout()) != -1) {
+                refuseDraw(TARGET_INCOMPATIBLE, "external sampler " + i + " was not prepared for sampling");
+                return null;
+            }
+            resolved[i] = texture;
+        }
+        return resolved;
+    }
+
+    private long allocateSamplerSet(MemoryStack stack, VulkanGlTexture[] textures) {
+        LongBuffer handle = stack.mallocLong(1);
+        if (this.samplerPool == VK_NULL_HANDLE) {
+            var sizes = VkDescriptorPoolSize.calloc(1, stack);
+            sizes.get(0).type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(SAMPLER_SETS * MAX_SAMPLERS);
+            var poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                    .flags(VK10.VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT).maxSets(SAMPLER_SETS).pPoolSizes(sizes);
+            check(VK10.vkCreateDescriptorPool(this.device, poolInfo, null, handle), "create converter sampler pool");
+            this.samplerPool = handle.get(0);
+        }
+
+        long pool = this.samplerPool;
+        var allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                .descriptorPool(pool).pSetLayouts(stack.longs(this.samplerSetLayout));
+        check(VK10.vkAllocateDescriptorSets(this.device, allocate, handle), "allocate converter sampler set");
+        long set = handle.get(0);
+        this.context.celtium$retireCleanup("Lane 3 sampler set", () -> {
+            if (samplerPool == pool) VK10.vkFreeDescriptorSets(device, pool, set);
+        });
+
+        var infos = VkDescriptorImageInfo.calloc(textures.length, stack);
+        var writes = VkWriteDescriptorSet.calloc(textures.length, stack);
+        for (int i = 0; i < textures.length; i++) {
+            VulkanGlTexture texture = textures[i];
+            infos.get(i).imageView(texture.view()).sampler(texture.sampler()).imageLayout(texture.samplingLayout());
+            writes.get(i).sType$Default().dstSet(set).dstBinding(i).descriptorCount(1)
+                    .descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .pImageInfo(VkDescriptorImageInfo.create(infos.get(i).address(), 1));
+        }
+        VK10.vkUpdateDescriptorSets(this.device, writes, null);
+        return set;
+    }
+
+    static void refuseDraw(DirectGlRefusalCensus.Reason reason, String detail) {
+        BackendCallCounters.noteLane3DroppedDraw();
+        DirectGlRefusalCensus.note(reason, detail);
     }
 
     @Override
     public void dispatchCompute(ComputeProgramHandle program, int groupsX, int groupsY, int groupsZ) {
         BackendCallCounters.noteLane3SinkCall();
         VkCommandBuffer cmd = DirectGlFrameBridge.commandBuffer();
-        ProgramRec rec = program == null ? null : this.programs.get(program.handle());
-        if (cmd == null || rec == null || rec.computePipeline == VK_NULL_HANDLE) {
+        int slot = cmd == null ? -1 : this.context.directGlFrameSlot();
+        if (slot < 0) {
+            DirectGlRefusalCensus.note(NO_FRAME, "compute dispatch outside a frame recording");
             return;
         }
-        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, rec.computePipeline);
-        if (rec.descriptorSet != VK_NULL_HANDLE) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
+        ProgramRec rec = program == null ? null : this.programs.get(program.handle());
+        if (rec == null || rec.computePipeline == VK_NULL_HANDLE) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            UniformDraw uniforms = snapshotUniforms(rec, slot, stack);
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, rec.computePipeline);
+            if (uniforms != null) {
                 VK10.vkCmdBindDescriptorSets(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE,
-                        this.pipelineLayout, UNIFORM_SET, stack.longs(rec.descriptorSet), null);
+                        this.pipelineLayout, UNIFORM_SET, stack.longs(uniforms.set()), stack.ints(uniforms.offset()));
             }
+            VK10.vkCmdDispatch(cmd, groupsX, groupsY, groupsZ);
+        } catch (RuntimeException | LinkageError failure) {
+            DirectGlRefusalCensus.note(DESCRIPTOR_EXHAUSTED, failure.toString());
+            return;
         }
-        VK10.vkCmdDispatch(cmd, groupsX, groupsY, groupsZ);
         BackendCallCounters.noteLane3Dispatch();
     }
 
@@ -544,22 +643,45 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            var properties = org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
+            VK10.vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
+            this.uniformAlignment = Math.max(1, properties.limits().minUniformBufferOffsetAlignment());
+            this.maxUniformRange = properties.limits().maxUniformBufferRange();
             VkDescriptorSetLayoutBinding.Buffer binding = VkDescriptorSetLayoutBinding.calloc(1, stack);
-            binding.get(0).binding(UNIFORM_BINDING).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+            binding.get(0).binding(UNIFORM_BINDING).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                     .descriptorCount(1)
-                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK10.VK_SHADER_STAGE_COMPUTE_BIT);
             VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
                     .sType$Default().pBindings(binding);
             LongBuffer layout = stack.longs(0);
             check(VK10.vkCreateDescriptorSetLayout(this.device, layoutInfo, null, layout),
                     "vkCreateDescriptorSetLayout(converter uniforms)");
             this.uniformSetLayout = layout.get(0);
-            VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
-                    .sType$Default().pSetLayouts(stack.longs(this.uniformSetLayout));
-            LongBuffer handle = stack.longs(0);
-            check(VK10.vkCreatePipelineLayout(this.device, pipelineLayoutInfo, null, handle),
-                    "vkCreatePipelineLayout(converter)");
-            this.pipelineLayout = handle.get(0);
+            try {
+                var samplerBindings = VkDescriptorSetLayoutBinding.calloc(MAX_SAMPLERS, stack);
+                for (int i = 0; i < MAX_SAMPLERS; i++) {
+                    samplerBindings.get(i).binding(i).descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                            .descriptorCount(1).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+                }
+                layoutInfo.pBindings(samplerBindings);
+                check(VK10.vkCreateDescriptorSetLayout(this.device, layoutInfo, null, layout),
+                        "vkCreateDescriptorSetLayout(converter samplers)");
+                this.samplerSetLayout = layout.get(0);
+                var pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
+                        .pSetLayouts(stack.longs(this.uniformSetLayout, this.samplerSetLayout));
+                LongBuffer handle = stack.longs(0);
+                check(VK10.vkCreatePipelineLayout(this.device, pipelineLayoutInfo, null, handle),
+                        "vkCreatePipelineLayout(converter)");
+                this.pipelineLayout = handle.get(0);
+            } catch (RuntimeException | LinkageError failure) {
+                if (this.samplerSetLayout != VK_NULL_HANDLE) {
+                    VK10.vkDestroyDescriptorSetLayout(this.device, this.samplerSetLayout, null);
+                    this.samplerSetLayout = VK_NULL_HANDLE;
+                }
+                VK10.vkDestroyDescriptorSetLayout(this.device, this.uniformSetLayout, null);
+                this.uniformSetLayout = VK_NULL_HANDLE;
+                throw failure;
+            }
         }
     }
 
@@ -568,7 +690,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
      * does not. The previous pool is left fully alive - sets already allocated from it stay valid -
      * so crossing a pool boundary can never leave a program holding a destroyed pool's set
      * (audit #16 F-1: the old code destroyed the pool at 65 programs and dangled every existing
-     * {@code ProgramRec.descriptorSet}).
+     * snapshot sets).
      *
      * @param setsHint how many programs exist, used only to size a newly appended pool
      */
@@ -579,7 +701,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         int capacity = Math.max(64, setsHint * 2);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(1, stack);
-            sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(capacity);
+            sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(capacity);
             VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
                     .sType$Default().maxSets(capacity).pPoolSizes(sizes);
             LongBuffer handle = stack.longs(0);
@@ -618,45 +740,64 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
     }
 
     @Override
-    public void updateUniforms(long programHandle, MemorySegment values) {
+    public void registerProgramResources(long programHandle, int samplerCount, int fragmentOutputs) {
         ProgramRec rec = this.programs.get(programHandle);
-        if (rec == null || values == null || values.byteSize() == 0L) {
-            return;
+        if (rec != null) {
+            rec.samplerCount = samplerCount;
+            rec.fragmentOutputs = fragmentOutputs;
         }
-        ensurePipelineLayout();
-        if (rec.uniformBuffer == null) {
-            rec.uniformBuffer = new VulkanHostBuffer(this.context,
-                    Math.max(256L, values.byteSize()), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-            // The program's descriptor set names this buffer, and a set written before a growth
-            // could keep naming the grown-away handle: retention keeps every superseded uniform
-            // buffer alive until the program itself is destroyed (see VulkanHostBuffer).
-            rec.uniformBuffer.retainSupersededBuffers();
-        } else {
-            rec.uniformBuffer.ensureCapacity(values.byteSize());
-        }
-        MemorySegment.copy(values, 0L, MemorySegment.ofAddress(rec.uniformBuffer.mappedAddress())
-                .reinterpret(values.byteSize()), 0L, values.byteSize());
-        if (rec.descriptorSet == VK_NULL_HANDLE) {
+    }
+
+    @Override
+    public void setProgramSamplerTextures(long programHandle, long[] textures) {
+        ProgramRec rec = this.programs.get(programHandle);
+        if (rec != null && textures.length == rec.samplerCount) rec.samplerTextures = textures;
+    }
+
+    private void stageUniforms(long programHandle, MemorySegment values) {
+        ProgramRec rec = this.programs.get(programHandle);
+        if (rec == null || values == null || values.byteSize() == 0L) return;
+        int bytes = Math.toIntExact(values.byteSize());
+        if (rec.uniforms == null || rec.uniforms.length != bytes) rec.uniforms = new byte[bytes];
+        MemorySegment.copy(values, 0L, MemorySegment.ofArray(rec.uniforms), 0L, bytes);
+    }
+
+    private record UniformDraw(long set, int offset) {}
+    private record UniformSet(long handle, int bytes) {}
+
+    private UniformDraw snapshotUniforms(ProgramRec program, int slot, MemoryStack stack) {
+        if (program.uniforms == null) return null;
+        int bytes = program.uniforms.length;
+        if (bytes > this.maxUniformRange) throw new IllegalStateException("uniform block exceeds maxUniformBufferRange");
+        FrameLinearRing ring = this.context.celtium$frameLinearRing();
+        long offset = writeUniformSnapshot(ring, slot, this.uniformAlignment, MemorySegment.ofArray(program.uniforms));
+        if (offset < 0) throw new IllegalStateException("frame uniform ring exhausted");
+        UniformSet set = program.uniformSets[slot];
+        if (set == null || set.bytes() != bytes) {
             ensureDescriptorPool(this.programs.size());
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack)
-                        .sType$Default().descriptorPool(currentDescriptorPool())
-                        .pSetLayouts(stack.longs(this.uniformSetLayout));
-                LongBuffer set = stack.longs(0);
-                check(VK10.vkAllocateDescriptorSets(this.device, alloc, set),
-                        "vkAllocateDescriptorSets(converter)");
-                rec.descriptorSet = set.get(0);
-                this.descriptorPoolUsed++;
-            }
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack);
-            bufferInfo.get(0).buffer(rec.uniformBuffer.buffer()).offset(0L).range(values.byteSize());
-            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
-            write.get(0).sType$Default().dstSet(rec.descriptorSet).dstBinding(UNIFORM_BINDING)
-                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).pBufferInfo(bufferInfo);
+            var alloc = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                    .descriptorPool(currentDescriptorPool()).pSetLayouts(stack.longs(this.uniformSetLayout));
+            LongBuffer handle = stack.mallocLong(1);
+            check(VK10.vkAllocateDescriptorSets(this.device, alloc, handle), "vkAllocateDescriptorSets(converter)");
+            this.descriptorPoolUsed++;
+            set = new UniformSet(handle.get(0), bytes);
+            var info = VkDescriptorBufferInfo.calloc(1, stack);
+            info.get(0).buffer(ring.buffer(slot)).offset(0).range(bytes);
+            var write = VkWriteDescriptorSet.calloc(1, stack);
+            write.get(0).sType$Default().dstSet(set.handle()).dstBinding(UNIFORM_BINDING).descriptorCount(1)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).pBufferInfo(info);
             VK10.vkUpdateDescriptorSets(this.device, write, null);
+            program.uniformSets[slot] = set;
         }
+        return new UniformDraw(set.handle(), Math.toIntExact(offset));
+    }
+
+    static long writeUniformSnapshot(FrameLinearRingAccess ring, int slot, long alignment, MemorySegment values) {
+        long offset = ring.alloc(slot, values.byteSize(), alignment);
+        if (offset < 0) return offset;
+        MemorySegment mapped = MemorySegment.ofAddress(ring.mappedAddress(slot, offset)).reinterpret(values.byteSize());
+        MemorySegment.copy(values, 0, mapped, 0, values.byteSize());
+        return offset;
     }
 
     // -- texture ops -------------------------------------------------------------
@@ -1204,11 +1345,21 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
 
     private final ShaderOps shaderOps = new ShaderOps() {
         @Override
+        public void uploadUniforms(long programHandle, MemorySegment values) {
+            stageUniforms(programHandle, values);
+        }
+
+        @Override
         public long createProgram(SpirvModuleBundle bundle) {
             BackendCallCounters.noteLane3SinkCall();
             ProgramRec rec = new ProgramRec();
             rec.vertexModule = createShaderModule(bundle.vertexWords());
-            rec.fragmentModule = createShaderModule(bundle.fragmentWords());
+            try {
+                rec.fragmentModule = createShaderModule(bundle.fragmentWords());
+            } catch (RuntimeException | LinkageError failure) {
+                VK10.vkDestroyShaderModule(VulkanDirectGlSink.this.device, rec.vertexModule, null);
+                throw failure;
+            }
             long handle = VulkanDirectGlSink.this.nextProgramHandle++;
             VulkanDirectGlSink.this.programs.put(handle, rec);
             return handle;
@@ -1260,15 +1411,30 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
             if (rec.computePipeline != VK_NULL_HANDLE) {
                 VK10.vkDestroyPipeline(VulkanDirectGlSink.this.device, rec.computePipeline, null);
             }
-            if (rec.uniformBuffer != null) {
-                rec.uniformBuffer.delete();
-            }
         }
     };
 
     @Override
     public ShaderOps shaderOps() {
         return this.shaderOps;
+    }
+
+    private void destroyShaderResourcesIdle() {
+        for (long pipeline : this.pipelineCache.values()) VK10.vkDestroyPipeline(this.device, pipeline, null);
+        this.pipelineCache.clear();
+        for (ProgramRec program : this.programs.values()) {
+            if (program.computePipeline != VK_NULL_HANDLE) VK10.vkDestroyPipeline(this.device, program.computePipeline, null);
+            if (program.vertexModule != VK_NULL_HANDLE) VK10.vkDestroyShaderModule(this.device, program.vertexModule, null);
+            if (program.fragmentModule != VK_NULL_HANDLE) VK10.vkDestroyShaderModule(this.device, program.fragmentModule, null);
+        }
+        this.programs.clear();
+        if (this.samplerPool != VK_NULL_HANDLE) VK10.vkDestroyDescriptorPool(this.device, this.samplerPool, null);
+        this.samplerPool = VK_NULL_HANDLE;
+        for (long pool : this.descriptorPools) VK10.vkDestroyDescriptorPool(this.device, pool, null);
+        this.descriptorPools.clear();
+        if (this.pipelineLayout != VK_NULL_HANDLE) VK10.vkDestroyPipelineLayout(this.device, this.pipelineLayout, null);
+        if (this.samplerSetLayout != VK_NULL_HANDLE) VK10.vkDestroyDescriptorSetLayout(this.device, this.samplerSetLayout, null);
+        if (this.uniformSetLayout != VK_NULL_HANDLE) VK10.vkDestroyDescriptorSetLayout(this.device, this.uniformSetLayout, null);
     }
 
     private long createShaderModule(int[] words) {
@@ -1327,8 +1493,10 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         long computePipeline;
         AttribDesc[] attribs = new AttribDesc[0];
         long vertexLayoutHash = 0x9E3779B97F4A7C15L;
-        /** Slab-backed uniform block buffer; superseded growths are retained until destroy. */
-        VulkanHostBuffer uniformBuffer;
-        long descriptorSet;
+        byte[] uniforms;
+        int samplerCount;
+        long[] samplerTextures;
+        int fragmentOutputs;
+        final UniformSet[] uniformSets = new UniformSet[FrameSubmissionScheduler.FRAME_SLOTS];
     }
 }

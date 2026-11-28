@@ -76,17 +76,16 @@ class MainColorSampleBorrowBypassContractTest {
         assertTrue(noted > condition, "the bypass is noted under the main-sampled reason");
     }
 
-    /** ModPrograms refuses the closed frame's blend-off pass into main, ahead of the lab-switch refusal. */
+    /** ModPrograms refuses the closed frame's blend-off pass into main. */
     @Test
     void modProgramsRefusesTheOpaqueMainPassOnTheClosedFrame() throws IOException {
         String source = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java"));
         int guard = source.indexOf("b.mainColorSampledBorrowClosedFrame == b.frameId");
         assertTrue(guard >= 0, "the closed-frame guard is present in the prepare path");
-        int labRefusal = source.indexOf("if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN", guard);
-        assertTrue(labRefusal > guard,
-                "the closure guard stands ahead of the lab-switch opaque-main refusal");
-        String body = source.substring(guard, labRefusal);
+        int descriptor = source.indexOf("long set = pipeline.samplersAndImages", guard);
+        assertTrue(descriptor > guard, "the closure guard runs before descriptor allocation");
+        String body = source.substring(guard, descriptor);
         assertTrue(body.contains("!like.celtium$colorBlend().blend()"),
                 "the guard is scoped to blend-off passes");
         assertTrue(body.contains("b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()"),

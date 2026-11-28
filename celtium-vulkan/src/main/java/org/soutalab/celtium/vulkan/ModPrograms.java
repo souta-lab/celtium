@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * A mod's own shader programs drawn natively (default on, -Dceltium.vulkan.modPrograms=false to refuse them): pipeline cache, prepared draws, input readback and the per-program report. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * A mod's own shader programs drawn natively: pipeline cache, prepared draws, input readback and the per-program report. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
  */
 final class ModPrograms {
     private final VulkanTerrainGpuBackend b;
@@ -10,37 +10,9 @@ final class ModPrograms {
         this.b = backend;
     }
 
-    /**
-     * Whether a mod's own program draws the batches it can. <b>On by default</b>; {@code
-     * -Dceltium.vulkan.modPrograms=false} turns it off for an A/B.
-     * <p>
-     * It was opt-in while the passes into the game's framebuffer blacked the world out (legs r17-r20-gt). That was the
-     * stale-target read fixed in round 9 of docs/evidence/gregtech-bloom-2026-11-04.md: the window prefix asked
-     * {@code activeImmediateTarget} before it was assigned for the window, so the read barrier never ran before the
-     * copy. Keyed on {@code targetRegistry.currentIdentity()} the same passes draw with validation clean and the world
-     * is pixel-normal (r42-gt), and a program that cannot be lowered or compiled is still refused and counted per
-     * program - so the default no longer has to be "refuse everything a mod brought".
-     * <p>
-     * Measured on the GTCEu scene (legs {@code gt1-amd}/{@code gt2-amd}, 2026-11-07, renderer {@code 25d73c78}): the
-     * chain's 16 passes draw, {@code CELTIUM_SHADER_PROGRAM_REFUSED} is 0, and the lamp row's mean RGB rises from
-     * 170.8/173.4/168.3 to 210.1/212.7/207.6 against the GL reference's 243.0/245.5/240.6 - the emissive composite
-     * arrives, the halo does not yet (the bloom layer's terrain geometry is usually not built: {@code
-     * CELTIUM_LAYER_GEOMETRY layer=Bloom ... passes=[TerrainRenderPass[name=bloom]=false]}).
-     */
-    static final boolean MOD_PROGRAMS =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modPrograms", "true"));
-    /** Lab switch: {@code -Dceltium.vulkan.modProgramsOpaqueToMain=false} refuses blend-off passes into it. */
-    static final boolean MOD_PROGRAMS_REFUSE_OPAQUE_MAIN =
-            "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsOpaqueToMain", "true"));
-    /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
-    static final boolean MOD_PROGRAMS_TO_MAIN =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
     /** {@code -Dceltium.debug.modProgramTrace=N}: log the record order of mod-program passes for N frames from 300. */
     static final int MOD_TRACE_FRAMES = Integer.getInteger("celtium.debug.modProgramTrace", 0).intValue();
     int modTraceLines;
-    /** Lab switch: {@code false} refuses the mod-program passes that sample the game's own colour image. */
-    static final boolean MOD_PROGRAMS_SAMPLE_MAIN =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
     final java.util.Map<ModProgramKey, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
 
     /**
@@ -180,13 +152,6 @@ final class ModPrograms {
     /** {@return the registry's program when this batch can be drawn with it}, or null to refuse as before. */
     org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program celtium$executableModProgram(int program,
                                                                                                     int formatId) {
-        if (!MOD_PROGRAMS) {
-            // Counted in the aggregate only: the lab switch is a deliberate configuration, and a
-            // per-batch line for it would be spam - but the refusal itself must not be invisible
-            // in the census the way it was when this seat returned in silence (DP-35).
-            celtium$noteModRefusal(ModRefusal.DISABLED);
-            return null;
-        }
         org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program p =
                 org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(program);
         String reason = VulkanModProgramPipeline.unsupported(p, formatId);
@@ -295,10 +260,6 @@ final class ModPrograms {
                 return celtium$modFailure(programId, ModRefusal.FEEDBACK, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") is the colour image of the framebuffer being drawn into");
             }
-            if (!MOD_PROGRAMS_SAMPLE_MAIN && b.mainFramebufferColorNames.contains(name)) {
-                return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "sampler " + sampler.name() + " reads the game's colour and "
-                        + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
-            }
             textures[i] = texture;
             drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 13);
         }
@@ -340,15 +301,6 @@ final class ModPrograms {
             return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "the frame's colour publication was refused over a"
                     + " borrowed present image this frame (borrow closure), so the blend-off pass into"
                     + " the game's framebuffer is refused for this frame only");
-        }
-        if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
-                && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "a blend-off pass into the game's framebuffer and "
-                    + "-Dceltium.vulkan.modProgramsOpaqueToMain=false refuses that");
-        }
-        if (!MOD_PROGRAMS_TO_MAIN && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, ModRefusal.LAB_SWITCH, "the pass draws into the game's framebuffer and "
-                    + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
         }
         long set = pipeline.samplersAndImages(textures, imageTextures, program, b.frameId);
         if ((samplerCount + imageCount > 0 || pipeline.uniformsViaBuffer()) && set == 0L) {

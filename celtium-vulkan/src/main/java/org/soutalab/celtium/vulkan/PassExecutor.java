@@ -1,86 +1,29 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkAttachmentDescription;
-import org.lwjgl.vulkan.VkAttachmentReference;
-import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkDevice;
-import org.lwjgl.vulkan.VkFramebufferCreateInfo;
-import org.lwjgl.vulkan.VkImageMemoryBarrier;
-import org.lwjgl.vulkan.VkRect2D;
-import org.lwjgl.vulkan.VkRenderPassBeginInfo;
-import org.lwjgl.vulkan.VkRenderPassCreateInfo;
-import org.lwjgl.vulkan.VkSubpassDescription;
-import org.lwjgl.vulkan.VkViewport;
+import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
+import org.lwjgl.vulkan.VkRenderingInfo;
 
 import java.nio.ByteBuffer;
-import java.nio.LongBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_CLEAR;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_DONT_CARE;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
-import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT;
-import static org.lwjgl.vulkan.VK10.VK_SUBPASS_CONTENTS_INLINE;
-import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
-import static org.lwjgl.vulkan.VK10.vkCmdBeginRenderPass;
-import static org.lwjgl.vulkan.VK10.vkCmdEndRenderPass;
-import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
-import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
-import static org.lwjgl.vulkan.VK10.vkCmdSetViewport;
-import static org.lwjgl.vulkan.VK10.vkCreateFramebuffer;
-import static org.lwjgl.vulkan.VK10.vkCreateRenderPass;
-import static org.lwjgl.vulkan.VK10.vkDestroyFramebuffer;
-import static org.lwjgl.vulkan.VK10.vkDestroyRenderPass;
+import static org.lwjgl.vulkan.VK10.*;
+import static org.lwjgl.vulkan.VK13.*;
 
-/**
- * Frame-owned executor for registered {@link NativePassRegistry} passes (Phase 0).
- * <p>
- * Reuses {@link VulkanModProgramPipeline} and its prepared {@link VulkanModProgramPipeline.Draw} path to record
- * fullscreen passes into the backend's frame command stream. When no passes are registered for a stage, every call
- * returns immediately with zero allocations and zero Vulkan work.
- */
+/** Records registered native fullscreen passes into the frame command stream. */
 final class PassExecutor {
 
-    private record RenderPassKey(int vkFormat, boolean depth, boolean clear) {
-    }
-
-    private record FramebufferKey(String targetName, long view, long renderPass, int width, int height) {
-    }
-
-    private record PipelineKey(String passName, byte[] vertexSpirv, byte[] fragmentSpirv, long renderPass) {
+    private record PipelineKey(String passName, byte[] vertexSpirv, byte[] fragmentSpirv, int format, boolean depth) {
         @Override
         public boolean equals(Object other) {
             return other instanceof PipelineKey k
                     && this.passName.equals(k.passName)
                     && this.vertexSpirv == k.vertexSpirv
                     && this.fragmentSpirv == k.fragmentSpirv
-                    && this.renderPass == k.renderPass;
+                    && this.format == k.format && this.depth == k.depth;
         }
 
         @Override
@@ -88,8 +31,7 @@ final class PassExecutor {
             int h = this.passName.hashCode();
             h = 31 * h + System.identityHashCode(this.vertexSpirv);
             h = 31 * h + System.identityHashCode(this.fragmentSpirv);
-            h = 31 * h + Long.hashCode(this.renderPass);
-            return h;
+            return 31 * (31 * h + this.format) + Boolean.hashCode(this.depth);
         }
     }
 
@@ -102,15 +44,8 @@ final class PassExecutor {
     private final NativePassRegistry passRegistry;
     private final NamedRenderTargetAllocator targetAllocator;
 
-    private final Map<RenderPassKey, Long> renderPasses = new HashMap<>();
-    private final Map<FramebufferKey, Long> framebuffers = new HashMap<>();
-    private final Map<PipelineKey, VulkanModProgramPipeline> pipelines = new HashMap<>();
+    private final Map<PipelineKey, FullscreenPassPipeline> pipelines = new HashMap<>();
     private VulkanDynamicMesh quadMesh;
-    private long[] scratchViews = new long[8];
-    private long[] scratchSamplers = new long[8];
-    private int[] scratchLayouts = new int[8];
-    private long[] scratchGenerations = new long[8];
-    private final long[] fallbackBindCache = new long[6];
     private ByteBuffer scratchZeroUniforms;
 
     PassExecutor(VulkanContext context, RenderTargetRegistry targetRegistry,
@@ -229,85 +164,63 @@ final class PassExecutor {
         boolean passOpen = false;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            long renderPass = ensureRenderPass(output.vkFormat(), output.depth(), shouldClear);
-            long framebuffer = ensureFramebuffer(output.name(), output.view(), renderPass,
-                    output.width(), output.height());
-            VulkanModProgramPipeline pipeline = ensurePipeline(pass, inputs.length, renderPass);
-
-            long samplerSet = 0L;
-            if (inputs.length > 0) {
-                ensureInputScratchCapacity(inputs.length);
-                long[] views = this.scratchViews;
-                long[] samplers = this.scratchSamplers;
-                int[] layouts = this.scratchLayouts;
-                long[] generations = this.scratchGenerations;
-                for (int i = 0; i < inputs.length; i++) {
-                    int sampledLayout = inputs[i].depth()
-                            ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                    transitionImageLayout(commandBuffer, inputs[i].image(), inputs[i].layout(), sampledLayout,
-                            inputs[i].depth(), stack);
-                    this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), inputs[i].name(),
-                            sampledLayout);
-                    views[i] = inputs[i].view();
-                    samplers[i] = inputs[i].sampler();
-                    layouts[i] = sampledLayout;
-                    generations[i] = inputs[i].generation();
-                }
-                samplerSet = pipeline.samplerSetForHandles(views, samplers, layouts, generations, inputs.length);
-                if (samplerSet == 0L) {
-                    this.passRegistry.noteExecutionRefusal(pass.spec().name(), "failed to allocate sampler descriptor set");
+            FullscreenPassPipeline pipeline = ensurePipeline(pass, inputs.length, output.vkFormat(), output.depth());
+            var images = new FullscreenPassPipeline.Image[inputs.length];
+            for (int i = 0; i < inputs.length; i++) {
+                var input = inputs[i];
+                if (input.image() == output.image()) {
+                    this.passRegistry.noteExecutionRefusal(pass.spec().name(), "input aliases output");
                     return false;
                 }
+                int sampledLayout = input.depth() ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                        : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                images[i] = new FullscreenPassPipeline.Image(input.view(), input.sampler(), sampledLayout);
             }
-
-            transitionImageLayout(commandBuffer, output.image(), output.layout(), attachmentLayout, output.depth(),
-                    stack);
-            outputTransitionRecorded = true;
-
+            long samplerSet = pipeline.descriptorSet(stack, images, 0, 0, 0);
             ensureQuadMesh();
             int pushBytes = pass.spec().state().pushBytes();
             ByteBuffer uniforms = pushBytes > 0 ? zeroUniforms(pushBytes) : null;
-
-            VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                    .renderPass(renderPass)
-                    .framebuffer(framebuffer);
-            begin.renderArea().offset().set(0, 0);
-            begin.renderArea().extent().set(output.width(), output.height());
-            if (shouldClear && outputSpec != null) {
-                VkClearValue.Buffer clearValues = VkClearValue.calloc(1, stack);
-                if (output.depth()) {
-                    clearValues.get(0).depthStencil().set(outputSpec.clearDepth(), 0);
-                } else {
-                    clearValues.get(0).color().float32()
-                            .put(0, outputSpec.clearRed())
-                            .put(1, outputSpec.clearGreen())
-                            .put(2, outputSpec.clearBlue())
-                            .put(3, outputSpec.clearAlpha());
-                }
-                begin.pClearValues(clearValues);
+            for (int i = 0; i < inputs.length; i++) {
+                var input = inputs[i];
+                int sampledLayout = images[i].layout();
+                FullscreenPassPipeline.transition(commandBuffer, stack, input.image(),
+                        input.depth() ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT,
+                        input.layout(), sampledLayout,
+                        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), input.name(), sampledLayout);
             }
+            FullscreenPassPipeline.transition(commandBuffer, stack, output.image(),
+                    output.depth() ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT,
+                    output.layout(), attachmentLayout,
+                    output.depth() ? VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT
+                            : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    output.depth() ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            : VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            outputTransitionRecorded = true;
+
+            var attachments = VkRenderingAttachmentInfo.calloc(1, stack);
+            var attachment = attachments.get(0).sType$Default().imageView(output.view()).imageLayout(attachmentLayout)
+                    .loadOp(shouldClear ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                            : (output.depth() ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE))
+                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            if (shouldClear && outputSpec != null) {
+                if (output.depth()) attachment.clearValue().depthStencil().set(outputSpec.clearDepth(), 0);
+                else attachment.clearValue().color().float32(stack.floats(outputSpec.clearRed(),
+                        outputSpec.clearGreen(), outputSpec.clearBlue(), outputSpec.clearAlpha()));
+            }
+            var rendering = VkRenderingInfo.calloc(stack).sType$Default().layerCount(1);
+            rendering.renderArea().extent().set(output.width(), output.height());
+            if (output.depth()) rendering.pDepthAttachment(attachment);
+            else rendering.pColorAttachments(attachments);
 
             BackendCallCounters.noteFboSwitch();
-            vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBeginRendering(commandBuffer, rendering);
             passOpen = true;
-            VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
-            viewport.get(0).set(0.0f, 0.0f, output.width(), output.height(), 0.0f, 1.0f);
-            vkCmdSetViewport(commandBuffer, 0, viewport);
-            VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
-            scissor.get(0).offset().set(0, 0);
-            scissor.get(0).extent().set(output.width(), output.height());
-            vkCmdSetScissor(commandBuffer, 0, scissor);
-
-            long[] activeBindCache;
-            if (bindCache != null) {
-                activeBindCache = bindCache;
-            } else {
-                java.util.Arrays.fill(this.fallbackBindCache, 0L);
-                activeBindCache = this.fallbackBindCache;
-            }
-            pipeline.draw(commandBuffer, this.quadMesh, uniforms, samplerSet, activeBindCache);
-            vkCmdEndRenderPass(commandBuffer);
+            FullscreenPassPipeline.viewport(commandBuffer, stack, output.width(), output.height());
+            if (bindCache != null) java.util.Arrays.fill(bindCache, 0L);
+            pipeline.draw(commandBuffer, stack, this.quadMesh, uniforms, samplerSet);
+            vkCmdEndRendering(commandBuffer);
             passOpen = false;
 
             this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);
@@ -325,7 +238,7 @@ final class PassExecutor {
             // agree with what the recording says.
             if (passOpen) {
                 try {
-                    vkCmdEndRenderPass(commandBuffer);
+                    vkCmdEndRendering(commandBuffer);
                 } catch (RuntimeException | LinkageError ignored) {
                     // Already in failure handling; a second failure here changes nothing.
                 }
@@ -360,99 +273,15 @@ final class PassExecutor {
         };
     }
 
-    private VulkanModProgramPipeline ensurePipeline(NativePassRegistry.RegisteredPass pass, int samplerCount,
-                                                    long renderPass) {
-        PipelineKey key = new PipelineKey(pass.spec().name(), pass.vertexSpirv(), pass.fragmentSpirv(), renderPass);
-        VulkanModProgramPipeline existing = this.pipelines.get(key);
-        if (existing != null) {
-            return existing;
-        }
+    private FullscreenPassPipeline ensurePipeline(NativePassRegistry.RegisteredPass pass, int samplerCount,
+                                                  int format, boolean depth) {
+        PipelineKey key = new PipelineKey(pass.spec().name(), pass.vertexSpirv(), pass.fragmentSpirv(), format, depth);
         NativePassRegistry.PassState state = pass.spec().state();
-        VulkanModProgramPipeline built = VulkanModProgramPipeline.createForNativePass(
-                this.context,
-                pass.vertexSpirv(),
-                pass.fragmentSpirv(),
-                samplerCount,
-                state.pushBytes(),
-                state.colorBlend(),
-                state.depthTest(),
-                state.depthWrite(),
-                state.depthCompareOp(),
-                state.cull(),
-                renderPass);
-        this.pipelines.put(key, built);
-        return built;
-    }
-
-    private long ensureRenderPass(int vkFormat, boolean depth, boolean clear) {
-        RenderPassKey key = new RenderPassKey(vkFormat, depth, clear);
-        Long existing = this.renderPasses.get(key);
-        if (existing != null) {
-            return existing.longValue();
-        }
-        int attachmentLayout = depth
-                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkAttachmentDescription.Buffer attachment = VkAttachmentDescription.calloc(1, stack);
-            attachment.get(0)
-                    .format(vkFormat)
-                    .samples(VK_SAMPLE_COUNT_1_BIT)
-                    .loadOp(clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
-                            : (depth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE))
-                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-                    .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                    .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-                    .initialLayout(attachmentLayout)
-                    .finalLayout(attachmentLayout);
-
-            VkAttachmentReference.Buffer ref = VkAttachmentReference.calloc(1, stack);
-            ref.get(0).attachment(0).layout(attachmentLayout);
-
-            VkSubpassDescription.Buffer subpass = VkSubpassDescription.calloc(1, stack);
-            subpass.get(0).pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS);
-            if (depth) {
-                subpass.get(0).pDepthStencilAttachment(ref.get(0));
-            } else {
-                subpass.get(0).colorAttachmentCount(1).pColorAttachments(ref);
-            }
-
-            VkRenderPassCreateInfo info = VkRenderPassCreateInfo.calloc(stack).sType$Default()
-                    .pAttachments(attachment)
-                    .pSubpasses(subpass);
-            LongBuffer handle = stack.mallocLong(1);
-            int res = vkCreateRenderPass(this.context.device(), info, null, handle);
-            if (res != VK_SUCCESS) {
-                throw new IllegalStateException("vkCreateRenderPass(native pass) failed with VkResult " + res);
-            }
-            long created = handle.get(0);
-            this.renderPasses.put(key, Long.valueOf(created));
-            return created;
-        }
-    }
-
-    private long ensureFramebuffer(String targetName, long view, long renderPass, int width, int height) {
-        FramebufferKey key = new FramebufferKey(targetName, view, renderPass, width, height);
-        Long existing = this.framebuffers.get(key);
-        if (existing != null) {
-            return existing.longValue();
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkFramebufferCreateInfo info = VkFramebufferCreateInfo.calloc(stack).sType$Default()
-                    .renderPass(renderPass)
-                    .pAttachments(stack.longs(view))
-                    .width(width)
-                    .height(height)
-                    .layers(1);
-            LongBuffer handle = stack.mallocLong(1);
-            int res = vkCreateFramebuffer(this.context.device(), info, null, handle);
-            if (res != VK_SUCCESS) {
-                throw new IllegalStateException("vkCreateFramebuffer(native pass) failed with VkResult " + res);
-            }
-            long created = handle.get(0);
-            this.framebuffers.put(key, Long.valueOf(created));
-            return created;
-        }
+        VulkanColorBlendState blend = state.colorBlend() == null ? VulkanColorBlendState.legacy() : state.colorBlend();
+        return this.pipelines.computeIfAbsent(key, ignored -> new FullscreenPassPipeline(
+                this.context, pass.vertexSpirv(), pass.fragmentSpirv(), samplerCount, state.pushBytes(), false, true,
+                depth ? VK_FORMAT_UNDEFINED : format, depth ? format : VK_FORMAT_UNDEFINED, blend,
+                state.depthTest(), state.depthWrite(), state.depthCompareOp(), state.cull()));
     }
 
     private void ensureQuadMesh() {
@@ -481,17 +310,6 @@ final class PassExecutor {
         return index;
     }
 
-    private void ensureInputScratchCapacity(int required) {
-        if (this.scratchViews.length >= required) {
-            return;
-        }
-        int next = Math.max(required, this.scratchViews.length * 2);
-        this.scratchViews = new long[next];
-        this.scratchSamplers = new long[next];
-        this.scratchLayouts = new int[next];
-        this.scratchGenerations = new long[next];
-    }
-
     private ByteBuffer zeroUniforms(int pushBytes) {
         ByteBuffer buf = this.scratchZeroUniforms;
         if (buf == null || buf.capacity() < pushBytes) {
@@ -502,69 +320,9 @@ final class PassExecutor {
         return buf;
     }
 
-    private static void transitionImageLayout(VkCommandBuffer commandBuffer, long image, int oldLayout, int newLayout,
-                                              boolean depth, MemoryStack stack) {
-        if (oldLayout == newLayout) {
-            return;
-        }
-        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-        barrier.get(0).sType$Default()
-                .oldLayout(oldLayout)
-                .newLayout(newLayout)
-                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .image(image)
-                .srcAccessMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                        : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) | VK_ACCESS_SHADER_READ_BIT)
-                .dstAccessMask(newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                        || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                ? VK_ACCESS_SHADER_READ_BIT
-                                : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                        : VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
-                                                | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
-        barrier.get(0).subresourceRange()
-                .aspectMask(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT)
-                .baseMipLevel(0)
-                .levelCount(1)
-                .baseArrayLayer(0)
-                .layerCount(1);
-        int srcStage = oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
-                ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                : (depth ? VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
-                        : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-        int dstStage = (newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-                        ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-                        : (depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                                : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-        BackendCallCounters.noteBarrier();
-        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, barrier);
-    }
-
     void delete() {
-        for (VulkanModProgramPipeline pipeline : this.pipelines.values()) {
-            if (pipeline != null) {
-                pipeline.delete();
-            }
-        }
+        this.pipelines.values().forEach(FullscreenPassPipeline::delete);
         this.pipelines.clear();
-        if (this.context != null && this.context.device() != null) {
-            VkDevice device = this.context.device();
-            for (Long fb : this.framebuffers.values()) {
-                if (fb != null && fb.longValue() != VK_NULL_HANDLE) {
-                    vkDestroyFramebuffer(device, fb.longValue(), null);
-                }
-            }
-            for (Long rp : this.renderPasses.values()) {
-                if (rp != null && rp.longValue() != VK_NULL_HANDLE) {
-                    vkDestroyRenderPass(device, rp.longValue(), null);
-                }
-            }
-        }
-        this.framebuffers.clear();
-        this.renderPasses.clear();
         if (this.quadMesh != null) {
             this.quadMesh.delete();
             this.quadMesh = null;

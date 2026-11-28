@@ -1,13 +1,10 @@
 package org.soutalab.celtium.vulkan;
 
-import java.lang.foreign.MemorySegment;
-
 /**
  * The celtium-internal wiring between the direct-GL converter's executor and its Vulkan sink,
  * for the state the core {@code DirectGlVulkanSink} surface deliberately does not carry per
  * call: the fixed-function parameters finer than the {@code RenderStateKey} (blend factors,
- * depth/stencil functions, viewport and scissor rectangles), a program's vertex layout, and a
- * program's current uniform-block contents. The executor pushes these when they change; the
+ * depth/stencil functions, viewport and scissor rectangles), and a program's vertex layout and resource use. The executor pushes these when they change; the
  * sink folds them into its pipeline cache key and its per-draw dynamic state.
  * <p>
  * This is an implementation seam inside one module, not a second public contract: the core
@@ -23,8 +20,11 @@ public interface DirectGlSinkExtensions {
     /** Declares a sink program's vertex attributes, in the converter's canonical packing. */
     void registerProgramAttribs(long programHandle, AttribDesc[] attribs);
 
-    /** Replaces a program's uniform block contents (the executor's packed uniform values). */
-    void updateUniforms(long programHandle, MemorySegment values);
+    /** Supplies the linked shader's resource requirements before its first draw. */
+    default void registerProgramResources(long programHandle, int samplerCount, int fragmentOutputs) {}
+
+    /** Supplies resolved sink texture names in the linked program's sampler-binding order. */
+    default void setProgramSamplerTextures(long programHandle, long[] textures) {}
 
     /** One vertex attribute of a converted program: its location and its Vulkan format. */
     record AttribDesc(int location, int vkFormat) {

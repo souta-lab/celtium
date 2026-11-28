@@ -99,6 +99,9 @@ public interface DirectGlVulkanSink {
         /** Compiles a compute program; returns its handle for {@link DirectGlVulkanSink#dispatchCompute}. */
         ComputeProgramHandle createComputeProgram(SpirvModuleBundle bundle);
 
+        /** Accepts the current std140 block. The caller retains the bytes after this call returns. */
+        default void uploadUniforms(long programHandle, MemorySegment values) {}
+
         void destroyProgram(long programHandle);
     }
 }

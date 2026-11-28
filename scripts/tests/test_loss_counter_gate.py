@@ -145,12 +145,13 @@ class LossCounterGateTest(unittest.TestCase):
 # bundles put on the verification line. FOLLOWUP_ZERO is the healthy shape of every one of
 # them; each case below flips exactly one and expects the gate to name it.
 FOLLOWUP_ZERO = (
-    "postChainGateRefusals=0 postChainCreationFailures=0 postChainBorrowRefusals=0 "
+    "postChainCreationFailures=0 "
     "postChainUnsupportedRefusals=0 chainInputFlushFailures=0 framebufferHintFailures=0 "
     "nativeCompositeRefusals=0 modRefusals=0 "
-    "modRefusalsByReason[lab-switch=0 no-program=0 unsupported-format=0] "
+    "modRefusalsByReason[compile_failed=0 unsupported_stage=0 no_frame=0 target_incompatible=0 "
+    "feedback=0 sampler_unbound=0 descriptor_exhausted=0 pipeline_failed=0] "
     "nativePassExecRefusals=0 nativePassCompileRefusals=0 "
-    "stageGate[terrain=on failures=0 trips=0 post-chain=on failures=0 trips=0] "
+    "stageGate[terrainPipelines=on failures=0 trips=0] "
     "celtium/offerDeaths[swallowed=0 noData=0 noAddress=0] "
     "celtium/nativeDrawSkips[stalled=0 refused=0] "
     "celtium/noCameraSkips[flagTrue=0 worldSkips=0 maxConsecutiveWorldSkips=0 hudSkips=0] "
@@ -176,16 +177,14 @@ class FollowupWiringTest(unittest.TestCase):
     def test_followup_keys_all_zero_passes(self):
         problems, breakdown = loss_counter_gate.check(followup_line())
         self.assertEqual([], problems)
-        self.assertEqual(0, breakdown["postChainGateRefusals"])
+        self.assertEqual(0, breakdown["postChainCreationFailures"])
         self.assertEqual(0, breakdown["stageGateSum"])
         self.assertEqual(0, breakdown["celtium/offerDeathsSum"])
         self.assertEqual(0, breakdown["totalPostAcceptDrops"])
 
     def test_followup_scalar_losses_fail(self):
         cases = {
-            "postChainGateRefusals=0": "postChainGateRefusals=2",
             "postChainCreationFailures=0": "postChainCreationFailures=1",
-            "postChainBorrowRefusals=0": "postChainBorrowRefusals=1",
             "postChainUnsupportedRefusals=0": "postChainUnsupportedRefusals=1",
             "chainInputFlushFailures=0": "chainInputFlushFailures=3",
             "framebufferHintFailures=0": "framebufferHintFailures=1",
@@ -212,14 +211,19 @@ class FollowupWiringTest(unittest.TestCase):
                 self.assertTrue(any(key in p for p in problems),
                                 f"{replacement} produced no problem: {problems}")
 
+    def test_each_lane3_refusal_is_parsed_even_without_a_nonzero_total(self):
+        keys = ("compile_failed", "unsupported_stage", "no_frame", "target_incompatible",
+                "feedback", "sampler_unbound", "descriptor_exhausted", "pipeline_failed")
+        for key in keys:
+            with self.subTest(reason=key):
+                healthy = f"{key}=0"
+                problems, _ = loss_counter_gate.check(followup_line(**{healthy: f"{key}=1"}))
+                self.assertTrue(any("modRefusalsByReason" in problem for problem in problems), problems)
+
     def test_followup_bracket_losses_fail(self):
         cases = {
-            "stageGate[terrain=on failures=0 trips=0":
-                "stageGate[terrain=on failures=1 trips=0",
-            "post-chain=on failures=0 trips=0":
-                "post-chain=on failures=0 trips=2",
-            "modRefusalsByReason[lab-switch=0":
-                "modRefusalsByReason[lab-switch=3",
+            "stageGate[terrainPipelines=on failures=0 trips=0":
+                "stageGate[terrainPipelines=on failures=1 trips=0",
             "celtium/offerDeaths[swallowed=0":
                 "celtium/offerDeaths[swallowed=2",
             "celtium/nativeDrawSkips[stalled=0 refused=0":

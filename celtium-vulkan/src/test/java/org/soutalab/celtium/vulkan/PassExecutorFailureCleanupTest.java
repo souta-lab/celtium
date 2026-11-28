@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (audit-vulkan-core E1).
  * <p>
  * A pass is recorded into the frame's own command buffer, between everything else the frame
- * records. If the draw (or anything else between {@code vkCmdBeginRenderPass} and
- * {@code vkCmdEndRenderPass}) threw, the old catch recorded the refusal and returned with the
+ * records. If the draw (or anything else between {@code vkCmdBeginRendering} and
+ * {@code vkCmdEndRendering}) threw, the old catch recorded the refusal and returned with the
  * buffer still inside the render pass - every command recorded after it, and the buffer's own
  * end, were invalid for the rest of the frame. The cleanup is structural (the path needs a device
  * and a recording buffer to run), so what is pinned here is the shape: the open-pass flag is set
@@ -37,10 +37,10 @@ class PassExecutorFailureCleanupTest {
     @Test
     void theOpenFlagBracketsThePass() throws IOException {
         String body = recordPassBody();
-        int begun = body.indexOf("vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);");
+        int begun = body.indexOf("vkCmdBeginRendering(commandBuffer, rendering);");
         int opened = body.indexOf("passOpen = true;");
-        int drawn = body.indexOf("pipeline.draw(commandBuffer, this.quadMesh, uniforms, samplerSet, activeBindCache);");
-        int ended = body.indexOf("vkCmdEndRenderPass(commandBuffer);", drawn);
+        int drawn = body.indexOf("pipeline.draw(commandBuffer, stack, this.quadMesh, uniforms, samplerSet);");
+        int ended = body.indexOf("vkCmdEndRendering(commandBuffer);", drawn);
         int closed = body.indexOf("passOpen = false;", drawn);
         assertTrue(begun >= 0 && opened > begun, "the flag is set once the pass is open");
         assertTrue(drawn > opened, "the draw happens inside the bracket");
@@ -53,7 +53,7 @@ class PassExecutorFailureCleanupTest {
     void theOutputTransitionIsMarkedWhereItIsRecorded() throws IOException {
         String body = recordPassBody();
         int transition = body.indexOf(
-                "transitionImageLayout(commandBuffer, output.image(), output.layout(), attachmentLayout, output.depth(),");
+                "FullscreenPassPipeline.transition(commandBuffer, stack, output.image(),");
         int marked = body.indexOf("outputTransitionRecorded = true;");
         assertTrue(transition >= 0 && marked > transition,
                 "recording the output's barrier marks its layout note as owed");
@@ -69,7 +69,7 @@ class PassExecutorFailureCleanupTest {
         assertTrue(caught >= 0, "recordPass has a failure path");
         String failurePath = body.substring(caught);
         int passGuard = failurePath.indexOf("if (passOpen) {");
-        int passClosed = failurePath.indexOf("vkCmdEndRenderPass(commandBuffer);");
+        int passClosed = failurePath.indexOf("vkCmdEndRendering(commandBuffer);");
         int noteGuard = failurePath.indexOf("if (outputTransitionRecorded) {");
         int notePaid = failurePath.indexOf(
                 "this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);");

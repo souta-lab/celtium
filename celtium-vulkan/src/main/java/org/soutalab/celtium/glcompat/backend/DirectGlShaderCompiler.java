@@ -5,6 +5,7 @@ import java.nio.ByteOrder;
 import java.util.List;
 
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
+import static org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.Reason.*;
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
@@ -36,6 +37,7 @@ public final class DirectGlShaderCompiler {
             List<ModGlslTranslator.UniformMember> uniforms,
             int uniformBlockSize,
             List<ModGlslTranslator.SamplerBinding> samplers,
+            int fragmentOutputs,
             String failure) {
 
         public boolean ok() {
@@ -43,23 +45,26 @@ public final class DirectGlShaderCompiler {
         }
 
         static CompiledProgram refused(String failure) {
-            return new CompiledProgram(null, List.of(), List.of(), 0, List.of(), failure);
+            return new CompiledProgram(null, List.of(), List.of(), 0, List.of(), 0, failure);
         }
     }
 
     /** Translates and compiles one vertex+fragment program pair. */
     public static CompiledProgram compileProgram(String vertexSource, String fragmentSource) {
-        if (vertexSource == null || fragmentSource == null) {
-            return CompiledProgram.refused("missing shader stage source");
+        if (fragmentSource == null) {
+            return refuse(COMPILE_FAILED, "missing fragment shader source");
         }
         ModGlslTranslator.Result translated;
         try {
-            translated = ModGlslTranslator.translate(vertexSource, fragmentSource);
-        } catch (RuntimeException failure) {
-            return CompiledProgram.refused("translation threw: " + failure.getMessage());
+            translated = ModGlslTranslator.translateDirect(vertexSource, fragmentSource);
+        } catch (RuntimeException | LinkageError failure) {
+            return refuse(COMPILE_FAILED, "translation threw: " + failure.getMessage());
         }
         if (!translated.ok()) {
-            return CompiledProgram.refused(translated.failure());
+            return refuse(COMPILE_FAILED, translated.failure());
+        }
+        if (!translated.images().isEmpty()) {
+            return refuse(COMPILE_FAILED, "storage images are unsupported by the Lane 3 pipeline layout");
         }
         try {
             int[] vertexWords = toWords(ModShaderCompiler.compile(translated.vertex(), true));
@@ -67,15 +72,20 @@ public final class DirectGlShaderCompiler {
             return new CompiledProgram(
                     SpirvModuleBundle.of(vertexWords, fragmentWords),
                     translated.attributes(), translated.uniforms(), translated.uniformBlockSize(),
-                    translated.samplers(), null);
-        } catch (RuntimeException failure) {
-            return CompiledProgram.refused("compilation failed: " + failure.getMessage());
+                    translated.samplers(), translated.fragOutputCount(), null);
+        } catch (RuntimeException | LinkageError failure) {
+            return refuse(COMPILE_FAILED, "compilation failed: " + failure.getMessage());
         }
     }
 
     /** Compute is refused by the inherited compiler's stage set (see the class doc). */
     public static CompiledProgram compileCompute(String computeSource) {
-        return CompiledProgram.refused("compute stages are not supported by the converter compiler");
+        return refuse(UNSUPPORTED_STAGE, "compute stages are not supported by the converter compiler");
+    }
+
+    static CompiledProgram refuse(DirectGlRefusalCensus.Reason reason, String detail) {
+        DirectGlRefusalCensus.note(reason, detail);
+        return CompiledProgram.refused(detail);
     }
 
     private static int[] toWords(byte[] bytes) {

@@ -630,9 +630,8 @@ final class BackendDiagnostics {
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
                 + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
-                // The mod-program refusals by reason (drawpath audit DP-35): the total above counts
-                // the batches the shutter refused; this aggregate says why, per fixed category.
-                + " " + b.modPrograms.celtium$refusalSummary()
+                // Lane 3 reports its refusal total and the fixed categories consumed by the loss gate.
+                + " " + org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.refusalSummary()
                 // The native-pass refusals (DP-37): until now they existed only in the
                 // CELTIUM_NATIVE_PASS census line at snapshot time, outside this verify body.
                 + " nativePassExecRefusals=" + b.nativePassRegistry.executionRefusalCount()
@@ -667,14 +666,12 @@ final class BackendDiagnostics {
                 + " windowDrawsToFrameImage=" + b.targetStatistics.windowDrawsToFrameImage()
                 + " windowFramesMarkedPresentable=" + b.targetStatistics.windowFramesMarkedPresentable()
                 + " lastPairClearRefusal=[" + b.targetStatistics.lastPairClearRefusal() + "]"
-                + " " + (b.postChain != null ? b.postChain.status() : "postChains=0 postPasses=0")
-                // The bridge-level chain refusals and the stage gate's own summary (drawpath audit
-                // DP-31): printed whether or not an executor exists, because the refusals that
-                // happen before one exists are exactly the ones the executor status cannot see.
-                // The chain-input flush failures (DP-32) ride beside them.
-                + " " + b.postChainBridge.celtium$status()
+                + " vanillaPostRuns=" + b.frameCoordinator.vanillaPostRuns()
+                + " vanillaPostPasses=" + b.frameCoordinator.vanillaPostPasses()
+                + " postChainCreationFailures=" + b.frameCoordinator.postChainCreationFailures()
+                + " postChainUnsupportedRefusals=" + b.frameCoordinator.postChainUnsupportedRefusals()
+                + " chainInputFlushFailures=" + b.frameCoordinator.chainInputFlushFailures()
                 + " " + StageGate.system().summary()
-                + " chainInputFlushFailures=" + b.chainInputFlushFailures
                 + " " + VulkanContext.pipelineCreationSummary()
                 // The prewarm's fallback census, beside the creation summary it qualifies: a warm
                 // window with no synchronous creations reads very differently when the number of
