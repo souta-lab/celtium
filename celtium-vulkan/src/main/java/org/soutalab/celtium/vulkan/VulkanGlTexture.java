@@ -2037,6 +2037,7 @@ public final class VulkanGlTexture {
             this.patchLevelOffsets = new long[depth];
         }
         long[] offsets = this.patchLevelOffsets;
+        long[] levelBytes = new long[depth];
         long packed = 0L;
         for (int level = 0; level < depth; level++) {
             int levelWidth = Math.max(1, width >> level);
@@ -2055,6 +2056,7 @@ public final class VulkanGlTexture {
                 bytes = requiredUploadBytes("mip level " + level + " of a patch at " + x + "," + y, patchWidth,
                         patchHeight, levels[level]);
             }
+            levelBytes[level] = bytes;
             offsets[level] = packed;
             packed += bytes;
         }
@@ -2165,6 +2167,12 @@ public final class VulkanGlTexture {
             this.fullContentArrived = true;
         }
         recordPatchWrite(depth, producerDepth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
+        // The per-level write census (R-104) counts the same writes the provenance record above
+        // counts, with the staged byte size of each level, so the run summary says which levels
+        // the patch population reached and how much it put into them.
+        for (int level = 0; level < depth; level++) {
+            MipLevelWriteCensus.noteWrite(level, levelBytes[level]);
+        }
         boolean wholeImage = x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height;
         if (!wholeImage && !this.fullContentArrived) {
             // A patch smaller than the image still contributes to it: count the tiles it wrote, and treat the image as
@@ -4128,6 +4136,9 @@ public final class VulkanGlTexture {
         }
         setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         recordWholeImageWrite();
+        // Only this one level was written (see the method's contract above), so the per-level
+        // write census (R-104) counts exactly it, with the uploaded byte count.
+        MipLevelWriteCensus.noteWrite(level, bytes);
     }
 
     /** Records a level's layout, growing the array when a recreated image has more levels than the previous one had. */
@@ -4190,6 +4201,9 @@ public final class VulkanGlTexture {
         }
         this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         recordWholeImageWrite();
+        // The request regenerates the chain, so the per-level write census (R-104) counts the
+        // copied level 0 and every regenerated level, at enqueue like the provenance record.
+        MipLevelWriteCensus.noteWholeImage(pixelWidth, pixelHeight, this.mipLevels, BYTES_PER_PIXEL, bytes);
         return true;
     }
 
@@ -4218,6 +4232,9 @@ public final class VulkanGlTexture {
         context.celtium$enqueueTextureUpload(request);
         setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         recordWholeImageWrite();
+        // The request carries this one level only, so the per-level write census (R-104) counts
+        // exactly it, at enqueue like the provenance record above.
+        MipLevelWriteCensus.noteWrite(level, bytes);
         return true;
     }
 
@@ -4457,6 +4474,9 @@ public final class VulkanGlTexture {
         // now holds content from this write: level 0 from the copy, the levels above it from the chain. Recorded
         // after the submission, so a refused one cannot claim levels it did not write (audit N07).
         recordWholeImageWrite();
+        // The per-level write census (R-104) counts the same write: level 0 with the copied byte
+        // count, and every blit-regenerated level above it with that level's full byte size.
+        MipLevelWriteCensus.noteWholeImage(pixelWidth, pixelHeight, this.mipLevels, BYTES_PER_PIXEL, bytes);
     }
 
     /**
