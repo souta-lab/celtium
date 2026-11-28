@@ -41,7 +41,7 @@ class DrawPathLmContractTest {
 
         assertTrue(dropBlock.contains("b.modelRunDropped++;"),
                 "drop path increments modelRunDropped");
-        assertTrue(dropBlock.contains("b.retiredImmediateGroups.add(group);"),
+        assertTrue(dropBlock.contains("b.frame.retiredImmediateGroups.add(group);"),
                 "drop path retires the group");
         assertTrue(dropBlock.contains("b.immediateStatistics.noteImmediateGroupsDiscarded();"),
                 "drop path counts the discarded group");
@@ -71,14 +71,14 @@ class DrawPathLmContractTest {
 
         String diag = readSource(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java");
-        int anchor = diag.indexOf("+ \" modelDrawRefusals=\" + b.modelDrawRefusals");
+        int anchor = diag.indexOf("+ \" modelDrawRefusals=\" + funnel.modelDrawRefusals");
         assertTrue(anchor >= 0, "modelDrawRefusals anchor is located in BackendDiagnostics");
         String window = diag.substring(anchor, Math.min(diag.length(), anchor + 400));
-        assertTrue(window.contains("+ \" modelRunDropped=\" + b.modelRunDropped"),
+        assertTrue(window.contains("+ \" modelRunDropped=\" + funnel.modelRunDropped"),
                 "VERIFY exposes modelRunDropped next to modelDrawRefusals");
-        assertTrue(window.contains("+ \" modelInstancesFailed=\" + b.modelInstancesFailed"),
+        assertTrue(window.contains("+ \" modelInstancesFailed=\" + funnel.modelInstancesFailed"),
                 "VERIFY unconditionally exposes modelInstancesFailed next to modelDrawRefusals");
-        assertTrue(window.contains("+ \" modelMissingMeshes=\" + b.modelGeometry.modelMissingMeshes()"),
+        assertTrue(window.contains("+ \" modelMissingMeshes=\" + seatOwner.modelGeometry.modelMissingMeshes()"),
                 "VERIFY exposes modelMissingMeshes next to modelDrawRefusals");
     }
 

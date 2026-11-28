@@ -127,7 +127,7 @@ class FontRetentionBreakdownTest {
         int anchor = diag.indexOf("+ b.fontStats.run0()");
         assertTrue(anchor >= 0, "fontStats.run0() anchor is located");
         String window = diag.substring(anchor, Math.min(diag.length(), anchor + 200));
-        assertTrue(window.contains("+ \" \" + b.fontStats.retentionSummary()"),
+        assertTrue(window.contains("+ \" \" + funnel.fontStats.retentionSummary()"),
                 "VERIFY exposes fontStats.retentionSummary() next to fontStats.run0()");
     }
 }

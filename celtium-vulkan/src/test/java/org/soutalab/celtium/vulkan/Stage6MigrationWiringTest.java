@@ -183,7 +183,7 @@ class Stage6MigrationWiringTest {
         String backend = read(BACKEND);
         int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
-        String body = backend.substring(drain, drain + 120000);
+        String body = backend.substring(drain, Math.min(backend.length(), drain + 120000));
         int particle = body.indexOf("celtium$drawParticleGroupFallback(group, mesh, prepared, push);");
         int emitter = body.indexOf("celtium$emitNonQuadGroup(group, mesh, prepared, push);");
         int direct = body.indexOf("celtium$drawGroupDirect(group, mesh, prepared, push);");

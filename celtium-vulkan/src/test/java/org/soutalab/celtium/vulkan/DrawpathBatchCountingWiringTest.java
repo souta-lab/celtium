@@ -75,7 +75,7 @@ class DrawpathBatchCountingWiringTest {
         String backend = read(BACKEND);
         int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
-        String body = backend.substring(drain, drain + 120000);
+        String body = backend.substring(drain, Math.min(backend.length(), drain + 120000));
         assertTrue(body.contains("boolean groupDrew = false;"),
                 "the drain declares the drawn flag beside the capture flag");
         assertTrue(body.contains("groupDrew = batchCaptured || fallbackDrawn"),
@@ -106,11 +106,11 @@ class DrawpathBatchCountingWiringTest {
                 "the dropped-draws counter is package-private for the summary");
         assertTrue(backend.contains("    long batchDiscardedSegments;"),
                 "the discarded-segments counter is package-private for the summary");
-        assertTrue(diagnostics.contains("\" batchDroppedDraws=\" + b.batchDroppedDraws"),
+        assertTrue(diagnostics.contains("\" batchDroppedDraws=\" + funnel.batchDroppedDraws"),
                 "VERIFY prints batchDroppedDraws");
-        assertTrue(diagnostics.contains("\" batchDiscardedSegments=\" + b.batchDiscardedSegments"),
+        assertTrue(diagnostics.contains("\" batchDiscardedSegments=\" + funnel.batchDiscardedSegments"),
                 "VERIFY prints batchDiscardedSegments");
-        assertTrue(diagnostics.contains("\" offerRefusals=\" + b.offerRefusals"),
+        assertTrue(diagnostics.contains("\" offerRefusals=\" + funnel.offerRefusals"),
                 "VERIFY prints the aggregate offer-refusal total");
         assertEquals(1, occurrences(backend, "this.offerRefusals++;"),
                 "refusals are counted once, at the submitImmediateBatch funnel");
@@ -141,9 +141,9 @@ class DrawpathBatchCountingWiringTest {
                 "the offTargetRefusals key prints exactly once: the live by-reason map");
         assertTrue(diagnostics.contains("b.offTargetRefusalsByReason"),
                 "the surviving print is the by-reason map");
-        assertTrue(diagnostics.contains("\" windowFlushFailures=\" + b.targetStatistics.windowFlushFailures()"),
+        assertTrue(diagnostics.contains("\" windowFlushFailures=\" + funnel.targetStatistics.windowFlushFailures()"),
                 "the live window-flush failure counter still prints");
-        assertTrue(diagnostics.contains("\" unflushedTargetGroupsDropped=\" + b.targetStatistics.unflushedTargetGroupsDropped()"),
+        assertTrue(diagnostics.contains("\" unflushedTargetGroupsDropped=\" + funnel.targetStatistics.unflushedTargetGroupsDropped()"),
                 "the live unflushed drop counter still prints");
     }
 
@@ -175,7 +175,7 @@ class DrawpathBatchCountingWiringTest {
         int increment = backend.indexOf("this.offTargetRedirects++;");
         assertTrue(failure >= 0 && increment > failure && increment - failure < 200,
                 "the increment sits in the routing-failure catch, beside the failure text");
-        assertTrue(diagnostics.contains("\" offTargetRedirects=\" + b.offTargetRedirects"),
+        assertTrue(diagnostics.contains("\" offTargetRedirects=\" + funnel.offTargetRedirects"),
                 "VERIFY prints offTargetRedirects");
     }
 

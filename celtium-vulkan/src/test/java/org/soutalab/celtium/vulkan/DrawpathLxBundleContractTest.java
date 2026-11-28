@@ -86,7 +86,7 @@ class DrawpathLxBundleContractTest {
         String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("public void celtium$noteChainInputFlushFailure(Throwable error)"),
                 "the backend counts and bounds-prints the failure");
-        assertTrue(read(DIAGNOSTICS).contains("\" chainInputFlushFailures=\" + b.frameCoordinator.chainInputFlushFailures()"),
+        assertTrue(read(DIAGNOSTICS).contains("\" chainInputFlushFailures=\" + frame.chainInputFlushFailures()"),
                 "the verify line carries the count");
     }
 
@@ -128,7 +128,7 @@ class DrawpathLxBundleContractTest {
         String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("public void celtium$noteFramebufferHintFailure(String seat, Throwable error)"),
                 "the backend counts the failure with its seat's name");
-        assertTrue(read(DIAGNOSTICS).contains("\" framebufferHintFailures=\" + b.framebufferHintFailures"),
+        assertTrue(read(DIAGNOSTICS).contains("\" framebufferHintFailures=\" + funnel.framebufferHintFailures"),
                 "the verify line carries the count");
     }
 
@@ -161,9 +161,9 @@ class DrawpathLxBundleContractTest {
     @Test
     void theVerifyLineCarriesTheNativePassRefusals() throws IOException {
         String diagnostics = read(DIAGNOSTICS);
-        assertTrue(diagnostics.contains("\" nativePassExecRefusals=\" + b.nativePassRegistry.executionRefusalCount()"),
+        assertTrue(diagnostics.contains("\" nativePassExecRefusals=\" + funnel.nativePassRegistry.executionRefusalCount()"),
                 "execution refusals are in the verify body");
-        assertTrue(diagnostics.contains("\" nativePassCompileRefusals=\" + b.nativePassRegistry.compileRefusalCount()"),
+        assertTrue(diagnostics.contains("\" nativePassCompileRefusals=\" + funnel.nativePassRegistry.compileRefusalCount()"),
                 "compile refusals are in the verify body");
     }
 }

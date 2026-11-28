@@ -63,7 +63,7 @@ class NonQuadModeCensusWiringTest {
                 "the offered increment has exactly one site");
         int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
-        String body = backend.substring(drain, drain + 120000);
+        String body = backend.substring(drain, Math.min(backend.length(), drain + 120000));
         int branch = body.indexOf("group.drawMode != org.lwjgl.opengl.GL11.GL_QUADS");
         int increment = body.indexOf(OFFERED_INCREMENT);
         int call = body.indexOf("celtium$emitNonQuadGroup(group, mesh, prepared, push);");
