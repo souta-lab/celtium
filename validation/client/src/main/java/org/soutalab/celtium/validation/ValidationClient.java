@@ -9491,7 +9491,7 @@ public final class ValidationClient {
         try {
             Object current = org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (current != null
-                    && "org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend".equals(current.getClass().getName())) {
+                    && "org.soutalab.celtium.vulkan.VulkanBackendAdapter".equals(current.getClass().getName())) {
                 return current;
             }
         } catch (RuntimeException | LinkageError absent) {
