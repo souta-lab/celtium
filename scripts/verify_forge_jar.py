@@ -87,7 +87,6 @@ def license_errors(jar, names, repository):
     # (3) Every bundled third-party top-level package must have a named licence entry. The census is recorded
     # either way, so a new dependency shows up as an uncovered package instead of as a silent addition.
     coverage = {
-        "grondag/bitraster/": "licenses/bitraster-LICENSE",
         "org/soutalab/celtium/impl/shadow/joml/": "META-INF/LICENSE",
         "org/lwjgl/vulkan/": "licenses/lwjgl-LICENSE",
         "org/lwjgl/util/shaderc/": "licenses/shaderc-LICENSE",
@@ -151,7 +150,6 @@ def verify(path):
             "META-INF/MANIFEST.MF", "META-INF/LICENSE", "mcmod.info", "icon.png",
             "META-INF/celeritas_at.cfg", "mixins.celeritas.json",
             "COPYING", "COPYING.LESSER", "README.md", "docs/upstream-README.md",
-            "licenses/bitraster-LICENSE",
             "licenses/lwjgl-LICENSE", "org/lwjgl/vulkan/VK.class",
             "org/lwjgl/vulkan/KHRWin32Surface.class",
             "org/taumc/celeritas/CeleritasVintage.class",
@@ -229,7 +227,6 @@ def verify(path):
             "COPYING.LESSER": "COPYING.LESSER",
             "README.md": "README.md",
             "docs/upstream-README.md": "docs/upstream-README.md",
-            "licenses/bitraster-LICENSE": "common/src/main/java/grondag/bitraster/LICENSE",
             "licenses/lwjgl-LICENSE": "licenses/lwjgl-LICENSE",
             "licenses/shaderc-LICENSE": "licenses/shaderc-LICENSE",
         }

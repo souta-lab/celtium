@@ -248,7 +248,9 @@ tasks.named<JSTTransformerTask>("applyJST") {
 tasks.named<Jar>("jar") {
     val repositoryRoot = rootProject.findProperty("celtium_repository_root") ?: rootProject.projectDir
     from(file(repositoryRoot)) {
-        include("README.md", "docs/upstream-README.md")
+        // COPYING / COPYING.LESSER used to reach the distribution jar through :common's modJar; that supply
+        // path died with the module (S2-b), so the project's own licence text is taken from the root here.
+        include("README.md", "docs/upstream-README.md", "COPYING", "COPYING.LESSER")
     }
     // LWJGL Vulkan Java bindings are bundled since v0.1.2-alpha; include their BSD-3-Clause notice.
     from(file("$repositoryRoot/licenses/lwjgl-LICENSE")) {
