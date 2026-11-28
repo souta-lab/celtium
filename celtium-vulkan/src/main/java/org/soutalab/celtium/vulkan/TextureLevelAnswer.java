@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * What the {@code glGetTexLevelParameteri} family answers for a texture's level-0 extent.

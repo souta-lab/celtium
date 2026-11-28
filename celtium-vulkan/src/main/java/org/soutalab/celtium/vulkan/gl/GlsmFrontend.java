@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.TextureLevelAnswer;
+import org.soutalab.celtium.vulkan.TextureParameterRecord;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -275,9 +277,6 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     private static final boolean BIND_SITE_DIAGNOSTICS = Boolean.getBoolean("celtium.debug.bindSites");
     private static final int MAX_BIND_SITES = 4096;
-    /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
-    public final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
      * {@code -Dceltium.vulkan.targetFormatCensus=true}: the stub side of the format census (QUEUE 405, S5) -
      * the same switch the backend's decision census reads, so one leg flag turns the whole census on. Off,
@@ -1040,7 +1039,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 if (GlDrawCensus.DrawElementCensus.CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWELEMENTS " + drawElementSummary());
                 }
-                if (installed != null && (installed.textureParameters.calls() > 0 || installed.textureParameters.queries() > 0)) {
+                if (installed != null && (installed.textureCaptures.parameters().calls() > 0 || installed.textureCaptures.parameters().queries() > 0)) {
                     // The texture-parameter record's own census: what the game set, and what the queries were answered
                     // from. Printed only when something was recorded or asked, so a run that never touches it stays
                     // silent rather than claiming a measurement it did not take.
@@ -1817,7 +1816,7 @@ public final class GlsmFrontend implements FunctionProvider {
             return;
         }
         long value = 0L;
-        int[] extent = texture > 0 ? stub.texLevels.get(texLevelKey(texture, level)) : null;
+        int[] extent = texture > 0 ? stub.textureCaptures.texLevels().get(texLevelKey(texture, level)) : null;
         if (extent != null) {
             if (pname == 0x1000) {
                 value = extent[0]; // GL_TEXTURE_WIDTH
@@ -6245,7 +6244,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 vulkan.celtium$rawTextureDeleted(name);
             }
         }
-        int[] level0 = this.texLevels.get(texLevelKey(name, 0));
+        int[] level0 = this.textureCaptures.texLevels().get(texLevelKey(name, 0));
         if (level0 != null && level0[0] * level0[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
             StringBuilder callers = new StringBuilder();
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
@@ -6279,14 +6278,14 @@ public final class GlsmFrontend implements FunctionProvider {
         this.firstBindSites.remove(name);
         // The parameter record drops the name's version and recorded values itself, for the reasons its own
         // javadoc gives (a recycled name must not inherit the old wrap/filter, #389).
-        this.textureParameters.forget(name);
+        this.textureCaptures.parameters().forget(name);
         int maxLevel = this.maxRecordedTexLevel;
         if (maxLevel < 0) {
             return;
         }
-        if (!this.texLevels.isEmpty()) {
+        if (!this.textureCaptures.texLevels().isEmpty()) {
             for (int level = 0; level <= maxLevel; level++) {
-                this.texLevels.remove(texLevelKey(name, level));
+                this.textureCaptures.texLevels().remove(texLevelKey(name, level));
             }
         }
         this.textureCaptures.forgetCaptures(name, maxLevel);
@@ -6727,7 +6726,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return null;
         }
-        int[] level = stub.texLevels.get(texLevelKey(glTextureName, 0));
+        int[] level = stub.textureCaptures.texLevels().get(texLevelKey(glTextureName, 0));
         if (level == null) {
             return null;
         }
@@ -6934,7 +6933,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** The extent record for a texture already named, as the DSA storage forms carry it. */
     private void recordExtentForName(int name, int level, int internal, int width, int height) {
-        int[] previous = this.texLevels.put(putTexLevelKey(name, level), new int[] { width, height, internal });
+        int[] previous = this.textureCaptures.texLevels().put(putTexLevelKey(name, level), new int[] { width, height, internal });
         if (TARGET_FORMAT_CENSUS && level == 0 && internal != 0 && !isDepthInternalFormat(internal)) {
             synchronized (this.targetFormatRequests) {
                 if (this.targetFormatRequests.containsKey(internal)
@@ -7108,7 +7107,7 @@ public final class GlsmFrontend implements FunctionProvider {
         for (int level = 0; level <= mipmapLevels; level++) {
             int levelWidth = width >> level;
             int levelHeight = height >> level;
-            stub.texLevels.put(stub.putTexLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
+            stub.textureCaptures.texLevels().put(stub.putTexLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
             stub.undefinedLevel(name, level, levelWidth, levelHeight, 1);
         }
     }
@@ -7138,7 +7137,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** The pname's recorded value for a named texture's level - the DSA form of {@link #texLevelParam}. */
     private int texLevelParamForName(int name, int level, int pname) {
-        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
         if (dims == null) {
             return 0;
         }
@@ -7169,7 +7168,7 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     private boolean texLevelExtentForName(int name, int level, int[] out) {
-        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
         if (dims == null) {
             return false;
         }
@@ -7181,7 +7180,7 @@ public final class GlsmFrontend implements FunctionProvider {
     /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
     private int texLevelParam(int target, int level, int pname) {
         int name = uploadTargetName(target);
-        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
         if (dims == null) {
             return 0;
         }
@@ -7352,12 +7351,11 @@ public final class GlsmFrontend implements FunctionProvider {
     // texture a non-DSA call applies to (it reads this class's binding state), the call-site guard the dispatch
     // feeds the record's instrument with, and the static doors the mirror reads through, so the record's
     // consumers keep the signatures they already use.
-    private final TextureParameterRecord textureParameters = new TextureParameterRecord();
 
     /** {@return how many times this texture's recorded parameters changed}, 0 when the game never set one. */
     public static int textureParameterVersion(int textureName) {
         GlsmFrontend stub = installed;
-        return stub == null ? 0 : stub.textureParameters.version(textureName);
+        return stub == null ? 0 : stub.textureCaptures.parameters().version(textureName);
     }
 
     /**
@@ -7381,7 +7379,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** Records one texture parameter on this stub's record; see {@link TextureParameterRecord#set}. */
     private void celtium$setTextureParameter(int textureName, int pname, int value, String site) {
-        this.textureParameters.set(textureName, pname, value, site);
+        this.textureCaptures.parameters().set(textureName, pname, value, site);
     }
 
     /** The non-DSA form: the texture bound to {@code target} on the active unit is the one the call applies to. */
@@ -7398,7 +7396,7 @@ public final class GlsmFrontend implements FunctionProvider {
             // item: it falls back to inferring LINEAR from the upload's shape when nothing is recorded.
             bound = this.lastBoundTexture;
         }
-        this.textureParameters.set(bound < 0 ? 0 : bound, pname, value, site);
+        this.textureCaptures.parameters().set(bound < 0 ? 0 : bound, pname, value, site);
     }
 
     /**
@@ -7441,7 +7439,7 @@ public final class GlsmFrontend implements FunctionProvider {
     static int textureParameterValue(int textureName, int pname) {
         GlsmFrontend stub = installed;
         return stub == null ? TextureParameterRecord.defaultValue(pname)
-                : stub.textureParameters.valueOrDefault(textureName, pname);
+                : stub.textureCaptures.parameters().valueOrDefault(textureName, pname);
     }
 
     /**
@@ -7452,7 +7450,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     public static int recordedTextureParameter(int textureName, int pname) {
         GlsmFrontend stub = installed;
-        return stub == null ? -1 : stub.textureParameters.recordedValue(textureName, pname);
+        return stub == null ? -1 : stub.textureCaptures.parameters().recordedValue(textureName, pname);
     }
 
     /**
@@ -7466,7 +7464,7 @@ public final class GlsmFrontend implements FunctionProvider {
     /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
     public static boolean textureParameterRecorded(int textureName, int pname) {
         GlsmFrontend stub = installed;
-        return stub != null && stub.textureParameters.isRecorded(textureName, pname);
+        return stub != null && stub.textureCaptures.parameters().isRecorded(textureName, pname);
     }
 
     /** The named texture parameters, bounded: the record census and the query answers. */
@@ -7475,7 +7473,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null) {
             return "texture params: recorded=0 textures=0 repeat=0 clamp=0 unbound=0 overflow=0 queries=0";
         }
-        return stub.textureParameters.summary();
+        return stub.textureCaptures.parameters().summary();
     }
 
     /**
@@ -7522,7 +7520,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */
     void celtium$noteTextureParameterQuery(String name, int textureName, int pname, int value, boolean recorded) {
-        this.textureParameters.noteQuery(name, textureName, pname, value, recorded, () -> celtium$callSite(6));
+        this.textureCaptures.parameters().noteQuery(name, textureName, pname, value, recorded, () -> celtium$callSite(6));
     }
 
     // ---- copy-from-framebuffer: named, counted, and refused for a stated reason --------------------------------

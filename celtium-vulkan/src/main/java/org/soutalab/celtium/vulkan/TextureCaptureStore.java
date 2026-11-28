@@ -73,6 +73,7 @@ public final class TextureCaptureStore {
      */
     public void clear() {
         this.texCaptures.clear();
+        this.texLevels.clear();
         this.suppliedSerials.clear();
         this.texPatchBacklog.clear();
         this.texUploadSerial.set(0L);
@@ -90,6 +91,27 @@ public final class TextureCaptureStore {
         this.texPatchBytes = 0L;
         celtium$announcedPending = false;
         celtium$announcedCaptureSkips = 0L;
+    }
+
+    /**
+     * Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of
+     * -target. The entrance's {@code recordExtent} files here and the level answers read here; the store
+     * owns the record since the seat B inversion.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+
+    /** The recorded image extents, keyed like every store here. */
+    public it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels() {
+        return this.texLevels;
+    }
+
+    /** The texture parameter record (wrap/filter/min-mag and kin) this store owns. */
+    private final TextureParameterRecord parameters = new TextureParameterRecord();
+
+    /** The texture parameter record readers and the entrance's parameter doors go through. */
+    public TextureParameterRecord parameters() {
+        return this.parameters;
     }
 
     /** The level key every store here is keyed by: {@code (textureName << 16) | level}. */
@@ -526,7 +548,7 @@ public final class TextureCaptureStore {
             // mirror". Lay an extent-sized undefined surface (same rule as undefinedLevel) and let the normal patch
             // path write inside it; over the capture budget the patch is dropped and the mirror comes from the
             // announcement path, exactly as before the route existed.
-            int[] extent = stub.texLevels.get(key);
+            int[] extent = this.texLevels.get(key);
             if (extent != null && extent[0] > 0 && extent[1] > 0
                     && (x != 0 || y != 0 || width != extent[0] || height != extent[1])) {
                 long pixels2 = (long) extent[0] * extent[1];
@@ -1187,7 +1209,7 @@ public final class TextureCaptureStore {
                 if (capture.x != 0 || capture.y != 0) {
                     continue;
                 }
-                int[] extent = stub.texLevels.get(key);
+                int[] extent = this.texLevels.get(key);
                 if (extent == null || extent[0] != capture.width || extent[1] != capture.height) {
                     continue;
                 }

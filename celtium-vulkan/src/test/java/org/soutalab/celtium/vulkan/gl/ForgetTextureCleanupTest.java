@@ -61,9 +61,8 @@ class ForgetTextureCleanupTest {
             assertNull(GlsmFrontend.celtium$textureExtent(25),
                     "level 0 extent must be cleared on delete");
 
-            Field texLevelsField = GlsmFrontend.class.getDeclaredField("texLevels");
-            texLevelsField.setAccessible(true);
-            Map<?, ?> texLevels = (Map<?, ?>) texLevelsField.get(stub);
+            Map<?, ?> texLevels = org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore()
+                    .texLevels();
             // Only texture 26's 3 mip levels (0, 1, 2) should remain.
             assertEquals(3, texLevels.size(), "all mip levels 0..5 of texture 25 must be cleared");
 

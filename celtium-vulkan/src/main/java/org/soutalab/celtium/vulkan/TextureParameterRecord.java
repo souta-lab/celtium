@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * The per-texture-object record of GL texture parameters, extracted from {@code GlsmFrontend} unchanged in
@@ -21,7 +21,7 @@ package org.soutalab.celtium.vulkan.gl;
  * run on a different unit than the one that set the parameter. Deleted names are never reissued by the stub, so
  * a record left behind by glDeleteTextures cannot be read as a later texture's state.
  */
-final class TextureParameterRecord {
+public final class TextureParameterRecord {
 
     private static final int GL_TEXTURE_MAG_FILTER = 0x2800;
     private static final int GL_TEXTURE_MIN_FILTER = 0x2801;
@@ -60,7 +60,7 @@ final class TextureParameterRecord {
     }
 
     /** {@return how many times this texture's recorded parameters changed}, 0 when the game never set one. */
-    int version(int textureName) {
+    public int version(int textureName) {
         if (textureName <= 0 || textureName >= this.texParamVersions.length) {
             return 0;
         }
@@ -90,17 +90,17 @@ final class TextureParameterRecord {
     }
 
     /** {@return how many distinct set shapes the instrument has named so far} - the stub's site guard reads this. */
-    static int paramShapeCount() {
+    public static int paramShapeCount() {
         return TEX_PARAM_SHAPES.size();
     }
 
     /** {@return how many parameter sets were recorded or refused} - the exit census prints only when positive. */
-    int calls() {
+    public int calls() {
         return this.texParamCalls.get();
     }
 
     /** {@return how many parameter queries were noted} - the exit census prints only when positive. */
-    int queries() {
+    public int queries() {
         return this.texParamQueries.get();
     }
 
@@ -133,7 +133,7 @@ final class TextureParameterRecord {
      * non-DSA forms, the explicit first argument for the DSA ones - and a call with no texture bound (which real GL
      * rejects with GL_INVALID_OPERATION) is counted rather than filed under a name the game never used.
      */
-    void set(int textureName, int pname, int value, String site) {
+    public void set(int textureName, int pname, int value, String site) {
         if (textureName <= 0) {
             this.texParamUnbound.incrementAndGet();
             return;
@@ -163,7 +163,7 @@ final class TextureParameterRecord {
     }
 
     /** GL's own initial state for a pname: the answer when the game never set it on the texture. */
-    static int defaultValue(int pname) {
+    public static int defaultValue(int pname) {
         switch (pname) {
             case GL_TEXTURE_WRAP_S:
             case GL_TEXTURE_WRAP_T:
@@ -188,7 +188,7 @@ final class TextureParameterRecord {
      * which answered the values hardcoded before the record existed (wrap CLAMP_TO_EDGE, filters LINEAR), was
      * removed once the record side was adopted (item 396).
      */
-    int valueOrDefault(int textureName, int pname) {
+    public int valueOrDefault(int textureName, int pname) {
         if (textureName > 0) {
             long key = texParamKey(textureName, pname);
             if (this.texParams.containsKey(key)) {
@@ -204,7 +204,7 @@ final class TextureParameterRecord {
      * This is the mirror's door to the record: {@link #valueOrDefault} answers GL's default for an unset pname,
      * while a caller that wants to keep its own fallback (the mirror's clamp) can tell the two apart here.
      */
-    int recordedValue(int textureName, int pname) {
+    public int recordedValue(int textureName, int pname) {
         if (textureName <= 0) {
             return -1;
         }
@@ -213,7 +213,7 @@ final class TextureParameterRecord {
     }
 
     /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
-    boolean isRecorded(int textureName, int pname) {
+    public boolean isRecorded(int textureName, int pname) {
         return textureName > 0 && this.texParams.containsKey(texParamKey(textureName, pname));
     }
 
@@ -228,7 +228,7 @@ final class TextureParameterRecord {
      * REPEAT, #389); the records are also capped, so a long session of reloads would eventually stop recording
      * new ones.
      */
-    void forget(int name) {
+    public void forget(int name) {
         if (name >= 0 && name < this.texParamVersions.length) {
             this.texParamVersions[name] = 0;
         }
@@ -245,7 +245,7 @@ final class TextureParameterRecord {
     }
 
     /** The named texture parameters, bounded: the record census and the query answers. */
-    String summary() {
+    public String summary() {
         int repeat = 0;
         int clamp = 0;
         it.unimi.dsi.fastutil.ints.IntOpenHashSet textures = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
@@ -276,7 +276,7 @@ final class TextureParameterRecord {
      * The {@code site} is supplied lazily: reading the stack is the expensive part of this instrument, so it is
      * only asked for when the shape is actually printed.
      */
-    void noteQuery(String name, int textureName, int pname, int value, boolean recorded,
+    public void noteQuery(String name, int textureName, int pname, int value, boolean recorded,
                    java.util.function.Supplier<String> site) {
         this.texParamQueries.incrementAndGet();
         if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_QUERY_SHAPES.size(), 12)) {

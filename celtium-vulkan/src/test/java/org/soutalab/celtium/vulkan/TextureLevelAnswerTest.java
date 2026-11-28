@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 
