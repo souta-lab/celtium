@@ -1539,7 +1539,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         frontend.prepareFrame(frameView, lights,
                 this.fog.getFogColor(), this.fog.getFogStart(), this.fog.getFogEnd(),
                 this.fog.getFogDensity(), fogMode, this.frameId);
-        frontend.collectCompleted();
+        frontend.collectCompleted(
+                this.scheduler == null ? 0L : this.scheduler.completedSubmitSequence());
     }
 
     /**
