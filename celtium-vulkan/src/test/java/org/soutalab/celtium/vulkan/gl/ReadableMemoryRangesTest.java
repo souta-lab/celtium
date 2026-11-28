@@ -1,5 +1,11 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.GlsmClientArrayState;
+
+import org.soutalab.celtium.vulkan.GlsmBufferState;
+
+import org.soutalab.celtium.vulkan.GlsmEnableState;
+
 import java.io.BufferedReader;
 import java.io.StringReader;
 import java.lang.reflect.Field;

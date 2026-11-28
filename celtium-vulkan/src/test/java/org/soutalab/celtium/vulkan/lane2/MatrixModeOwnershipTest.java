@@ -5,7 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.vulkan.NativeRasterState;
 import org.soutalab.celtium.vulkan.NativeTextureBindings;
-import org.soutalab.celtium.vulkan.gl.GlsmMatrixMode;
+import org.soutalab.celtium.vulkan.GlsmMatrixMode;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;

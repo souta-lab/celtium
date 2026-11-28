@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.GlsmClientArrayState;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -7,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.GlsmClientArrayState.VaoAttrib;
+import org.soutalab.celtium.vulkan.GlsmClientArrayState.VaoAttrib;
 
 /**
  * M-5: the VAO attribute records live in GlsmClientArrayState with the stub's recording

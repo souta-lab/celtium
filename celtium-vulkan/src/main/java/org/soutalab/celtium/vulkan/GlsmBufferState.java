@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;

@@ -1,5 +1,11 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.GlsmClientArrayState;
+
+import org.soutalab.celtium.vulkan.GlsmBufferState;
+
+import org.soutalab.celtium.vulkan.GlsmEnableState;
+
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;

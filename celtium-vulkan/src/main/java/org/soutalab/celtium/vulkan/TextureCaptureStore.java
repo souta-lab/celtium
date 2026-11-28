@@ -1,6 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.gl.GlsmBufferState;
+import org.soutalab.celtium.vulkan.GlsmBufferState;
 
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;

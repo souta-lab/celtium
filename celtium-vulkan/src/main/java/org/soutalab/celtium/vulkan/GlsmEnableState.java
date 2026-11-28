@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * GLSM stage 3, GAP-ST-1: the single owner of the guest's capability enable/disable record.

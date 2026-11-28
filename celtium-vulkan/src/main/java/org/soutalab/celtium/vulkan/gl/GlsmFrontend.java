@@ -1,5 +1,17 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.GlsmDisplayListLedger;
+
+import org.soutalab.celtium.vulkan.GlsmClientArrayState;
+
+import org.soutalab.celtium.vulkan.GlsmMatrixMode;
+
+import org.soutalab.celtium.vulkan.GlsmImmediateState;
+
+import org.soutalab.celtium.vulkan.GlsmBufferState;
+
+import org.soutalab.celtium.vulkan.GlsmEnableState;
+
 import org.soutalab.celtium.vulkan.FramebufferViewportState;
 import org.soutalab.celtium.vulkan.GlsmNameLedger;
 

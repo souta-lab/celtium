@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * GLSM stage 3, GAP-ST-9 (census S-14, plus S-9's line width / point size): the owner of

@@ -6724,7 +6724,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateState.color(red, green, blue, alpha);
         // The stub answers glGetFloatv(GL_CURRENT_COLOR) from its own record; without this a mod that set a colour and
         // queried it back got the stub's default white.
-        org.soutalab.celtium.vulkan.gl.GlsmImmediateState.current().color(red, green, blue, alpha);
+        org.soutalab.celtium.vulkan.GlsmImmediateState.current().color(red, green, blue, alpha);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
