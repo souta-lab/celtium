@@ -217,13 +217,6 @@ public final class FrameCoordinator {
      */
     void beginFrame(boolean packActive, boolean modFboRequested) {
 
-        VulkanContext context = this.host == null ? null : this.host.context();
-        if (context != null) context.setDirectGlFrameSlot(this.host.frameSlot());
-        this.frameTemplate = selectTemplate(packActive, modFboRequested);
-        this.frameModFboRequested = modFboRequested;
-        java.util.Arrays.fill(this.stageEntered, false);
-        this.lastStage = null;
-
         if (this.frameBufferOpen) {
             // The frame's buffer is still recording: a later segment (window, terrain pass) continues into it
             // without paying the slot wait, the reset/begin pair, the query reset or the indirect-page rebind -
@@ -352,6 +345,13 @@ public final class FrameCoordinator {
             // rather than through this frame path, so the pick's inputs are stated as
             // the fixed template's here and the executor's frames are picked on its own
             // entry when the world-pass hook is wired (S3-b D7-c).
+
+        VulkanContext context = this.host == null ? null : this.context;
+        if (context != null) context.setDirectGlFrameSlot(this.frameSlot);
+        this.frameTemplate = selectTemplate(packActive, modFboRequested);
+        this.frameModFboRequested = modFboRequested;
+        java.util.Arrays.fill(this.stageEntered, false);
+        this.lastStage = null;
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
@@ -717,7 +717,7 @@ public void setLastFrameReachedQueue(boolean reached) {
     private long readbackBuffer;
 
     /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
-    private static final int READBACK_SLOTS = 32;
+    static final int READBACK_SLOTS = 32;
 
     /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
     private static final int READBACK_COPY_BYTES = 64;
@@ -799,7 +799,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     private static final int MARKS = 240;
 
-    private static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
+    static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
 
     private int gpuMarkCount;
 
@@ -809,7 +809,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** Writes a labelled GPU mark when the GPU pass report is collecting; otherwise nothing. */
-    private void gpuMark(String label) {
+    void gpuMark(String label) {
         if (this.timestampPool == 0L || !this.timestampsUsable || this.gpuMarkCount >= MARKS
                 || !org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || this.commandBuffer == null) {
             return;
@@ -944,7 +944,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
 
     /** The offset of the recording frame slot's query range within the timestamp pool. */
-    private int celtium$timestampPoolBase() {
+    int celtium$timestampPoolBase() {
         return this.frameSlot * TIMESTAMP_SLOTS;
     }
 
@@ -1054,7 +1054,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * "no frame target, or stalled" for the rest of the session (presentedFromVulkan frozen at 355), so which of the four
      * places set it is the fact the fix needs.
      */
-    private void noteStalled() {
+    void noteStalled() {
         if (!this.gpuStalled) {
             this.gpuStalled = true;
             StackTraceElement[] stack = new Throwable().getStackTrace();
@@ -1314,7 +1314,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * without its reset is VUID-vkCmdWriteTimestamp-00830, which the frame budget's first positive-control leg did
      * reproduce (twenty errors, and a validation verdict of dirty).
      */
-    private static boolean celtium$windowTimestampsActive() {
+    static boolean celtium$windowTimestampsActive() {
         return org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || FrameBudgetTimings.enabled();
     }
 
@@ -1759,7 +1759,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * pair) attaches the frame image instead and records the acquire there. This field is how the release learns what
      * the acquire actually did, so the two can never disagree about the image's layout.
      */
-    private boolean windowFrameImageAttached = true;
+    boolean windowFrameImageAttached = true;
 
     /**
      * The recording-lifecycle guard per slot. {@link #commandState} aliases the current slot's entry, so every site
@@ -2056,7 +2056,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * a Vulkan queue completes in submission order, a signalled fence also confirms every earlier submission - which is
      * what the sequence watermark records for the resource lists below.
      */
-    private boolean waitForSlot(int slot) {
+    boolean waitForSlot(int slot) {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
             if (slot >= 0 && slot < FRAME_SLOTS) {
                 // Nothing of this slot's is in flight. If it ever carried a submission, that submission's
@@ -2294,7 +2294,7 @@ public void setLastFrameReachedQueue(boolean reached) {
      * paid for on the spot by the render thread. Returns how many slots were confirmed, which callers use for the
      * "nothing is in flight anymore" statement the retire queue needs.
      */
-    private int celtium$pollCompletedSlots() {
+    int celtium$pollCompletedSlots() {
         this.scheduler.notePoll(false);
         int confirmed = 0;
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {

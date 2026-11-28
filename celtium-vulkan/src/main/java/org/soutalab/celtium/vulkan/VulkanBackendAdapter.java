@@ -76,7 +76,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.presentSwapchain = this.presentSwapchain;
         this.funnel.owner = this;
         this.copyReadSide = new CopyReadSide(this.frameCoordinator, this.funnel, this.presentSwapchain);
+        this.copyReadSide.owner = this;
+        this.presentSwapchain.owner = this;
         this.frameStats = new FrameStatsReport(this.frameCoordinator, this.funnel);
+        this.frameStats.owner = this;
         this.reports.bind(this.frameCoordinator, this.funnel, this.presentSwapchain, this);
 
         this.context = context;
@@ -120,7 +123,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * teardown - a pass may still be named by submitted command buffers, and the variant caches take the
      * same keep-until-teardown line. Bounded by the number of frame formats (two).
      */
-    private final java.util.ArrayList<Long> retiredUiRenderPasses = new java.util.ArrayList<>();
+    final java.util.ArrayList<Long> retiredUiRenderPasses = new java.util.ArrayList<>();
 
     /** The frame-shaped pipeline passes for non-default classes, indexed by class ordinal (0 = unused). */
     final long[] formatClassPipelinePasses = new long[TargetFormatClass.values().length];
@@ -263,10 +266,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
 
     private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
 
-    private long lane1PreparedFrame = -1L;
+    long lane1PreparedFrame = -1L;
 
     /** The frame whose S1 cull dispatch has been recorded (once per frame, first main layer). */
-    private long lane1CullDispatchedFrame = -1L;
+    long lane1CullDispatchedFrame = -1L;
 
     @Override
     public void celtium$setTextureCellTable(int[] packedCells) {
@@ -1220,7 +1223,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.presentSwapchain.runSwapchainProbe();
     }
 
-    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
+    org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
                                                                           int width, int height) {
         return this.presentSwapchain.celtium$windowBeginInfo(renderPass, framebuffer, width, height);
     }
@@ -1255,32 +1258,6 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
      * because the frame summary, the diagnostics and the teardown read it here - one of them reflectively.
      */
     final TextureCopyService textureCopyService = this.copyReadSide.textureCopyService;
-
-    public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
-            int x, int y, int width, int height, int readFbo) {
-        return this.copyReadSide.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
-                readFbo);
-    }
-
-    public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
-            int x, int y, int width, int height, int xoffset, int yoffset) {
-        return this.copyReadSide.celtium$serveDepthCopy(sourceDepthTexture, destDepthTexture, x, y, width, height,
-                xoffset, yoffset);
-    }
-
-    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
-            int format, int type, long address) {
-        return this.copyReadSide.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
-    }
-
-    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
-        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address);
-    }
-
-    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address,
-            long capacity) {
-        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address, capacity);
-    }
 
     void celtium$dumpOwnedImage(String stage, long image, String base, String identity, int width,
             int height) {

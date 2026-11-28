@@ -1138,7 +1138,7 @@ public final class Lane2ImmediateRecorder {
     }
 
 
-    /** Writes every chain pair at its own extent; see {@code VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT}. */
+    /** Writes every chain pair at its own extent; see {@code Lane2ImmediateRecorder.DUMP_PAIRS_AT_PRESENT}. */
     void dumpChainPairs(String stage) {
         GllessFrameTarget glless = this.offTargetTarget();
         if (glless == null) {
@@ -3617,7 +3617,7 @@ public final class Lane2ImmediateRecorder {
                         celtium$frameSerial(), bindCache);
             } else if (this.owner.ensureFrameTarget()) {
                 this.frameTarget.beginFrame();
-                this.frame.beginCommands();
+                this.frame.beginFrame(false, false);
                 this.frameTarget.recordAcquireBarriers(this.frame.commandBuffer);
                 this.owner.nativePassExecutor.executeStage(stage, this.frame.commandBuffer, this.targetWidth, this.targetHeight,
                         celtium$frameSerial(), bindCache);
@@ -4556,7 +4556,6 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void setBlendEnabled(boolean enabled) {
         if (this.immediateState.blendEnabled() != enabled) {
             celtium$fontDrawStateBoundary();
@@ -4565,7 +4564,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
         celtium$fontDrawStateBoundary();
         this.immediateState.blendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
@@ -4574,7 +4572,6 @@ public final class Lane2ImmediateRecorder {
 
 
     /** BH-07: the blend equation, on the mirror the capture reads when the stub is not installed (the bridge). */
-    @Override
     public void blendEquation(int rgbEquation, int alphaEquation) {
         celtium$fontDrawStateBoundary();
         this.immediateState.blendEquation(rgbEquation, alphaEquation);
@@ -4583,7 +4580,6 @@ public final class Lane2ImmediateRecorder {
 
 
     /** BH-10: the colour write mask, on the same mirror and for the same reason as the equation above. */
-    @Override
     public void colorMask(int mask) {
         if (this.immediateState.colorMask() != mask) {
             celtium$fontDrawStateBoundary();
@@ -4691,7 +4687,6 @@ public final class Lane2ImmediateRecorder {
         return this.immediateState.depthMask();
     }
 
-    @Override
     public void setDepthMask(boolean mask) {
         if (this.immediateState.depthMask() != mask) {
             celtium$fontDrawStateBoundary();
@@ -4700,7 +4695,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setDepthTest(boolean enabled) {
         if (this.immediateState.depthTestEnabled() != enabled) {
             celtium$fontDrawStateBoundary();
@@ -4719,7 +4713,6 @@ public final class Lane2ImmediateRecorder {
      * which is 0 whatever the game asked for. Position-only and texture-family cutout batches are the ones that read
      * it, so this is the state half of the same defect as the mis-named hooks in {@code GlStateManagerMixin}.
      */
-    @Override
     public void setAlphaFunc(int glFunc, float reference) {
         if (this.immediateState.alphaFunc() != glFunc
                 || this.immediateState.alphaFuncReference() != reference) {
@@ -4729,13 +4722,11 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setAlphaTestEnabled(boolean enabled) {
         this.immediateState.alphaTestEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setLightingEnabled(boolean enabled) {
         // In the group's captured state (state[8]) but never inside a run key change the append can see: a lighting
         // flip between two appends of one run submits the earlier quads under the newer lamp.
@@ -4753,7 +4744,6 @@ public final class Lane2ImmediateRecorder {
      * the state real OpenGL modulates by - the unit is on for the entity pass, the hand and the block entities, and off
      * for the whole GUI stage.
      */
-    @Override
     public void setLightmapUnitEnabled(boolean enabled) {
         this.lightmapUnitEnabled = enabled;
         if (enabled) {
@@ -4763,31 +4753,26 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void setLightEnabled(int index, boolean enabled) {
         this.immediateState.lightEnabled(index, enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setLightPosition(int index, float x, float y, float z) {
         this.immediateState.setLightPosition(index, x, y, z);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setLightDiffuse(int index, float red, float green, float blue) {
         this.immediateState.setLightDiffuse(index, red, green, blue);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setLightAmbient(float red, float green, float blue) {
         this.immediateState.setLightAmbient(red, green, blue);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setShadeModel(int glMode) {
         // GL_FLAT and GL_SMOOTH are the two the mirror distinguishes; the shader path treats per-quad normals as flat.
         this.immediateState.shadeModel(glMode == 7424 ? Lane2ImmediateState.SHADE_FLAT : Lane2ImmediateState.SHADE_SMOOTH);
@@ -4841,48 +4826,41 @@ public final class Lane2ImmediateRecorder {
 
     private int litFogSkipLogs;
 
-    @Override
     public void setFogEnabled(boolean enabled) {
         this.fog.enabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("enable=" + enabled, this.frame.frameId);
     }
 
-    @Override
     public void setFogMode(int glMode) {
         this.fog.parameter(0x0B65, glMode);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("mode=" + glMode, this.frame.frameId);
     }
 
-    @Override
     public void setFogDensity(float density) {
         this.fog.parameter(0x0B62, density);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void setFogStart(float start) {
         this.fog.parameter(0x0B63, start);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("start=" + start, this.frame.frameId);
     }
 
-    @Override
     public void setFogEnd(float end) {
         this.fog.parameter(0x0B64, end);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("end=" + end, this.frame.frameId);
     }
 
-    @Override
     public void setFogColor(float red, float green, float blue) {
         this.fog.color(red, green, blue);
         this.immediateStatistics.noteImmediateStateCalls();
         if (this.fog.logOpen()) this.fog.log("colour=" + red + "," + green + "," + blue, this.frame.frameId);
     }
 
-    @Override
     public void setFogRadial(boolean radial) {
         this.fog.parameter(0x855A, radial ? 0x855B : 0x855C);
         this.immediateStatistics.noteImmediateStateCalls();
@@ -4899,7 +4877,6 @@ public final class Lane2ImmediateRecorder {
      * would use has really arrived. A mixin whose target names differed applies nothing and this stays false, so the
      * gate keeps refusing instead of letting the batch through with the field defaults.
      */
-    @Override
     public boolean immediateFogAvailable() {
         return this.fog.available();
     }
@@ -5283,7 +5260,6 @@ public final class Lane2ImmediateRecorder {
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
 
-    @Override
     public void beginAnimationUploads(int glTextureId) {
         if (this.animationBatchTexture != null || glTextureId <= 0) {
             return;
@@ -5297,7 +5273,6 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void endAnimationUploads() {
         VulkanGlTexture texture = this.animationBatchTexture;
         if (texture != null) {
@@ -5379,7 +5354,6 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void invalidateTexture(int glTextureId) {
         this.lastInvalidationOrigin = "invalidateTexture";
         // Who invalidates what, named once per texture. Three hooks have failed to catch the light map's writes, and the
@@ -5693,7 +5667,6 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void invalidateBoundTexture() {
         // The per-sprite invalidation the animation hook issues beside the announcement: 16 calls a tick, and the
         // only Celtium work in the tick that no other name covers.
@@ -5756,13 +5729,11 @@ public final class Lane2ImmediateRecorder {
                 + " upload the stub captured)");
     }
 
-    @Override
     public void setTexture2dEnabled(boolean enabled) {
         this.immediateState.texture2dEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void bindTexture(int glTextureId) {
         this.immediateState.bindTexture(glTextureId);
         this.immediateStatistics.noteImmediateStateCalls();
@@ -5776,7 +5747,6 @@ public final class Lane2ImmediateRecorder {
      * leg: 1,628,711 arrivals for 1,280,000 glyphs. The comparison is per unit inside the mirror, so a light-map bind
      * on unit 1 is never skipped because unit 0 happens to hold the same name.
      */
-    @Override
     public boolean skipUnchangedBind(int glTextureId) {
         if (!this.immediateState.bindWouldChangeNothing(glTextureId)) {
             return false;
@@ -5785,7 +5755,6 @@ public final class Lane2ImmediateRecorder {
         return true;
     }
 
-    @Override
     public void setColor(float red, float green, float blue, float alpha) {
         // The state mirror already keeps this colour (immediateState.color); the flag only says whether the game has ever
         // set one, which is what decides between the mirror and the GL read on the position-only path.
@@ -5797,7 +5766,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void matrixMode(int glMode) {
         this.lastMatrixMode = glMode;
         this.matrixModeCallsByMode[glMode == 5889 ? 0 : glMode == 5888 ? 1 : 2]++;
@@ -5855,7 +5823,6 @@ public final class Lane2ImmediateRecorder {
         this.matrixModeCalls++;
     }
 
-    @Override
     public void loadIdentity() {
         celtium$fontMatrixBoundary();
         if (this.trace.size() < 40) {
@@ -5873,7 +5840,6 @@ public final class Lane2ImmediateRecorder {
         this.loadIdentityCalls++;
     }
 
-    @Override
     public void ortho(double left, double right, double bottom, double top, double near, double far) {
         celtium$fontMatrixBoundary();
         // The GUI's projection arrives through this call. If it stops arriving, every GUI batch is drawn with whatever
@@ -5901,7 +5867,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void translate(double x, double y, double z) {
         celtium$fontMatrixBoundary();
         this.translateCalls++;
@@ -5916,7 +5881,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void rotate(float angle, float x, float y, float z) {
         celtium$fontMatrixBoundary();
         this.matricesDirty = true;
@@ -5930,7 +5894,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void scale(float x, float y, float z) {
         celtium$fontMatrixBoundary();
         this.matricesDirty = true;
@@ -5938,12 +5901,10 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void activeTextureUnit(int unit) {
         this.immediateState.activeTextureUnit(unit);
     }
 
-    @Override
     public void depthFunc(int func) {
         if (this.immediateState.depthFunc() != func) {
             celtium$fontDrawStateBoundary();
@@ -5951,7 +5912,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateState.depthFunc(func);
     }
 
-    @Override
     public void perspective(float fovDegrees, float aspect, float near, float far) {
         celtium$fontMatrixBoundary();
         if (aspect == 0.0f || near == far) {
@@ -6005,7 +5965,6 @@ public final class Lane2ImmediateRecorder {
      * @return whether the call reached the mirror; {@code false} when LWJGL's own helper would have returned before
      *         touching GL, or when GL state was unavailable
      */
-    @Override
     public boolean mirrorGluPerspective(float fovDegrees, float aspect, float near, float far) {
         // The shapes LWJGL 2's Project.gluPerspective returns early on (its own `if (deltaZ == 0 || sine == 0 ||
         // aspect == 0) return;`, read from lwjgl_util-2.9.4's bytecode): it touches no GL state in either, so neither
@@ -6118,7 +6077,6 @@ public final class Lane2ImmediateRecorder {
         return frames.length() == 0 ? "unknown" : frames.toString();
     }
 
-    @Override
     public void frustum(double left, double right, double bottom, double top, double near, double far) {
         celtium$fontMatrixBoundary();
         double width = right - left;
@@ -6152,7 +6110,6 @@ public final class Lane2ImmediateRecorder {
 
     private static int matrixTraceDumps;
 
-    @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
         celtium$fontMatrixBoundary();
         this.matricesDirty = true;
@@ -6186,7 +6143,6 @@ public final class Lane2ImmediateRecorder {
         }
     }
 
-    @Override
     public void pushMatrix() {
         celtium$fontMatrixBoundary();
         this.matricesDirty = true;
@@ -6194,7 +6150,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     public void popMatrix() {
         celtium$fontMatrixBoundary();
         this.matricesDirty = true;
@@ -6202,7 +6157,6 @@ public final class Lane2ImmediateRecorder {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    @Override
     /**
      * Seeds the mirrored projection and modelview from OpenGL once, at the moment the world camera is fully applied.
      * <p>
@@ -6267,7 +6221,6 @@ public final class Lane2ImmediateRecorder {
         return reason;
     }
 
-    @Override
     public String lastRefusal() {
         if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
             // The refusal never named itself; the stage says where the batch stopped. Stages are set at the checkpoints of
@@ -7358,7 +7311,6 @@ public final class Lane2ImmediateRecorder {
      * framebuffer - be routed to the right image, and what lets the game's composite find that image by the texture
      * name it binds.
      */
-    @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         this.publishedTextures.bindColorTexture(framebufferIdentity, colorTexture, width, height);
         if (colorTexture == 0 || width <= 0 || height <= 0) {
@@ -9385,14 +9337,12 @@ public final class Lane2ImmediateRecorder {
      * a layout only the lit ITEM pipeline shades, so the GL stub picks that layout for a lit draw and keeps its own for
      * an unlit one (whose group colour - a Mod's raw glColor - the ITEM layout's unlit shader would not apply).
      */
-    @Override
     public boolean fixedFunctionLightingEnabled() {
         return this.immediateState.lightingEnabled();
     }
 
 
     /** {@inheritDoc} This backend's retained geometry is its {@link NativeGeometryBuffer}. */
-    @Override
     public boolean acceptsRetainedGeometry() {
         return true;
     }
@@ -9402,14 +9352,12 @@ public final class Lane2ImmediateRecorder {
      * {@inheritDoc} The cast lives here, with the type: the interface carries the geometry as {@code Object}
      * because the type is this module's own.
      */
-    @Override
     public boolean submitRetainedGeometry(Object geometry, int drawMode) {
         return geometry instanceof NativeGeometryBuffer retained && submitRetainedGeometry(retained, drawMode);
     }
 
 
     /** {@inheritDoc} The mirror read the frontend's replay used to reach through a concrete-type test. */
-    @Override
     public boolean texture2dEnabled() {
         return celtium$texture2dEnabled();
     }
@@ -13802,7 +13750,7 @@ this.frame.frameBufferOpen = false;
                     }
                     this.windowOpen = true;
                     long wsCommandsMark = WINDOW_SPLIT ? System.nanoTime() : 0L;
-                    this.frame.beginCommands();
+                    this.frame.beginFrame(false, false);
                     try (MemoryStack stack = MemoryStack.stackPush()) {
                         if (WINDOW_SPLIT) {
                             long now = System.nanoTime();
@@ -13948,7 +13896,7 @@ this.frame.frameBufferOpen = false;
                     this.immediateGroups.addAll(0, this.frame.recordedImmediateGroups);
                     this.frame.recordedImmediateGroups.clear();
                     if (opened) {
-                        this.frame.beginCommands();
+                        this.frame.beginFrame(false, false);
                         this.frame.gpuMark("pre-acq3");
                         this.frameTarget.recordAcquireBarriers(this.frame.commandBuffer);
                         this.frame.gpuMark("acq3");
@@ -16657,7 +16605,6 @@ this.frame.frameBufferOpen = false;
         return summary;
     }
 
-    @Override
     public String getTransferQueueDebugString() {
         // The debug overlay shows this line, so it carries the backend's own state: without it a terrain pass that
         // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
@@ -17627,7 +17574,7 @@ this.frame.frameBufferOpen = false;
             if (pairOwner != null && pairOwner.chainPairColorImage(identity) != 0L) {
                 boolean submitted = false;
                 try {
-                    this.frame.beginCommands();
+                    this.frame.beginFrame(false, false);
                     // Outside a render pass by construction: vkCmdClearColorImage/vkCmdClearDepthStencilImage plus
                     // the pair's own acquire/clear-attachment barriers.
                     if (pairOwner.applyGameClearToChainPair(identity, this.frame.commandBuffer, mask, rgba, depth)) {
@@ -19400,8 +19347,34 @@ this.frame.frameBufferOpen = false;
 
     private int immediateOffersLastFrame;
 
+    public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height, int readFbo) {
+        return this.owner.copyReadSide.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+                readFbo);
+    }
+
+    public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
+            int x, int y, int width, int height, int xoffset, int yoffset) {
+        return this.owner.copyReadSide.celtium$serveDepthCopy(sourceDepthTexture, destDepthTexture, x, y, width, height,
+                xoffset, yoffset);
+    }
+
     static String celtium$layoutName(int layout) {
         return CopyReadSide.celtium$layoutName(layout);
+    }
+
+    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
+            int format, int type, long address) {
+        return this.owner.copyReadSide.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
+    }
+
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
+        return this.owner.copyReadSide.celtium$getTexImage(textureName, level, format, type, address);
+    }
+
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address,
+            long capacity) {
+        return this.owner.copyReadSide.celtium$getTexImage(textureName, level, format, type, address, capacity);
     }
 
 
