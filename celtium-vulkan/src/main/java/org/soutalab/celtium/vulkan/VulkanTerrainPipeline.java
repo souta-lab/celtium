@@ -1315,12 +1315,12 @@ public final class VulkanTerrainPipeline {
         if (name <= 0) {
             return -1;
         }
-        if (org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameterRecorded(name, 0x813D)) {
-            return org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(name, 0x813D);
+        if (VulkanTextureRegistry.captureStore().textureParameterRecorded(name, 0x813D)) {
+            return VulkanTextureRegistry.captureStore().textureParameter(name, 0x813D);
         }
         int highest = -1;
         for (int level = 0; level < 16; level++) {
-            if (org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(name, level, 0x1000) <= 0) {
+            if (VulkanTextureRegistry.captureStore().textureLevelParameter(name, level, 0x1000) <= 0) {
                 break;
             }
             highest = level;

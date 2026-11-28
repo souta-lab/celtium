@@ -6307,7 +6307,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // published image is excluded: announceFullPixels answers true for one without applying anything,
                 // and skipping the capture there would lose the only copy of the pixels.
                 if (!this.textureRegistry.isExternalImage(bound)) {
-                    org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().celtium$noteAnnouncedPatch(0, x, y, width, height);
+                    VulkanTextureRegistry.captureStore().celtium$noteAnnouncedPatch(0, x, y, width, height);
                 }
             }
         } finally {
@@ -6375,13 +6375,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // unapplied, skipping the re-read would leave those writes on the floor forever - the case that held the
                 // E2E atlas's mirror at the announced 40% while 37,143 captured patches sat pending.
                 if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
-                        && !org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)) {
+                        && !VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)) {
                     // The write that invalidated this mirror handed its pixels over, and they went into this image.
                     this.textureRegistry.consumeReadback(glTextureId);
                     this.textureStats.noteDirectMirrorFromAnnouncement();
                     this.readbackSkippedAfterAnnouncement++;
                 } else if (this.textureRegistry != null
-                        && !org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)
+                        && !VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)
                         && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
                     this.textureStats.noteDirectMirrorFromAnnouncement();
                 } else {
@@ -6437,7 +6437,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
         if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
-                && !org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)) {
+                && !VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)) {
             // Pending backlog patches are real un-applied writes: skipping the re-read while they wait would
             // leave the mirror at the announced fraction forever.
             this.textureRegistry.consumeReadback(glTextureId);
@@ -6622,7 +6622,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                             : " invalidationsKeptNoGl=" + this.textureInvalidationsKeptGlless
                             + " " + Lane2ImmediateState.perUnitBindCensus()
                             + " mirrorSources=[" + this.textureRegistry.mirrorSourceSummary() + "]"
-                            + " " + org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureCaptureSummary()
+                            + " " + VulkanTextureRegistry.captureStore().textureCaptureSummary()
                             + " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
         }
     }
@@ -6683,7 +6683,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         : " retainedAnnouncements=" + this.textureRegistry.retainedAnnouncements()
                         + " fills=[" + this.textureRegistry.mirrorSourceSummary() + "]"
                         + " cost=[" + this.textureRegistry.patchCostSummary() + "]")
-                + " " + org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureCaptureSummary()
+                + " " + VulkanTextureRegistry.captureStore().textureCaptureSummary()
                 + " (no GL readback exists under the stub: a mirror is refreshed from the announced image the game"
                 + " handed over, which now survives the texture's own delete-and-reallocate, and otherwise from the"
                 + " upload the stub captured)");
@@ -8665,8 +8665,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // for that framebuffer's image, its mirror superseded by the framebuffer's and the terrain drawn black. A name
         // whose current level 0 is not the size the framebuffer reported is not that attachment any more.
         long[] attachment = this.publishedTextures.colorTexture(identity);
-        int width = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1000);
-        int height = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1001);
+        int width = VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1000);
+        int height = VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1001);
         if (attachment != null && width > 0 && height > 0 && (attachment[1] != width || attachment[2] != height)) {
             this.publishedTextures.forgetColorTexture(glTextureName);
             if (this.staleColorTextureLogs++ < 4) {
@@ -8760,9 +8760,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
                         + " reason=validate knownIdentity=0x" + Long.toHexString(knownIdentity)
                         + " recorded=" + (recorded == null ? "none" : recorded[0] + "," + recorded[1] + "x" + recorded[2])
-                        + " level0=" + org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+                        + " level0=" + VulkanTextureRegistry.captureStore().textureLevelParameter(
                                 glTextureName, 0, 0x1000)
-                        + "x" + org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+                        + "x" + VulkanTextureRegistry.captureStore().textureLevelParameter(
                                 glTextureName, 0, 0x1001));
             }
             return false;
@@ -9010,9 +9010,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         .celtium$framebufferForDepthTexture(glTextureName) != 0;
         boolean gamePixels = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                 .textureLevelHasGamePixels(glTextureName, 0);
-        int width = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+        int width = VulkanTextureRegistry.captureStore().textureLevelParameter(
                 glTextureName, 0, 0x1000);
-        int height = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+        int height = VulkanTextureRegistry.captureStore().textureLevelParameter(
                 glTextureName, 0, 0x1001);
         if (!celtium$standaloneTextureMaterializable(hasUsableMirror, colourAttachment, depthRecorded,
                 gamePixels, width, height)) {
@@ -9058,9 +9058,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             return false;
         }
-        int levelWidth = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+        int levelWidth = VulkanTextureRegistry.captureStore().textureLevelParameter(
                 glTextureName, 0, 0x1000);
-        int levelHeight = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(
+        int levelHeight = VulkanTextureRegistry.captureStore().textureLevelParameter(
                 glTextureName, 0, 0x1001);
         if ((levelWidth > 0 && levelWidth != extent[0]) || (levelHeight > 0 && levelHeight != extent[1])) {
             // The colour publication's size rule, for the same reason: a reused GL name must not be taken for a
@@ -9113,9 +9113,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         if ((image == 0L || view == 0L) && this.commandBuffer != null && !this.commandState.inRenderPass()) {
             int allocWidth = width > 0 ? width
-                    : org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1000);
+                    : VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1000);
             int allocHeight = height > 0 ? height
-                    : org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1001);
+                    : VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1001);
             if (offTarget.ensureAndInitializeExtraColor(identity, slot, allocWidth, allocHeight, this.commandBuffer)) {
                 image = offTarget.chainPairColorImageAt(identity, slot);
                 view = offTarget.chainPairColorViewAt(identity, slot);
@@ -10833,7 +10833,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
                     // small but paid on each of ~220 offers.
                     long extentStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-                    boolean hasExtent = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelExtent(
+                    boolean hasExtent = VulkanTextureRegistry.captureStore().textureLevelExtent(
                             boundTexture, 0, this.textureExtentScratch);
                     if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
                     // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
@@ -11050,7 +11050,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 celtium$refreshRawWrites(boundTexture, existing);
             }
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
-            this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureWriteEpoch();
+            this.slowPathWriteEpoch = VulkanTextureRegistry.captureStore().textureWriteEpoch();
             // The slow path is the only reader of the captured values, and the key cache may have left the scratch
             // array stale: materialise it here, once, before the preflight and the group open both read it.
             celtium$materializeOfferState();
@@ -11525,7 +11525,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The group's own freshness stamp, taken at the same point as its mirror: the fast merge compares this
                 // against the live serial instead of refusing on any write anywhere (see the field's javadoc).
                 this.currentGroupTextureSerial = boundTexture == 0 ? Long.MIN_VALUE
-                        : org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(boundTexture, 0);
+                        : VulkanTextureRegistry.captureStore().textureUploadSerial(boundTexture, 0);
                 // Not registered in the shared texture array: no immediate pipeline reads an array index (the model
                 // instance runs register their own textures), so registering every group's texture was a lookup per
                 // group for nothing - and it filled the array's fixed capacity with GUI, font and mod tile textures
@@ -12284,12 +12284,12 @@ this.frameBufferOpen = false;
      * changing that for the textureless case is not what this fixes.
      */
     private boolean celtium$groupTextureUnchanged(int boundTexture) {
-        if (org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureWriteEpoch() == this.slowPathWriteEpoch) {
+        if (VulkanTextureRegistry.captureStore().textureWriteEpoch() == this.slowPathWriteEpoch) {
             return true;
         }
         return celtium$groupTextureUnchanged(false, boundTexture, this.currentGroupTextureSerial,
                 boundTexture == 0 ? Long.MIN_VALUE
-                        : org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(boundTexture, 0));
+                        : VulkanTextureRegistry.captureStore().textureUploadSerial(boundTexture, 0));
     }
 
     /**
@@ -13047,7 +13047,7 @@ this.frameBufferOpen = false;
      * no-op once it has caught up. The atlas and the light map are refreshed by their own paths and never come here.
      */
     private void celtium$refreshRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
-        long epoch = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureWriteEpoch();
+        long epoch = VulkanTextureRegistry.captureStore().textureWriteEpoch();
         if (epoch == Long.MIN_VALUE) {
             return;
         }
@@ -13077,7 +13077,7 @@ this.frameBufferOpen = false;
         // Checked at this epoch whatever the outcome: a failing upload is retried when the next write lands anywhere,
         // not on every batch.
         this.rawWriteEpochChecked[texture] = epoch;
-        long serial = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
+        long serial = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
         if (serial == Long.MIN_VALUE || serial == this.rawWriteSerialApplied[texture]) {
             return;
         }
@@ -13241,7 +13241,7 @@ this.frameBufferOpen = false;
                     || pending.mirror.view() == 0L || !pending.mirror.celtium$ownsImage()) {
                 continue;
             }
-            if (org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(textures[i], 0)) {
+            if (VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(textures[i], 0)) {
                 // The write the queue recorded left no pixels the stub can read (a re-allocation with no data, or a
                 // fill through a path that carries none). The upload would throw the capture-miss; the mirror keeps
                 // what it had, which is the same picture without the exception.
@@ -13307,11 +13307,11 @@ this.frameBufferOpen = false;
         // question the upload asks, one call earlier, and it is the only place that knows the answer for a name the
         // arrays do not cover.
         if (mirror.celtium$holdsSerial(
-                org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0))) {
+                VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0))) {
             this.rawWriteAlreadyCurrent++;
             return true;
         }
-        if (org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(texture, 0)) {
+        if (VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(texture, 0)) {
             // The write moved the serial but left nothing the stub can read - a re-allocation with no data, or a fill
             // through a path that carries no pixels. The upload would throw the capture-miss on every write; the
             // mirror keeps the content it already holds, which is the same picture without the exception. True
@@ -13361,7 +13361,7 @@ this.frameBufferOpen = false;
             this.rawWriteEpochChecked = java.util.Arrays.copyOf(this.rawWriteEpochChecked, grown);
             this.rawWriteSerialApplied = java.util.Arrays.copyOf(this.rawWriteSerialApplied, grown);
         }
-        this.rawWriteSerialApplied[texture] = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
+        this.rawWriteSerialApplied[texture] = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
     }
 
     /** {@return whether a 4x4 float matrix is the identity}, within a float's rounding of one. */
@@ -15740,12 +15740,12 @@ this.frameBufferOpen = false;
             // because the refusal could not tell "never uploaded" from "uploaded, supply failed once".
             int[] extent = this.textureRegistry == null ? new int[] { -1, -1 }
                     : new int[] {
-                            org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(textureId, 0, 0x1000),
-                            org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(textureId, 0, 0x1001) };
+                            VulkanTextureRegistry.captureStore().textureLevelParameter(textureId, 0, 0x1000),
+                            VulkanTextureRegistry.captureStore().textureLevelParameter(textureId, 0, 0x1001) };
             this.lastPrepareFailure = "format=" + format + " texture=" + textureId
                     + " (no mirror for this GL id; registry=" + (this.textureRegistry == null ? "absent" : "present")
                     + " extent=" + extent[0] + "x" + extent[1]
-                    + " uploadSerial=" + org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(textureId, 0)
+                    + " uploadSerial=" + VulkanTextureRegistry.captureStore().textureUploadSerial(textureId, 0)
                     + " lazyFailure=" + this.lastLazyMirrorFailure
                     + " firstBoundBy=[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.firstBindSite(textureId) + "]"
                     + " stateBoundBy=[" + this.immediateState.firstBindSite(textureId)
@@ -17060,7 +17060,7 @@ this.frameBufferOpen = false;
         if (existing != null && existing.hasFullContent()) {
             return true;
         }
-        long writeSerial = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(glTextureId, 0);
+        long writeSerial = VulkanTextureRegistry.captureStore().textureUploadSerial(glTextureId, 0);
         if (glTextureId < this.lazySupplySerialByTexture.length && this.lazySupplySerialRecorded[glTextureId]
                 && this.lazySupplySerialByTexture[glTextureId] == writeSerial) {
             this.lazyMirrorRetrySkips++;
@@ -17078,7 +17078,7 @@ this.frameBufferOpen = false;
         this.lazySupplySerialRecorded[glTextureId] = true;
         // One pass over the two capture maps for the whole decision. The three predicates this replaces read the same
         // two records - the level's capture and its patch backlog - through nine map lookups between them.
-        int decision = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().celtium$supplyDecision(glTextureId, 0);
+        int decision = VulkanTextureRegistry.captureStore().celtium$supplyDecision(glTextureId, 0);
         // The registry defers a name that stands for a framebuffer's colour attachment in both of its lookup branches;
         // this direct imageFor() was the one path that built the empty mirror first, then asked the capture for pixels
         // the stub does not hold. The image and its sampler are superseded (and retired) when the owner publishes, and

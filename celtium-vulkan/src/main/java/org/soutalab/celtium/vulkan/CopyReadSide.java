@@ -1417,7 +1417,7 @@ final class CopyReadSide {
         }
         // Native GL bind/query entry points may be replaced; the named allocation owns this texture's extent.
         return new int[] {
-                org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(texture, 0, 0x1000),
-                org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(texture, 0, 0x1001) };
+                VulkanTextureRegistry.captureStore().textureLevelParameter(texture, 0, 0x1000),
+                VulkanTextureRegistry.captureStore().textureLevelParameter(texture, 0, 0x1001) };
     }
 }
