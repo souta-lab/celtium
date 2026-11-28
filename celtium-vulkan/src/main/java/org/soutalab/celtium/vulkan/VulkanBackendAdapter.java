@@ -59,6 +59,7 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStateGuard.DepthAlphaSink {
 
     final BackendDiagnostics reports;
+    final VulkanContext context;
     final FrameCoordinator frameCoordinator;
     final Lane2ImmediateRecorder funnel;
     final PresentSwapchain presentSwapchain;

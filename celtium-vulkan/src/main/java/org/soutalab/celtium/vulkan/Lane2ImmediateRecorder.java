@@ -20475,13 +20475,13 @@ this.frame.frameBufferOpen = false;
         @Override
         public void bindPipeline(int pipelineKey) {
             this.twin = batchTwinBindings.get(Integer.valueOf(pipelineKey));
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
+            vkCmdBindPipeline(Lane2ImmediateRecorder.this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
             // The records set is bound with the pipeline, at the family's own index: set 1 for the
             // texture, item, block and particle families (set 0 is the per-texture pair), set 0 for
             // the colour family, whose layout declares the records set alone. The dynamic offset is
             // read now, at execution: a store grow during the window moved the slice, and the
             // offset that names this window's records is the current one.
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+            vkCmdBindDescriptorSets(Lane2ImmediateRecorder.this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                     this.twin.recordsSet, this.stack.longs(drawRecords.descriptorSet()),
                     this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
             drawRecords.noteSetBound();
@@ -20490,7 +20490,7 @@ this.frame.frameBufferOpen = false;
                 // entries name their textures in their records, so no per-texture bind follows
                 // for them, and a per-texture drop verdict left over from an earlier entry of
                 // this segment never applies to them.
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(Lane2ImmediateRecorder.this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 this.textureDropped = false;
@@ -20515,7 +20515,7 @@ this.frame.frameBufferOpen = false;
                 // (the entries' flag suppresses the ask); defensively, the only set this twin
                 // reads at set 0 is the array itself, so rebind that and never enter the
                 // per-texture registration, eviction-check or drop procedure for it.
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(Lane2ImmediateRecorder.this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 return;
@@ -20539,7 +20539,7 @@ this.frame.frameBufferOpen = false;
                 // wrapper, in the family's own form (the pair-keyed families take the drain's light map,
                 // as the drain's own rebuild does); when no rebuild is available, the entries that
                 // sample this texture are dropped (counted), never drawn with the retired set.
-                VulkanGlTexture current = celtium$registry().get(textureSlot);
+                VulkanGlTexture current = Lane2ImmediateRecorder.this.owner.celtium$registry().get(textureSlot);
                 long rebuilt = current == null ? 0L
                         : binding.celtium$rebuild(current, lightmapTexture);
                 if (rebuilt == 0L) {
@@ -20549,7 +20549,7 @@ this.frame.frameBufferOpen = false;
                 binding.descriptor = rebuilt;
                 descriptor = rebuilt;
             }
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
+            vkCmdBindDescriptorSets(Lane2ImmediateRecorder.this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
                     this.stack.longs(descriptor), null);
         }
 
@@ -20561,7 +20561,7 @@ this.frame.frameBufferOpen = false;
             float constantFactor = offsetEnabled ? donor.polygonOffsetUnits : 0.0F;
             float slopeFactor = offsetEnabled ? donor.polygonOffsetFactor : 0.0F;
             if (constantFactor != passBiasC || slopeFactor != passBiasS) {
-                vkCmdSetDepthBias(commandBuffer, constantFactor, 0.0F, slopeFactor);
+                vkCmdSetDepthBias(Lane2ImmediateRecorder.this.frame.commandBuffer, constantFactor, 0.0F, slopeFactor);
                 passBiasC = constantFactor;
                 passBiasS = slopeFactor;
             }
@@ -20586,10 +20586,10 @@ this.frame.frameBufferOpen = false;
                 // the frame ring's mapping at the store's offset reads geometry bytes as the
                 // fragment's tint and alpha reference - the panel-background defect's seat.
                 long address = drawRecords.recordAddress(firstInstance);
-                vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                vkCmdPushConstants(Lane2ImmediateRecorder.this.frame.commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }
-            vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            vkCmdDrawIndexed(Lane2ImmediateRecorder.this.frame.commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
         }
     }
 
