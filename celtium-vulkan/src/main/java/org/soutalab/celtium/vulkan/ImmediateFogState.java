@@ -122,6 +122,91 @@ public final class ImmediateFogState {
         return IMMEDIATE_FOG && this.mirrored;
     }
 
+    // --- R-105 feed/latch census: observation only; nothing here writes the fog state above. ---
+    // The feed counters advance only from the GlStateManager mixin (noteFeedEnable/noteFeedDisable). The
+    // adapter path calls enabled(...) directly and is deliberately not counted, so a leg can tell "the mixin
+    // never fired" apart from "the state arrived by another route". The latch counters advance from the
+    // terrain backend's per-frame fog latch with the value it actually read. Together with stateId() they
+    // separate the three seats the static diagnosis could not: (a) no feed at all, (b) a disable interrupting
+    // between setupFog and the latch, (c) the mixin and the backend holding different instances.
+    int feedEnable;
+    int feedDisable;
+    int latchEnabled;
+    int latchDisabled;
+    /** Bounded CELTIUM_FOG_FEED lines per instance, like the other per-run diagnostics. */
+    private static final int FEED_LOG_LIMIT = 4;
+    private int feedLogs;
+    /** The caller stack of the first mixin-fed disable, kept once: an interrupting caller names itself here. */
+    private String firstDisableCaller;
+
+    /** One mixin-fed {@code GlStateManager.enableFog}: the feed side of the R-105 census. */
+    public void noteFeedEnable() {
+        this.feedEnable++;
+        logFeed("enable", null);
+    }
+
+    /** One mixin-fed {@code GlStateManager.disableFog}: the feed side of the R-105 census. */
+    public void noteFeedDisable() {
+        this.feedDisable++;
+        boolean first = this.firstDisableCaller == null;
+        if (first) {
+            this.firstDisableCaller = callerStack();
+        }
+        logFeed("disable", first ? this.firstDisableCaller : null);
+    }
+
+    /** The value the terrain backend's frame latch read, once per prepared frame. */
+    public void noteLatchRead(boolean value) {
+        if (value) {
+            this.latchEnabled++;
+        } else {
+            this.latchDisabled++;
+        }
+    }
+
+    public int feedEnableCount() { return this.feedEnable; }
+    public int feedDisableCount() { return this.feedDisable; }
+    public int latchEnabledCount() { return this.latchEnabled; }
+    public int latchDisabledCount() { return this.latchDisabled; }
+    /** {@return the first mixin-fed disable's caller stack, or null when no disable was fed yet}. */
+    public String firstDisableCaller() { return this.firstDisableCaller; }
+    /**
+     * {@return this instance's identity, printed beside both the feed-side and the latch-side lines so a leg
+     * can tell mechanically whether the mixin wrote the instance the backend reads (seat (c) when they differ)}.
+     */
+    public int stateId() { return System.identityHashCode(this); }
+
+    private void logFeed(String kind, String caller) {
+        if (this.feedLogs >= FEED_LOG_LIMIT) {
+            return;
+        }
+        this.feedLogs++;
+        System.out.println("[Celtium] CELTIUM_FOG_FEED kind=" + kind + " stateId=" + Integer.toHexString(stateId())
+                + " feedEnable=" + this.feedEnable + " feedDisable=" + this.feedDisable
+                + (caller == null ? "" : " caller=" + caller));
+    }
+
+    /** The top frames above this class, as one line: who called into the fog feed. */
+    private static String callerStack() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        StringBuilder out = new StringBuilder();
+        int taken = 0;
+        for (StackTraceElement frame : stack) {
+            String className = frame.getClassName();
+            if (className.equals(Thread.class.getName()) || className.equals(ImmediateFogState.class.getName())) {
+                continue;
+            }
+            if (taken > 0) {
+                out.append(" <- ");
+            }
+            out.append(className).append('.').append(frame.getMethodName());
+            if (++taken >= 6) {
+                break;
+            }
+        }
+        return out.toString();
+    }
+
     /**
      * The shader's fog selector: {@code mode + 8 * shape}, both small integers so the float is exact.
      * <p>
@@ -238,7 +323,10 @@ public final class ImmediateFogState {
             this.periodicLines++;
             System.out.println("[Celtium] CELTIUM_FOG_STATE frame=" + frameId + " enabled=" + this.enabled
                     + " glMode=" + this.glMode + " start=" + this.start + " end=" + this.end
-                    + " density=" + this.density + " colour=" + this.red + "," + this.green + "," + this.blue);
+                    + " density=" + this.density + " colour=" + this.red + "," + this.green + "," + this.blue
+                    + " feedEnable=" + this.feedEnable + " feedDisable=" + this.feedDisable
+                    + " latchEnabled=" + this.latchEnabled + " latchDisabled=" + this.latchDisabled
+                    + " stateId=" + Integer.toHexString(stateId()));
         }
     }
 }

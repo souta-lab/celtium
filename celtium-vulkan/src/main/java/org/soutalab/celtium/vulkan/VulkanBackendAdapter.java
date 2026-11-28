@@ -522,7 +522,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
             }
         }
         int fogMode = 0;
-        if (this.funnel.fog.enabled()) {
+        boolean fogEnabled = this.funnel.fog.enabled();
+        // R-105 census: the value this latch read, once per prepared frame, beside the mixin's feed counts.
+        this.funnel.fog.noteLatchRead(fogEnabled);
+        if (fogEnabled) {
             fogMode = switch (this.funnel.fog.glMode()) {
                 case 0x2600 -> 1;
                 case 0x0800 -> 2;

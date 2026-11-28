@@ -17,12 +17,18 @@ public abstract class GlStateManagerFogMixin {
 
     @Inject(method = "func_179127_m", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$enableFog(CallbackInfo info) {
-        state().enabled(true); info.cancel();
+        // The R-105 census notes the feed here, at the mixin, so the count means "this injection fired";
+        // the adapter path into the same owner is not a feed and is not counted.
+        org.soutalab.celtium.vulkan.ImmediateFogState state = state();
+        state.noteFeedEnable();
+        state.enabled(true); info.cancel();
     }
 
     @Inject(method = "func_179106_n", at = @At("HEAD"), cancellable = true, require = 1)
     private static void celtiumFog$disableFog(CallbackInfo info) {
-        state().enabled(false); info.cancel();
+        org.soutalab.celtium.vulkan.ImmediateFogState state = state();
+        state.noteFeedDisable();
+        state.enabled(false); info.cancel();
     }
 
     @Inject(method = "func_179093_d", at = @At("HEAD"), cancellable = true, require = 1)
