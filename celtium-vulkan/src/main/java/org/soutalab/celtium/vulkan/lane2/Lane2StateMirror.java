@@ -463,6 +463,7 @@ public final class Lane2StateMirror {
         this.register.loadIdentity();
         this.register.setBoundTextureId(0);
         this.register.setCompilingListId(0);
+        this.register.setActiveProgramId(0);
         this.projectionDepth = 1;
         writeIdentity(this.projectionStack[0]);
         publishKey();

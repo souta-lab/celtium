@@ -39,6 +39,7 @@ public final class LightStateRegister implements AutoCloseable {
     private RenderStateKey key = RenderStateKey.DEFAULT;
     private int boundTextureId;
     private int compilingListId;
+    private int activeProgramId;
     private boolean lane3Dirty;
 
     public LightStateRegister() {
@@ -94,6 +95,25 @@ public final class LightStateRegister implements AutoCloseable {
             throw new IllegalArgumentException("listId must not be negative");
         }
         this.compilingListId = listId;
+    }
+
+    /**
+     * The guest program currently bound by {@code glUseProgram} on the Lane 3 side:
+     * {@code 0} is the fixed-function pipeline, {@code > 0} a custom shader program.
+     * Lane 2 reads this only as the Lane 2 / Lane 3 boundary gate (a batch offered with
+     * a program bound belongs to Lane 3); Lane 3 publishes it (ruling item 21). It is
+     * deliberately not part of {@code RenderStateKey}: a program id is not pipeline
+     * state of the fixed-function key space.
+     */
+    public int activeProgramId() {
+        return activeProgramId;
+    }
+
+    public void setActiveProgramId(int programId) {
+        if (programId < 0) {
+            throw new IllegalArgumentException("programId must not be negative");
+        }
+        this.activeProgramId = programId;
     }
 
     // -- matrix stack ---------------------------------------------------------

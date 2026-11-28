@@ -100,6 +100,14 @@ class Lane2StateMirrorTest {
     }
 
     @Test
+    void resetReturnsTheActiveProgramToZero() {
+        this.mirror.register().setActiveProgramId(31);
+        assertEquals(31, this.mirror.register().activeProgramId());
+        this.mirror.reset();
+        assertEquals(0, this.mirror.register().activeProgramId());
+    }
+
+    @Test
     void modelViewTransformsComposeOnTheRegisterStack() {
         float[] out = new float[16];
         this.mirror.translate(2.0f, 3.0f, 4.0f);

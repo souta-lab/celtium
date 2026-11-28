@@ -104,6 +104,22 @@ class LightStateRegisterTest {
     }
 
     @Test
+    void activeProgramIdDefaultsToZeroRoundTripsAndRejectsNegatives() {
+        try (LightStateRegister register = new LightStateRegister()) {
+            assertEquals(0, register.activeProgramId());
+            int keyBefore = register.key().value();
+            register.setActiveProgramId(7);
+            assertEquals(7, register.activeProgramId());
+            register.setActiveProgramId(0);
+            assertEquals(0, register.activeProgramId());
+            assertThrows(IllegalArgumentException.class, () -> register.setActiveProgramId(-1));
+            // The active program is Lane 3's binding, not Lane 2 pipeline state: the
+            // key - and with it the fixed pipeline census (K5) - must not move (item 21).
+            assertEquals(keyBefore, register.key().value());
+        }
+    }
+
+    @Test
     void lane3DirtyDisciplineFollowsTheContract() {
         try (LightStateRegister register = new LightStateRegister()) {
             assertFalse(register.isLane3Dirty());
