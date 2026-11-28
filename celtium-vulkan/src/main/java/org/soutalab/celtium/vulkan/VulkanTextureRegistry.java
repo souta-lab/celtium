@@ -37,6 +37,20 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 public final class VulkanTextureRegistry {
 
     /**
+     * The texture capture store this registry owns: the single seat for texture level parameters, upload
+     * serials and epochs, pending patches and recorded pixels (S3-b E5 seat B; Neon E4 ruling section 1.3).
+     * Static because the capture entrance is installed before any backend - and so any registry - exists,
+     * while the store's lifetime is the GL context's; the registry class is the owning seat either way, and
+     * every registry instance answers texture-metadata questions from this store.
+     */
+    private static final TextureCaptureStore CAPTURE_STORE = new TextureCaptureStore();
+
+    /** The capture store every registry instance owns its texture answers through. */
+    public static TextureCaptureStore captureStore() {
+        return CAPTURE_STORE;
+    }
+
+    /**
      * Whether the skip decision above is logged; set with the mirror dump, which asks the same
      * question of pixels. The gate is the mirror-dump family's one formula -
      * {@link VulkanGlTexture#mirrorDumpConfigured()}, the property's value set and non-empty - not a

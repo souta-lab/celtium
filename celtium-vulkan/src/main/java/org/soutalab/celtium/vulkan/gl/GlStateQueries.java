@@ -349,7 +349,7 @@ final class GlStateQueries {
                 return GlsmBufferState.current().bound(0x8893);
             case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
                 // M-8 residual: the pixel buffer binding fields have no stage-3 owner yet, and
-                // GlTextureCaptures reads (and clears) the unpack field directly, so moving them
+                // TextureCaptureStore reads (and clears) the unpack field directly, so moving them
                 // into GlsmBufferState is a separate multi-file slice.
                 return stub.pixelPackBuffer;
             case 0x88EF: // GL_PIXEL_UNPACK_BUFFER_BINDING

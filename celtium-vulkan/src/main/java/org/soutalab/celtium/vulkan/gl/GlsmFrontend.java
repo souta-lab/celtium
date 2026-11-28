@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -166,8 +168,8 @@ public final class GlsmFrontend implements FunctionProvider {
     static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
 
     /** One function-table row: name, return type, arg types, semantics. */
-    static final class Fn {
-        final String name;
+    public static final class Fn {
+        public final String name;
         final byte ret;
         final byte[] args;
         final int semantics;
@@ -274,7 +276,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private static final boolean BIND_SITE_DIAGNOSTICS = Boolean.getBoolean("celtium.debug.bindSites");
     private static final int MAX_BIND_SITES = 4096;
     /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
-    final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
+    public final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
      * {@code -Dceltium.vulkan.targetFormatCensus=true}: the stub side of the format census (QUEUE 405, S5) -
@@ -293,44 +295,14 @@ public final class GlsmFrontend implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap targetFormatRequests =
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
     /**
-     * Captured uploads in RGBA8, keyed like {@link #texLevels}. A full {@code glTexImage*} publishes a new record, so
-     * a reader sees the old image or the new one and never a half-written one; {@code glTexSubImage2D} patches rows
-     * of the record that is already there.
+     * The texture-pixel captures - the filed records, the patch backlog's bookkeeping, the conversion and
+     * the capture census - are owned by {@link TextureCaptureStore}, the HAL texture registry's capture
+     * store (S3-b E5 seat B ownership inversion; giant-split seam 7, QUEUE 688, built the operator). This
+     * entrance only calls in: the dispatch files uploads into the store, {@code forgetTexture} settles a
+     * name through it, the copy-image path reads beside it, and the doors below read the answers back.
      */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<GlTextureCaptures.TexCapture> texCaptures =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    /**
-     * The write serial each level's capture carried when {@link #textureUploadRgba8} last handed it to a reader,
-     * keyed like {@link #texCaptures}. A level whose entry still equals its capture's serial at release time is
-     * one a mirror has already taken in full and nothing has rewritten since - the pair of facts
-     * {@link #releaseSettledTextureCaptures} needs before it may drop the stub's own copy. Entries are removed
-     * with their texture and with a released capture, so the map stays the size of the supplied set. Every
-     * access holds the map's own monitor: the recording write happens inside {@link #textureUploadRgba8}, which
-     * is documented safe from any thread, while the release reads and removes on the render thread.
-     */
-    private final it.unimi.dsi.fastutil.longs.Long2LongMap suppliedSerials =
-            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
-    /**
-     * Patches a level could not hold at full extent - the budget above - stay in a per-level backlog, which the
-     * mirror path replays as region writes. This is how a big atlas fills at all: its sprite uploads are raw
-     * {@code glTexSubImage2D} calls that carry no announcement (measured: 37,713 captured patches vs ~1,182
-     * announced fills in one E2E run), so without the backlog the mirror covered only the announced fraction.
-     * Bounded because the texture may never be mirrored; the atlas's whole stitch burst measured ~143 MB.
-     */
-    // Primitive-keyed: textureUploadSerial reads it on every offered batch, and a boxed Long key was an allocation and
-    // a Long.equals per offer.
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<java.util.List<GlTextureCaptures.TexCapture>> texPatchBacklog =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<java.util.List<GlTextureCaptures.TexCapture>>();
+    final TextureCaptureStore textureCaptures = VulkanTextureRegistry.captureStore();
 
-    /**
-     * The texture-pixel captures themselves - the filed records, the patch backlog's bookkeeping, the
-     * conversion and the capture census - live in {@link GlTextureCaptures} (giant-split seam 7, QUEUE 688),
-     * constructed over the three stores above, which stay fields of this stub: {@code forgetTexture} and
-     * the copy-image path read them beside the captures' own state, and the cleanup test reads
-     * {@code texCaptures} by name. The write serial and the census counters moved with the captures.
-     */
-    final GlTextureCaptures textureCaptures = new GlTextureCaptures(this.texCaptures, this.texPatchBacklog,
-            this.suppliedSerials);
     /**
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
@@ -1594,9 +1566,9 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     /** Refusals caused by a bound pixel buffer, counted once so the diagnostic is bounded. */
-    int pixelBufferRefusals;
+    public int pixelBufferRefusals;
     /** Bounded count of the CELTIUM_PBO_UPLOAD lines: texture uploads read from a bound pixel unpack buffer. */
-    int pboUploadLogs;
+    public int pboUploadLogs;
 
     /** {@code GL_PIXEL_PACK_BUFFER}: with one bound, a readback's {@code pixels} argument is a buffer offset, not a pointer. */
     static final int GL_PIXEL_PACK_BUFFER = 0x88EB;
@@ -1608,7 +1580,7 @@ public final class GlsmFrontend implements FunctionProvider {
     int pixelPackBuffer;
 
     /** The bound pixel unpack buffer, 0 when none is bound. */
-    int pixelUnpackBuffer;
+    public int pixelUnpackBuffer;
 
     /**
      * {@return why a readback or upload must be refused when a pixel buffer is bound}, or null when it may proceed.
@@ -1618,7 +1590,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * the readback and upload paths did - reads or writes the JVM's low memory at address 0 or 16. Neither path can honour
      * a buffer offset, so both refuse explicitly instead of dereferencing it; the offset reaches the diagnostic verbatim.
      */
-    static String pixelBufferRefusal(int boundPixelBuffer, long offset, String operation) {
+    public static String pixelBufferRefusal(int boundPixelBuffer, long offset, String operation) {
         if (boundPixelBuffer == 0) {
             return null;
         }
@@ -4417,11 +4389,11 @@ public final class GlsmFrontend implements FunctionProvider {
 
     // ---- texture captures: the answers the mirrors read --------------------------------------------------
     //
-    // Extracted (giant-split seam 7, QUEUE 688): the capture answers moved to GlTextureCaptures, which owns
+    // Extracted (giant-split seam 7, QUEUE 688): the capture answers moved to TextureCaptureStore, which owns
     // them now. The doors below keep their names and exact signatures; each answers the documented default
     // when no stub is installed and otherwise delegates, so no caller changes.
 
-    /** The RGBA8 pixels the game uploaded for a texture level; see {@link GlTextureCaptures}. */
+    /** The RGBA8 pixels the game uploaded for a texture level; see {@link TextureCaptureStore}. */
     public static java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
         GlsmFrontend stub = installed;
         if (stub == null) {
@@ -4434,51 +4406,27 @@ public final class GlsmFrontend implements FunctionProvider {
         return stub.textureCaptures.textureUploadRgba8(textureName, level, outWidthHeight);
     }
 
-    /** The texel offset the level's captured record covers inside its level; see {@link GlTextureCaptures}. */
+    /** The texel offset the level's captured record covers inside its level; see {@link TextureCaptureStore}. */
     public static boolean textureUploadOffset(int textureName, int level, int[] outXY) {
         GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureUploadOffset(textureName, level, outXY);
     }
 
-    /**
-     * A read-only view of one backlog patch: the level region it covers and the write serial it carries.
-     * Pixels come back as a read-only duplicate positioned at 0, same rule as {@link #textureUploadRgba8}.
-     */
-    public static final class PendingPatch {
-        public final int x;
-        public final int y;
-        public final int width;
-        public final int height;
-        public final long serial;
-        public final java.nio.ByteBuffer pixels;
-
-        PendingPatch(GlTextureCaptures.TexCapture capture) {
-            this.x = capture.x;
-            this.y = capture.y;
-            this.width = capture.width;
-            this.height = capture.height;
-            this.serial = capture.serial;
-            java.nio.ByteBuffer view = capture.data.duplicate();
-            view.clear();
-            this.pixels = view.asReadOnlyBuffer();
-        }
-    }
-
-    /** Whether the level has backlog patches waiting; see {@link GlTextureCaptures}. */
+    /** Whether the level has backlog patches waiting; see {@link TextureCaptureStore}. */
     public static boolean textureHasPendingPatches(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureHasPendingPatches(textureName, level);
     }
 
-    /** A snapshot of the level's backlog patches, ordered by write serial; see {@link GlTextureCaptures}. */
-    public static java.util.List<PendingPatch> texturePendingPatches(int textureName, int level) {
+    /** A snapshot of the level's backlog patches, ordered by write serial; see {@link TextureCaptureStore}. */
+    public static java.util.List<TextureCaptureStore.PendingPatch> texturePendingPatches(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub == null
                 ? new java.util.ArrayList<PendingPatch>()
                 : stub.textureCaptures.texturePendingPatches(textureName, level);
     }
 
-    /** Drops every backlog patch at or below {@code uptoSerial} for the level; see {@link GlTextureCaptures}. */
+    /** Drops every backlog patch at or below {@code uptoSerial} for the level; see {@link TextureCaptureStore}. */
     public static void texturePatchesConsumed(int textureName, int level, long uptoSerial) {
         GlsmFrontend stub = installed;
         if (stub != null) {
@@ -4486,37 +4434,37 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
-    /** The serial the most recent level write took, any texture; see {@link GlTextureCaptures}. */
+    /** The serial the most recent level write took, any texture; see {@link TextureCaptureStore}. */
     public static long textureWriteEpoch() {
         GlsmFrontend stub = installed;
         return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureWriteEpoch();
     }
 
-    /** The write serial the level's captured record carries; see {@link GlTextureCaptures}. */
+    /** The write serial the level's captured record carries; see {@link TextureCaptureStore}. */
     public static long textureUploadSerial(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureUploadSerial(textureName, level);
     }
 
-    /** Whether the texture was allocated with a NULL data pointer; see {@link GlTextureCaptures}. */
+    /** Whether the texture was allocated with a NULL data pointer; see {@link TextureCaptureStore}. */
     public static boolean textureAllocatedWithoutData(int textureName) {
         GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureAllocatedWithoutData(stub, textureName);
     }
 
-    /** Whether the level exists but holds no game pixels; see {@link GlTextureCaptures}. */
+    /** Whether the level exists but holds no game pixels; see {@link TextureCaptureStore}. */
     public static boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureLevelAllocatedWithoutPixels(textureName, level);
     }
 
-    /** Whether the level holds pixels the game itself wrote; see {@link GlTextureCaptures}. */
+    /** Whether the level holds pixels the game itself wrote; see {@link TextureCaptureStore}. */
     public static boolean textureLevelHasGamePixels(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureLevelHasGamePixels(textureName, level);
     }
 
-    /** Whether a mirror upload of this level has provably nothing to read; see {@link GlTextureCaptures}. */
+    /** Whether a mirror upload of this level has provably nothing to read; see {@link TextureCaptureStore}. */
     public static boolean celtium$levelHasNothingToRead(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub == null || stub.textureCaptures.celtium$levelHasNothingToRead(textureName, level);
@@ -4549,20 +4497,20 @@ public final class GlsmFrontend implements FunctionProvider {
                 textureHasPendingPatches(textureName, 0), textureLevelHasGamePixels(textureName, 0));
     }
 
-    /** The rule itself, with the three facts it reads passed in; see {@link GlTextureCaptures}. */
+    /** The rule itself, with the three facts it reads passed in; see {@link TextureCaptureStore}. */
     static boolean celtium$mirrorWaitsForFramebuffer(boolean colourAttachment, boolean pendingPatches,
             boolean gamePixels) {
-        return GlTextureCaptures.celtium$mirrorWaitsForFramebuffer(colourAttachment, pendingPatches, gamePixels);
+        return TextureCaptureStore.celtium$mirrorWaitsForFramebuffer(colourAttachment, pendingPatches, gamePixels);
     }
 
     /** {@link #celtium$supplyDecision}: the level holds content a full upload can read. */
-    public static final int SUPPLY_NOW = GlTextureCaptures.SUPPLY_NOW;
+    public static final int SUPPLY_NOW = TextureCaptureStore.SUPPLY_NOW;
     /** {@link #celtium$supplyDecision}: a framebuffer's colour attachment with nothing captured; its owner publishes. */
-    public static final int SUPPLY_WAIT_FRAMEBUFFER = GlTextureCaptures.SUPPLY_WAIT_FRAMEBUFFER;
+    public static final int SUPPLY_WAIT_FRAMEBUFFER = TextureCaptureStore.SUPPLY_WAIT_FRAMEBUFFER;
     /** {@link #celtium$supplyDecision}: no captured record and no patch backlog, so the upload would throw. */
-    public static final int SUPPLY_NOTHING_TO_READ = GlTextureCaptures.SUPPLY_NOTHING_TO_READ;
+    public static final int SUPPLY_NOTHING_TO_READ = TextureCaptureStore.SUPPLY_NOTHING_TO_READ;
 
-    /** Which of the three supply outcomes this level has; see {@link GlTextureCaptures}. */
+    /** Which of the three supply outcomes this level has; see {@link TextureCaptureStore}. */
     public static int celtium$supplyDecision(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub == null
@@ -4570,7 +4518,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 : stub.textureCaptures.celtium$supplyDecision(textureName, level);
     }
 
-    /** One line of capture diagnostics; see {@link GlTextureCaptures}. */
+    /** One line of capture diagnostics; see {@link TextureCaptureStore}. */
     public static String textureCaptureSummary() {
         GlsmFrontend stub = installed;
         return stub == null
@@ -4578,13 +4526,13 @@ public final class GlsmFrontend implements FunctionProvider {
                 : stub.textureCaptures.textureCaptureSummary();
     }
 
-    /** The RGBA8 bytes the filed captures currently hold; see {@link GlTextureCaptures}. */
+    /** The RGBA8 bytes the filed captures currently hold; see {@link TextureCaptureStore}. */
     public static long textureCaptureBytes() {
         GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.textureCaptures.textureCaptureBytes();
     }
 
-    /** Drops the stub's CPU copy of every captured level that has settled; see {@link GlTextureCaptures}. */
+    /** Drops the stub's CPU copy of every captured level that has settled; see {@link TextureCaptureStore}. */
     public static long[] releaseSettledTextureCaptures() {
         GlsmFrontend stub = installed;
         return stub == null
@@ -6334,32 +6282,12 @@ public final class GlsmFrontend implements FunctionProvider {
         if (maxLevel < 0) {
             return;
         }
-        boolean hasLevels = !this.texLevels.isEmpty();
-        boolean hasCaptures = !this.texCaptures.isEmpty();
-        boolean hasBacklog = !this.texPatchBacklog.isEmpty();
-        if (!hasLevels && !hasCaptures && !hasBacklog) {
-            return;
-        }
-        for (int level = 0; level <= maxLevel; level++) {
-            long key = texLevelKey(name, level);
-            if (hasLevels) {
-                this.texLevels.remove(key);
-            }
-            if (hasCaptures) {
-                this.texCaptures.remove(key);
-            }
-            synchronized (this.suppliedSerials) {
-                this.suppliedSerials.remove(key);
-            }
-            if (hasBacklog) {
-                java.util.List<GlTextureCaptures.TexCapture> pending = this.texPatchBacklog.remove(key);
-                if (pending != null) {
-                    for (GlTextureCaptures.TexCapture capture : pending) {
-                        this.textureCaptures.texPatchBytes -= capture.data.capacity();
-                    }
-                }
+        if (!this.texLevels.isEmpty()) {
+            for (int level = 0; level <= maxLevel; level++) {
+                this.texLevels.remove(texLevelKey(name, level));
             }
         }
+        this.textureCaptures.forgetCaptures(name, maxLevel);
     }
 
     // ---- state queries ---------------------------------------------------------------
@@ -6938,7 +6866,7 @@ public final class GlsmFrontend implements FunctionProvider {
         GlsmEnableState.current().set(capability, enabled);
     }
 
-    static boolean isProxyTarget(int target) {
+    public static boolean isProxyTarget(int target) {
         // GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing.
         return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
     }
@@ -6958,7 +6886,7 @@ public final class GlsmFrontend implements FunctionProvider {
         return ((long) name << 16) | (level & 0xFFL);
     }
 
-    long putTexLevelKey(int name, int level) {
+    public long putTexLevelKey(int name, int level) {
         int masked = level & 0xFF;
         if (masked > this.maxRecordedTexLevel) {
             this.maxRecordedTexLevel = masked;
@@ -6971,7 +6899,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * for a proxy target. Proxy uploads are how FML probes the maximum texture size - they bind to nothing and their
      * "pixels" are never a real image, so only an extent is recorded for them.
      */
-    int uploadTargetName(int target) {
+    public int uploadTargetName(int target) {
         if (isProxyTarget(target)) {
             return -target;
         }
@@ -6994,7 +6922,7 @@ public final class GlsmFrontend implements FunctionProvider {
      * Records an uploaded extent under {@link #uploadTargetName}, which is what {@code glGetTexLevelParameter} answers
      * from. For an upload whose pixels the stub cannot use, this record is all there is.
      */
-    void recordExtent(int target, int level, int internal, int width, int height) {
+    public void recordExtent(int target, int level, int internal, int width, int height) {
         int name = uploadTargetName(target);
         if (name == 0) {
             return;
@@ -7075,7 +7003,7 @@ public final class GlsmFrontend implements FunctionProvider {
 
     // ---- texture pixels: the uploads the Vulkan mirrors are built from -----------------------------------
     //
-    // Extracted (giant-split seam 7, QUEUE 688): the capture bodies moved to GlTextureCaptures, which owns
+    // Extracted (giant-split seam 7, QUEUE 688): the capture bodies moved to TextureCaptureStore, which owns
     // them now - the filed records and their census, the patch backlog's bookkeeping, the RGBA8 conversion
     // and the announced-patch skip. The three stores the captures file into stay fields of this stub and
     // are handed over at construction (see the textureCaptures field), because forgetTexture and the
@@ -7083,85 +7011,85 @@ public final class GlsmFrontend implements FunctionProvider {
     // transformer call sites unchanged.
 
     /** The pixel formats and types the conversion understands - the pairs the game's texture loader uses. */
-    static final int GL_UNSIGNED_BYTE = 0x1401;
-    static final int GL_RGB = 0x1907;
-    static final int GL_RGBA = 0x1908;
-    static final int GL_BGRA = 0x80E1;
+    public static final int GL_UNSIGNED_BYTE = 0x1401;
+    public static final int GL_RGB = 0x1907;
+    public static final int GL_RGBA = 0x1908;
+    public static final int GL_BGRA = 0x80E1;
 
-    /** The tex-image producer the dispatch case lands on; see {@link GlTextureCaptures}. */
+    /** The tex-image producer the dispatch case lands on; see {@link TextureCaptureStore}. */
     private void texImagePixels(Fn fn, long[] c) {
         this.textureCaptures.texImagePixels(this, fn, c);
     }
 
-    /** The tex-image producer the transformer's route lands on; see {@link GlTextureCaptures}. */
+    /** The tex-image producer the transformer's route lands on; see {@link TextureCaptureStore}. */
     private void texImagePixels(String name, long[] c) {
         this.textureCaptures.texImagePixels(this, name, c);
     }
 
-    /** The one tex-image producer; see {@link GlTextureCaptures}. */
+    /** The one tex-image producer; see {@link TextureCaptureStore}. */
     private void texImagePixels(String name, int target, int level, int internal, int width, int height, int border,
             int format, int type, long pixels) {
         this.textureCaptures.texImagePixels(this, name, target, level, internal, width, height, border, format,
                 type, pixels);
     }
 
-    /** The patch producer the dispatch case lands on; see {@link GlTextureCaptures}. */
+    /** The patch producer the dispatch case lands on; see {@link TextureCaptureStore}. */
     private void texSubImage(long[] c) {
         this.textureCaptures.texSubImage(this, c);
     }
 
-    /** The one tex-sub-image producer; see {@link GlTextureCaptures}. */
+    /** The one tex-sub-image producer; see {@link TextureCaptureStore}. */
     private void texSubImage(int target, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         this.textureCaptures.texSubImage(this, target, level, xOffset, yOffset, width, height, format, type,
                 pixels);
     }
 
-    /** The DSA spelling's producer; see {@link GlTextureCaptures}. */
+    /** The DSA spelling's producer; see {@link TextureCaptureStore}. */
     private void texSubImageForName(int name, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         this.textureCaptures.texSubImageForName(this, name, level, xOffset, yOffset, width, height, format, type,
                 pixels);
     }
 
-    /** Files one converted RGBA8 patch into a level's captured rows; see {@link GlTextureCaptures}. */
+    /** Files one converted RGBA8 patch into a level's captured rows; see {@link TextureCaptureStore}. */
     private void fileTexturePatch(int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
         this.textureCaptures.fileTexturePatch(this, name, level, x, y, width, height, patch);
     }
 
-    /** A level allocated with a NULL data pointer; see {@link GlTextureCaptures}. */
+    /** A level allocated with a NULL data pointer; see {@link TextureCaptureStore}. */
     private void undefinedLevel(int name, int level, int width, int height, int depth) {
         this.textureCaptures.undefinedLevel(this, name, level, width, height, depth);
     }
 
-    /** {@code glCompressedTexImage2D}: the extent record only; see {@link GlTextureCaptures}. */
+    /** {@code glCompressedTexImage2D}: the extent record only; see {@link TextureCaptureStore}. */
     private void compressedTexImage(long[] c) {
         this.textureCaptures.compressedTexImage(this, c);
     }
 
-    /** {@code bytes} rounded up to a GL unpack alignment; see {@link GlTextureCaptures}. */
+    /** {@code bytes} rounded up to a GL unpack alignment; see {@link TextureCaptureStore}. */
     private static int aligned(int bytes, int alignment) {
-        return GlTextureCaptures.aligned(bytes, alignment);
+        return TextureCaptureStore.aligned(bytes, alignment);
     }
 
-    /** Whether a texture upload's {@code pixels} argument names data; see {@link GlTextureCaptures}. */
+    /** Whether a texture upload's {@code pixels} argument names data; see {@link TextureCaptureStore}. */
     static boolean carriesPixels(long pixels, int unpackBuffer) {
-        return GlTextureCaptures.carriesPixels(pixels, unpackBuffer);
+        return TextureCaptureStore.carriesPixels(pixels, unpackBuffer);
     }
 
-    /** Converts one upload's pixels to RGBA8; see {@link GlTextureCaptures}. */
+    /** Converts one upload's pixels to RGBA8; see {@link TextureCaptureStore}. */
     private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
         return this.textureCaptures.uploadToRgba8(this, width, height, format, type, pixels);
     }
 
-    /** Arms the one-shot skip for the patch an announcement just applied; see {@link GlTextureCaptures}. */
+    /** Arms the one-shot skip for the patch an announcement just applied; see {@link TextureCaptureStore}. */
     public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
-        GlTextureCaptures.celtium$noteAnnouncedPatch(level, x, y, width, height);
+        TextureCaptureStore.celtium$noteAnnouncedPatch(level, x, y, width, height);
     }
 
     /** {@return how many captures the announcement made unnecessary} */
     public static long celtium$announcedCaptureSkips() {
-        return GlTextureCaptures.celtium$announcedCaptureSkips();
+        return TextureCaptureStore.celtium$announcedCaptureSkips();
     }
 
     /**
@@ -7322,12 +7250,12 @@ public final class GlsmFrontend implements FunctionProvider {
     }
 
     /** {@return the size GL last gave this buffer}; the semantics live in {@link BufferStorageRecord#logicalSizeOf}. */
-    int logicalSizeOf(int name, int capacity) {
+    public int logicalSizeOf(int name, int capacity) {
         return this.bufferStorage.logicalSizeOf(name, capacity);
     }
 
     /** The range contract lives in {@link BufferStorageRecord#mapRangeOffset}; this door keeps its callers unchanged. */
-    static long mapRangeOffset(long offset, long length, long capacity) {
+    public static long mapRangeOffset(long offset, long length, long capacity) {
         return BufferStorageRecord.mapRangeOffset(offset, length, capacity);
     }
 
@@ -7679,8 +7607,8 @@ public final class GlsmFrontend implements FunctionProvider {
                     + " size=" + width + "x" + height
                     + " (only a 2D level-to-level copy is served)";
         }
-        GlTextureCaptures.TexCapture source = refusal == null
-                ? this.texCaptures.get(texLevelKey(srcName, srcLevel))
+        TextureCaptureStore.TexCapture source = refusal == null
+                ? this.textureCaptures.capture(srcName, srcLevel)
                 : null;
         // A capture filed as a patch covers its level from the record's own (x, y), so the rectangle this copy
         // names in level coordinates is read at the level position minus the record's origin.
@@ -7715,9 +7643,9 @@ public final class GlsmFrontend implements FunctionProvider {
         }
         // A patch the mirror has not consumed yet is a newer write to the source level than the record it
         // sits beside: where one overlaps the rectangle it wins, in the order the game wrote them.
-        java.util.List<GlTextureCaptures.TexCapture> pending = this.texPatchBacklog.get(texLevelKey(srcName, srcLevel));
+        java.util.List<TextureCaptureStore.TexCapture> pending = this.textureCaptures.backlog(srcName, srcLevel);
         if (pending != null) {
-            for (GlTextureCaptures.TexCapture newer : pending) {
+            for (TextureCaptureStore.TexCapture newer : pending) {
                 int ix0 = Math.max(srcX, newer.x);
                 int iy0 = Math.max(srcY, newer.y);
                 int ix1 = Math.min(srcX + width, newer.x + newer.width);

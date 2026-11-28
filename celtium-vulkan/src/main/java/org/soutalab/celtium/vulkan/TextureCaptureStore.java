@@ -1,4 +1,6 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
+
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
@@ -8,37 +10,96 @@ import static org.lwjgl.system.MemoryUtil.memGetLong;
 import static org.lwjgl.system.MemoryUtil.memPutInt;
 
 /**
- * The stub's texture-pixel captures, extracted from {@code GlsmFrontend} (giant-split seam 7, QUEUE 688).
- * Behaviour is unchanged: this class owns the filed capture records ({@link TexCapture}), the patch
+ * The texture-pixel capture store, extracted from {@code GlsmFrontend} (giant-split seam 7, QUEUE 688)
+ * and moved under the HAL texture registry at S3-b E5 seat B. This class owns the filed capture records ({@link TexCapture}), the patch
  * backlog's bookkeeping, the RGBA8 conversion every upload passes through, the capture census and the
- * read-side answers the Vulkan mirrors are built from, while {@code GlsmFrontend} keeps the public doors
- * (the {@code textureUpload*} statics and kin) and the dispatch that calls in.
+ * read-side answers the Vulkan mirrors are built from. {@code GlsmFrontend} keeps thin public doors
+ * (the {@code textureUpload*} statics and kin) over this store until E4-b re-homes them.
  * <p>
- * The three stores are not owned here: they are the stub's fields, handed in at construction, because
- * {@code forgetTexture} and the copy-image path read them beside this class's own state, and the cleanup
- * test reads {@code texCaptures} by name (the shape split-2 set for {@link BufferStorageRecord}). What
- * this class owns is everything filed into them: the write serial, the census counters, the patch-byte
- * total and the per-key patch census.
+ * Ownership inverted at S3-b E5 seat B (Neon E4 ruling section 1.3): this store is the texture mirror's
+ * single owning seat, held by {@link VulkanTextureRegistry} - the HAL's single texture registry - and
+ * reached from there by the capture side and by every mirror reader. The three stores are this class's
+ * own fields; what it owns is everything filed into them: the write serial, the census counters, the
+ * patch-byte total and the per-key patch census.
  * <p>
- * The producers and answers read the stub's live extent and binding records, so the ones that need them
- * take the stub itself rather than a copy of its values; the fields and helper methods they read are
- * package-private on the stub for this class (the same widening the state-query extraction applied).
+ * The producers still read the capture entrance's live extent and binding records, so the ones that need
+ * them take the entrance itself rather than a copy of its values; those reads are capture machinery and
+ * leave with the entrance at E4-b.
  */
-final class GlTextureCaptures {
+public final class TextureCaptureStore {
 
-    /** The stub's captured uploads, keyed like its extent record. Owned by the stub; operated on here. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<TexCapture> texCaptures;
-    /** The stub's per-level patch backlog. Owned by the stub; operated on here. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<java.util.List<TexCapture>> texPatchBacklog;
-    /** The stub's supplied-serial record. Owned by the stub; operated on here. */
-    private final it.unimi.dsi.fastutil.longs.Long2LongMap suppliedSerials;
+    /**
+     * Captured uploads in RGBA8, keyed like the entrance's extent record. A full {@code glTexImage*}
+     * publishes a new record, so a reader sees the old image or the new one and never a half-written one;
+     * {@code glTexSubImage2D} patches rows of the record that is already there.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<TexCapture> texCaptures =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    /**
+     * The write serial each level's capture carried when {@link #textureUploadRgba8} last handed it to a
+     * reader, keyed like {@link #texCaptures}. A level whose entry still equals its capture's serial at
+     * release time is one a mirror has already taken in full and nothing has rewritten since - the pair of
+     * facts {@link #releaseSettledTextureCaptures} needs before it may drop this store's own copy. Entries
+     * are removed with their texture and with a released capture, so the map stays the size of the supplied
+     * set. Every access holds the map's own monitor: the recording write happens inside
+     * {@link #textureUploadRgba8}, which is documented safe from any thread, while the release reads and
+     * removes on the render thread.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongMap suppliedSerials =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /**
+     * Patches a level could not hold at full extent - the budget below - stay in a per-level backlog, which
+     * the mirror path replays as region writes. This is how a big atlas fills at all: its sprite uploads are
+     * raw {@code glTexSubImage2D} calls that carry no announcement (measured: 37,713 captured patches vs
+     * ~1,182 announced fills in one E2E run), so without the backlog the mirror covered only the announced
+     * fraction. Bounded because the texture may never be mirrored; the atlas's whole stitch burst measured
+     * ~143 MB.
+     */
+    // Primitive-keyed: textureUploadSerial reads it on every offered batch, and a boxed Long key was an
+    // allocation and a Long.equals per offer.
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<java.util.List<TexCapture>> texPatchBacklog =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<java.util.List<TexCapture>>();
 
-    GlTextureCaptures(it.unimi.dsi.fastutil.longs.Long2ObjectMap<TexCapture> texCaptures,
-            it.unimi.dsi.fastutil.longs.Long2ObjectMap<java.util.List<TexCapture>> texPatchBacklog,
-            it.unimi.dsi.fastutil.longs.Long2LongMap suppliedSerials) {
-        this.texCaptures = texCaptures;
-        this.texPatchBacklog = texPatchBacklog;
-        this.suppliedSerials = suppliedSerials;
+    public TextureCaptureStore() {
+    }
+
+    /** The level key every store here is keyed by: {@code (textureName << 16) | level}. */
+    static long texLevelKey(int name, int level) {
+        return ((long) name << 16) | (level & 0xFFL);
+    }
+
+    /** The filed capture for one level, or null; the copy-image path reads beside the store. */
+    public TexCapture capture(int textureName, int level) {
+        return this.texCaptures.get(texLevelKey(textureName, level));
+    }
+
+    /** The filed patch backlog for one level, or null; the copy-image path reads beside the store. */
+    public java.util.List<TexCapture> backlog(int textureName, int level) {
+        return this.texPatchBacklog.get(texLevelKey(textureName, level));
+    }
+
+    /**
+     * Drops every filed capture, supplied serial and backlog patch for one texture name, settling the
+     * patch-byte total as the backlog goes. The entrance's {@code forgetTexture} calls this beside its own
+     * extent-record cleanup.
+     */
+    public void forgetCaptures(int name, int maxLevel) {
+        if (this.texCaptures.isEmpty() && this.texPatchBacklog.isEmpty() && this.suppliedSerials.isEmpty()) {
+            return;
+        }
+        for (int level = 0; level <= maxLevel; level++) {
+            long key = texLevelKey(name, level);
+            this.texCaptures.remove(key);
+            synchronized (this.suppliedSerials) {
+                this.suppliedSerials.remove(key);
+            }
+            java.util.List<TexCapture> pending = this.texPatchBacklog.remove(key);
+            if (pending != null) {
+                for (TexCapture capture : pending) {
+                    this.texPatchBytes -= capture.data.capacity();
+                }
+            }
+        }
     }
 
     /** The serial every filed level write takes its number from; see {@link TexCapture#serial}. */
@@ -96,15 +157,15 @@ final class GlTextureCaptures {
     private int patchBranchLone;
     private int patchBranchPaste;
 
-    // Package-private: the stub's forgetTexture settles the total when it drops a backlog.
-    long texPatchBytes;
+    // Settled by forgetCaptures when it drops a backlog.
+    private long texPatchBytes;
     private static final long MAX_PATCH_BACKLOG_BYTES = 192L * 1024L * 1024L;
 
     /** One captured level: RGBA8, {@code width * height} pixels, top row first, in stub-owned direct storage. */
-    static final class TexCapture {
-        final int width;
-        final int height;
-        final ByteBuffer data;
+    public static final class TexCapture {
+        public final int width;
+        public final int height;
+        public final ByteBuffer data;
         /**
          * Whether the game itself wrote a pixel into this level - true for a {@code glTexImage2D} that carried data and
          * for a {@code glTexSubImage2D} patch, false for the zero-filled surface {@link #undefinedLevel} lays down for
@@ -115,7 +176,7 @@ final class GlTextureCaptures {
          * {@link GlsmFrontend#textureLevelHasGamePixels}. Mutable because a patch is copied into an already filed surface, and
          * volatile because the game thread writes it while a reader may be polling the record.
          */
-        volatile boolean gamePixels;
+        public volatile boolean gamePixels;
         /**
          * The write number the level reached when this record's bytes became true.
          * <p>
@@ -126,7 +187,7 @@ final class GlTextureCaptures {
          * every byte of the level on every ask, which is what the per-batch light-map upload measured against.
          * Volatile for the same reason {@link #gamePixels} is.
          */
-        volatile long serial;
+        public volatile long serial;
         /**
          * Whether a {@code glTexSubImage2D} patch has ever been written into this record (or the record was itself
          * filed by one). The settled-capture release ({@link GlsmFrontend#releaseSettledTextureCaptures}) refuses
@@ -136,15 +197,15 @@ final class GlTextureCaptures {
          * tick - are excluded by this flag from their first patch on. Set on the game thread, read by the release
          * on the same thread; volatile because a reader may poll the record from elsewhere.
          */
-        volatile boolean patched;
+        public volatile boolean patched;
         /**
          * The texel offset this record covers inside its level, for a capture that is a {@code glTexSubImage2D}
          * patch rather than the whole level. Zero on every record that fills its level from the origin; the patch
          * case exists because a level too large for the capture budget keeps its patch at patch size instead of an
          * extent-sized surface - the mirror path writes it at this position, not at 0,0.
          */
-        final int x;
-        final int y;
+        public final int x;
+        public final int y;
 
         TexCapture(int width, int height, ByteBuffer data, boolean gamePixels, long serial) {
             this(width, height, data, gamePixels, serial, 0, 0);
@@ -166,11 +227,11 @@ final class GlTextureCaptures {
      * bound texture's level. A NULL data pointer is a legal GL call that allocates the level with undefined content -
      * see {@link #undefinedLevel}, because the game fills levels exactly that way.
      */
-    void texImagePixels(GlsmFrontend stub, GlsmFrontend.Fn fn, long[] c) {
+    public void texImagePixels(GlsmFrontend stub, GlsmFrontend.Fn fn, long[] c) {
         this.texImagePixels(stub, fn.name, c);
     }
 
-    void texImagePixels(GlsmFrontend stub, String name, long[] c) {
+    public void texImagePixels(GlsmFrontend stub, String name, long[] c) {
         this.texImagePixels(stub, name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6],
                 (int) c[7], c[8]);
     }
@@ -185,7 +246,7 @@ final class GlTextureCaptures {
      * lower half of the frame was drawn by nobody. The census counted the calls that were dropped all along:
      * {@code nglTexSubImage2D=41199} in one cohort run.
      */
-    void texImagePixels(GlsmFrontend stub, String name, int target, int level, int internal, int width, int height, int border,
+    public void texImagePixels(GlsmFrontend stub, String name, int target, int level, int internal, int width, int height, int border,
             int format, int type, long pixels) {
         boolean oneD = "glTexImage1D".equals(name);
         boolean threeD = "glTexImage3D".equals(name);
@@ -217,7 +278,7 @@ final class GlTextureCaptures {
             this.unconvertedUploads.incrementAndGet();
             return;
         }
-        long key = GlsmFrontend.texLevelKey(targetName, level);
+        long key = texLevelKey(targetName, level);
         TexCapture previous = this.texCaptures.get(key);
         if (previous != null && previous.gamePixels && previous.x == 0 && previous.y == 0
                 && previous.width == width && previous.height == extentHeight
@@ -268,7 +329,7 @@ final class GlTextureCaptures {
      * that way ({@code glTexSubImage2D(..., 0L)} from a PBO), and reading 0 as NULL dropped all of them: the minimap
      * showed the world through itself, every tile batch refused for want of a complete image.
      */
-    static boolean carriesPixels(long pixels, int unpackBuffer) {
+    public static boolean carriesPixels(long pixels, int unpackBuffer) {
         return pixels != 0L || unpackBuffer > 0;
     }
 
@@ -282,7 +343,7 @@ final class GlTextureCaptures {
      * of an undefined level, and they are exactly what the extent record already claims, so the two records agree. It
      * carries no game bytes, so it is counted apart from the full images.
      */
-    void undefinedLevel(GlsmFrontend stub, int name, int level, int width, int height, int depth) {
+    public void undefinedLevel(GlsmFrontend stub, int name, int level, int width, int height, int depth) {
         long pixels = (long) width * (long) height;
         if (depth > 1 || width <= 0 || height <= 0 || pixels > MAX_CAPTURE_BYTES / 4L) {
             // No shape to lay a surface out from: a 2D record cannot describe depth, and this level is past the size
@@ -307,7 +368,7 @@ final class GlTextureCaptures {
      * patch, not as a full image. A patch that does not fit inside the captured image is counted and dropped, the way
      * GL raises GL_INVALID_VALUE and leaves the level alone; a partly written image would be worse than none.
      */
-    void texSubImage(GlsmFrontend stub, long[] c) {
+    public void texSubImage(GlsmFrontend stub, long[] c) {
         this.texSubImage(stub, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7],
                 c[8]);
     }
@@ -351,7 +412,7 @@ final class GlTextureCaptures {
     private static long celtium$announcedCaptureSkips;
 
     /** Arms the one-shot skip for the patch an announcement just applied. See the fields above. */
-    static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
+    public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
         celtium$announcedLevel = level;
         celtium$announcedX = x;
         celtium$announcedY = y;
@@ -361,12 +422,12 @@ final class GlTextureCaptures {
     }
 
     /** {@return how many captures the announcement made unnecessary} */
-    static long celtium$announcedCaptureSkips() {
+    public static long celtium$announcedCaptureSkips() {
         return celtium$announcedCaptureSkips;
     }
 
     /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
-    void texSubImage(GlsmFrontend stub, int target, int level, int xOffset, int yOffset, int width, int height, int format,
+    public void texSubImage(GlsmFrontend stub, int target, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         if (GlsmFrontend.isProxyTarget(target)) {
             return;
@@ -393,7 +454,7 @@ final class GlTextureCaptures {
     }
 
     /** The DSA spelling's producer: the same patch rules, with the texture named by the caller. */
-    void texSubImageForName(GlsmFrontend stub, int name, int level, int xOffset, int yOffset, int width, int height, int format,
+    public void texSubImageForName(GlsmFrontend stub, int name, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         int x = xOffset;
         int y = yOffset;
@@ -425,8 +486,8 @@ final class GlTextureCaptures {
      * backlog, surface and settled-release rules stay the level's own rather than diverging per spelling.
      * {@code x}/{@code y} are the patch's position in the level, {@code patch} its RGBA8 rows, top row first.
      */
-    void fileTexturePatch(GlsmFrontend stub, int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
-        long key = GlsmFrontend.texLevelKey(name, level);
+    public void fileTexturePatch(GlsmFrontend stub, int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
+        long key = texLevelKey(name, level);
         this.patchKeys.addTo(key, 1);
         TexCapture existing = this.texCaptures.get(key);
         if (existing == null) {
@@ -559,7 +620,7 @@ final class GlTextureCaptures {
      * similar and decoding it is not this stub's job - the upload is counted as unconverted, which leaves whatever the
      * level held before it.
      */
-    void compressedTexImage(GlsmFrontend stub, long[] c) {
+    public void compressedTexImage(GlsmFrontend stub, long[] c) {
         int target = (int) c[0];
         stub.recordExtent(target, (int) c[1], (int) c[2], (int) c[3], (int) c[4]);
         if (!GlsmFrontend.isProxyTarget(target) && c[7] != 0L) {
@@ -699,7 +760,7 @@ final class GlTextureCaptures {
     }
 
     /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */
-    static int aligned(int bytes, int alignment) {
+    public static int aligned(int bytes, int alignment) {
         return (bytes + alignment - 1) & ~(alignment - 1);
     }
 
@@ -714,8 +775,8 @@ final class GlTextureCaptures {
      * unknown texture name is just a {@code null} answer, and a compressed or unconverted upload is a {@code null}
      * answer too (the census says which).
      */
-    java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
-        TexCapture capture = this.texCaptures.get(GlsmFrontend.texLevelKey(textureName, level));
+    public java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
+        TexCapture capture = this.texCaptures.get(texLevelKey(textureName, level));
         if (capture == null) {
             if (outWidthHeight != null && outWidthHeight.length >= 2) {
                 // The extent goes with the pixels: a caller that reuses one array across levels must not read the
@@ -734,7 +795,7 @@ final class GlTextureCaptures {
         // serial and the remembered one no longer matches, which is the whole test. Locked on the map: this
         // query is documented safe from any thread, and the release mutates the same map on the render thread.
         synchronized (this.suppliedSerials) {
-            this.suppliedSerials.put(GlsmFrontend.texLevelKey(textureName, level), capture.serial);
+            this.suppliedSerials.put(texLevelKey(textureName, level), capture.serial);
         }
         ByteBuffer view = capture.data.duplicate();
         view.clear();
@@ -748,8 +809,8 @@ final class GlTextureCaptures {
      * it into the extent-sized image as a region rather than posing the patch as the whole level - the case that
      * built the E2E atlas's mirror at 1125x1125. Returns false when no record exists.
      */
-    boolean textureUploadOffset(int textureName, int level, int[] outXY) {
-        TexCapture capture = this.texCaptures.get(GlsmFrontend.texLevelKey(textureName, level));
+    public boolean textureUploadOffset(int textureName, int level, int[] outXY) {
+        TexCapture capture = this.texCaptures.get(texLevelKey(textureName, level));
         if (capture == null) {
             return false;
         }
@@ -764,10 +825,34 @@ final class GlTextureCaptures {
      * {@return whether the level has backlog patches waiting}, without building the snapshot - the query the
      * supply paths ask before they may skip a full re-read.
      */
-    boolean textureHasPendingPatches(int textureName, int level) {
+    public boolean textureHasPendingPatches(int textureName, int level) {
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(
-                GlsmFrontend.texLevelKey(textureName, level));
+                texLevelKey(textureName, level));
         return pending != null && !pending.isEmpty();
+    }
+
+    /**
+     * A read-only view of one backlog patch: the level region it covers and the write serial it carries.
+     * Pixels come back as a read-only duplicate positioned at 0, same rule as {@link #textureUploadRgba8}.
+     */
+    public static final class PendingPatch {
+        public final int x;
+        public final int y;
+        public final int width;
+        public final int height;
+        public final long serial;
+        public final java.nio.ByteBuffer pixels;
+
+        PendingPatch(TexCapture capture) {
+            this.x = capture.x;
+            this.y = capture.y;
+            this.width = capture.width;
+            this.height = capture.height;
+            this.serial = capture.serial;
+            java.nio.ByteBuffer view = capture.data.duplicate();
+            view.clear();
+            this.pixels = view.asReadOnlyBuffer();
+        }
     }
 
     /**
@@ -775,14 +860,14 @@ final class GlTextureCaptures {
      * A snapshot keeps a concurrent {@code glTexSubImage2D} append from changing the list under the consumer;
      * a patch appended mid-iteration lands in the next call, which its newer serial makes the consumer take.
      */
-    java.util.List<GlsmFrontend.PendingPatch> texturePendingPatches(int textureName, int level) {
+    public java.util.List<PendingPatch> texturePendingPatches(int textureName, int level) {
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(
-                GlsmFrontend.texLevelKey(textureName, level));
-        java.util.List<GlsmFrontend.PendingPatch> out = new java.util.ArrayList<GlsmFrontend.PendingPatch>(
+                texLevelKey(textureName, level));
+        java.util.List<PendingPatch> out = new java.util.ArrayList<PendingPatch>(
                 pending == null ? 0 : pending.size());
         if (pending != null) {
             for (TexCapture capture : pending) {
-                out.add(new GlsmFrontend.PendingPatch(capture));
+                out.add(new PendingPatch(capture));
             }
         }
         return out;
@@ -793,8 +878,8 @@ final class GlTextureCaptures {
      * the patches into the mirror, which keeps the backlog at in-flight size instead of a second copy of the
      * texture. Patches appended after the call are untouched, so a write the consumer never saw is never pruned.
      */
-    void texturePatchesConsumed(int textureName, int level, long uptoSerial) {
-        long key = GlsmFrontend.texLevelKey(textureName, level);
+    public void texturePatchesConsumed(int textureName, int level, long uptoSerial) {
+        long key = texLevelKey(textureName, level);
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(key);
         if (pending == null) {
             return;
@@ -812,7 +897,7 @@ final class GlTextureCaptures {
     }
 
     /** {@return the serial the most recent level write took}, any texture: unchanged means no texture was written. */
-    long textureWriteEpoch() {
+    public long textureWriteEpoch() {
         return this.texUploadSerial.get();
     }
 
@@ -828,8 +913,8 @@ final class GlTextureCaptures {
      * @param textureName the GL texture name
      * @param level       the mip level
      */
-    long textureUploadSerial(int textureName, int level) {
-        long key = GlsmFrontend.texLevelKey(textureName, level);
+    public long textureUploadSerial(int textureName, int level) {
+        long key = texLevelKey(textureName, level);
         long serial = Long.MIN_VALUE;
         TexCapture capture = this.texCaptures.get(key);
         if (capture != null) {
@@ -850,12 +935,12 @@ final class GlTextureCaptures {
      * the mirror path reports it as deferred rather than as a rejection.
      */
     /** {@return whether the texture was allocated with a NULL data pointer and no data has arrived since}. */
-    boolean textureAllocatedWithoutData(GlsmFrontend stub, int textureName) {
+    public boolean textureAllocatedWithoutData(GlsmFrontend stub, int textureName) {
         return GlsmNameLedger.current().isNullAllocated(textureName);
     }
 
-    boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
-        TexCapture capture = this.texCaptures.get(GlsmFrontend.texLevelKey(textureName, level));
+    public boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
+        TexCapture capture = this.texCaptures.get(texLevelKey(textureName, level));
         return capture != null && !capture.gamePixels;
     }
 
@@ -874,8 +959,8 @@ final class GlTextureCaptures {
      * @param textureName the GL texture name
      * @param level       the mip level
      */
-    boolean textureLevelHasGamePixels(int textureName, int level) {
-        TexCapture capture = this.texCaptures.get(GlsmFrontend.texLevelKey(textureName, level));
+    public boolean textureLevelHasGamePixels(int textureName, int level) {
+        TexCapture capture = this.texCaptures.get(texLevelKey(textureName, level));
         return capture != null && capture.gamePixels;
     }
 
@@ -896,8 +981,8 @@ final class GlTextureCaptures {
      * "nothing to read": the record exists and the upload takes its zeros, which is the state the mirror is meant to
      * hold until the owner publishes. Only the absent record and the empty backlog answer true here.
      */
-    boolean celtium$levelHasNothingToRead(int textureName, int level) {
-        long key = GlsmFrontend.texLevelKey(textureName, level);
+    public boolean celtium$levelHasNothingToRead(int textureName, int level) {
+        long key = texLevelKey(textureName, level);
         if (this.texCaptures.containsKey(key)) {
             return false;
         }
@@ -910,7 +995,7 @@ final class GlTextureCaptures {
      * test: a geometry backlog is content {@code uploadFromGlTexture} replays, and treating it as "nothing to supply"
      * would leave the level empty until its framebuffer happened to publish.
      */
-    static boolean celtium$mirrorWaitsForFramebuffer(boolean colourAttachment, boolean pendingPatches,
+    public static boolean celtium$mirrorWaitsForFramebuffer(boolean colourAttachment, boolean pendingPatches,
             boolean gamePixels) {
         return colourAttachment && !pendingPatches && !gamePixels;
     }
@@ -938,11 +1023,11 @@ final class GlTextureCaptures {
      * @param textureName the GL texture name the bound batch samples
      * @param level       the mip level
      */
-    int celtium$supplyDecision(int textureName, int level) {
+    public int celtium$supplyDecision(int textureName, int level) {
         if (textureName <= 0) {
             return SUPPLY_NOTHING_TO_READ;
         }
-        long key = GlsmFrontend.texLevelKey(textureName, level);
+        long key = texLevelKey(textureName, level);
         TexCapture capture = this.texCaptures.get(key);
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(key);
         boolean pendingPatches = pending != null && !pending.isEmpty();
@@ -964,7 +1049,7 @@ final class GlTextureCaptures {
      * pair, a pixel-store state the conversion does not model, a compressed payload, a depth-carrying or oversized
      * level), and the RGBA8 bytes those levels hold.
      */
-    String textureCaptureSummary() {
+    public String textureCaptureSummary() {
         long bytes = 0L;
         for (TexCapture capture : this.texCaptures.values()) {
             bytes += capture.data.capacity();
@@ -1028,7 +1113,7 @@ final class GlTextureCaptures {
 
     /** {@return the RGBA8 bytes the filed captures currently hold} - the total {@link #textureCaptureSummary}
      * prints as {@code bytes=}, without building the line. */
-    long textureCaptureBytes() {
+    public long textureCaptureBytes() {
         long bytes = 0L;
         for (TexCapture capture : this.texCaptures.values()) {
             bytes += capture.data.capacity();
@@ -1057,7 +1142,7 @@ final class GlTextureCaptures {
      *
      * @return {@code {levels released, bytes released}}
      */
-    long[] releaseSettledTextureCaptures(GlsmFrontend stub) {
+    public long[] releaseSettledTextureCaptures(GlsmFrontend stub) {
         long levels = 0L;
         long bytes = 0L;
         long[] keys = this.texCaptures.keySet().toLongArray();
