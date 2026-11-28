@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan.terrain.lane1;
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.core.frame.CameraPose;
 import org.soutalab.celtium.core.frame.FrustumPlanes;
+import org.soutalab.celtium.core.geometry.GeneralQuad;
 import org.soutalab.celtium.core.geometry.SectionDesc;
 
 import java.util.regex.Matcher;
@@ -181,5 +182,21 @@ class G1VisibilityContractTest {
                 "GEN_UV must follow the cyclic corner order");
         assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("fragLocalUv = GEN_UV[corner]"),
                 "fragLocalUv must come from the cyclic GEN_UV table");
+    }
+
+    // -- GENERAL_VERTEX word stride contract (C-1, S2-b landing) --------------------------
+
+    @Test
+    void generalVertexWordStrideMatchesThe80ByteRecord() {
+        // The CPU side writes the 80 B GeneralQuad record (S3-b-pre); the shader walks the
+        // flat word stream with a per-quad stride that must equal BYTE_SIZE / 4 = 20 words.
+        // The 64 B era stride (16u) survived the S2-b branch in silence because the branch
+        // was self-consistent at 64 B - on the merged tree it would shift every quad from
+        // index 1 on. Pin both directions so the mismatch cannot re-enter unobserved.
+        assertEquals(80L, GeneralQuad.BYTE_SIZE, "the merged-tree GeneralQuad record is 80 B");
+        assertTrue(Lane1Shaders.GENERAL_VERTEX.contains("quadIndex * 20u"),
+                "GENERAL_VERTEX word stride must be quadIndex * 20u (80 B record)");
+        assertFalse(Lane1Shaders.GENERAL_VERTEX.contains("quadIndex * 16u"),
+                "GENERAL_VERTEX must not keep the 64 B era word stride (quadIndex * 16u)");
     }
 }

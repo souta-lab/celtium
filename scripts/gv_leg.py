@@ -190,7 +190,6 @@ HARNESS_KEYS = {
     "celtium.vulkan.legacyProbeDir": "legacyProbeDir",
     "celtium.vulkan.legacyProbeLong": "legacyProbeLong",
     "celtium.vulkan.legacyProbeText": "legacyProbeText",
-    "celtium.debug.buildFlow": "buildFlow",
     "celtium.debug.markTrace": "markTrace",
 }
 

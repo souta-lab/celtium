@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan.terrain.lane1;
 /**
  * The Lane 1 terrain shaders (design V040-FINAL-PLAN section 2.1): the GPU cull compute (frustum
  * + half-res Hi-Z, R-19 plan-2), the Hi-Z pyramid build, and the vertex-pulling draw pair (K1)
- * whose vertex stage unpacks the 16 B {@code PackedAxisQuad} / 64 B {@code GeneralQuad} in the
+ * whose vertex stage unpacks the 16 B {@code PackedAxisQuad} / 80 B {@code GeneralQuad} in the
  * shader - no vertex buffers exist on this lane. The dynamic-light evaluation walks the cluster
  * mask with {@code findLSB} (V2-5), so per-vertex light cost tracks local density.
  * <p>
@@ -177,15 +177,15 @@ public final class Lane1Shaders {
             }
             """;
 
-    /** Vertex-pulling general draw: reads the 64 B GeneralQuad stream. */
+    /** Vertex-pulling general draw: reads the 80 B GeneralQuad stream. */
     public static final String GENERAL_VERTEX = "#version 450\n"
             + "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
             + COMMON + """
             layout(std430, set = 0, binding = 0) readonly buffer Descs { SectionDesc descs[]; };
-            // Flat word stream, 16 words per GeneralQuad (12 position floats, then
+            // Flat word stream, 20 words per GeneralQuad (12 position floats, then
             // textureIndex / lightWord / normalPacked / flags as bit-cast ints). A struct
             // array member cannot be indexed dynamically without GL_EXT_nonuniform_qualifier,
-            // so the shader reads the same 64 B record through a flat float array instead.
+            // so the shader reads the same 80 B record through a flat float array instead.
             layout(std430, set = 0, binding = 1) readonly buffer GeneralQuads { float generalWords[]; };
             layout(std430, set = 0, binding = 3) readonly buffer TextureCells { uvec2 textureCells[]; };
             layout(push_constant) uniform DrawPush {
@@ -208,7 +208,7 @@ public final class Lane1Shaders {
                 uint quadIndex = uint(gl_VertexIndex) / 6u;
                 int corner = CORNER_INDEX[gl_VertexIndex % 6];
                 SectionDesc d = descs[gl_InstanceIndex];
-                uint wordBase = quadIndex * 16u;
+                uint wordBase = quadIndex * 20u;
                 vec3 local = vec3(generalWords[wordBase + uint(corner * 3)],
                                   generalWords[wordBase + uint(corner * 3) + 1u],
                                   generalWords[wordBase + uint(corner * 3) + 2u]);
@@ -216,7 +216,7 @@ public final class Lane1Shaders {
                 gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos.xyz, 1.0);
                 // The quad's texture index resolves through the frontend's cell table; the corner
                 // maps onto the sprite's full extent (the S2-a full-sprite approximation: the
-                // mesher's 64 B record carries no per-vertex sprite UVs).
+                // mesher's 80 B record carries no per-vertex sprite UVs).
                 int textureIndex = floatBitsToInt(generalWords[wordBase + 12u]);
                 vec2 cell = vec2(0.0);
                 if (textureIndex > 0 && textureIndex < pc.textureCellCount) {
