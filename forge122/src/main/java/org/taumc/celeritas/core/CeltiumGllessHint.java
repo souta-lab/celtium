@@ -361,7 +361,7 @@ public final class CeltiumGllessHint {
         buffer.get(flat);
         switch (components) {
             case 1: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform1(location, flat); break;
-            case 2: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2(location, flat); break;
+            case 2: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2(location, java.nio.FloatBuffer.wrap(flat)); break;
             case 3: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform3(location, flat); break;
             default: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform4(location, flat); break;
         }
@@ -1652,7 +1652,7 @@ public final class CeltiumGllessHint {
 
     /** Binds an array buffer, as {@code glBindBuffer(target, name)} does. */
     public static void glBindBuffer(int target, int name) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindBuffer(target, name);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.bindBufferRoute(target, name);
     }
 
     /**
@@ -1661,17 +1661,24 @@ public final class CeltiumGllessHint {
      * filed under whatever texture the game last bound, and the name was later refused "no mirror".
      */
     public static void glBindTexture(int target, int texture) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glBindTexture(target, texture);
+        org.soutalab.celtium.vulkan.NativeTextureBindings.current().noteBoundTexture(target, texture);
     }
 
     /** Selects the active texture unit, as {@code glActiveTexture(unit)} does. */
     public static void glActiveTexture(int unit) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glActiveTexture(unit);
+        org.soutalab.celtium.vulkan.NativeTextureBindings.current().activeUnit(unit - 0x84C0);
     }
 
     /** Deletes texture names, as {@code glDeleteTextures(count, namesPointer)} does. */
     public static void glDeleteTextures(int count, long names) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glDeleteTextures(count, names);
+        if (names == 0L) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
+            org.soutalab.celtium.vulkan.GlsmNameLedger.current().removeName(name);
+            org.soutalab.celtium.vulkan.CaptureUploadContext.current().deleteTextureRecords(name);
+        }
     }
 
     /** A deleted bound draw FBO becomes the default framebuffer before the stub forgets it. */
@@ -1681,59 +1688,137 @@ public final class CeltiumGllessHint {
             int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
             if (name != 0 && name == rawDrawFramebuffer) {
                 if (vanillaFramebufferDepth == 0) {
-                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$registerRawFramebuffer(0);
+                    org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.registerRawFramebuffer(0);
                 }
                 rawDrawFramebuffer = 0;
                 break;
             }
         }
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glDeleteFramebuffers(count, names);
+        if (names != 0L) {
+            for (int i = 0; i < count; i++) {
+                int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
+                org.soutalab.celtium.vulkan.GlsmNameLedger.current().removeName(name);
+                org.soutalab.celtium.vulkan.FramebufferBindings.current().forgetName(name);
+                int color = org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().colorTexture(name);
+                var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                    vulkan.celtium$rawFramebufferDeleted(name, color);
+                }
+                org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().framebufferDeleted(name);
+            }
+        }
     }
 
     /** Enables a client array, as {@code glEnableClientState(capability)} does. */
     public static void glEnableClientState(int capability) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, true);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.setCapability(capability, true);
     }
 
     /** Disables a client array, as {@code glDisableClientState(capability)} does. */
     public static void glDisableClientState(int capability) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, false);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.setCapability(capability, false);
     }
 
     /** The generic attribute pointer, recorded for index 0 (the position attribute the decoder reads). */
     public static void glVertexAttribPointer(int index, int size, int type, boolean normalized, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribPointer(index, size, type, normalized, stride,
-                pointer);
+        if (index < 0 || index >= org.soutalab.celtium.vulkan.GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            return;
+        }
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.VaoAttrib attrib =
+                org.soutalab.celtium.vulkan.GlsmClientArrayState.current().boundAttribs()[index];
+        attrib.size = size;
+        attrib.type = type;
+        attrib.stride = stride;
+        attrib.offset = pointer;
+        attrib.normalized = normalized;
+        attrib.integer = false;
+        attrib.pointerSet = true;
+        attrib.buffer = org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId();
+        if (index == 0) {
+            syncVertexPointer(attrib);
+        }
+    }
+
+    /** Keeps the legacy vertex-pointer record in step with attribute 0's generic pointer. */
+    private static void syncVertexPointer(org.soutalab.celtium.vulkan.GlsmClientArrayState.VaoAttrib position) {
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.Pointer vertex =
+                org.soutalab.celtium.vulkan.GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertex.size = position.size;
+        vertex.type = position.type;
+        vertex.stride = position.stride;
+        vertex.offset = position.offset;
+        vertex.normalized = position.normalized;
+        vertex.integer = position.integer;
     }
 
     /** The integer attribute pointer, recorded for index 0 so the state queries answer it. */
     public static void glVertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribIPointer(index, size, type, stride, pointer);
+        if (index < 0 || index >= org.soutalab.celtium.vulkan.GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            return;
+        }
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.VaoAttrib attrib =
+                org.soutalab.celtium.vulkan.GlsmClientArrayState.current().boundAttribs()[index];
+        attrib.size = size;
+        attrib.type = type;
+        attrib.stride = stride;
+        attrib.offset = pointer;
+        attrib.normalized = false;
+        attrib.integer = true;
+        attrib.pointerSet = true;
+        attrib.buffer = org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId();
+        if (index == 0) {
+            syncVertexPointer(attrib);
+        }
     }
 
     /** Attribute-array enables, recorded per attribute in the bound VAO; index 0 also feeds the position enable. */
     public static void glEnableVertexAttribArray(int index, boolean enabled) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribEnabled(index, enabled);
+        if (index >= 0 && index < org.soutalab.celtium.vulkan.GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            org.soutalab.celtium.vulkan.GlsmClientArrayState.current().boundAttribs()[index].enabled = enabled;
+        }
+        if (index == 0) {
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.setCapability(0x8622, enabled);
+        }
     }
 
     /** Sets the client vertex-array pointer, as {@code glVertexPointer(size, type, stride, pointer)} does. */
     public static void glVertexPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.Pointer vertex =
+                org.soutalab.celtium.vulkan.GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertex.size = size;
+        vertex.type = type;
+        vertex.stride = stride;
+        vertex.offset = pointer;
+        vertex.normalized = false;
+        vertex.integer = false;
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.VaoAttrib attrib =
+                org.soutalab.celtium.vulkan.GlsmClientArrayState.current().boundAttribs()[0];
+        attrib.size = size;
+        attrib.type = type;
+        attrib.stride = stride;
+        attrib.offset = pointer;
+        attrib.normalized = false;
+        attrib.integer = false;
+        attrib.pointerSet = true;
+        attrib.buffer = org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId();
     }
 
     /** Sets the split texture-coordinate pointer, as {@code glTexCoordPointer(size, type, stride, pointer)} does. */
     public static void glTexCoordPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texCoordPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.current().setClientPointer(0x8078, size, type, stride,
+                pointer, org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId());
     }
 
     /** Sets the split colour pointer, as {@code glColorPointer(size, type, stride, pointer)} does. */
     public static void glColorPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colorPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.current().setClientPointer(0x8076, size, type, stride,
+                pointer, org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId());
     }
 
     /** Sets the split normal pointer, as {@code glNormalPointer(type, stride, pointer)} does. */
     public static void glNormalPointer(int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$normalPointer(type, stride, pointer);
+        org.soutalab.celtium.vulkan.GlsmClientArrayState.current().setClientPointer(0x8075, 3, type, stride,
+                pointer, org.soutalab.celtium.vulkan.NativeGeometryBuffer.boundId());
     }
 
     /**
@@ -1743,14 +1828,16 @@ public final class CeltiumGllessHint {
      */
     public static void glTexImage2D(int target, int level, int internal, int width, int height, int border, int format,
             int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texImage2D(target, level, internal, width, height, border,
-                format, type, pixels);
+        org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore().texImagePixels(
+                org.soutalab.celtium.vulkan.CaptureUploadContext.current(), "glTexImage2D", target, level, internal,
+                width, height, border, format, type, pixels);
     }
 
     /** Sub-image writes, the other half of the same family. */
     public static void glTexSubImage2D(int target, int level, int xOffset, int yOffset, int width, int height,
             int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texSubImage2D(target, level, xOffset, yOffset, width,
+        org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore().texSubImage(
+                org.soutalab.celtium.vulkan.CaptureUploadContext.current(), target, level, xOffset, yOffset, width,
                 height, format, type, pixels);
     }
 
@@ -1761,7 +1848,7 @@ public final class CeltiumGllessHint {
      * run for texture 506.
      */
     public static void glFramebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferTexture2D(target, attachment, textarget,
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.framebufferTexture2DRoute(target, attachment, textarget,
                 texture, level);
         // Bounded census of raw attachments: which framebuffer took which colour texture, and the identity its draws
         // will use. Xaero's radar icons move one framebuffer between its own texture and the icon atlas, and the
@@ -1799,13 +1886,13 @@ public final class CeltiumGllessHint {
         // registration is suppressed for the bracket's duration instead.
         boolean suppressed = vanillaFramebufferDepth > 0;
         if (suppressed) {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pushBindReportSuppression();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.pushBindReportSuppression();
         }
         try {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindFramebuffer(target, framebuffer);
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.bindFramebufferRoute(target, framebuffer);
         } finally {
             if (suppressed) {
-                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$popBindReportSuppression();
+                org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.popBindReportSuppression();
             }
         }
         if (target != GL_READ_FRAMEBUFFER) {
@@ -1820,7 +1907,7 @@ public final class CeltiumGllessHint {
      * failure, which is what ScreenShotHelper's screenshots and the fixture's format-2 readback measured.
      */
     public static void glReadPixels(int x, int y, int width, int height, int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$readPixels(x, y, width, height, format, type, pixels);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.readPixels(x, y, width, height, format, type, pixels);
     }
 
     /**
@@ -1830,7 +1917,7 @@ public final class CeltiumGllessHint {
      * never touched the {@code glReadPixels} route and its buffer stayed zeroed - a black PNG.
      */
     public static void glGetTexImage(int target, int level, int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexImage(target, level, format, type, pixels);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getTexImage(target, level, format, type, pixels);
     }
 
     /**

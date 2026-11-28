@@ -43,7 +43,9 @@ import org.soutalab.celtium.vulkan.GlsmDisplayListLedger;
 import org.soutalab.celtium.vulkan.GlsmEnableState;
 import org.soutalab.celtium.vulkan.GlsmImmediateState;
 import org.soutalab.celtium.vulkan.GlsmMatrixMode;
+import org.soutalab.celtium.vulkan.GlsmAttribStacks;
 import org.soutalab.celtium.vulkan.GlsmNameLedger;
+import org.soutalab.celtium.vulkan.LegacyAttribSnapshot;
 import org.soutalab.celtium.vulkan.ImmediateFogState;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 import org.soutalab.celtium.vulkan.NativeImageBindings;
@@ -1403,6 +1405,128 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
+    /** The transformer's {@code glMapBuffer}/{@code glMapBufferRange} route; 0 is GL's NULL. */
+    public static long mapBufferRoute(int target, boolean range, long offset, long length, int access) {
+        DirectGlCaptureEntry entry = installed;
+        return entry == null ? 0L : BufferStorageRecord.current().mapBufferFor(
+                entry.boundBuffer(target), range, offset, length, access);
+    }
+
+    /** The DSA mapping form: the buffer is named, not the bound target. */
+    public static long mapNamedBufferRoute(int name, boolean range, long offset, long length, int access) {
+        return BufferStorageRecord.current().mapBufferFor(name, range, offset, length, access);
+    }
+
+    /** The transformer's {@code glUnmapBuffer} route. */
+    public static boolean unmapBufferRoute(int target) {
+        DirectGlCaptureEntry entry = installed;
+        return entry != null && BufferStorageRecord.unmap(entry.boundBuffer(target));
+    }
+
+    /** The DSA unmap form. */
+    public static boolean unmapNamedBufferRoute(int name) {
+        return BufferStorageRecord.unmap(name);
+    }
+
+    /** The transformer's {@code glBufferData} route: mirrors the bound buffer's storage. */
+    public static void bufferDataRoute(int target, long size, long data) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            BufferStorageRecord.current().bufferDataFor(entry.boundBuffer(target), size, data);
+        }
+    }
+
+    /** The transformer's named buffer-parameter query: GL_BUFFER_SIZE from the record, else 0. */
+    public static void getNamedBufferParameter(int name, int pname, long out, boolean wide) {
+        if (out == 0L) {
+            return;
+        }
+        long size = 0L;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            if (nativeBuffer != null) {
+                size = nativeBuffer.byteSize();
+            } else {
+                ByteBuffer storage = GlsmBufferState.current().storage(name);
+                size = storage == null ? 0L
+                        : BufferStorageRecord.current().logicalSizeOf(name, storage.capacity());
+            }
+        } catch (RuntimeException error) {
+            size = 0L;
+        }
+        long value = pname == 0x8764 ? size : 0L; // GL_BUFFER_SIZE
+        if (wide) {
+            MemoryUtil.memPutLong(out, value);
+        } else {
+            MemoryUtil.memPutInt(out, (int) value);
+        }
+    }
+
+    /**
+     * {@code glClearBufferData/SubData} and their named forms, for the zero fill only: a null
+     * clear value zeroes the bytes whatever the internal format's component layout is. A
+     * non-zero value stays untouched.
+     */
+    public static void clearBufferRoute(int targetOrName, boolean named, long offset, long size, long data) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null || data != 0L) {
+            return;
+        }
+        int name = named ? targetOrName : entry.boundBuffer(targetOrName);
+        if (name == 0) {
+            return;
+        }
+        long capacity;
+        try {
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+            if (nativeBuffer != null) {
+                capacity = nativeBuffer.byteSize();
+                if (offset < 0L || offset >= capacity) {
+                    return;
+                }
+                if (size <= 0L) {
+                    size = capacity - offset;
+                }
+                if (BufferStorageRecord.mapRangeOffset(offset, size, capacity) < 0L) {
+                    return;
+                }
+                byte[] zeros = new byte[(int) Math.min(size, 1 << 16)];
+                long written = 0L;
+                while (written < size) {
+                    int chunk = (int) Math.min(size - written, zeros.length);
+                    nativeBuffer.write(offset + written, java.nio.ByteBuffer.wrap(zeros, 0, chunk));
+                    written += chunk;
+                }
+                return;
+            }
+        } catch (RuntimeException error) {
+            return;
+        }
+        ByteBuffer storage = GlsmBufferState.current().storage(name);
+        if (storage == null) {
+            return;
+        }
+        capacity = BufferStorageRecord.current().logicalSizeOf(name, storage.capacity());
+        if (offset < 0L || offset >= capacity) {
+            return;
+        }
+        if (size <= 0L) {
+            size = capacity - offset;
+        }
+        if (BufferStorageRecord.mapRangeOffset(offset, size, capacity) < 0L) {
+            return;
+        }
+        MemoryUtil.memSet(MemoryUtil.memAddress(storage) + offset, 0, size);
+    }
+
+    /** The transformer's {@code glClear} route: the clear latch on the entry. */
+    public static void clearRoute(int mask) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.recordClear(mask);
+        }
+    }
+
     /** The transformer's {@code glReadPixels} route. */
     public static void readPixels(int x, int y, int width, int height, int format, int type, long address) {
         DirectGlCaptureEntry entry = installed;
@@ -1469,6 +1593,450 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             vulkan.celtium$getTexImage(NativeTextureBindings.current().texture2d(), level, format, type,
                     address, capacity);
         }
+    }
+
+
+    // ---- framebuffer attachment record, ported from the monolith (E4-b2) ---------------------
+    private static int framebufferAttachmentLogs;
+    private static int framebufferDepthAttachmentLogs;
+    private static int framebufferLevelRefusals;
+    private static int framebufferLevelRefusalLogs;
+
+    void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
+        int framebuffer = target == 0x8CA8 ? FramebufferBindings.current().readFramebuffer() : FramebufferBindings.current().drawFramebuffer();
+        if (framebuffer == 0) {
+            return;
+        }
+        if (level != 0) {
+            // A mip-level attachment is not recorded: the backend resolves an attachment at level 0, so
+            // recording this one would publish the texture as if its level-0 pixels were the level the caller
+            // named. Refused by name and counted instead of silently dropped.
+            framebufferLevelRefusals++;
+            if (framebufferLevelRefusalLogs < 8) {
+                framebufferLevelRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_LEVEL framebuffer=" + framebuffer
+                        + " attachment=0x" + Integer.toHexString(attachment) + " texture=" + texture
+                        + " level=" + level + " refused=level-not-recorded");
+            }
+            return;
+        }
+        // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
+        // colour, but the backend keys its shared depth storage from the texture named here.
+        if (isDepthAttachment(attachment)) {
+            FramebufferAttachmentTable.current().attachDepth(framebuffer, texture);
+            if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
+                framebufferDepthAttachmentLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
+                        + " depthTexture=" + texture
+                        + " depthAttachments=" + FramebufferAttachmentTable.current().depthTextureCount());
+            }
+            // The depth attach completes most framebuffers' records (colour went on first), so it is a
+            // registration point too: a framebuffer whose binds never reach the renderer's bind report still
+            // gets its identity, pair and shared-depth borrow from here.
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$rawAttachmentChanged(framebuffer);
+            }
+            return;
+        }
+        // Colour attachments: every colour slot is recorded (GL_COLOR_ATTACHMENT0+i,
+        // i < COLOR_ATTACHMENT_SLOTS), because a mod's render target can attach several colour textures and
+        // write more than one in a pass; slot 0 additionally feeds the single-texture record above, which is
+        // the one the sampling resolution has always read.
+        int slot = colorAttachmentSlot(attachment);
+        if (slot < 0) {
+            return;
+        }
+        FramebufferAttachmentTable.current().attachColor(framebuffer, slot, texture);
+        // After the record update, not before: the backend's registration reads the record this call just wrote
+        // (it used to be notified first and so registered the previous attachment, or none).
+        Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawAttachmentChanged(framebuffer);
+        }
+        if (texture == 0) return;
+        if (framebufferAttachmentLogs < 8) {
+            framebufferAttachmentLogs++;
+            System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
+                    + " colorTexture=" + texture
+                    + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
+                    + " colorAttachments=" + FramebufferAttachmentTable.current().colorTextureCount());
+        }
+    }
+
+    static boolean isDepthAttachment(int attachment) {
+        return attachment == 0x8D00 || attachment == 0x821A; // DEPTH_ATTACHMENT / DEPTH_STENCIL_ATTACHMENT
+    }
+
+    static int colorAttachmentSlot(int attachment) {
+        int slot = (attachment & 0xFFFF) - 0x8CE0; // COLOR_ATTACHMENT0
+        return slot >= 0 && slot < COLOR_ATTACHMENT_SLOTS ? slot : -1;
+    }
+
+    /** The transformer's {@code glFramebufferTexture2D} route: files under the bound framebuffer. */
+    public static void framebufferTexture2DRoute(int target, int attachment, int textarget, int texture, int level) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.framebufferTexture2D(target, attachment, textarget, texture, level);
+        }
+    }
+
+    /** The transformer's named-framebuffer texture route (the DSA spelling). */
+    public static void namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
+        if (framebuffer == 0 || level != 0) {
+            return;
+        }
+        if (isDepthAttachment(attachment)) {
+            FramebufferAttachmentTable.current().attachDepth(framebuffer, texture);
+        } else {
+            int slot = colorAttachmentSlot(attachment);
+            if (slot < 0) {
+                return;
+            }
+            FramebufferAttachmentTable.current().attachColor(framebuffer, slot, texture);
+        }
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        if (vulkan != null) {
+            vulkan.celtium$rawAttachmentChanged(framebuffer);
+        }
+    }
+
+    /** The transformer's buffer-binding route: the same seat writes the dispatch makes. */
+    public static void bindBufferRoute(int target, int name) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry == null) {
+            if (target == 0x8892) { // GL_ARRAY_BUFFER
+                NativeGeometryBuffer.bindId(name);
+            }
+            return;
+        }
+        entry.bindBuffer(target, name);
+        GLSMBuffers.glBindBuffer(target, name);
+    }
+
+    /** The transformer's framebuffer-binding route. */
+    public static void bindFramebufferRoute(int target, int name) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.bindFramebuffer(target, name);
+        } else {
+            FramebufferBindings.current().bind(target, name);
+        }
+        GLSMFramebuffer.glBindFramebuffer(target, name);
+    }
+
+
+    // ---- attribute stacks, ported from the monolith (E4-b2) ----------------------------------
+    private int attribPushes;
+    private int attribPops;
+    private int attribOverflow;
+    private int attribUnmatchedPops;
+    private int attribRestoredGroups;
+    private int attribUnrestoredGroups;
+    private int attribPartialGroups;
+    private int lastAttribRestored;
+    private int lastAttribMask;
+    private int attribLightingRestores;
+    private int attribLightingRestoresChanged;
+    private final java.util.Map<Integer, Long> attribMasks = new java.util.HashMap<>();
+    private static final int MAX_ATTRIB_MASKS = 64;
+    private static final int[] ATTRIB_CAPABILITIES = {
+            0x0BE2, 0x0B44, 0x0B71, 0x0BD0, 0x0B60, 0x0B50, 0x0BC0, 0x0C11, 0x8037, 0x0DE1, 0x0B57, 0x0B90, 0x0B41, 0x809D,
+    };
+
+    private boolean attribDepthWritesLive() {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
+    }
+
+    private int attribDepthFuncLive() {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
+    }
+
+    private int attribAlphaFuncLive() {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
+    }
+
+    private float attribAlphaReferenceLive() {
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
+    }
+
+    private void noteAttribMask(int mask) {
+        Long previous = this.attribMasks.get(Integer.valueOf(mask));
+        if (previous != null) {
+            this.attribMasks.put(Integer.valueOf(mask), Long.valueOf(previous.longValue() + 1L));
+        } else if (this.attribMasks.size() < MAX_ATTRIB_MASKS) {
+            this.attribMasks.put(Integer.valueOf(mask), Long.valueOf(1L));
+        }
+    }
+
+    /** The legacy vertex-pointer record (the clientPointer(GL_VERTEX_ARRAY) live record). */
+    private static GlsmClientArrayState.Pointer vertexPointerRecord() {
+        return GlsmClientArrayState.current().clientPointer(0x8074, true);
+    }
+
+    public static void pushAttrib(int mask) {
+        DirectGlCaptureEntry stub = installed;
+        if (stub == null) {
+            return;
+        }
+        int caps = ATTRIB_CAPABILITIES.length;
+        LegacyAttribSnapshot snapshot = new LegacyAttribSnapshot(caps);
+        snapshot.mask = mask;
+        for (int i = 0; i < caps; i++) {
+            snapshot.capabilities[i] = sharedEnabled(ATTRIB_CAPABILITIES[i]);
+        }
+        snapshot.red = GlsmImmediateState.current().red();
+        snapshot.green = GlsmImmediateState.current().green();
+        snapshot.blue = GlsmImmediateState.current().blue();
+        snapshot.alpha = GlsmImmediateState.current().alpha();
+        snapshot.lineWidth = GlsmImmediateState.current().lineWidth();
+        snapshot.pointSize = GlsmImmediateState.current().pointSize();
+        snapshot.depthWrites = stub.attribDepthWritesLive();
+        snapshot.depthFunc = stub.attribDepthFuncLive();
+        snapshot.alphaFunc = stub.attribAlphaFuncLive();
+        snapshot.alphaReference = stub.attribAlphaReferenceLive();
+        snapshot.blendSourceRgb = NativeRasterState.current().blendSrcRgb();
+        snapshot.blendDestinationRgb = NativeRasterState.current().blendDstRgb();
+        snapshot.blendSourceAlpha = NativeRasterState.current().blendSrcAlpha();
+        snapshot.blendDestinationAlpha = NativeRasterState.current().blendDstAlpha();
+        snapshot.blendEquationRgb = NativeRasterState.current().blendEquationRgb();
+        snapshot.blendEquationAlpha = NativeRasterState.current().blendEquationAlpha();
+        snapshot.colorMask = NativeRasterState.current().colorMask();
+        snapshot.cullFace = NativeRasterState.current().cullFace();
+        snapshot.frontFace = NativeRasterState.current().frontFace();
+        snapshot.scissorX = NativeRasterState.current().scissorX();
+        snapshot.scissorY = NativeRasterState.current().scissorY();
+        snapshot.scissorWidth = NativeRasterState.current().scissorWidth();
+        snapshot.scissorHeight = NativeRasterState.current().scissorHeight();
+        snapshot.polygonOffsetFactor = NativeRasterState.current().polygonOffsetFactor();
+        snapshot.polygonOffsetUnits = NativeRasterState.current().polygonOffsetUnits();
+        snapshot.viewportX = FramebufferViewportState.current().x();
+        snapshot.viewportY = FramebufferViewportState.current().y();
+        snapshot.viewportWidth = FramebufferViewportState.current().width();
+        snapshot.viewportHeight = FramebufferViewportState.current().height();
+        snapshot.listBase = GlsmDisplayListLedger.current().listBase();
+        snapshot.activeTextureUnit = NativeTextureBindings.current().activeUnit();
+        snapshot.texture2d = NativeTextureBindings.current().texture2d();
+        // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
+        // game's GlStateManager path and the raw glLightfv route both write; this stub keeps no second copy, and
+        // reading one would be the "restore a copy of a copy" shape the rest of this push avoids.
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting = vulkanBackend();
+        if (lighting != null) {
+            System.arraycopy(lighting.celtium$lightDirections(), 0, snapshot.lightDirections, 0, 6);
+            System.arraycopy(lighting.celtium$lightDiffuse(), 0, snapshot.lightDiffuse, 0, 6);
+            System.arraycopy(lighting.celtium$lightAmbient(), 0, snapshot.lightAmbient, 0, 3);
+            snapshot.shadeModel = lighting.celtium$shadeModel();
+            snapshot.lightingCaptured = true;
+        }
+        // GL_FOG_BIT's restorable part. The authority is the fog owner, which the game's GlStateManager path and
+        // the raw glFog route both write; it exists unconditionally, so there is no "not captured" case here of
+        // the kind the lighting group needs. The enable is captured beside the parameters because GL keeps it in
+        // the fog group too: a mask like AdvancedRocketry's 0xBC1 (fog group, no GL_ENABLE_BIT) still expects the
+        // pop to put it back (ITEM382-SCAN section 3.1).
+        org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
+        snapshot.fogEnabled = fog.enabled();
+        snapshot.fogMode = fog.glMode();
+        snapshot.fogDensity = fog.getFogDensity();
+        snapshot.fogStart = fog.getFogStart();
+        snapshot.fogEnd = fog.getFogEnd();
+        float[] fogColor = fog.getFogColor();
+        snapshot.fogColor[0] = fogColor[0];
+        snapshot.fogColor[1] = fogColor[1];
+        snapshot.fogColor[2] = fogColor[2];
+        snapshot.fogColor[3] = fog.colorAlpha();
+        stub.attribPushes++;
+        stub.noteAttribMask(mask);
+        if (!GlsmAttribStacks.current().pushServer(snapshot)) {
+            stub.attribOverflow++;
+            return;
+        }
+    }
+
+    public static void popAttrib() {
+        DirectGlCaptureEntry stub = installed;
+        if (stub == null) {
+            return;
+        }
+        LegacyAttribSnapshot snapshot = GlsmAttribStacks.current().popServer();
+        if (snapshot == null) {
+            stub.attribUnmatchedPops++;
+            return;
+        }
+        stub.attribPops++;
+        stub.restoreAttrib(snapshot);
+    }
+
+    private void restoreAttrib(LegacyAttribSnapshot snapshot) {
+        org.soutalab.celtium.vulkan.CeltiumBackend backend =
+                org.soutalab.celtium.vulkan.CeltiumBackends.current();
+        int restored = 0;
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.ENABLE_BIT)) {
+            for (int i = 0; i < ATTRIB_CAPABILITIES.length; i++) {
+                setCapability(ATTRIB_CAPABILITIES[i], snapshot.capabilities[i]);
+            }
+            restored |= LegacyAttribSnapshot.ENABLE_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.CURRENT_BIT)) {
+            GlsmImmediateState.current().color(snapshot.red, snapshot.green, snapshot.blue, snapshot.alpha);
+            // The group payload reads its colour from the backend mirror, not from these fields: restoring only the
+            // stub would leave the popped draw's tint as the next vanilla group's colour.
+            if (backend != null) {
+                backend.setColor(GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
+            }
+            restored |= LegacyAttribSnapshot.CURRENT_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LINE_BIT)) {
+            GlsmImmediateState.current().lineWidth(snapshot.lineWidth);
+            restored |= LegacyAttribSnapshot.LINE_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.POINT_BIT)) {
+            GlsmImmediateState.current().pointSize(snapshot.pointSize);
+            restored |= LegacyAttribSnapshot.POINT_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.DEPTH_BUFFER_BIT)) {
+            this.attribDepthWrites = snapshot.depthWrites;
+            this.attribDepthFunc = snapshot.depthFunc;
+            // GL_DEPTH_WRITEMASK is answered from the enable record when no backend mirror exists, and the restore has
+            // to land there too or the query keeps reporting the pushed block's value.
+            GlsmEnableState.current().set(GL_DEPTH_WRITEMASK_CAP, snapshot.depthWrites);
+            if (backend != null) {
+                backend.setDepthMask(snapshot.depthWrites);
+                backend.depthFunc(snapshot.depthFunc);
+            }
+            restored |= LegacyAttribSnapshot.DEPTH_BUFFER_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.COLOR_BUFFER_BIT)) {
+            // GL puts the blend factors and equation, the colour write mask and the alpha test's comparison in
+            // GL_COLOR_BUFFER_BIT - the *enables* are GL_ENABLE_BIT, which is why this is a separate group.
+            NativeRasterState.current().blendFunc(snapshot.blendSourceRgb, snapshot.blendDestinationRgb,
+                    snapshot.blendSourceAlpha, snapshot.blendDestinationAlpha);
+            NativeRasterState.current().blendEquation(snapshot.blendEquationRgb, snapshot.blendEquationAlpha);
+            NativeRasterState.current().colorMask(snapshot.colorMask);
+            this.attribAlphaFunc = snapshot.alphaFunc;
+            this.attribAlphaReference = snapshot.alphaReference;
+            if (backend != null) {
+                backend.setAlphaFunc(snapshot.alphaFunc, snapshot.alphaReference);
+            }
+            restored |= LegacyAttribSnapshot.COLOR_BUFFER_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.POLYGON_BIT)) {
+            NativeRasterState.current().cullFace(snapshot.cullFace);
+            NativeRasterState.current().frontFace(snapshot.frontFace);
+            NativeRasterState.current().polygonOffset(snapshot.polygonOffsetFactor, snapshot.polygonOffsetUnits);
+            restored |= LegacyAttribSnapshot.POLYGON_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.SCISSOR_BIT)) {
+            NativeRasterState.current().scissor(snapshot.scissorX, snapshot.scissorY,
+                    snapshot.scissorWidth, snapshot.scissorHeight);
+            restored |= LegacyAttribSnapshot.SCISSOR_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.VIEWPORT_BIT)) {
+            // Through the backend when there is one: it owns the group key's viewport term and the live sizes the
+            // offers outside the full-target contract are refused against, and its own viewport writer updates the
+            // packed rectangle and this stub's fields. Without a backend the packed value is still what the capture
+            // reads, so it is written directly rather than left describing the popped block's rectangle.
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.viewport(snapshot.viewportX, snapshot.viewportY,
+                        snapshot.viewportWidth, snapshot.viewportHeight);
+            } else {
+                FramebufferViewportState.current().set(snapshot.viewportX, snapshot.viewportY,
+                        snapshot.viewportWidth, snapshot.viewportHeight);
+            }
+            restored |= LegacyAttribSnapshot.VIEWPORT_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
+            GlsmDisplayListLedger.current().listBase(snapshot.listBase);
+            restored |= LegacyAttribSnapshot.LIST_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.TEXTURE_BIT)) {
+            NativeTextureBindings.current().activeUnit(snapshot.activeTextureUnit);
+            NativeTextureBindings.current().bindTexture2d(snapshot.texture2d);
+            restored |= LegacyAttribSnapshot.TEXTURE_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIGHTING_BIT) && snapshot.lightingCaptured
+                && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend lighting) {
+            // The group is restored in part (see LegacyAttribSnapshot.PARTIAL_GROUPS): the two directions, the two
+            // diffuse colours, the scene ambient and the shade model. The material and per-light ambient/specular/spot
+            // terms GL also keeps in this group do not exist in this renderer's payload, so they are counted as the
+            // partial gap rather than silently claimed.
+            if (lighting.celtium$restoreLightState(snapshot.lightDirections, snapshot.lightDiffuse,
+                    snapshot.lightAmbient, snapshot.shadeModel)) {
+                this.attribLightingRestoresChanged++;
+            }
+            this.attribLightingRestores++;
+            restored |= LegacyAttribSnapshot.LIGHTING_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.FOG_BIT)) {
+            // The group is restored in part (see LegacyAttribSnapshot.PARTIAL_GROUPS): the enable, the mode, the
+            // density, the start/end and the colour go back through the fog owner's own setters, so a restore
+            // that changes a value takes the same batch-boundary flush a game write would. GL_FOG_INDEX has no
+            // counterpart in the owner and is the counted partial gap.
+            org.soutalab.celtium.vulkan.ImmediateFogState fog =
+                    org.soutalab.celtium.vulkan.ImmediateFogState.current();
+            fog.enabled(snapshot.fogEnabled);
+            fog.parameter(0x0B65, snapshot.fogMode);
+            fog.parameter(0x0B62, snapshot.fogDensity);
+            fog.parameter(0x0B63, snapshot.fogStart);
+            fog.parameter(0x0B64, snapshot.fogEnd);
+            fog.color(snapshot.fogColor[0], snapshot.fogColor[1], snapshot.fogColor[2], snapshot.fogColor[3]);
+            restored |= LegacyAttribSnapshot.FOG_BIT;
+        }
+        this.attribRestoredGroups += Integer.bitCount(restored);
+        this.attribUnrestoredGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.UNMODELLED_GROUPS));
+        this.attribPartialGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.PARTIAL_GROUPS));
+        this.lastAttribRestored = restored;
+        this.lastAttribMask = snapshot.mask;
+    }
+
+    /** {@return whether this pop restores {@code group}} - the mask rule, applied unconditionally. */
+    private static boolean restoresAttrib(LegacyAttribSnapshot snapshot, int group) {
+        return snapshot.restores(group);
+    }
+
+    /** {@return the groups a push with this mask selects that this renderer cannot put back}. */
+    private static int selectsAttrib(LegacyAttribSnapshot snapshot, int groups) {
+        return snapshot.mask & groups;
+    }
+
+    public static void pushClientAttrib() {
+        DirectGlCaptureEntry stub = installed;
+        if (stub == null) {
+            return;
+        }
+        GlsmAttribStacks.current().pushClient(new long[] {vertexPointerRecord().size, vertexPointerRecord().type,
+                vertexPointerRecord().stride, vertexPointerRecord().offset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
+                vertexPointerRecord().normalized ? 1L : 0L, vertexPointerRecord().integer ? 1L : 0L});
+    }
+
+    public static void popClientAttrib() {
+        DirectGlCaptureEntry stub = installed;
+        if (stub == null) {
+            return;
+        }
+        long[] saved = GlsmAttribStacks.current().popClient();
+        if (saved == null) {
+            return;
+        }
+        vertexPointerRecord().size = (int) saved[0];
+        vertexPointerRecord().type = (int) saved[1];
+        vertexPointerRecord().stride = (int) saved[2];
+        vertexPointerRecord().offset = saved[3];
+        GlsmEnableState.current().set(0x8074, saved[4] != 0);
+        vertexPointerRecord().normalized = saved.length > 5 && saved[5] != 0L;
+        vertexPointerRecord().integer = saved.length > 6 && saved[6] != 0L;
+        // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
+        GlsmClientArrayState.VaoAttrib attrib = GlsmClientArrayState.current().boundAttribs()[0];
+        attrib.size = vertexPointerRecord().size;
+        attrib.type = vertexPointerRecord().type;
+        attrib.stride = vertexPointerRecord().stride;
+        attrib.offset = vertexPointerRecord().offset;
+        attrib.normalized = vertexPointerRecord().normalized;
+        attrib.integer = vertexPointerRecord().integer;
+        attrib.pointerSet = true;
     }
 
     // ---- dispatch helpers -------------------------------------------------------------------

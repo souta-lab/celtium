@@ -20,6 +20,8 @@ import org.soutalab.celtium.vulkan.GlsmNameLedger;
 import org.soutalab.celtium.vulkan.FramebufferClearState;
 
 import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
+import org.soutalab.celtium.vulkan.GlsmAttribStacks;
+import org.soutalab.celtium.vulkan.LegacyAttribSnapshot;
 import org.soutalab.celtium.vulkan.FramebufferBindings;
 
 import org.soutalab.celtium.glcompat.capture.ClientArrayRange;

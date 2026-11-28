@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 /**
  * One {@code glPushAttrib} snapshot: every state group the renderer can put back, plus the mask that says which of

@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
+import org.soutalab.celtium.vulkan.GlsmAttribStacks;
+import org.soutalab.celtium.vulkan.LegacyAttribSnapshot;
 import org.soutalab.celtium.vulkan.NativeRasterState;
 import org.soutalab.celtium.vulkan.NativeTextureBindings;
 
