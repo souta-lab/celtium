@@ -14158,9 +14158,13 @@ public final class ValidationClient {
      * the session tainted and lets the JVM exit for the supervisor to restart.
      */
     private void celtium$residentAfterBootFinish(Minecraft mc) {
-        // The filing distinction is execution, not verdict: a boot leg whose picture verdict fails has
-        // still executed, and its report (which carries the verdict) is filed under done/. failed/ is
-        // for a boot job whose execution itself failed, which is what fail() records.
+        // The boot job is always filed under done/: its own report carries its verdict and status,
+        // exactly as a normal leg's report is read today. The queue's failed/ is reserved for jobs
+        // that could not execute (queued-job failures, supervisor isolations). This matters because
+        // the vanilla reference arm ends every boot leg through fail() - frame()'s world-renderer
+        // lookup throws ClassNotFoundException there by construction - so a fail() call during the
+        // boot job is a property of the configuration, not an execution failure. It is still recorded
+        // on the filed manifest, not hidden.
         boolean failed = celtium$residentBootFailed;
         JsonObject endSnapshot = celtium$residentSnapshot();
         long consoleEnd = celtium$residentConsoleSize(mc);
@@ -14177,42 +14181,29 @@ public final class ValidationClient {
             manifest.addProperty("holdUntilTick", Integer.valueOf(celtium$holdUntilTick));
             manifest.addProperty("sessionJobIndex", Integer.valueOf(1));
             JsonObject delta = celtium$residentDelta(celtium$residentBootStartSnapshot, endSnapshot);
-            if (failed) {
-                Path dir = celtium$residentQueueDir.resolve("failed").resolve("0000-boot");
-                Files.createDirectories(dir);
-                celtium$residentWriteJson(dir.resolve("job-manifest.json"), manifest);
-                celtium$residentWriteJson(dir.resolve("counter-delta.json"), delta);
-                JsonObject record = new JsonObject();
-                record.addProperty("jobId", "boot");
-                record.addProperty("sessionId", celtium$residentSessionId);
-                record.addProperty("failureKind", "JOB_FAILED");
-                if (report.has("error")) {
-                    record.addProperty("error", report.get("error").getAsString());
-                }
-                record.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
-                celtium$residentWriteJson(dir.resolve("failure-record.json"), record);
-            } else {
-                Path doneRoot = celtium$residentQueueDir.resolve("done");
-                Path tmp = doneRoot.resolve(".tmp-0000-boot");
-                celtium$residentDeleteTree(tmp);
-                Files.createDirectories(tmp);
-                celtium$residentWriteJson(tmp.resolve("job-manifest.json"), manifest);
-                Path reportFile = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
-                if (Files.exists(reportFile)) {
-                    Files.copy(reportFile, tmp.resolve("celtium-validation.json"),
-                            StandardCopyOption.REPLACE_EXISTING);
-                }
-                celtium$residentWriteJson(tmp.resolve("counter-delta.json"), delta);
-                celtium$residentCopyTree(mc.gameDir.toPath().resolve("screenshots"),
-                        tmp.resolve("screenshots"), 0L);
-                celtium$residentCopyTree(mc.gameDir.toPath().resolve("framedump"),
-                        tmp.resolve("framedump"), 0L);
-                celtium$residentWriteAtomic(tmp.resolve("READY"), new byte[0]);
-                Path target = doneRoot.resolve("0000-boot");
-                celtium$residentDeleteTree(target);
-                Files.move(tmp, target);
+            if (failed && report.has("error")) {
+                manifest.addProperty("executionFailError", report.get("error").getAsString());
             }
-            System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_DONE job=boot failed=" + failed
+            Path doneRoot = celtium$residentQueueDir.resolve("done");
+            Path tmp = doneRoot.resolve(".tmp-0000-boot");
+            celtium$residentDeleteTree(tmp);
+            Files.createDirectories(tmp);
+            celtium$residentWriteJson(tmp.resolve("job-manifest.json"), manifest);
+            Path reportFile = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
+            if (Files.exists(reportFile)) {
+                Files.copy(reportFile, tmp.resolve("celtium-validation.json"),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+            celtium$residentWriteJson(tmp.resolve("counter-delta.json"), delta);
+            celtium$residentCopyTree(mc.gameDir.toPath().resolve("screenshots"),
+                    tmp.resolve("screenshots"), 0L);
+            celtium$residentCopyTree(mc.gameDir.toPath().resolve("framedump"),
+                    tmp.resolve("framedump"), 0L);
+            celtium$residentWriteAtomic(tmp.resolve("READY"), new byte[0]);
+            Path target = doneRoot.resolve("0000-boot");
+            celtium$residentDeleteTree(target);
+            Files.move(tmp, target);
+            System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_DONE job=boot failCalled=" + failed
                     + " tainted=" + tainted + " newVuids=" + newVuids);
         } catch (Throwable error) {
             System.out.println("[Celtium] CELTIUM_RESIDENT_ERROR filing boot job: " + error);
