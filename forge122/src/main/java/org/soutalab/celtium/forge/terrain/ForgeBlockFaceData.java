@@ -256,26 +256,6 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (model == null) {
             return;
         }
-        if (state.getMaterial().isLiquid()) {
-            // Vanilla never renders fluids through baked models (BlockFluidRenderer
-            // tessellates them from texture-map sprites fetched by name); a liquid
-            // state's model only offers the missing sprite (measured in the Gate G1
-            // Step 2 separation run: VanillaModelWrapper quads are all "missingno").
-            // Resolve the fluid's own sprites the same way vanilla does and record
-            // them as the face textures: still on the horizontal faces, flowing on
-            // the sides. The fullCube branch below (never taken by liquids) would
-            // overwrite these with model sprites, which stays authoritative there.
-            TextureAtlasSprite still = fluidSprite(state, true);
-            TextureAtlasSprite flow = fluidSprite(state, false);
-            for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
-                TextureAtlasSprite sprite = dir == TerrainDirs.UP || dir == TerrainDirs.DOWN
-                        ? still : flow;
-                if (sprite != null) {
-                    t.faceTexture[id * 6 + dir] = sprites.indexFor(sprite);
-                    t.faceCell[id * 6 + dir] = sprites.cellFor(sprite);
-                }
-            }
-        }
         if (t.fullCube[id]) {
             t.generalOffset[id] = meta.size() / 3;
             int written = 0;
@@ -340,6 +320,27 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (written == 0) {
             t.generalOffset[id] = 0;
         }
+        if (state.getMaterial().isLiquid()) {
+            // Vanilla never renders fluids through baked models (BlockFluidRenderer
+            // tessellates them from texture-map sprites fetched by name); a liquid
+            // state's model only offers the missing sprite (measured in the Gate G1
+            // Step 2 separation run: VanillaModelWrapper quads are all "missingno"),
+            // and the model-based recording above faithfully stored that sprite.
+            // Resolve the fluid's own sprites the same way vanilla does and let them
+            // have the final word as the face textures: still on the horizontal
+            // faces, flowing on the sides. (Liquids are never full cubes, so this
+            // seat - the end of the general path - is the only one they reach.)
+            TextureAtlasSprite still = fluidSprite(state, true);
+            TextureAtlasSprite flow = fluidSprite(state, false);
+            for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
+                TextureAtlasSprite sprite = dir == TerrainDirs.UP || dir == TerrainDirs.DOWN
+                        ? still : flow;
+                if (sprite != null) {
+                    t.faceTexture[id * 6 + dir] = sprites.indexFor(sprite);
+                    t.faceCell[id * 6 + dir] = sprites.cellFor(sprite);
+                }
+            }
+        }
         // TEMP S2-b G1 water diagnostic (strip after the separation run): for liquid
         // states, report what the baked model actually offered per facing.
         if (state.getMaterial().isLiquid()) {
@@ -355,6 +356,10 @@ public final class ForgeBlockFaceData implements BlockFaceData {
                             .append(",tex=").append(t.faceTexture[id * 6 + dir]).append(")");
                 }
             }
+            TextureAtlasSprite st = fluidSprite(state, true);
+            TextureAtlasSprite fl = fluidSprite(state, false);
+            sb.append(" still=").append(st == null ? "null" : st.getIconName())
+                    .append(" flow=").append(fl == null ? "null" : fl.getIconName());
             System.out.println(sb);
         }
     }
