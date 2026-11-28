@@ -434,7 +434,7 @@ public final class CeltiumFontGlyphCapture {
         // none of them geometry.
         armed = CeltiumBackends.current() != null;
         if (armed) {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowBegin();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.beginFontWindow();
         }
         windowUnicode = unicode;
         if (GLYPH_DEBUG && unicode && openLogged < 60) {
@@ -988,7 +988,7 @@ public final class CeltiumFontGlyphCapture {
         if (!TIMINGS) {
             window = false;
             armed = false;
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowEnd();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.endFontWindow();
             reset();
             return;
         }
@@ -996,7 +996,7 @@ public final class CeltiumFontGlyphCapture {
         try {
             window = false;
             armed = false;
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$fontWindowEnd();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.endFontWindow();
             reset();
         } finally {
             windowNanos += System.nanoTime() - started;

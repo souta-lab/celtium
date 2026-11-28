@@ -9,7 +9,6 @@ import org.soutalab.celtium.vulkan.RenderTargetRegistry.NamedTargetSpec;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetClearPolicy;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetSizing;
-import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.util.List;
@@ -164,8 +163,7 @@ class NativePassRegistryTest {
         assertEquals(1L, passes.executionCount());
         assertEquals(1L, passes.executionRefusalCount());
 
-        // Census separation: stub-side ModProgramRegistry and ImmediateStatistics must not receive native passes.
-        assertNull(ModProgramRegistry.program(1));
+        // Census separation: the stub-side ImmediateStatistics must not receive native passes.
         ImmediateStatistics immediateStats = new ImmediateStatistics();
         assertEquals(0L, immediateStats.shaderProgramRefusals());
 

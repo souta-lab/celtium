@@ -872,7 +872,7 @@ public final class ModGlslTranslator {
         return RESERVED_IN_450.contains(glName) ? RENAMED + glName : glName;
     }
 
-    /** Public for {@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}'s fallback stage heuristic, which reads the same cleaned text (cross-package since the G2-06 move). */
+    /** Public for the converter program machine's fallback stage heuristic, which reads the same cleaned text. */
     public static String strip(String source) {
         if (source == null) {
             throw new IllegalArgumentException("a stage has no source");
@@ -2459,7 +2459,7 @@ public final class ModGlslTranslator {
         };
     }
 
-    /** {@return {alignment, size}} of a std140 member. Arrays round every element up to 16 bytes. Public for {@link org.soutalab.celtium.vulkan.gl.GlsmPackState}'s layout walk (cross-package since the G2-06 move). */
+    /** {@return {alignment, size}} of a std140 member. Arrays round every element up to 16 bytes. Public for the pack-state layout walk. */
     public static int[] std140(String type, int arrayLength) {
         int align;
         int size;

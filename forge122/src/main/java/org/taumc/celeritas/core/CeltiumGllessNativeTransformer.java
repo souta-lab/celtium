@@ -39,7 +39,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
     /** State setters the stub answers with SEM_NOOP; see the direct-return branch for why the name is enough. */
     // GAP-INT-2 exclusion (stage-3 routes): the state-bearing subset named by
-    // org.soutalab.celtium.vulkan.gl.GlsmVoidNoopRoutes (15 names: the stencil family,
+    // the monolith's void-noop route table (15 names: the stencil family,
     // glClearStencil, glDepthMask, glDepthFunc, glBlendColor, glPolygonMode,
     // glSampleCoverage, glBindSampler, glBindBufferBase, glBindBufferRange) is NOT listed
     // here any more. A direct call to one of them must not be dropped as a no-op before it
@@ -58,8 +58,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // These texcoord/vertex names also have legacy-capture routes: the route is consulted before this set,
             // so an entry here never answers them (the listing is kept for the names that have no route).
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
-            // The uniform setters, the shader source, attachment and link are routed to ModProgramRegistry
-            // (celtium$routeModProgram, 2026-11-05) and are therefore absent.
+            // The uniform setters, the shader source, attachment and link are routed to the converter's
+            // program machine (GLSMPrograms over DirectGlRuntime) and are therefore absent.
             "glVertex2i", "glLineStipple",
             // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
             // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
@@ -628,7 +628,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitVarInsn(argument.getOpcode(Opcodes.ILOAD), slot);
             slot += argument.getSize();
         }
-        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/vulkan/gl/NativeRasterAdapter",
+        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/soutalab/celtium/vulkan/NativeRasterState",
                 entry, descriptor, false);
         method.visitInsn(Opcodes.RETURN);
         return true;
@@ -771,7 +771,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         for (int i = 0; i < order.size(); i++) {
             int id = order.get(i).intValue();
             if (id >= names.length
-                    || !org.soutalab.celtium.vulkan.gl.GlsmFrontend.isDrawingEntryPointKey(names[id])) {
+                    || !org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.isDrawingEntryPointKey(names[id])) {
                 continue;
             }
             if (drawingNames > 0) {
@@ -853,7 +853,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
 
     /**
      * A mod's own program: its sources, attachment, link and uniform values reach
-     * {@code ModProgramRegistry} (2026-11-05). Until now these were listed no-ops, so a program bound for a draw was an
+     * the converter's program machine (GLSMPrograms over DirectGlRuntime). Until now these were listed no-ops, so a program bound for a draw was an
      * empty id and its batch could only be refused; GTCEu's bloom programs are the measured case. The ARB spellings
      * (glShaderSourceARB, glAttachObjectARB, glLinkProgramARB, glUniform*ARB) take the same arguments.
      */

@@ -3,7 +3,6 @@ package org.soutalab.celtium.vulkan;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
-import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,62 +19,6 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
  * {@code celtium-vulkan}.
  */
 class PerformanceOptimizationsTest {
-
-    @Test
-    void modProgramRegistryZeroAllocUniformsAndVersionTracking() {
-        ModProgramRegistry.shaderSource(910,
-                "#version 120\nuniform float u_Time;\nuniform vec4 u_Color;\nvoid main() { gl_Position = ftransform(); }\n");
-        ModProgramRegistry.shaderSource(911,
-                "#version 120\nuniform sampler2D u_Tex;\nuniform float u_Time;\nuniform vec4 u_Color;\n"
-                        + "void main() { gl_FragColor = texture2D(u_Tex, vec2(u_Time)) * u_Color; }\n");
-        ModProgramRegistry.attach(905, 910);
-        ModProgramRegistry.attach(905, 911);
-        ModProgramRegistry.Program prog = ModProgramRegistry.link(905);
-        assertNotNull(prog);
-        assertTrue(prog.lowered().ok(), () -> "expected ok lowered program, got: " + prog.lowered().failure());
-
-        int timeLoc = ModProgramRegistry.location("u_Time");
-        int colorLoc = ModProgramRegistry.location("u_Color");
-        int texLoc = ModProgramRegistry.location("u_Tex");
-
-        long v0 = prog.uniformVersion();
-        ModProgramRegistry.uniformFloat1(905, timeLoc, 1.5f);
-        long v1 = prog.uniformVersion();
-        assertTrue(v1 > v0, "writing a new float uniform advances uniformVersion");
-        assertArrayEquals(new float[] {1.5f}, prog.floats("u_Time"));
-
-        ModProgramRegistry.uniformFloat1(905, timeLoc, 1.5f);
-        assertEquals(v1, prog.uniformVersion(), "rewriting bit-identical float uniform does not bump uniformVersion");
-
-        ModProgramRegistry.uniformFloat4(905, colorLoc, 0.1f, 0.2f, 0.3f, 0.4f);
-        long v2 = prog.uniformVersion();
-        assertTrue(v2 > v1);
-        assertArrayEquals(new float[] {0.1f, 0.2f, 0.3f, 0.4f}, prog.floats("u_Color"));
-
-        ModProgramRegistry.uniformInt1(905, texLoc, 2);
-        long v3 = prog.uniformVersion();
-        assertTrue(v3 > v2);
-        assertArrayEquals(new int[] {2}, prog.ints("u_Tex"));
-        ModProgramRegistry.uniformInt1(905, texLoc, 2);
-        assertEquals(v3, prog.uniformVersion(), "rewriting identical int uniform does not bump uniformVersion");
-
-        var directFloats = MemoryUtil.memAlloc(16);
-        try {
-            long addr = MemoryUtil.memAddress(directFloats);
-            MemoryUtil.memPutFloat(addr, 0.5f);
-            MemoryUtil.memPutFloat(addr + 4, 0.6f);
-            MemoryUtil.memPutFloat(addr + 8, 0.7f);
-            MemoryUtil.memPutFloat(addr + 12, 0.8f);
-            ModProgramRegistry.uniformFloatPtr(905, colorLoc, 1, addr, 4, false, 4);
-            long v4 = prog.uniformVersion();
-            assertTrue(v4 > v3);
-            assertArrayEquals(new float[] {0.5f, 0.6f, 0.7f, 0.8f}, prog.floats("u_Color"));
-            ModProgramRegistry.uniformFloatPtr(905, colorLoc, 1, addr, 4, false, 4);
-            assertEquals(v4, prog.uniformVersion());
-        } finally {
-            MemoryUtil.memFree(directFloats);
-        }
-    }
 
     @Test
     void modGlslTranslatorReservedWordsAndPatterns() {

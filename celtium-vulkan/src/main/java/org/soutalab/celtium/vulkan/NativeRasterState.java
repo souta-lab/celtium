@@ -67,15 +67,30 @@ public final class NativeRasterState {
     public void flushBeforeChange() { changing(); }
 
     private void changing() {
-        // GAP-FL-1 (F-7): every actual raster change records into the one flush census.
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.RASTER_CHANGE);
         if (this.beforeChange != null && !this.notifying) {
             this.notifying = true;
             try { this.beforeChange.run(); }
             finally { this.notifying = false; }
         }
     }
+
+    // Raw mod GL raster setters, connected directly to this owner (the former NativeRasterAdapter
+    // indirection was removed in E4-b2): the transformer rewrites the LWJGL natives onto these.
+    public static void glBlendFunc(int source, int destination) {
+        current().blendFunc(source, destination, source, destination);
+    }
+    public static void glBlendFuncSeparate(int sourceRgb, int destinationRgb, int sourceAlpha, int destinationAlpha) {
+        current().blendFunc(sourceRgb, destinationRgb, sourceAlpha, destinationAlpha);
+    }
+    public static void glBlendEquation(int equation) { current().blendEquation(equation, equation); }
+    public static void glBlendEquationSeparate(int rgb, int alpha) { current().blendEquation(rgb, alpha); }
+    public static void glColorMask(boolean red, boolean green, boolean blue, boolean alpha) {
+        current().colorMask((red ? 1 : 0) | (green ? 2 : 0) | (blue ? 4 : 0) | (alpha ? 8 : 0));
+    }
+    public static void glCullFace(int face) { current().cullFace(face); }
+    public static void glFrontFace(int face) { current().frontFace(face); }
+    public static void glPolygonOffset(float factor, float units) { current().polygonOffset(factor, units); }
+    public static void glScissor(int x, int y, int width, int height) { current().scissor(x, y, width, height); }
 
     public boolean blendEnabled() { return this.blendEnabled; }
     public void blendEnabled(boolean enabled) {

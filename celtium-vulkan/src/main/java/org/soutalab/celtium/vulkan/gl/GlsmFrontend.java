@@ -4092,7 +4092,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     /**
      * {@code glGetShaderiv/glGetProgramiv/glGetObjectParameterivARB} from the transformer's route. A zero
      * compile/link status is a "failed" answer every caller checks, so the status pnames answer true by
-     * default - but a program whose link {@link ModProgramRegistry} recorded answers with that link's result
+     * default - but a program whose link the converter's program machine recorded answers with that link's result
      * instead, and its info-log length is the recorded failure's. Everything else (uniform counts...)
      * answers zero. See {@link #shaderProgramQueryAnswer(int, int)}.
      */
@@ -4106,7 +4106,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     /**
      * The answer for a shader/program status query, shared by the transformer's route and the native
      * dispatch. LINK_STATUS and VALIDATE_STATUS answer the recorded link's truth for a program the registry
-     * knows ({@link ModProgramRegistry#linkStatus(int)}): a caller that checks - Iris's program builder,
+     * knows: a caller that checks - Iris's program builder,
      * Embeddium's {@code GlProgram} - then fails at load, with the reason in the info log, instead of
      * proceeding over a program whose passes this renderer refuses by name at prepare and which therefore
      * never draws. An id with no recorded link keeps the default true: its link may never have reached the
@@ -4116,13 +4116,19 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * condemn shaders a later link compiles fine.
      */
     static int shaderProgramQueryAnswer(int object, int pname) {
+        // The recorded link's truth now lives in the converter's program machine (GLSMPrograms over
+        // DirectGlRuntime); an id it does not know keeps the default answers below.
+        if (org.soutalab.celtium.glcompat.GLSMPrograms.glIsProgram(object)) {
+            return org.soutalab.celtium.glcompat.GLSMPrograms.glGetProgrami(object, pname);
+        }
+        if (org.soutalab.celtium.glcompat.GLSMPrograms.glIsShader(object)) {
+            return org.soutalab.celtium.glcompat.GLSMPrograms.glGetShaderi(object, pname);
+        }
         if (pname == 0x8B82 || pname == 0x8B83) { // GL_LINK_STATUS / GL_VALIDATE_STATUS
-            Boolean recorded = ModProgramRegistry.linkStatus(object);
-            return recorded == null || recorded ? 1 : 0;
+            return 1;
         }
         if (pname == 0x8B84) { // GL_INFO_LOG_LENGTH
-            String failure = ModProgramRegistry.linkInfoLog(object);
-            return failure == null ? 0 : failure.length() + 1;
+            return 0;
         }
         return pname == 0x8B81 ? 1 : 0; // GL_COMPILE_STATUS
     }
@@ -4139,12 +4145,13 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     /**
      * Writes the recorded link failure of a program as its info log, bounded by the caller's buffer size,
      * and {@return the characters written}, excluding the NUL. With no recorded failure the log is the empty
-     * string, as before. The failure text is the registry's own reason string, which is ASCII; a non-ASCII
+     * string, as before. The failure text is the program machine's own reason string, which is ASCII; a non-ASCII
      * character would be truncated by the byte cast, as in any C log.
      */
     public static int celtium$writeInfoLog(int object, int maxLength, long log) {
-        String failure = ModProgramRegistry.linkInfoLog(object);
-        if (failure == null || maxLength <= 0) {
+        String failure = org.soutalab.celtium.glcompat.GLSMPrograms.glIsProgram(object) ? org.soutalab.celtium.glcompat.GLSMPrograms.glGetProgramInfoLog(object)
+                : org.soutalab.celtium.glcompat.GLSMPrograms.glIsShader(object) ? org.soutalab.celtium.glcompat.GLSMPrograms.glGetShaderInfoLog(object) : null;
+        if (failure == null || failure.isEmpty() || maxLength <= 0) {
             org.lwjgl.system.MemoryUtil.memPutByte(log, (byte) 0);
             return 0;
         }
@@ -5928,13 +5935,12 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
                     forgetBuffer(name);
                 }
                 if ("glDeleteProgram".equals(fn.name)) {
-                    // The registry's entry carries lowered SPIR-V and live uniform values; leaving it behind
-                    // handed both to whatever object recycled the name (item 328, V-04). Until now only the
-                    // forge122 transformer route reached the registry's delete.
-                    ModProgramRegistry.deleteProgram(name);
+                    // The program machine's entry carries lowered SPIR-V and live uniform values; leaving
+                    // it behind handed both to whatever object recycled the name (item 328, V-04).
+                    org.soutalab.celtium.glcompat.GLSMPrograms.glDeleteProgram(name);
                 }
                 if ("glDeleteShader".equals(fn.name)) {
-                    ModProgramRegistry.deleteShader(name);
+                    org.soutalab.celtium.glcompat.GLSMPrograms.glDeleteShader(name);
                 }
             }
         }

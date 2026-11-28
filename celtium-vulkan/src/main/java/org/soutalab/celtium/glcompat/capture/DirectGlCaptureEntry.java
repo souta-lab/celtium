@@ -435,6 +435,19 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         return fontWindowActive;
     }
 
+    private static final java.util.concurrent.atomic.AtomicLong FONT_WINDOW_SUPPRESSED =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** Counts one legacy begin suppressed by the open font window (DP-26). */
+    public static void noteFontWindowSuppressed() {
+        FONT_WINDOW_SUPPRESSED.incrementAndGet();
+    }
+
+    /** {@return how many legacy begins the font window has suppressed}. */
+    public static long fontWindowSuppressed() {
+        return FONT_WINDOW_SUPPRESSED.get();
+    }
+
     // ---- duty 5: the drawing-entry predicate ------------------------------------------------
 
     /** The drawing entry points the surface census reports on (the old stub's set, moved unchanged). */

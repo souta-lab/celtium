@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -132,29 +132,46 @@ class DrawPathLmContractTest {
         int openEnd = capture.indexOf("public static boolean fastPathAvailable() {", openStart);
         assertTrue(openStart >= 0 && openEnd > openStart, "openWindowBody is located");
         String openBody = capture.substring(openStart, openEnd);
-        assertTrue(openBody.contains("GlsmFrontend.celtium$fontWindowBegin();"),
+        assertTrue(openBody.contains("DirectGlCaptureEntry.beginFontWindow();"),
                 "openWindowBody raises font window ownership flag when armed");
 
         int closeStart = capture.indexOf("public static void closeWindow() {");
         int closeEnd = capture.indexOf("private static void reset() {", closeStart);
         assertTrue(closeStart >= 0 && closeEnd > closeStart, "closeWindow is located");
         String closeBody = capture.substring(closeStart, closeEnd);
-        assertEquals(2, countOccurrences(closeBody, "GlsmFrontend.celtium$fontWindowEnd();"),
+        assertEquals(2, countOccurrences(closeBody, "DirectGlCaptureEntry.endFontWindow();"),
                 "closeWindow lowers font window ownership flag on both TIMINGS and non-TIMINGS paths");
 
-        // Behavioral verification of the GlsmFrontend ownership gate itself.
-        long before = GlsmFrontend.celtium$legacyFontWindowSuppressed();
+        // The door itself: the hint's legacy begin consults the entry's gate and counts a
+        // suppression instead of forwarding into the converter (source-pinned - the hint class
+        // is not on this module's test classpath).
+        String hint = readSource(
+                "forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java");
+        int beginStart = hint.indexOf("public static void glLegacyBegin(int mode) {");
+        int beginEnd = hint.indexOf("public static void glLegacyEnd()", beginStart);
+        assertTrue(beginStart >= 0 && beginEnd > beginStart, "glLegacyBegin is located");
+        String beginBody = hint.substring(beginStart, beginEnd);
+        assertTrue(beginBody.contains("DirectGlCaptureEntry.isFontWindowActive()"),
+                "glLegacyBegin consults the font window gate");
+        assertTrue(beginBody.contains("DirectGlCaptureEntry.noteFontWindowSuppressed()"),
+                "glLegacyBegin counts a suppressed begin under the gate");
+
+        // Behavioral verification of the capture entry's ownership gate itself.
+        long before = DirectGlCaptureEntry.fontWindowSuppressed();
+        DirectGlCaptureEntry.beginFontWindow();
         try {
-            GlsmFrontend.celtium$fontWindowBegin();
-            GlsmFrontend.celtium$legacyBegin(5);
-            assertEquals(before + 1L, GlsmFrontend.celtium$legacyFontWindowSuppressed(),
-                    "legacyBegin inside an active font window is suppressed and counted");
+            assertTrue(DirectGlCaptureEntry.isFontWindowActive(),
+                    "the gate is active inside the window");
+            DirectGlCaptureEntry.noteFontWindowSuppressed();
+            assertEquals(before + 1L, DirectGlCaptureEntry.fontWindowSuppressed(),
+                    "a suppression under the gate is counted");
         } finally {
-            GlsmFrontend.celtium$fontWindowEnd();
+            DirectGlCaptureEntry.endFontWindow();
         }
-        GlsmFrontend.celtium$legacyBegin(5);
-        assertEquals(before + 1L, GlsmFrontend.celtium$legacyFontWindowSuppressed(),
-                "legacyBegin after fontWindowEnd is not counted as font-window suppressed");
+        assertFalse(DirectGlCaptureEntry.isFontWindowActive(),
+                "the gate is inactive after endFontWindow, so a later begin is not suppressed");
+        assertEquals(before + 1L, DirectGlCaptureEntry.fontWindowSuppressed(),
+                "no further suppression is counted once the window has closed");
     }
 
     private static int countOccurrences(String text, String needle) {

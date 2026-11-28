@@ -76,14 +76,16 @@ class LossAggregateReaderContractTest {
     }
 
     @Test
-    void flushBoundaryCensusHasAnOutputSeatInTheSummary() throws IOException {
+    void flushBoundaryCensusIsGoneFromTheSummary() throws IOException {
+        // E4-b2 abolished the monolith's flush-boundary census along with its output seat: the
+        // summary no longer splices it, and the diagnostics class no longer names the census.
         String diagnostics = read(DIAGNOSTICS);
-        assertTrue(diagnostics.contains("flushBoundarySummary()"),
-                "the verification summary must splice the flush-boundary census");
-        assertTrue(diagnostics.contains("FlushBoundaryCensus.current()"),
-                "the census is read from its single current instance");
-        assertTrue(diagnostics.contains("\"flushBoundary=[\""),
-                "the census prints under its own bracket");
+        assertTrue(!diagnostics.contains("flushBoundarySummary()"),
+                "the retired census has no output seat left in the summary");
+        assertTrue(!diagnostics.contains("FlushBoundaryCensus"),
+                "the diagnostics class does not reference the retired census");
+        assertTrue(!diagnostics.contains("\"flushBoundary=[\""),
+                "the census bracket is not printed");
     }
 
     @Test

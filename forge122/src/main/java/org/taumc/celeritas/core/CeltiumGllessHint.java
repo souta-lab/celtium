@@ -268,7 +268,7 @@ public final class CeltiumGllessHint {
 
     /**
      * {@code glShaderSource}: the strings GL would concatenate, kept so a mod's program can be lowered and run natively
-     * ({@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}). {@code lengths} 0 or a negative entry means the
+     * (the converter's program machine, via GLSMPrograms). {@code lengths} 0 or a negative entry means the
      * string is NUL-terminated.
      */
     public static void glShaderSource(int shader, int count, long strings, long lengths) {
@@ -2254,6 +2254,12 @@ public final class CeltiumGllessHint {
 
     // ---- legacy immediate mode, routed by the transformer ----
     public static void glLegacyBegin(int mode) {
+        // DP-26: while the font capture's window is open, a vanilla FontRenderer begin belongs to
+        // the capture, not the converter - suppress it (and count it) instead of double-drawing.
+        if (org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.isFontWindowActive()) {
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.noteFontWindowSuppressed();
+            return;
+        }
         org.soutalab.celtium.glcompat.DirectGlDispatcher.enterLane3();
         try {
             org.soutalab.celtium.glcompat.GLSMDraws.glBegin(mode);

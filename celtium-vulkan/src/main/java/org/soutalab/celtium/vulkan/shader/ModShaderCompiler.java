@@ -98,7 +98,7 @@ public final class ModShaderCompiler {
 
     /**
      * {@return the SPIR-V words of one stage}; throws with shaderc's message when the stage does not compile, and
-     * throws when the stage does not compile <em>in time</em> - the caller ({@code ModProgramRegistry}) already
+     * throws when the stage does not compile <em>in time</em> - the caller (the converter's program machine) already
      * turns any {@code RuntimeException} from here into a refused program, so a stuck compile now fails the one
      * program instead of the whole frame loop.
      */

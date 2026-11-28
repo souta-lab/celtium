@@ -2461,8 +2461,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public int celtium$flushPendingForChainInput() {
         // M-6 wired (FL-1 F-6): the chain-input boundary records into the single flush census
         // at this entry.
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.POST_CHAIN);
         // The chain input's flush orders the pending work before the chain reads it; it is an
         // ordering flush, not a draw boundary (the window census' stamp).
         this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
@@ -7270,8 +7268,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     public void flushBeforeClear(int mask) {
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.ORDERING);
         if (this.immediateWindowBusy) return; // bridge GL state restore must not recursively flush
         if (mask == 0) {
             this.clearOrderFlushesZeroMask++;
@@ -10172,8 +10168,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // M-6 wired (FL-1 F-8): every immediate-run commit - the stub's glEnd / display-list
         // replay / drawArrays submissions and this backend's own captured-run flush - funnels
         // through this entry, so the commit is counted here, once per submission.
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.IMMEDIATE_RUN);
         if (NullRenderer.ENABLED) {
             // Null-renderer measurement mode (Stage 0): the batch is accepted and dropped. The
             // vertex memory is the caller's scratch, so nothing is owed for it; see NullRenderer.
@@ -13692,8 +13686,6 @@ this.frameBufferOpen = false;
         // M-6 wired (FL-1 F-5): the frame-boundary drain records into the single flush census.
         // The body's drain goes through flushPendingBeforeGlDraw directly (not the stamped
         // funnel), so this entry note is the drain's only census record - no double count.
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.FRAME_DRAIN);
         long flushStartedNanos = System.nanoTime();
         try {
             celtium$flushPendingAtFrameBoundaryBody(flushStartedNanos);
@@ -13892,8 +13884,6 @@ this.frameBufferOpen = false;
         // entry (a draw submission flushing the queued groups first); the other causes are
         // F-3 ordering guarantees and keep their own census treatment.
         if (cause == GlDrawWindowCensus.CAUSE_BATCH_SUBMIT) {
-            org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                    .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.DRAW_ENTRY);
         }
         int previous = this.pendingGlDrawCause;
         this.pendingGlDrawCause = cause;
@@ -13920,8 +13910,6 @@ this.frameBufferOpen = false;
         // M-6 wired (FL-1 F-1): this funnel's only caller is the group queue's size trip
         // (CAUSE_SIZE); the capacity flush records into the single flush census here.
         if (cause == GlDrawWindowCensus.CAUSE_SIZE) {
-            org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
-                    .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.SIZE);
         }
         int previous = this.pendingGlDrawCause;
         this.pendingGlDrawCause = cause;

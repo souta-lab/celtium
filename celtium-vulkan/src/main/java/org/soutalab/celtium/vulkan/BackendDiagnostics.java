@@ -918,7 +918,6 @@ final class BackendDiagnostics {
                 + ",mode:" + b.matrixModeCalls + ",identity:" + b.loadIdentityCalls
                 + ",texture:" + b.textureStats.bindTextureCalls()
                 + " " + lossAggregateSummary()
-                + " " + flushBoundarySummary()
                 + " " + CeltiumLogLimiter.suppressionSummary();
     }
 
@@ -953,24 +952,6 @@ final class BackendDiagnostics {
                 + ",windowFlushFailures=" + windowFlushFailures
                 + ",staleGroupRefusals=" + staleGroupRefusals
                 + ",total=" + total + "]";
-    }
-
-    /**
-     * The flush-boundary census's output seat: the census counts every flush cause at ten increment
-     * sites and had tests, but nothing printed it, so a leg could never read why frames flushed.
-     */
-    private String flushBoundarySummary() {
-        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus census =
-                org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current();
-        StringBuilder out = new StringBuilder("flushBoundary=[");
-        for (org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason reason
-                : org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.values()) {
-            if (out.length() > "flushBoundary=[".length()) {
-                out.append(",");
-            }
-            out.append(reason.name()).append("=").append(census.count(reason));
-        }
-        return out.append(",boundaries=").append(census.boundaries()).append("]").toString();
     }
 
     /** The bounded window diagnostics {@link #b.drawPendingImmediate(Long)} used to run inline; see the call site. */

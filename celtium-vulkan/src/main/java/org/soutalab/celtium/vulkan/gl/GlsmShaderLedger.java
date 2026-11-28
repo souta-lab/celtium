@@ -12,7 +12,7 @@ import java.util.Set;
  * the GLSM-side ledger for shader source/stage/deletion and the current program.
  * <p>
  * GlsmPackState classifies uniform members of linked programs; it never owned the
- * shader records ModProgramRegistry keeps as statics (SHADER_SOURCES / SHADER_STAGES /
+ * shader records the retired program registry kept as statics (SHADER_SOURCES / SHADER_STAGES /
  * DELETED_SHADERS). This ledger is their stage-3 home, with the registry's own rules:
  * setting a stage or a source revives a deleted shader (the pending delete only takes
  * effect while no live program references it - that reference check stays the registry's),

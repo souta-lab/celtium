@@ -81,7 +81,7 @@ public final class GlsmHintLedger {
         CURRENT.registerDoor("glIsList", "nameLedger");
         CURRENT.registerDoor("glIsObject", "nameLedger");
         CURRENT.registerDoor("glIsSync", "nameLedger");
-        // Shader/program surface: sources, stages and the current program live in GlsmShaderLedger (PROG-1); the program machine that consumes them (ModProgramRegistry) reads that ledger. Uniform writes belong to the bound program of the same ledger pair.
+        // Shader/program surface: sources, stages and the current program live in GlsmShaderLedger (PROG-1); the program machine that consumes them reads that ledger. Uniform writes belong to the bound program of the same ledger pair.
         CURRENT.registerDoor("glUseProgram", "shader");
         CURRENT.registerDoor("glCreateShader", "shader");
         CURRENT.registerDoor("glShaderSource", "shader");

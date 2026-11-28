@@ -471,8 +471,12 @@ public class MinecraftMixin {
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null) {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.initializeWindowRectangles(
-                    mc.displayWidth, mc.displayHeight);
+            if (mc.displayWidth > 0 && mc.displayHeight > 0) {
+                org.soutalab.celtium.vulkan.FramebufferViewportState.current()
+                        .initialize(0, 0, mc.displayWidth, mc.displayHeight);
+                org.soutalab.celtium.vulkan.NativeRasterState.current()
+                        .initializeScissor(mc.displayWidth, mc.displayHeight);
+            }
         }
         celtium$windowRendererStage = "createDisplay";
         celtium$ensureWindowRenderer();

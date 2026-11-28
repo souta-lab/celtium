@@ -7,7 +7,7 @@ package org.soutalab.celtium.vulkan.shader;
  * ({@link ModGlslTranslator}), because the ceiling is a property of the push route, not of the block.
  * <p>
  * Why a holder and not a parameter: the lowering runs from {@code glLinkProgram} through the static
- * {@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}, with no {@code VulkanContext} on that path, so the number the device selection already
+ * the converter's program machine, with no {@code VulkanContext} on that path, so the number the device selection already
  * reads and already enforces is recorded once where the device is chosen and read here by {@link ModGlslTranslator}.
  * It is the same limit {@code VulkanPostChain} takes from the device properties, and the selection refuses to run
  * below it ({@code VulkanContext.PUSH_CONSTANT_BYTES_USED} = 256): {@code VulkanModProgramPipeline} sizes its
