@@ -83,7 +83,7 @@ class FrameImageSamplingInitContractTest {
         int nullRefusal = body.indexOf("reason=frame-target-null");
         assertTrue(nullRefusal >= 0 && init > nullRefusal,
                 "the bootstrap stands after the frame-target-null refusal, on a live target");
-        int closure = body.indexOf("this.mainColorSampledBorrowClosedFrame = this.frameId;");
+        int closure = body.indexOf("this.mainColorSampledBorrowClosedFrame = this.frame.frameId;");
         assertTrue(closure >= 0 && init > closure,
                 "the bootstrap stands after the live-borrow closure: it never runs over a borrow");
         assertEquals(1, source.split("initializeFrameImageForSampling\\(\\)", -1).length - 1,
