@@ -13,7 +13,10 @@ import java.nio.ShortBuffer;
 import org.soutalab.celtium.core.glcompat.DirectGlVulkanSink;
 import org.soutalab.celtium.core.state.LightStateRegister;
 import org.soutalab.celtium.glcompat.GLContextState;
+import org.soutalab.celtium.glcompat.GLStateManager;
+import org.soutalab.celtium.glcompat.ffp.ShaderManager;
 import org.soutalab.celtium.glcompat.gtnh.bytebuf.MemoryUtilities;
+import org.soutalab.celtium.glcompat.streaming.TessellatorStreamingDrawer;
 import org.soutalab.celtium.glcompat.texture.TextureStaging;
 
 import org.lwjgl.opengl.GL11;
@@ -40,9 +43,21 @@ public final class DirectGlExecutor {
     /** The state machine and sink translation behind this facade (celtium's own). */
     private final DirectGlRuntime runtime = new DirectGlRuntime();
 
-    /** Installs the Vulkan sink the converter submits through (renderer bootstrap seat). */
+    /**
+     * Installs the Vulkan sink the converter submits through (renderer bootstrap seat).
+     * On the production executor this connection also completes the Lane 3 initialization
+     * wiring (C1, DECODERS ruling as disposed by ruling item 25 section 3.2), idempotently:
+     * the FFP shader emulation is enabled, and the immediate-mode direct drawer is installed
+     * on the host config. Test executors (own instances) and sink removal wire nothing.
+     */
     public void setSink(DirectGlVulkanSink sink) {
         this.runtime.setSink(sink);
+        if (this == EXECUTOR && sink != null) {
+            if (!ShaderManager.isEnabled()) {
+                ShaderManager.enable();
+            }
+            GLStateManager.installDirectDrawer(TessellatorStreamingDrawer::drawDirect);
+        }
     }
 
     /** The installed sink, or {@code null} before bootstrap. */

@@ -655,6 +655,36 @@ public class GLStateManager {
         initConfig = config;
     }
 
+    /**
+     * Installs the immediate-mode direct drawer on the host config without touching the GL
+     * context (the C1(b) wiring seat, DECODERS ruling as disposed by ruling item 25 section
+     * 3.2): when no config exists yet, a drawer-only config is applied; when a config exists
+     * without a drawer, it is rebuilt with every other host setting preserved and only the
+     * drawer filled in. Idempotent: a config that already carries a drawer is left untouched.
+     */
+    public static void installDirectDrawer(java.util.function.Consumer<org.soutalab.celtium.glcompat.gtnh.client.renderer.DirectTessellator> drawer) {
+        final GLSMInitConfig config = initConfig;
+        if (config != null && config.getDirectDrawer() != null) {
+            return;
+        }
+        if (config == null) {
+            applyInitConfig(GLSMInitConfig.builder().directDrawer(drawer).build());
+            return;
+        }
+        applyInitConfig(GLSMInitConfig.builder()
+                .lwjglDebug(config.isLwjglDebug())
+                .noErrorChecks(config.isNoErrorChecks())
+                .streamingUploadStrategy(config.getStreamingUploadStrategy())
+                .framebufferSupported(config.isFramebufferSupported())
+                .fboEnabled(config.isFboEnabled())
+                .directDrawer(drawer)
+                .streamingDrawerDestroy(config.getStreamingDrawerDestroy())
+                .displaySize(config.getDisplayWidth(), config.getDisplayHeight())
+                .postInitCallback(config.getPostInitCallback())
+                .gpuCommandRecorder(config.getGpuCommandRecorder())
+                .build());
+    }
+
     static void recordGpuCommand(GpuCommandType type, int operand0, int operand1) {
         recordGpuCommand(type, GpuCommandPhase.ISSUED, operand0, operand1);
     }
