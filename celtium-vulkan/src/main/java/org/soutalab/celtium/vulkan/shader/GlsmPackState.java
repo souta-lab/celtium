@@ -154,6 +154,11 @@ public final class GlsmPackState {
         return PER_FRAME_LAYOUT.get(name);
     }
 
+    /** Programs whose lowering extracted a REGION member into the SSBO table. */
+    private static long regionExtracted;
+    /** REGION-named members whose shape refused extraction (array / matrix / struct part). */
+    private static long regionUnextractable;
+
     public static synchronized void noteRegionExtracted() {
         regionExtracted++;
     }
