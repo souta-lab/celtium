@@ -62,6 +62,21 @@ public interface DirectGlVulkanSink {
         void destroyBuffer(long bufferId);
     }
 
+    // Framebuffer aspect bits. These belong to the Java contract, independent of the GL mask.
+    int COLOR_ASPECT = 1;
+    int DEPTH_ASPECT = 2;
+    int STENCIL_ASPECT = 4;
+
+    /** Clear values and an optional rectangle in framebuffer coordinates. */
+    record ClearSpec(int clearMask, float r, float g, float b, float a, float depth, int stencil,
+                     boolean scissorEnabled, int scissorX, int scissorY, int scissorWidth, int scissorHeight) {
+    }
+
+    /** Ordered rectangle endpoints in framebuffer coordinates; reversing an axis mirrors the image. */
+    record BlitRegion(int srcX0, int srcY0, int srcX1, int srcY1,
+                      int dstX0, int dstY0, int dstX1, int dstY1, int aspectMask, boolean linearFilter) {
+    }
+
     /** Framebuffer operations: a mod's custom FBO becomes an isolated transient-slab target. */
     interface FramebufferOps {
 
