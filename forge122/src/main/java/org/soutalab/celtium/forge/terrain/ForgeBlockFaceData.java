@@ -320,6 +320,23 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         if (written == 0) {
             t.generalOffset[id] = 0;
         }
+        // TEMP S2-b G1 water diagnostic (strip after the separation run): for liquid
+        // states, report what the baked model actually offered per facing.
+        if (state.getMaterial().isLiquid()) {
+            StringBuilder sb = new StringBuilder("[S2B-TEMP] liquid id=" + id
+                    + " block=" + block.getRegistryName()
+                    + " model=" + (model == null ? "null" : model.getClass().getName()));
+            for (int dir = 0; dir < TerrainDirs.COUNT; dir++) {
+                List<BakedQuad> qs = safeQuads(model, state, EnumFacing.VALUES[dir]);
+                sb.append(" dir").append(dir).append("=n").append(qs.size());
+                if (!qs.isEmpty()) {
+                    TextureAtlasSprite sp = qs.get(0).getSprite();
+                    sb.append("(").append(sp == null ? "null" : sp.getIconName())
+                            .append(",tex=").append(t.faceTexture[id * 6 + dir]).append(")");
+                }
+            }
+            System.out.println(sb);
+        }
     }
 
     /** The canonical full-sprite corner assignment, in corner order: (0,0), (0,1), (1,1), (1,0). */
