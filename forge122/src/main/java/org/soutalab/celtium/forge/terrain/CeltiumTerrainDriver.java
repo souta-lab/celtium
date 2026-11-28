@@ -15,18 +15,20 @@ import org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometry;
 import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
 import org.taumc.celeritas.mixin.core.terrain.ChunkProviderClientAccessor;
 
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * The Lane 1 terrain driver (S2-b): celtium's own replacement for the retired Celeritas world
- * renderer at the {@code RenderGlobal} seats. It polls the client's loaded-chunk set each frame
+ * renderer at the {@code RenderGlobal} seats. It polls the client's loaded-chunk set each tick
  * (no chunk tracker), snapshots changed sections on the render thread, meshes them on the S2-a
  * build scheduler, and uploads the finished geometry to the backend's Lane 1 store; the layer
  * draws themselves are one backend call per vanilla layer.
@@ -34,7 +36,7 @@ import java.util.concurrent.CompletableFuture;
  * Residency is diffed, not event-driven: a section exists when its chunk is loaded and its
  * storage is non-empty. Block edits arrive through {@link #scheduleRebuildForBlockArea} (the
  * {@code markBlocksForUpdate} seat); everything else - chunk load, chunk unload, world change -
- * falls out of the per-frame diff.
+ * falls out of the per-tick diff.
  */
 public final class CeltiumTerrainDriver {
 
@@ -62,17 +64,22 @@ public final class CeltiumTerrainDriver {
     private FluidloggedProbe fluids;
 
     /** Section keys (packed) whose geometry is in the backend store. */
-    private final Set<Long> resident = new HashSet<>();
-    /** Section keys the world currently has, recomputed by the per-frame diff. */
-    private final Set<Long> present = new HashSet<>();
+    private final LongOpenHashSet resident = new LongOpenHashSet();
+    /** Section keys the world currently has, recomputed by the per-tick diff. */
+    private final LongOpenHashSet present = new LongOpenHashSet();
     /** Section keys waiting for a (re)build. */
-    private final Set<Long> dirty = new HashSet<>();
+    private final LongOpenHashSet dirty = new LongOpenHashSet();
     /** Sections built while their chunk's light was not yet populated; rebuilt once it is. */
-    private final Set<Long> awaitingLight = new HashSet<>();
+    private final LongOpenHashSet awaitingLight = new LongOpenHashSet();
 
     /** Light-array fingerprint per resident section, taken when its mesh was built. */
-    private final Map<Long, Integer> lightFingerprints = new HashMap<>();
+    private final Long2IntOpenHashMap lightFingerprints = new Long2IntOpenHashMap();
     private int lightSweepCursor;
+    /** The resident keys as one flat array for the sweep, rebuilt only when residency changed. */
+    private long[] sweepKeys;
+    private boolean sweepKeysDirty = true;
+    /** Gates the per-tick bookkeeping (diff, light promotion, fingerprint sweep) to client ticks. */
+    private final TickGate tickGate = new TickGate();
     private final Map<Long, CompletableFuture<MeshBuffers>> pending = new HashMap<>();
 
     private int visibleSectionCount;
@@ -133,6 +140,30 @@ public final class CeltiumTerrainDriver {
         return (int) (key & 0xFFFFF);
     }
 
+    /**
+     * The tick gate for the driver's per-tick bookkeeping: chunk loads, unloads and relights
+     * land on client ticks, so the loaded-set diff and the light sweep are due only when the
+     * world time actually advances - not on every render frame (ruling section 1.3, CPU-1/2).
+     * While time is frozen (pause, lag) nothing is due; a world switch resets the gate so the
+     * first frame of the new world always syncs.
+     */
+    static final class TickGate {
+        private long lastAccepted = Long.MIN_VALUE;
+
+        /** {@return true} exactly when {@code worldTime} differs from the last accepted value. */
+        boolean advance(long worldTime) {
+            if (worldTime == lastAccepted) {
+                return false;
+            }
+            lastAccepted = worldTime;
+            return true;
+        }
+
+        void reset() {
+            lastAccepted = Long.MIN_VALUE;
+        }
+    }
+
     // ------------------------------------------------------------------
     // Lifecycle (RenderGlobalMixin seats)
     // ------------------------------------------------------------------
@@ -151,6 +182,8 @@ public final class CeltiumTerrainDriver {
         lightFingerprints.clear();
         present.clear();
         dirty.clear();
+        tickGate.reset();
+        sweepKeysDirty = true;
         for (CompletableFuture<MeshBuffers> future : pending.values()) {
             future.cancel(false);
         }
@@ -225,9 +258,15 @@ public final class CeltiumTerrainDriver {
             return;
         }
         ensureBuildSide();
-        diffLoadedSections();
-        promoteAwaitingLight();
-        sweepLightFingerprints();
+        // Per-tick bookkeeping: the loaded-set diff, the light promotion and the fingerprint
+        // sweep only have new information when a client tick lands, so they run on tick
+        // boundaries instead of re-scanning the whole resident set every render frame.
+        // Drains and build scheduling stay per-frame (they are budgeted and event-shaped).
+        if (tickGate.advance(world.getTotalWorldTime())) {
+            diffLoadedSections();
+            promoteAwaitingLight();
+            sweepLightFingerprints();
+        }
         drainFinishedBuilds();
         scheduleBuilds(cameraX, cameraY, cameraZ);
         visibleSectionCount = resident.size();
@@ -278,7 +317,7 @@ public final class CeltiumTerrainDriver {
         return 1024;
     }
 
-    private final Set<Long> populatedChunks = new HashSet<>();
+    private final LongOpenHashSet populatedChunks = new LongOpenHashSet();
 
     private void diffLoadedSections() {
         present.clear();
@@ -303,14 +342,15 @@ public final class CeltiumTerrainDriver {
         }
         CeltiumBackend backend = CeltiumBackends.current();
         // Sections that vanished: unload from the store.
-        Iterator<Long> residentIt = resident.iterator();
+        LongIterator residentIt = resident.iterator();
         while (residentIt.hasNext()) {
-            long k = residentIt.next();
+            long k = residentIt.nextLong();
             if (!present.contains(k)) {
                 if (backend != null) {
                     backend.celtium$lane1RemoveSection(keyX(k), keyY(k), keyZ(k));
                 }
                 residentIt.remove();
+                sweepKeysDirty = true;
                 lightFingerprints.remove(k);
                 dirty.remove(k);
                 CompletableFuture<MeshBuffers> stale = pending.remove(k);
@@ -320,7 +360,9 @@ public final class CeltiumTerrainDriver {
             }
         }
         // Sections that appeared: build.
-        for (long k : present) {
+        LongIterator presentIt = present.iterator();
+        while (presentIt.hasNext()) {
+            long k = presentIt.nextLong();
             if (!resident.contains(k) && !pending.containsKey(k)) {
                 dirty.add(k);
             }
@@ -332,9 +374,9 @@ public final class CeltiumTerrainDriver {
         if (awaitingLight.isEmpty()) {
             return;
         }
-        Iterator<Long> it = awaitingLight.iterator();
+        LongIterator it = awaitingLight.iterator();
         while (it.hasNext()) {
-            long k = it.next();
+            long k = it.nextLong();
             if (!present.contains(k)) {
                 it.remove();
                 continue;
@@ -352,8 +394,8 @@ public final class CeltiumTerrainDriver {
      * neighbours. The integrated server relights chunks after load (the save's arrays
      * can arrive zeroed) and the client arrays then change under a resident mesh;
      * vanilla re-meshes on those updates, so a changed fingerprint re-dirties the
-     * section. Swept in a rotating window so the whole resident set is re-checked
-     * about once a second without a per-frame full pass.
+     * section. Swept in a rotating window on tick boundaries so the whole resident
+     * set is re-checked every second or so without a per-frame full pass.
      */
     private int lightFingerprint(int sx, int sy, int sz) {
         if (!(world instanceof net.minecraft.world.World w)) {
@@ -382,32 +424,93 @@ public final class CeltiumTerrainDriver {
         if (array == null) {
             return 3;
         }
-        byte[] data = array.getData();
-        int hash = data.length;
-        for (byte b : data) {
-            hash = hash * 31 + b;
+        return fingerprintWords(array.getData());
+    }
+
+    /**
+     * A word-parallel fingerprint of a light array's bytes. The old hash chained
+     * {@code hash * 31 + b} over all 2,048 bytes: a serial dependency chain whose latency,
+     * not the byte count, is what the sweep paid for (six arrays per section). Four
+     * independent accumulators over 8-byte words break the chain. The value is an internal
+     * change detector, recorded and compared only by this class, so the contract is just:
+     * same bytes give the same value, and a changed byte changes the value (each accumulator
+     * step is a bijection in the word, and the final mix is a bijection per accumulator).
+     */
+    static int fingerprintWords(byte[] data) {
+        long h0 = 0x9E3779B97F4A7C15L;
+        long h1 = 0xC2B2AE3D27D4EB4FL;
+        long h2 = 0x165667B19E3779F9L;
+        long h3 = 0x85EBCA77C2B2AE63L;
+        int words = data.length >>> 3;
+        int w = 0;
+        for (; w + 4 <= words; w += 4) {
+            h0 = mixWord(h0, wordAt(data, w));
+            h1 = mixWord(h1, wordAt(data, w + 1));
+            h2 = mixWord(h2, wordAt(data, w + 2));
+            h3 = mixWord(h3, wordAt(data, w + 3));
         }
-        return hash;
+        for (; w < words; w++) {
+            h0 = mixWord(h0, wordAt(data, w));
+        }
+        int tail = data.length & 7;
+        if (tail != 0) {
+            long partial = 0L;
+            for (int i = 0; i < tail; i++) {
+                partial |= (long) (data[(words << 3) + i] & 0xFF) << (i * 8);
+            }
+            h1 = mixWord(h1, partial ^ ((long) tail << 56));
+        }
+        long combined = splitMix64(h0) ^ splitMix64(h1) ^ splitMix64(h2) ^ splitMix64(h3)
+                ^ data.length;
+        return (int) (combined ^ (combined >>> 32));
+    }
+
+    private static long wordAt(byte[] data, int wordIndex) {
+        int base = wordIndex << 3;
+        return (long) (data[base] & 0xFF)
+                | ((long) (data[base + 1] & 0xFF) << 8)
+                | ((long) (data[base + 2] & 0xFF) << 16)
+                | ((long) (data[base + 3] & 0xFF) << 24)
+                | ((long) (data[base + 4] & 0xFF) << 32)
+                | ((long) (data[base + 5] & 0xFF) << 40)
+                | ((long) (data[base + 6] & 0xFF) << 48)
+                | ((long) (data[base + 7] & 0xFF) << 56);
+    }
+
+    private static long mixWord(long hash, long word) {
+        return Long.rotateLeft(hash ^ word, 27) * 5L + 0x52DCE729L;
+    }
+
+    private static long splitMix64(long z) {
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
     }
 
     private void sweepLightFingerprints() {
         if (resident.isEmpty() || world == null) {
             return;
         }
-        List<Long> keys = new ArrayList<>(resident);
-        int n = keys.size();
+        // The key array is rebuilt only when residency changed (diff removals, drain
+        // uploads, world switches mark it dirty); the old code copied the whole resident
+        // set into a fresh ArrayList on every frame.
+        if (sweepKeysDirty || sweepKeys == null) {
+            sweepKeys = resident.toLongArray();
+            sweepKeysDirty = false;
+        }
+        int n = sweepKeys.length;
         int batch = Math.min(n, 96);
         for (int i = 0; i < batch; i++) {
-            long k = keys.get((lightSweepCursor + i) % n);
+            long k = sweepKeys[(lightSweepCursor + i) % n];
             if (pending.containsKey(k) || dirty.contains(k)) {
                 continue;
             }
-            Integer recorded = lightFingerprints.get(k);
-            if (recorded == null) {
+            if (!lightFingerprints.containsKey(k)) {
                 continue;
             }
+            int recorded = lightFingerprints.get(k);
             int current = lightFingerprint(keyX(k), keyY(k), keyZ(k));
-            if (current != recorded.intValue()) {
+            if (current != recorded) {
                 lightFingerprints.put(k, current);
                 dirty.add(k);
             }
@@ -487,6 +590,7 @@ public final class CeltiumTerrainDriver {
                     backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
                     if (backend.celtium$lane1HasSection(keyX(k), keyY(k), keyZ(k))) {
                         resident.add(k);
+                        sweepKeysDirty = true;
                         starvedUntil.remove(k);
                         uploads++;
                     } else {
