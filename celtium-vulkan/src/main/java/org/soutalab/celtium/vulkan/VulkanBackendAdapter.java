@@ -1737,6 +1737,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.funnel.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode);
     }
 
+    public String celtium$fontBakeSummary() {
+        return this.funnel.celtium$fontBakeSummary();
+    }
+
     public String celtium$fontBatchSummary() {
         return this.funnel.celtium$fontBatchSummary();
     }
