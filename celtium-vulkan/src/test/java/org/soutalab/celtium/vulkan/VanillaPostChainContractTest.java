@@ -49,7 +49,7 @@ class VanillaPostChainContractTest {
 
     @Test
     void nonBundledGroupsDoNotIncrementVanillaLosses() {
-        var coordinator = new FrameCoordinator(null);
+        var coordinator = new FrameCoordinator(null, null);
         var specs = List.of(pass("modded_post", 10, 11));
         assertFalse(FrameCoordinator.isBundledVanillaPostChain(specs));
         assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED, coordinator.runVanillaPostChain(specs));
@@ -65,7 +65,7 @@ class VanillaPostChainContractTest {
 
     @Test
     void aBundledChainRefusedAtPreflightIsCountedWithItsReason() {
-        var coordinator = new FrameCoordinator(emptyHost());
+        var coordinator = new FrameCoordinator(null, null);
         var specs = List.of(pass("entity_outline", 10, 11), pass("blur", 11, 12), pass("blit", 12, 10));
         assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED,
                 coordinator.runVanillaPostChain(specs),
@@ -75,23 +75,9 @@ class VanillaPostChainContractTest {
                 "the refusal carries the reason the boundary prints");
     }
 
-    /** A host with no context, no command buffer and no recording state: every preflight refuses. */
-    private static FrameCoordinator.Host emptyHost() {
-        return (FrameCoordinator.Host) java.lang.reflect.Proxy.newProxyInstance(
-                VanillaPostChainContractTest.class.getClassLoader(),
-                new Class<?>[] {FrameCoordinator.Host.class},
-                (proxy, method, args) -> {
-                    Class<?> type = method.getReturnType();
-                    if (type == boolean.class) return false;
-                    if (type == int.class) return 0;
-                    if (type == long.class) return 0L;
-                    return null;
-                });
-    }
-
     @Test
     void aBoundaryRefusalIsCountedLikeAPreflightRefusal() {
-        var coordinator = new FrameCoordinator(null);
+        var coordinator = new FrameCoordinator(null, null);
         assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED,
                 coordinator.refuseVanillaPostChain("pass-not-collected"));
         assertEquals(1, coordinator.postChainUnsupportedRefusals());

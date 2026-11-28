@@ -346,12 +346,7 @@ public final class FrameCoordinator {
             // the fixed template's here and the executor's frames are picked on its own
             // entry when the world-pass hook is wired (S3-b D7-c).
 
-        VulkanContext context = this.context;
-        if (context != null) context.setDirectGlFrameSlot(this.frameSlot);
-        this.frameTemplate = selectTemplate(packActive, modFboRequested);
-        this.frameModFboRequested = modFboRequested;
-        java.util.Arrays.fill(this.stageEntered, false);
-        this.lastStage = null;
+        this.pickFrameTemplate(packActive, modFboRequested);
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
@@ -2598,6 +2593,19 @@ public void setLastFrameReachedQueue(boolean reached) {
         // timestamp-less device would report a silent instrument, which reads as "nothing was drawn".
         readPipelineStatistics();
         updateTimingsBody();
+    }
+
+    /** The frame template pick, at the seat the old coordinator entry occupied inside the frame
+     *  begin (D7 section 4.2 (i)): the direct-GL slot is published, the template is chosen and the
+     *  per-frame stage record starts clean. */
+    void pickFrameTemplate(boolean packActive, boolean modFboRequested) {
+
+        VulkanContext context = this.context;
+        if (context != null) context.setDirectGlFrameSlot(this.frameSlot);
+        this.frameTemplate = selectTemplate(packActive, modFboRequested);
+        this.frameModFboRequested = modFboRequested;
+        java.util.Arrays.fill(this.stageEntered, false);
+        this.lastStage = null;
     }
 
     /** Whether a stack-frame class is one of the three seats the monolith split into (E7): the

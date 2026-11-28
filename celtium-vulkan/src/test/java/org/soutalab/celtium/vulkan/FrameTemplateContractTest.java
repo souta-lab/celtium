@@ -30,8 +30,8 @@ class FrameTemplateContractTest {
 
     @Test
     void stageRecordIsPerFrame() {
-        FrameCoordinator coordinator = new FrameCoordinator(null);
-        coordinator.beginFrame(false, true);
+        FrameCoordinator coordinator = new FrameCoordinator(null, null);
+        coordinator.pickFrameTemplate(false, true);
         assertEquals(FrameCoordinator.FrameTemplate.FIXED_FOUR_STAGE, coordinator.frameTemplate());
         assertTrue(coordinator.frameModFboRequested());
         for (FrameCoordinator.Stage stage : FrameCoordinator.Stage.values()) {
@@ -46,7 +46,7 @@ class FrameTemplateContractTest {
         assertEquals("template=FIXED_FOUR_STAGE UPLOAD MAIN_RENDER", coordinator.stageSummary());
 
         // The next frame's record starts clean, with its own template pick.
-        coordinator.beginFrame(true, false);
+        coordinator.pickFrameTemplate(true, false);
         assertEquals(FrameCoordinator.FrameTemplate.PACK_EXECUTOR, coordinator.frameTemplate());
         assertFalse(coordinator.frameModFboRequested());
         assertFalse(coordinator.stageEntered(FrameCoordinator.Stage.UPLOAD));
