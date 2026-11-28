@@ -264,6 +264,11 @@ public final class Lane1TerrainFrontend {
         return refusedUploads;
     }
 
+    /** The terrain driver the native pack frame seat records through (plan interface 1). */
+    public org.soutalab.celtium.core.shader.PackTerrainDriver terrainDriver() {
+        return drawStage;
+    }
+
     public String diagnosticsSummary() {
         return drawStage.diagnosticsSummary()
                 + " sections=" + store.sectionCount()

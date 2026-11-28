@@ -13038,6 +13038,8 @@ this.frameBufferOpen = false;
         DrawCounters.reportIfDue(this.frameId);
         BackendCallCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer();
+        // The native pack frame seat closes with the frame buffer it was opened on.
+        org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
         // The frame buffer this call just finished is the submission a post chain's deferred
         // first-use commit waits on (drawpath audit DP-32): settle it now that the recording is
         // ended and batched for the queue - or, on a stall, now that it was reset instead.
@@ -20658,6 +20660,16 @@ this.frameBufferOpen = false;
             // command buffer destroyed under it). Set here, at the one place the frame's unified buffer begins; the
             // coordinator clears it at submit and on every fallback path.
             this.frameBufferOpen = true;
+            // S3-b D7: the native pack frame seat opens with the frame's unified buffer -
+            // the one point where the context, the begun buffer and the frame id are all
+            // live. The terrain driver resolves lazily through the factory (the frontend
+            // is created on first terrain use), and the swapchain targets stay unbound
+            // until their supply form is ruled: the seat's record path has no caller
+            // until the world-pass hook is wired, so opening the seat changes no frame's
+            // behavior yet. The seat closes in celtium$finishFrameBuffer.
+            org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
+                    this.context, this.commandBuffer, null,
+                    ctx -> celtium$lane1().terrainDriver(), this.frameId);
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
