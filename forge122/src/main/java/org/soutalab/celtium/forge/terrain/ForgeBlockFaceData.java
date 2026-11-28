@@ -292,7 +292,22 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         List<BakedQuad> all = new ArrayList<>();
         all.addAll(safeQuads(model, state, null));
         for (EnumFacing facing : EnumFacing.VALUES) {
-            all.addAll(safeQuads(model, state, facing));
+            List<BakedQuad> quads = safeQuads(model, state, facing);
+            if (!quads.isEmpty()) {
+                // Face textures stay recorded for non-cube states too: the fluid emitter
+                // (SectionMesher.emitFluids) reads faceTexture for fluid states, which are
+                // never full cubes, and an unrecorded entry reads as sprite index 0 (the
+                // unknown sprite) - fluid surfaces rendered as the missing-texture pattern
+                // (Gate G1 Step 2 run, 2026-11-28). The axis path never sees these states
+                // (its boards are fullCube-only), so recording here affects fluids alone.
+                BakedQuad quad = quads.get(0);
+                TextureAtlasSprite sprite = quad.getSprite();
+                int dir = facing.getIndex();
+                t.faceTexture[id * 6 + dir] = sprites.indexFor(sprite);
+                t.faceCell[id * 6 + dir] = sprites.cellFor(sprite);
+                t.faceTint[id * 6 + dir] = quad.getTintIndex() != -1;
+            }
+            all.addAll(quads);
         }
         t.generalOffset[id] = meta.size() / 3;
         int written = 0;
