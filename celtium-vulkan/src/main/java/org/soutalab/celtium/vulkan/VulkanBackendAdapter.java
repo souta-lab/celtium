@@ -292,6 +292,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return base + " drawCalls=" + this.lane1DrawCalls + " guardCmd=" + this.lane1GuardCmd
                 + " guardStall=" + this.lane1GuardStall + " guardTarget=" + this.lane1GuardTarget
                 + " guardPass=" + this.lane1GuardPass + " guardViews=" + this.lane1GuardViews
+                + " guardNotRecording=" + this.lane1GuardNotRecording
                 + " recordPass=" + this.lane1RecordPasses;
     }
 
@@ -306,6 +307,8 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     long lane1GuardPass;
 
     long lane1GuardViews;
+
+    long lane1GuardNotRecording;
 
     long lane1RecordPasses;
 
@@ -375,6 +378,19 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         }
         if (this.frameCoordinator.commandState.inRenderPass()) {
             this.lane1GuardPass++;
+            return;
+        }
+        if (!this.frameCoordinator.commandState.recording()) {
+            // R-100: this entry records into the frame's unified buffer on the premise that a
+            // preceding window opened the recording, but nothing here re-opens it when the premise
+            // fails - the pre-terrain flush returns early on an empty queue. After a swapchain
+            // rebuild is consumed at the present tail (a present-mode change applied in-world),
+            // the first terrain draw can arrive with the buffer EXECUTABLE: the acquire barriers
+            // and vkCmdBeginRenderPass then record natively before beginPass' state check throws
+            // and ends the client. Refuse the layer and count it, so the loss is one frame's
+            // terrain, named, instead of the process. Whether the entry may instead open the
+            // recording itself is a design question (Neon window Q5), not this guard's call.
+            this.lane1GuardNotRecording++;
             return;
         }
         org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend = celtium$lane1();
