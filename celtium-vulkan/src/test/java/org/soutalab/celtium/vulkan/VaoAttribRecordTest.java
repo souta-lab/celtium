@@ -7,11 +7,8 @@ import org.soutalab.celtium.vulkan.GlsmClientArrayState;
 
 import org.soutalab.celtium.vulkan.GlsmEnableState;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,7 +18,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * against a VBO inside a VAO, the array buffer unbound again, and the draw issued frames later with only the VAO
  * rebound. Before the per-attribute records this decoded from the last pointer set (attribute 2's) and from
  * enables another draw had left behind, and was refused on every frame. No GL context and no claim about rendered
- * pixels: the assertions are the recorded state and the decode's own report line.
+ * pixels: the assertions are the recorded state the queries answer from.
+ * <p>
+ * E4-c disposition (ruling section 4.2, category C with the transplant proviso): the recorded-state
+ * contract below is transplanted and kept - the records and the queries both live on the new seat.
+ * The two draw tests this file carried are retired in this slice: they asserted on the monolith's
+ * {@code CELTIUM_PROGRAM_DRAW} report line, an instrument that no longer exists anywhere in the
+ * tree, and the decode contract's successor observable is the E4-b2-tail T2 form (draws reaching
+ * the sink with droppedDraws == 0), which is defined and gated there.
  */
 class VaoAttribRecordTest {
     private static final int GL_ARRAY_BUFFER = 0x8892;
@@ -60,11 +64,8 @@ class VaoAttribRecordTest {
         GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
         GlsmEnableState.current().set(ENABLED, false); // the attribute-0 enable mirror
         // The per-attribute records are VAO state in the same singleton owner (M-5), so they outlive a stub
-        // instance too - and the resets above do not touch them. The quad setup leaves VAO 77 bound with
-        // attribute 0 enabled; a draw that is supposed to be unrecorded then decodes under the quad's enable
-        // and refuses on the legacy pointer's size instead of by name (the main-promotion full gate's one
-        // failure, 2026-11-25). Bind the default VAO and restore its records to GL's initial values, so the
-        // unrecorded-draw premise is actually established.
+        // instance too - and the resets above do not touch them. Bind the default VAO and restore its
+        // records to GL's initial values, so the assertions about VAO 0 start from the defaults.
         call("glBindVertexArray", 0);
         for (GlsmClientArrayState.VaoAttrib attrib : GlsmClientArrayState.current().attribsFor(0)) {
             attrib.enabled = false;
@@ -86,12 +87,6 @@ class VaoAttribRecordTest {
         Field installed = DirectGlCaptureEntry.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, null);
-    }
-
-    private static void setCurrentProgram(DirectGlCaptureEntry stub, int program) throws Exception {
-        // E4-c: the current program is written through the entry's own glUseProgram dispatch
-        // (SEM_USE_PROGRAM: GLSMPrograms + the Lane2 mirror register).
-        call("glUseProgram", program);
     }
 
     private static int attribIv(int index, int pname) throws Exception {
@@ -138,24 +133,6 @@ class VaoAttribRecordTest {
         return vertices;
     }
 
-    private static String drawLine(int program, Runnable draw) {
-        PrintStream original = System.out;
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
-        try {
-            draw.run();
-        } finally {
-            System.setOut(original);
-        }
-        String text = captured.toString(StandardCharsets.UTF_8);
-        for (String line : text.split("\n")) {
-            if (line.contains("CELTIUM_PROGRAM_DRAW program=" + program + " ")) {
-                return line;
-            }
-        }
-        return "";
-    }
-
     @Test
     void quadSetupIsRecordedPerAttributeAndSurvivesRebind() throws Exception {
         DirectGlCaptureEntry stub = install();
@@ -187,37 +164,6 @@ class VaoAttribRecordTest {
         }
     }
 
-    @Test
-    void quadDrawDecodesToPositionTexFromTheRecordedBuffer() throws Exception {
-        DirectGlCaptureEntry stub = install();
-        ByteBuffer vertices = quadVertices();
-        try {
-            setUpQuad(vertices);
-            call("glBindVertexArray", 77);
-            setCurrentProgram(stub, 999);
-            String line = drawLine(999, () -> callUnchecked("glDrawArrays", GL_TRIANGLE_STRIP, 0, 4));
-            assertTrue(line.contains("format=6"), "the stride-20 quad must decode as POSITION_TEX: " + line);
-            assertTrue(line.contains("reason=null"),
-                    "the decode must accept the draw (a backend refusal later is a different line): " + line);
-        } finally {
-            MemoryUtil.memFree(vertices);
-            uninstall();
-        }
-    }
-
-    @Test
-    void drawWithoutAnyEnabledAttributeKeepsTheNamedRefusal() throws Exception {
-        DirectGlCaptureEntry stub = install();
-        try {
-            setCurrentProgram(stub, 998);
-            String line = drawLine(998, () -> callUnchecked("glDrawArrays", GL_TRIANGLE_STRIP, 0, 4));
-            assertTrue(line.contains("attribute 0 is not enabled"),
-                    "an unrecorded draw must still refuse by name: " + line);
-        } finally {
-            uninstall();
-        }
-    }
-
     // E4-c: the monolith's celtium$* transformer doors delegate to the installed entry's
     // dispatch now - same installed-instance semantics the doors themselves had.
     private static void call(String name, long... callArgs) throws Exception {
@@ -227,14 +173,6 @@ class VaoAttribRecordTest {
         System.arraycopy(callArgs, 0, args, 0, callArgs.length);
         dispatch.invoke(DirectGlCaptureEntry.installed(),
                 DirectGlCaptureEntry.row(DirectGlCaptureEntry.ids().get(name)), args);
-    }
-
-    private static void callUnchecked(String name, long... args) {
-        try {
-            call(name, args);
-        } catch (Exception failure) {
-            throw new AssertionError(failure);
-        }
     }
 
     private static void callVertexAttribEnabled(int index, boolean enabled) throws Exception {

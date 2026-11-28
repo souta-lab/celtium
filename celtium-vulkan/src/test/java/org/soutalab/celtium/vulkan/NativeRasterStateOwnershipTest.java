@@ -82,18 +82,22 @@ class NativeRasterStateOwnershipTest {
     }
 
     @Test
-    void nativeStateCannotBeOverwrittenByAnOlderRawGlRecord() throws Exception {
-        // E4-c narrowing: the raw blend-factors call routes to the converter's own stack now
-        // (the entry's dispatch serves GLSMBlend, whose factors the executor consumes), so the
-        // shared-record half of this contract is the enable and query surface below. The
-        // factor record itself is the wrapper's; a raw call must not move it.
+    void latestBlendWriteWinsAcrossRawAndWrapperCalls() throws Exception {
+        // E4-c seat repair: the entry's raw blend dispatch writes BOTH seats - the GLSM
+        // factors the executor consumes and the native raster record the entry's own
+        // queries and the attrib snapshot read (the monolith wrote the one record both
+        // sides read). The contract on the shared record is therefore latest-write-wins
+        // in both directions; neither side holds a protected copy.
         this.nativeState.blendFunc(1, 0, 1, 0);
         call("glBlendFuncSeparate", 0x0302, 0x0303, 1, 0);
+        assertEquals(0x0302, this.nativeState.blendSrcRgb(), "the raw write is the latest write");
+        assertEquals(0x0303, this.nativeState.blendDstRgb());
         call("glEnable", 0x0BE2);
         assertTrue(this.nativeState.blendEnabled());
-        assertEquals(1, this.nativeState.blendSrcRgb());
-        // A vanilla write AFTER a raw call must win, including when the wrapper's cached value skips real GL.
+        // A wrapper write AFTER a raw call wins again, including when the wrapper's cached
+        // value skips real GL.
         this.nativeState.blendFunc(1, 0, 1, 0);
+        assertEquals(1, this.nativeState.blendSrcRgb(), "the wrapper write is the latest write");
         this.nativeState.blendEnabled(false);
         assertEquals(0, call("glIsEnabled", 0x0BE2));
         var out = MemoryUtil.memAlloc(16);
@@ -119,8 +123,8 @@ class NativeRasterStateOwnershipTest {
             assertEquals(1, call("glIsEnabled", 0x0B44));
             call("glGetIntegerv", 0x0B45, MemoryUtil.memAddress(out));
             assertEquals(0x0404, out.getInt(0));
-            // E4-c narrowing: a raw glColorMask lands in the converter's stack, not this record;
-            // the save/restore direction pinned here is the query answering the wrapper's mask.
+            // The save/restore direction pinned here is the query answering the wrapper's
+            // mask (since the seat repair a raw glColorMask writes this record too).
             this.nativeState.colorMask(0xA);
             call("glGetBooleanv", 0x0C23, MemoryUtil.memAddress(out));
             assertArrayEquals(new byte[] {0, 1, 0, 1}, new byte[] {out.get(0), out.get(1), out.get(2), out.get(3)});
@@ -158,8 +162,8 @@ class NativeRasterStateOwnershipTest {
     void deferredGeometryObservesOldStateAndSnapshotsOutliveSubsequentChanges() throws Exception {
         var observed = new ArrayList<Integer>();
         this.raster.beforeChange(() -> observed.add(this.nativeState.colorMask()));
-        // E4-c narrowing: the raw call that still lands in this record is glScissor (a raw
-        // glColorMask routes to the converter's stack); the boundary contract is unchanged.
+        // The raw call exercised against the boundary here is glScissor; the boundary
+        // contract is unchanged.
         call("glScissor", 1, 1, 10, 10);
         this.nativeState.colorMask(2);
         this.nativeState.colorMask(2);

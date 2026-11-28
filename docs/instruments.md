@@ -628,8 +628,8 @@
 | `CELTIUM_BATCH_SITE` | [VulkanTerrainGpuBackend.java:10519](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L10519>) |
 | `CELTIUM_BIND_ENTRY` | [VulkanTerrainGpuBackend.java:9174](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9174>) |
 | `CELTIUM_BIND_PENDING` | [VulkanTerrainGpuBackend.java:9187](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9187>) |
-| `CELTIUM_BLIT_DEPTH` | [DirectGlCaptureEntry.java:1348](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1348>) |
-| `CELTIUM_BLIT_UNSERVED` | [DirectGlCaptureEntry.java:1300](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1300>) |
+| `CELTIUM_BLIT_DEPTH` | [DirectGlCaptureEntry.java:1353](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1353>) |
+| `CELTIUM_BLIT_UNSERVED` | [DirectGlCaptureEntry.java:1305](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1305>) |
 | `CELTIUM_BLOCKLAYER` | [RenderGlobalMixin.java:250](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L250>) |
 | `CELTIUM_BORROW_BYPASS` | [PresentSwapchain.java:367](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java#L367>) |
 | `CELTIUM_BOUNDARY_SLOW` | [VulkanTerrainGpuBackend.java:13695](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L13695>) |
@@ -838,7 +838,7 @@
 | `CELTIUM_ICONIFY` | [ValidationClient.java:5191](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L5191>) |
 | `CELTIUM_IDLE_CAP` | [CeltiumFramePacing.java:78](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumFramePacing.java#L78>) |
 | `CELTIUM_IMAGE_RELEASED` | [VulkanGlTexture.java:3177](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3177>) |
-| `CELTIUM_IMGUNIT_ANSWER` | [DirectGlCaptureEntry.java:1272](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1272>), [CeltiumGllessHint.java:955](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L955>) |
+| `CELTIUM_IMGUNIT_ANSWER` | [DirectGlCaptureEntry.java:1277](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1277>), [CeltiumGllessHint.java:955](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L955>) |
 | `CELTIUM_IMMEDIATE_DESCRIPTORS` | [VulkanImmediateItemRecordsPipeline.java:619](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateItemRecordsPipeline.java#L619>), [VulkanImmediateTextureRecordsPipeline.java:1017](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java#L1017>) |
 | `CELTIUM_IMMEDIATE_ENQ` | [VulkanTerrainGpuBackend.java:17033](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L17033>) |
 | `CELTIUM_IMMEDIATE_FOG` | [ImmediateFogState.java:226](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java#L226>) |
@@ -924,7 +924,7 @@
 | `CELTIUM_MODEL_STATE` | [ModelReplay.java:286](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L286>) |
 | `CELTIUM_MOD_SHADERC_TIMEOUT` | [ModShaderCompiler.java:152](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/ModShaderCompiler.java#L152>) |
 | `CELTIUM_MOUSEOVER` | [ValidationClient.java:13833](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13833>) |
-| `CELTIUM_MULT_MATRIX` | [DirectGlCaptureEntry.java:2171](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2171>) |
+| `CELTIUM_MULT_MATRIX` | [DirectGlCaptureEntry.java:2176](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2176>) |
 | `CELTIUM_NATIVE_DEVICE` | [VulkanContext.java:3986](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3986>) |
 | `CELTIUM_NATIVE_DRAW_REFUSED` | [CeltiumNativeDraw.java:54](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumNativeDraw.java#L54>) |
 | `CELTIUM_NATIVE_PASS` | [NativePassRegistry.java:302](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativePassRegistry.java#L302>) |
@@ -950,7 +950,7 @@
 | `CELTIUM_PATCH_REJECTED` | [VulkanTextureRegistry.java:2029](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L2029>) |
 | `CELTIUM_PATCH_SKIPPED` | [PatchLedger.java:269](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchLedger.java#L269>), [PatchLedger.java:272](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchLedger.java#L272>), [PatchLedger.java:275](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchLedger.java#L275>) |
 | `CELTIUM_PATCH_TABLE` | [PatchLedger.java:305](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchLedger.java#L305>), [CeleritasVintageMixinPlugin.java:166](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L166>), [CeleritasVintageMixinPlugin.java:173](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L173>), [CeleritasVintageMixinPlugin.java:219](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L219>) |
-| `CELTIUM_PBO_REFUSED` | [DirectGlCaptureEntry.java:1368](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1368>), [TextureCaptureStore.java:920](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCaptureStore.java#L920>) |
+| `CELTIUM_PBO_REFUSED` | [DirectGlCaptureEntry.java:1373](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1373>), [TextureCaptureStore.java:920](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCaptureStore.java#L920>) |
 | `CELTIUM_PBO_UPLOAD` | [TextureCaptureStore.java:718](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCaptureStore.java#L718>) |
 | `CELTIUM_PICTURE_IDENTITY` | [ValidationClient.java:9761](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9761>), [ValidationClient.java:9905](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9905>) |
 | `CELTIUM_PIPELINE_CACHE` | [VulkanContext.java:3678](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3678>), [VulkanContext.java:3697](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3697>), [VulkanContext.java:3733](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3733>) |
@@ -984,16 +984,16 @@
 | `CELTIUM_RAW_BIND_GAME_FRAMEBUFFER` | [VulkanTerrainGpuBackend.java:7899](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7899>) |
 | `CELTIUM_RAW_BIND_REGISTER` | [VulkanTerrainGpuBackend.java:7923](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7923>) |
 | `CELTIUM_RAW_DEPTH_REGISTER` | [VulkanTerrainGpuBackend.java:7990](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7990>) |
-| `CELTIUM_RAW_FBO` | [DirectGlCaptureEntry.java:2265](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2265>) |
+| `CELTIUM_RAW_FBO` | [DirectGlCaptureEntry.java:2270](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2270>) |
 | `CELTIUM_RAW_FBO_ADOPTED` | [VulkanTerrainGpuBackend.java:8596](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8596>), [VulkanTerrainGpuBackend.java:8623](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8623>) |
-| `CELTIUM_RAW_FBO_DEPTH` | [DirectGlCaptureEntry.java:2234](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2234>) |
+| `CELTIUM_RAW_FBO_DEPTH` | [DirectGlCaptureEntry.java:2239](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2239>) |
 | `CELTIUM_RAW_FBO_ID_PROBE` | [RawFboIdentityProbe.java:38](<../validation/client/src/main/java/org/soutalab/celtium/validation/RawFboIdentityProbe.java#L38>), [RawFboIdentityProbe.java:258](<../validation/client/src/main/java/org/soutalab/celtium/validation/RawFboIdentityProbe.java#L258>) |
-| `CELTIUM_RAW_FBO_LEVEL` | [DirectGlCaptureEntry.java:2222](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2222>) |
+| `CELTIUM_RAW_FBO_LEVEL` | [DirectGlCaptureEntry.java:2227](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L2227>) |
 | `CELTIUM_READBACK_PHASES` | [VulkanSwapchain.java:808](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L808>) |
 | `CELTIUM_READBACK_QUARANTINED` | [VulkanContext.java:274](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L274>) |
 | `CELTIUM_READBACK_SUPPRESSED` | [VulkanGlTexture.java:1710](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1710>) |
-| `CELTIUM_READ_PIXELS` | [DirectGlCaptureEntry.java:1379](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1379>), [DirectGlCaptureEntry.java:1388](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1388>), [TextureCopyService.java:1222](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1222>) |
-| `CELTIUM_READ_PIXELS_ENTRY` | [DirectGlCaptureEntry.java:1360](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1360>) |
+| `CELTIUM_READ_PIXELS` | [DirectGlCaptureEntry.java:1384](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1384>), [DirectGlCaptureEntry.java:1393](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1393>), [TextureCopyService.java:1222](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1222>) |
+| `CELTIUM_READ_PIXELS_ENTRY` | [DirectGlCaptureEntry.java:1365](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1365>) |
 | `CELTIUM_READ_PIXELS_WINDOW` | [TextureCopyService.java:1214](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1214>) |
 | `CELTIUM_READ_RESOLVE` | [TextureCopyService.java:1082](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1082>) |
 | `CELTIUM_READ_VIRGIN_PAIR` | [TextureCopyService.java:1069](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1069>) |
@@ -1074,7 +1074,7 @@
 | `CELTIUM_TEXTURE_IMAGE` | [BackendDiagnostics.java:977](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L977>) |
 | `CELTIUM_TEXTURE_RESPECIFIED` | [CaptureUploadContext.java:115](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CaptureUploadContext.java#L115>) |
 | `CELTIUM_TEXTURE_SITE` | [WorldVertexBufferUploaderMixin.java:944](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L944>) |
-| `CELTIUM_TEXUNIT_ANSWER` | [DirectGlCaptureEntry.java:1264](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1264>) |
+| `CELTIUM_TEXUNIT_ANSWER` | [DirectGlCaptureEntry.java:1269](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1269>) |
 | `CELTIUM_TEX_COPY` | [CaptureUploadContext.java:294](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CaptureUploadContext.java#L294>) |
 | `CELTIUM_TEX_COPY_SERVED` | [TextureCopyService.java:815](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L815>) |
 | `CELTIUM_TEX_PARAM` | [TextureParameterRecord.java:156](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureParameterRecord.java#L156>) |

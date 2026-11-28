@@ -838,6 +838,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMDraws.glListBase((int) c[0]);
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
+                // The client-array state's bound VAO swaps with the binding (the Hint door
+                // keeps the same seat in step): the entry's attrib queries read it.
+                GlsmClientArrayState.current().bindVertexArray((int) c[0]);
+                GlsmClientArrayState.current().bindAttribs((int) c[0]);
+                syncVertexPointerRecord();
                 GLSMVertexInput.glBindVertexArray((int) c[0]);
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
@@ -2988,7 +2993,13 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMPrograms.glGetObjectParameterARB(obj, pname, MemoryUtil.memIntBuffer(out, 1));
                 return;
             case "glGetBufferParameteriv": case "glGetBufferParameterivARB":
-                MemoryUtil.memPutInt(out, GLSMBuffers.glGetBufferParameteri(obj, pname));
+                MemoryUtil.memPutInt(out, bufferParameterAnswer(obj, pname));
+                return;
+            case "glGetVertexAttribiv":
+                getVertexAttribiv(obj, pname, out);
+                return;
+            case "glGetVertexAttribPointerv":
+                getVertexAttribPointer(obj, pname, out);
                 return;
             case "glGetTexParameteriv":
                 MemoryUtil.memPutInt(out, GLSMTextures.glGetTexParameteri(obj, pname));
@@ -3021,6 +3032,30 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             default:
                 MemoryUtil.memPutInt(out, 0);
         }
+    }
+
+    /**
+     * The dispatch's buffer-parameter answer. GL_BUFFER_SIZE comes from the record seat
+     * this dispatch's own bufferData writes ({@link BufferStorageRecord} / the native
+     * buffer), as the named route already answers it: the executor's record is blind to
+     * natively bound buffers, so a raw glBufferData against one answered 0 there. Other
+     * parameters stay with the executor's record.
+     */
+    private int bufferParameterAnswer(int target, int pname) {
+        if (pname != 0x8764) { // GL_BUFFER_SIZE
+            return GLSMBuffers.glGetBufferParameteri(target, pname);
+        }
+        int name = boundBuffer(target);
+        if (name == 0) {
+            return 0;
+        }
+        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
+        if (nativeBuffer != null) {
+            return (int) nativeBuffer.byteSize();
+        }
+        ByteBuffer storage = GlsmBufferState.current().storage(name);
+        return storage == null ? 0
+                : BufferStorageRecord.current().logicalSizeOf(name, storage.capacity());
     }
 
     private void infoLogAnswer(GlFn fn, long[] c) {
@@ -3741,19 +3776,92 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     private void vertexPointer(GlFn fn, long[] c) {
         switch (fn.name) {
             case "glVertexPointer":
+                recordVertexPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 GLSMVertexInput.glVertexPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 break;
             case "glNormalPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8075, 3, (int) c[0], (int) c[1], c[2],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
                 break;
             case "glColorPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8076, (int) c[0], (int) c[1], (int) c[2], c[3],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 break;
             case "glTexCoordPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8078, (int) c[0], (int) c[1], (int) c[2], c[3],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 break;
             default:
                 break;
+        }
+    }
+
+    /**
+     * The legacy vertex pointer's two records of one fact (the Hint door keeps both): the
+     * client-pointer record the draw decode reads, and attribute 0's per-VAO record the
+     * attrib queries read. Neither may drift from the other.
+     */
+    private static void recordVertexPointer(int size, int type, int stride, long pointer) {
+        GlsmClientArrayState.Pointer vertex = GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertex.size = size;
+        vertex.type = type;
+        vertex.stride = stride;
+        vertex.offset = pointer;
+        vertex.normalized = false;
+        vertex.integer = false;
+        GlsmClientArrayState.VaoAttrib attrib = GlsmClientArrayState.current().boundAttribs()[0];
+        attrib.size = size;
+        attrib.type = type;
+        attrib.stride = stride;
+        attrib.offset = pointer;
+        attrib.normalized = false;
+        attrib.integer = false;
+        attrib.pointerSet = true;
+        attrib.buffer = NativeGeometryBuffer.boundId();
+    }
+
+    /** Attribute 0's per-VAO record is the live legacy pointer after a VAO swap: mirror it back. */
+    private static void syncVertexPointerRecord() {
+        GlsmClientArrayState.VaoAttrib attrib = GlsmClientArrayState.current().boundAttribs()[0];
+        GlsmClientArrayState.Pointer vertex = GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertex.size = attrib.size;
+        vertex.type = attrib.type;
+        vertex.stride = attrib.stride;
+        vertex.offset = attrib.offset;
+        vertex.normalized = attrib.normalized;
+        vertex.integer = attrib.integer;
+    }
+
+    /** The generic attribute pointer's per-VAO record (the Hint door writes the same fields). */
+    private static void recordVertexAttribPointer(int index, int size, int type, boolean normalized,
+            int stride, long pointer) {
+        if (index < 0 || index >= GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            return;
+        }
+        GlsmClientArrayState.VaoAttrib attrib = GlsmClientArrayState.current().boundAttribs()[index];
+        attrib.size = size;
+        attrib.type = type;
+        attrib.stride = stride;
+        attrib.offset = pointer;
+        attrib.normalized = normalized;
+        attrib.integer = false;
+        attrib.pointerSet = true;
+        attrib.buffer = NativeGeometryBuffer.boundId();
+        if (index == 0) {
+            syncVertexPointerRecord();
+        }
+    }
+
+    /** The generic attribute enable's per-VAO record; index 0 also feeds the capability record. */
+    private static void recordVertexAttribEnabled(int index, boolean enabled) {
+        if (index >= 0 && index < GlsmClientArrayState.MAX_VERTEX_ATTRIBS) {
+            GlsmClientArrayState.current().boundAttribs()[index].enabled = enabled;
+        }
+        if (index == 0) {
+            setCapability(0x8622, enabled);
         }
     }
 
@@ -3864,12 +3972,15 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 return 0L;
             // vertex input
             case "glEnableVertexAttribArray": case "glEnableVertexAttribArrayARB":
+                recordVertexAttribEnabled((int) c[0], true);
                 GLSMVertexInput.glEnableVertexAttribArray((int) c[0]);
                 return 0L;
             case "glDisableVertexAttribArray": case "glDisableVertexAttribArrayARB":
+                recordVertexAttribEnabled((int) c[0], false);
                 GLSMVertexInput.glDisableVertexAttribArray((int) c[0]);
                 return 0L;
             case "glVertexAttribPointer": case "glVertexAttribPointerARB":
+                recordVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L, (int) c[4], c[5]);
                 GLSMVertexInput.glVertexAttribPointer((int) c[0], (int) c[1], (int) c[2], c[3] != 0L,
                         (int) c[4], c[5]);
                 return 0L;
@@ -3877,12 +3988,18 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMVertexInput.glVertexAttribDivisor((int) c[0], (int) c[1]);
                 return 0L;
             case "glTexCoordPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8078, (int) c[0], (int) c[1], (int) c[2], c[3],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glTexCoordPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 return 0L;
             case "glColorPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8076, (int) c[0], (int) c[1], (int) c[2], c[3],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glColorPointer((int) c[0], (int) c[1], (int) c[2], c[3]);
                 return 0L;
             case "glNormalPointer":
+                GlsmClientArrayState.current().setClientPointer(0x8075, 3, (int) c[0], (int) c[1], c[2],
+                        NativeGeometryBuffer.boundId());
                 GLSMVertexInput.glNormalPointer((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case "glEdgeFlagPointer":
