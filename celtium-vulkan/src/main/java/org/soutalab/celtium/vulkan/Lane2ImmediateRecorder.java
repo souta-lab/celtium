@@ -10864,6 +10864,8 @@ this.frame.frameBufferOpen = false;
                     // The abandoned frame's pack seat closes with it (D7 seat ruling:
                     // endNativeFrame on every exit path, abandon included).
                     org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+                    // The Lane 3 frame publication closes with it (same all-exit discipline).
+                    DirectGlFrameBridge.unbindFrame();
                     this.reports.record("window flush failed at frame " + this.frame.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
@@ -13951,6 +13953,8 @@ this.frame.frameBufferOpen = false;
                         // The abandoned frame's pack seat closes with it (D7 seat ruling:
                         // endNativeFrame on every exit path, abandon included).
                         org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+                        // The Lane 3 frame publication closes with it (same all-exit discipline).
+                        DirectGlFrameBridge.unbindFrame();
                         // The recording has to be unwound with the flag, or the state keeps saying "recording"
                         // while no frame buffer owns it. The recovery submission above is either deferred
                         // (the unified buffer: submitCommands() returns RECORDED without ending the buffer) or was

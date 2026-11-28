@@ -733,6 +733,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
             this.frameCoordinator.celtium$finishFrameBuffer();
         } finally {
             org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+            // The Lane 3 frame publication is withdrawn at the same boundary, in the
+            // same finally: a direct-GL draw after this point belongs to no frame and
+            // must meet the sink's gate closed, never a finished frame's buffer.
+            DirectGlFrameBridge.unbindFrame();
         }
     }
 

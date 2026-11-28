@@ -332,6 +332,13 @@ public final class FrameCoordinator {
                 // missed close degrades to a lost pack frame, never to a stale seat.
                 org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
             }
+            // The Lane 3 frame publication (DirectGlFrameBridge) keeps the same leak
+            // discipline: a publication that escaped its own frame's closes is withdrawn
+            // before this frame's opens, so a dead command buffer is never published
+            // into a new frame (the bridge's stale-buffer protection, kept by the wiring).
+            if (DirectGlFrameBridge.bound()) {
+                DirectGlFrameBridge.unbindFrame();
+            }
             org.soutalab.celtium.core.frame.ActiveRenderTargets seatTargets =
                     this.presentSwapchain.celtium$seatSwapchainTargets();
             if (seatTargets != null) {
@@ -347,6 +354,50 @@ public final class FrameCoordinator {
             // entry when the world-pass hook is wired (S3-b D7-c).
 
         this.pickFrameTemplate(packActive, modFboRequested);
+            // Lane 3 frame publication (the DirectGlFrameBridge writer): the pack seat
+            // above is open and the template pick has just published the coordinator's
+            // direct-GL slot, so both halves of the sink's frame gate - the bridge's
+            // buffer and the context's slot - are live from here to the frame boundary.
+            // The published targets are built from the frame target itself, colour plus
+            // the D32 depth: the seat supply above is the pack executor's depthless
+            // contract, and publishing it as-is would key the sink's main pipelines
+            // with an undefined depth format and resume the main rendering without its
+            // depth. A frame that opened no seat (no live target) publishes nothing,
+            // exactly as it opens no seat.
+            if (seatTargets != null && this.funnel.frameTarget instanceof GllessFrameTarget frameTarget) {
+                org.soutalab.celtium.core.frame.ActiveRenderTargets mainTargets =
+                        new org.soutalab.celtium.core.frame.ActiveRenderTargets(
+                                java.util.List.of(new org.soutalab.celtium.core.frame.ActiveRenderTargets.RenderTargetView(
+                                        frameTarget.colorView(), frameTarget.colorFormat(),
+                                        org.soutalab.celtium.core.frame.ActiveRenderTargets.LoadOp.LOAD,
+                                        org.soutalab.celtium.core.frame.ActiveRenderTargets.StoreOp.STORE)),
+                                frameTarget.depthView() != 0L
+                                        ? new org.soutalab.celtium.core.frame.ActiveRenderTargets.RenderTargetView(
+                                                frameTarget.depthView(), VK_FORMAT_D32_SFLOAT,
+                                                org.soutalab.celtium.core.frame.ActiveRenderTargets.LoadOp.LOAD,
+                                                org.soutalab.celtium.core.frame.ActiveRenderTargets.StoreOp.STORE)
+                                        : null,
+                                frameTarget.width(), frameTarget.height());
+                // The main images ride with the publication for the sink's LOAD resume:
+                // the target's tracked layouts where they already name the layouts its
+                // own rendering keeps (colour COLOR_RENDER_LAYOUT, depth
+                // DEPTH_RENDER_LAYOUT); any other tracked value is a resting layout the
+                // resume must not be declared in, so the sink's own no-images default
+                // pair stands in for it - no other values are invented here.
+                int colorLayout = frameTarget.colorImageLayout();
+                if (colorLayout != GllessFrameTarget.COLOR_RENDER_LAYOUT) {
+                    colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                }
+                int depthLayout = frameTarget.depthLayout();
+                if (depthLayout != GllessFrameTarget.DEPTH_RENDER_LAYOUT) {
+                    depthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                }
+                DirectGlFrameBridge.bindFrame(this.commandBuffer, mainTargets,
+                        new DirectGlFrameBridge.MainImages(
+                                frameTarget.colorImage(), colorLayout,
+                                frameTarget.depthImage(), depthLayout,
+                                false));
+            }
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
@@ -2142,6 +2193,8 @@ public void setLastFrameReachedQueue(boolean reached) {
                     // The stalled frame's pack seat closes with it (D7 seat ruling:
                     // endNativeFrame on every exit path, GPU stall included).
                     org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+                    // The Lane 3 frame publication closes with it (same all-exit discipline).
+                    DirectGlFrameBridge.unbindFrame();
                     return false;
                 }
                 if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
@@ -2232,6 +2285,8 @@ public void setLastFrameReachedQueue(boolean reached) {
                 // The stalled frame's pack seat closes with it (D7 seat ruling:
                 // endNativeFrame on every exit path, GPU stall included).
                 org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+                // The Lane 3 frame publication closes with it (same all-exit discipline).
+                DirectGlFrameBridge.unbindFrame();
                 return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
