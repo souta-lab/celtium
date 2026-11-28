@@ -264,6 +264,19 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
         }
     }
 
+    /** The raw-array counterpart of {@link #uploadSection} (S2-b-perf CPU-4). */
+    public synchronized void uploadSectionRaw(int x, int y, int z, SectionGeometryRaw raw, long timeline) {
+        if (store.sectionCount() >= MAX_SECTIONS && !store.contains(x, y, z)) {
+            refusedUploads++;
+            return;
+        }
+        try {
+            store.uploadRaw(x, y, z, raw, timeline);
+        } catch (IllegalStateException cannotFit) {
+            refusedUploads++;
+        }
+    }
+
     public synchronized void removeSection(int x, int y, int z, long timeline) {
         store.remove(x, y, z, timeline);
     }

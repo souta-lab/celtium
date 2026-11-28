@@ -7,6 +7,7 @@ import org.soutalab.celtium.core.shader.TerrainVertexRequirements;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,16 @@ public final class TerrainSectionStore {
     private long generation;
     /** Cached key-ordered descriptor snapshot, rebuilt lazily after a residency change. */
     private List<SectionDesc> cachedDescriptors;
+    /**
+     * The resident keys and descriptors in key order, maintained incrementally: uploads and
+     * removals insert/delete at the binary-searched position (one memmove per change)
+     * instead of re-sorting the whole resident set on every generation change - during a
+     * load stream the generation changes every frame, so the old stream().sorted() pass
+     * over ~2,900 sections ran per frame (S2-b-perf CPU-4).
+     */
+    private long[] sortedKeys = new long[64];
+    private SectionDesc[] sortedDescs = new SectionDesc[64];
+    private int sortedCount;
 
     private static final class Resident {
         final long key;
@@ -133,12 +144,89 @@ public final class TerrainSectionStore {
      */
     public synchronized SectionDesc upload(int sectionX, int sectionY, int sectionZ,
                                            SectionGeometry geometry, long timelineValue) {
+        int[] axisCounts = new int[LAYER_COUNT];
+        int[] generalCounts = new int[LAYER_COUNT];
+        for (int layer = 0; layer < LAYER_COUNT; layer++) {
+            axisCounts[layer] = geometry.axisLayer(layer).size();
+            generalCounts[layer] = geometry.generalLayer(layer).size();
+        }
+        return doUpload(sectionX, sectionY, sectionZ, axisCounts, generalCounts,
+                geometry.mcEntityIds(), new LayerWriter() {
+                    @Override
+                    public void writeAxis(MemorySegment segment, int layer, int quadCursor, int count) {
+                        List<PackedAxisQuad> axis = geometry.axisLayer(layer);
+                        for (int i = 0; i < count; i++) {
+                            axis.get(i).writeTo(segment,
+                                    (long) (quadCursor + i) * PackedAxisQuad.BYTE_SIZE);
+                        }
+                    }
+
+                    @Override
+                    public void writeGeneral(MemorySegment segment, int layer, int quadCursor, int count) {
+                        List<GeneralQuad> general = geometry.generalLayer(layer);
+                        for (int i = 0; i < count; i++) {
+                            general.get(i).writeTo(segment,
+                                    (long) (quadCursor + i) * GeneralQuad.BYTE_SIZE);
+                        }
+                    }
+                }, timelineValue);
+    }
+
+    /**
+     * The raw upload (S2-b-perf CPU-4): the same residency change as {@link #upload}, but the
+     * geometry arrives as the mesher's backing arrays ({@link SectionGeometryRaw}) and is
+     * bulk-copied into the slab - axis words in one copy per layer, general quads as a
+     * positions copy plus a meta copy each (the meta words are exactly the slab's bytes
+     * 48..79). No per-quad objects are materialised. The carrier's arrays are borrowed:
+     * everything the store keeps is copied out before this method returns.
+     *
+     * @throws IllegalStateException when a region cannot fit the geometry - the previous residency
+     *                               is left untouched in that case
+     */
+    public synchronized SectionDesc uploadRaw(int sectionX, int sectionY, int sectionZ,
+                                              SectionGeometryRaw raw, long timelineValue) {
+        return doUpload(sectionX, sectionY, sectionZ, raw.axisCounts(), raw.generalCounts(),
+                raw.concatenatedAux(), new LayerWriter() {
+                    @Override
+                    public void writeAxis(MemorySegment segment, int layer, int quadCursor, int count) {
+                        if (count == 0) {
+                            return;
+                        }
+                        MemorySegment.copy(raw.axisWords()[layer], 0, segment, ValueLayout.JAVA_INT,
+                                (long) quadCursor * PackedAxisQuad.BYTE_SIZE, count * 4);
+                    }
+
+                    @Override
+                    public void writeGeneral(MemorySegment segment, int layer, int quadCursor, int count) {
+                        float[] positions = raw.generalPositions()[layer];
+                        int[] meta = raw.generalMeta()[layer];
+                        for (int i = 0; i < count; i++) {
+                            long offset = (long) (quadCursor + i) * GeneralQuad.BYTE_SIZE;
+                            MemorySegment.copy(positions, i * 12, segment, ValueLayout.JAVA_FLOAT,
+                                    offset, 12);
+                            MemorySegment.copy(meta, i * 8, segment, ValueLayout.JAVA_INT,
+                                    offset + 48L, 8);
+                        }
+                    }
+                }, timelineValue);
+    }
+
+    /** How one upload writes its quads into the slab segments, per layer. */
+    private interface LayerWriter {
+        void writeAxis(MemorySegment segment, int layer, int quadCursor, int count);
+
+        void writeGeneral(MemorySegment segment, int layer, int quadCursor, int count);
+    }
+
+    private SectionDesc doUpload(int sectionX, int sectionY, int sectionZ,
+                                 int[] axisCounts, int[] generalCounts, short[] mcEntityIds,
+                                 LayerWriter writer, long timelineValue) {
         long key = sectionKey(sectionX, sectionY, sectionZ);
-        int axisCount = geometry.axisQuadCount();
-        int generalCount = geometry.generalQuadCount();
+        int axisCount = axisCounts[0] + axisCounts[1] + axisCounts[2];
+        int generalCount = generalCounts[0] + generalCounts[1] + generalCounts[2];
         long axisBytes = axisCount * PackedAxisQuad.BYTE_SIZE;
         long generalBytes = generalCount * GeneralQuad.BYTE_SIZE;
-        boolean wantsAux = requirements.needsAuxiliaryColumn() && geometry.mcEntityIds().length == axisCount
+        boolean wantsAux = requirements.needsAuxiliaryColumn() && mcEntityIds.length == axisCount
                 && axisCount > 0;
         long auxBytes = wantsAux ? axisCount * 2L : 0L;
 
@@ -165,7 +253,7 @@ public final class TerrainSectionStore {
         resident.axisBytes = axisBytes;
         resident.generalBytes = generalBytes;
         resident.auxBytes = auxBytes;
-        resident.mcEntityIds = geometry.mcEntityIds();
+        resident.mcEntityIds = mcEntityIds;
 
         MemorySegment axisSegment = axisBytes == 0L ? null : axisSpace.segment(axisOffset, axisBytes);
         MemorySegment generalSegment = generalBytes == 0L ? null
@@ -173,24 +261,18 @@ public final class TerrainSectionStore {
         int axisCursor = 0;
         int generalCursor = 0;
         for (int layer = 0; layer < LAYER_COUNT; layer++) {
-            List<PackedAxisQuad> axis = geometry.axisLayer(layer);
-            List<GeneralQuad> general = geometry.generalLayer(layer);
-            resident.layers[layer] = new LayerRange(axisCursor, axis.size(), generalCursor, general.size());
-            for (PackedAxisQuad quad : axis) {
-                quad.writeTo(axisSegment, (long) axisCursor * PackedAxisQuad.BYTE_SIZE);
-                axisCursor++;
-            }
-            for (GeneralQuad quad : general) {
-                quad.writeTo(generalSegment, (long) generalCursor * GeneralQuad.BYTE_SIZE);
-                generalCursor++;
-            }
+            resident.layers[layer] = new LayerRange(axisCursor, axisCounts[layer],
+                    generalCursor, generalCounts[layer]);
+            writer.writeAxis(axisSegment, layer, axisCursor, axisCounts[layer]);
+            writer.writeGeneral(generalSegment, layer, generalCursor, generalCounts[layer]);
+            axisCursor += axisCounts[layer];
+            generalCursor += generalCounts[layer];
         }
         int mcEntityBase = SectionDesc.NO_AUXILIARY;
         if (auxOffset >= 0L) {
             MemorySegment auxSegment = auxSpace.segment(auxOffset, auxBytes);
-            short[] ids = geometry.mcEntityIds();
-            for (int i = 0; i < ids.length; i++) {
-                auxSegment.set(ValueLayout.JAVA_SHORT, (long) i * 2L, ids[i]);
+            for (int i = 0; i < mcEntityIds.length; i++) {
+                auxSegment.set(ValueLayout.JAVA_SHORT, (long) i * 2L, mcEntityIds[i]);
             }
             mcEntityBase = (int) (auxOffset / 2L);
         }
@@ -200,6 +282,7 @@ public final class TerrainSectionStore {
         generation++;
         cachedDescriptors = null;
         Resident previous = sections.put(key, resident);
+        sortedPut(key, resident.desc);
         if (previous != null) {
             releaseRanges(previous, timelineValue);
         }
@@ -210,10 +293,12 @@ public final class TerrainSectionStore {
     public synchronized boolean remove(int sectionX, int sectionY, int sectionZ, long timelineValue) {
         generation++;
         cachedDescriptors = null;
-        Resident previous = sections.remove(sectionKey(sectionX, sectionY, sectionZ));
+        long key = sectionKey(sectionX, sectionY, sectionZ);
+        Resident previous = sections.remove(key);
         if (previous == null) {
             return false;
         }
+        sortedRemove(key);
         releaseRanges(previous, timelineValue);
         return true;
     }
@@ -250,11 +335,13 @@ public final class TerrainSectionStore {
                 }
                 resident.auxBytes = auxBytes;
                 resident.desc = withAux(resident.desc, (int) (auxOffset / 2L));
+                sortedPut(resident.key, resident.desc);
             } else if (resident.desc.hasAuxiliaryColumn()) {
                 auxRegion.releaseDeferred((long) resident.desc.mcEntityBase() * 2L, resident.auxBytes,
                         timelineValue);
                 resident.auxBytes = 0L;
                 resident.desc = withAux(resident.desc, SectionDesc.NO_AUXILIARY);
+                sortedPut(resident.key, resident.desc);
             }
         }
     }
@@ -268,13 +355,12 @@ public final class TerrainSectionStore {
 
     /** Writes every resident descriptor, in key order, into {@code out} at {@code offset}; returns the count. */
     public synchronized int writeDescriptors(MemorySegment out, long offset) {
-        List<Long> keys = sections.keySet().stream().sorted().toList();
         long cursor = offset;
-        for (Long key : keys) {
-            sections.get(key).desc.writeTo(out, cursor);
+        for (int i = 0; i < sortedCount; i++) {
+            sortedDescs[i].writeTo(out, cursor);
             cursor += SectionDesc.BYTE_SIZE;
         }
-        return keys.size();
+        return sortedCount;
     }
 
     /** Writes three layer ranges per section in descriptor slot order (48 bytes per slot). */
@@ -300,10 +386,41 @@ public final class TerrainSectionStore {
     /** Snapshot of the resident descriptors, in key order - the cull stage's CPU-side input. */
     public synchronized List<SectionDesc> descriptors() {
         if (cachedDescriptors == null) {
-            cachedDescriptors = sections.keySet().stream().sorted()
-                    .map(key -> sections.get(key).desc).toList();
+            cachedDescriptors = List.of(Arrays.copyOf(sortedDescs, sortedCount));
         }
         return cachedDescriptors;
+    }
+
+    /** Inserts or replaces one descriptor in the key-ordered parallel arrays. */
+    private void sortedPut(long key, SectionDesc desc) {
+        int index = Arrays.binarySearch(sortedKeys, 0, sortedCount, key);
+        if (index >= 0) {
+            sortedDescs[index] = desc;
+            return;
+        }
+        int insertion = -index - 1;
+        if (sortedCount == sortedKeys.length) {
+            sortedKeys = Arrays.copyOf(sortedKeys, sortedKeys.length * 2);
+            sortedDescs = Arrays.copyOf(sortedDescs, sortedDescs.length * 2);
+        }
+        System.arraycopy(sortedKeys, insertion, sortedKeys, insertion + 1, sortedCount - insertion);
+        System.arraycopy(sortedDescs, insertion, sortedDescs, insertion + 1, sortedCount - insertion);
+        sortedKeys[insertion] = key;
+        sortedDescs[insertion] = desc;
+        sortedCount++;
+    }
+
+    /** Removes one key from the key-ordered parallel arrays, if present. */
+    private void sortedRemove(long key) {
+        int index = Arrays.binarySearch(sortedKeys, 0, sortedCount, key);
+        if (index < 0) {
+            return;
+        }
+        int tail = sortedCount - index - 1;
+        System.arraycopy(sortedKeys, index + 1, sortedKeys, index, tail);
+        System.arraycopy(sortedDescs, index + 1, sortedDescs, index, tail);
+        sortedCount--;
+        sortedDescs[sortedCount] = null;
     }
 
 

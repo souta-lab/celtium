@@ -81,6 +81,31 @@ public final class MeshBuffers {
         generalCounts[layer] = count + 1;
     }
 
+    // The raw backing arrays, for the store's zero-materialisation upload path
+    // (SectionGeometryRaw). The arrays are live: they grow by replacement and their counts
+    // reset on the next build, so a reader must consume them synchronously and retain
+    // nothing - the upload chain does exactly that before the buffers return to the pool.
+
+    /** One layer's packed axis words: {@code axisCount(layer) * 4} valid entries. */
+    public int[] axisWords(int layer) {
+        return axisWords[layer];
+    }
+
+    /** One layer's auxiliary column values: {@code axisCount(layer)} valid entries. */
+    public short[] axisAuxArray(int layer) {
+        return axisAux[layer];
+    }
+
+    /** One layer's general-quad positions: {@code generalCount(layer) * 12} valid entries. */
+    public float[] generalPositions(int layer) {
+        return generalPositions[layer];
+    }
+
+    /** One layer's general-quad meta words: {@code generalCount(layer) * 8} valid entries. */
+    public int[] generalMeta(int layer) {
+        return generalMeta[layer];
+    }
+
     public int axisCount(int layer) {
         return axisCounts[layer];
     }
