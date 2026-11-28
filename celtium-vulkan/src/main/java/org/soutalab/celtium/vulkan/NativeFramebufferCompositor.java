@@ -105,7 +105,7 @@ final class NativeFramebufferCompositor {
         group.mesh = lease.value();
         group.geometryLease = lease;
         group.prepared = material;
-        group.textureImage = b.owner.celtium$registry().get(texture);
+        group.textureImage = b.seatOwner.celtium$registry().get(texture);
         group.textureMutations = b.textureRegistry.mutations();
         if (this.viewportCache == null || this.viewportCacheWidth != width || this.viewportCacheHeight != height) {
             this.viewportCache = new int[] {0, 0, width, height};

@@ -76,10 +76,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.presentSwapchain = this.presentSwapchain;
         this.funnel.owner = this;
         this.copyReadSide = new CopyReadSide(this.frameCoordinator, this.funnel, this.presentSwapchain);
-        this.copyReadSide.owner = this;
-        this.presentSwapchain.owner = this;
+        this.copyReadSide.seatOwner = this;
+        this.presentSwapchain.seatOwner = this;
         this.frameStats = new FrameStatsReport(this.frameCoordinator, this.funnel);
-        this.frameStats.owner = this;
+        this.frameStats.seatOwner = this;
         this.reports.bind(this.frameCoordinator, this.funnel, this.presentSwapchain, this);
 
         this.context = context;

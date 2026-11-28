@@ -24,7 +24,7 @@ final class PresentSwapchain {
 
     private final FrameCoordinator frame;
     private final Lane2ImmediateRecorder funnel;
-    VulkanBackendAdapter owner;
+    VulkanBackendAdapter seatOwner;
 
     PresentSwapchain(FrameCoordinator frame, Lane2ImmediateRecorder funnel) {
         this.frame = frame;
@@ -518,7 +518,7 @@ final class PresentSwapchain {
             if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING) == 0) {
                 frame.reports.record("presenting the frame skipped: the default framebuffer is bound, so there is no frame content"
                         + " to present here");
-            } else if (owner.ensureFrameTarget()) {
+            } else if (seatOwner.ensureFrameTarget()) {
                 frame.frameSubmitReachedQueue = false;
                 funnel.frameTarget.beginFrame();
                 celtium$ensureBorrowedFrameImage();
@@ -720,7 +720,7 @@ final class PresentSwapchain {
         funnel.celtium$noteStalledOnDeviceLoss();
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
-        owner.celtium$finishFrameBuffer();
+        seatOwner.celtium$finishFrameBuffer();
         funnel.celtium$dropSplashCanvasesAtSplashEnd();
         // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
         // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
@@ -739,7 +739,7 @@ final class PresentSwapchain {
         // returned it.
         if (frame.presentHookCalls <= 3 || frame.presentHookCalls % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_PRESENT hookCalls=" + frame.presentHookCalls
-                    + " attempts=" + funnel.presentAttempts + " presented=" + owner.framePresentedFromVulkan
+                    + " attempts=" + funnel.presentAttempts + " presented=" + seatOwner.framePresentedFromVulkan
                     + " failures=" + funnel.presentFailures + " swapsSkipped=" + funnel.glSwapsSkipped
                     + " drainFailures=" + funnel.presentFlushFailures
                     + " drainUnfinished=" + funnel.presentDrainUnfinished
@@ -788,7 +788,7 @@ final class PresentSwapchain {
                 if (Lane2ImmediateRecorder.PRESENT_DRAIN_FINISH_GUARD) {
                     // If the present-time drain opened and recorded into the unified frame buffer,
                     // close and queue it before the lastFrameReachedQueue gate and presentDirect().
-                    owner.celtium$finishFrameBuffer();
+                    seatOwner.celtium$finishFrameBuffer();
                 }
             } catch (RuntimeException | LinkageError error) {
                 // A failed drain must not stop the present: the queued work keeps its owner, and whatever
@@ -832,7 +832,7 @@ final class PresentSwapchain {
         }
         boolean reached;
         try {
-            if (!owner.ensureFrameTarget()) {
+            if (!seatOwner.ensureFrameTarget()) {
                 funnel.presentSkipReason = "frame target not available";
                 funnel.presentSkips++;
                 funnel.presentSkipsByReason[3]++;
@@ -857,10 +857,10 @@ final class PresentSwapchain {
             // true when the frame is presented or whether the image is whitened after the composite. The patch is the
             // logo's own region, so a flat value is "no picture" and a dark one is "picture".
             if (Lane2ImmediateRecorder.PRESENT_PATCH_TRACE && funnel.presentPatchLogs < Lane2ImmediateRecorder.PRESENT_PATCH_LINES
-                    && owner.framePresentedFromVulkan + 1 >= Lane2ImmediateRecorder.PRESENT_PATCH_MIN_PRESENT
+                    && seatOwner.framePresentedFromVulkan + 1 >= Lane2ImmediateRecorder.PRESENT_PATCH_MIN_PRESENT
                     && funnel.targetWidth > 512 && funnel.targetHeight > 512) {
                 funnel.presentPatchLogs++;
-                String presentLine = "CELTIUM_PRESENT_PATCH present=" + (owner.framePresentedFromVulkan + 1)
+                String presentLine = "CELTIUM_PRESENT_PATCH present=" + (seatOwner.framePresentedFromVulkan + 1)
                         + " frame=" + frame.frameId
                         + " windows=" + funnel.immediateStatistics.immediateWindows()
                         + " windowsThisFrame=" + funnel.immediateStatistics.immediateWindowsThisFrame()
@@ -908,9 +908,9 @@ final class PresentSwapchain {
                     && funnel.skyPresentProbeLines < Lane2ImmediateRecorder.SKY_FRAME_PROBE_LIMIT
                     && funnel.frameTarget.colorImage() != 0L) {
                 funnel.skyPresentProbeLines++;
-                int[] presentFramePixels = owner.celtium$readImageRectangle(funnel.frameTarget.colorImage(), 0, 0,
+                int[] presentFramePixels = seatOwner.celtium$readImageRectangle(funnel.frameTarget.colorImage(), 0, 0,
                         funnel.targetWidth, funnel.targetHeight);
-                System.out.println("[Celtium] CELTIUM_SKY_PRESENT_PROBE present=" + (owner.framePresentedFromVulkan + 1)
+                System.out.println("[Celtium] CELTIUM_SKY_PRESENT_PROBE present=" + (seatOwner.framePresentedFromVulkan + 1)
                         + " frame=" + frame.frameId
                         + " skyDraws=" + funnel.skyDrawsThisFrame
                         + " " + PixelSignatures.celtium$skyBandSignature(presentFramePixels, funnel.targetWidth, funnel.targetHeight));
@@ -932,7 +932,7 @@ final class PresentSwapchain {
             funnel.presentSkipReason = "presented";
             reached = funnel.swapchain.lastPresentSucceeded();
             if (reached) {
-                owner.framePresentedFromVulkan++;
+                seatOwner.framePresentedFromVulkan++;
                 // Attribute the dumps this present wrote to this presented frame. The fixture can only observe
                 // the file once per render tick and several presents can pass in that window (measured: the
                 // startup request's file first existed while the counter read 16), which is why the frame is
@@ -945,12 +945,12 @@ final class PresentSwapchain {
                         if (seen == null || seen.longValue() != write.getValue().longValue()) {
                             funnel.seenDumpWriteSerialByName.put(write.getKey(), write.getValue());
                             funnel.presentedDumpWrittenFrames.put(write.getKey(),
-                                    Integer.valueOf(owner.framePresentedFromVulkan));
+                                    Integer.valueOf(seatOwner.framePresentedFromVulkan));
                         }
                     }
                 }
                 long dumpStartedNanos = System.nanoTime();
-                dumpFrameIfRequested(owner.framePresentedFromVulkan);
+                dumpFrameIfRequested(seatOwner.framePresentedFromVulkan);
                 this.swapPointDumpNanos += System.nanoTime() - dumpStartedNanos;
                 // The caller skips the game's own Display.update when this returns true, and that call is also what polls
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
@@ -1247,9 +1247,9 @@ final class PresentSwapchain {
             return;
         }
         if (current != null) {
-            owner.celtium$registry().unpublishExternalImage(glTextureName);
+            seatOwner.celtium$registry().unpublishExternalImage(glTextureName);
         }
-        VulkanGlTexture published = owner.celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
+        VulkanGlTexture published = seatOwner.celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
         if (published == null) {
             return;
         }
@@ -1303,9 +1303,9 @@ final class PresentSwapchain {
             return;
         }
         if (current != null) {
-            owner.celtium$registry().unpublishExternalImage(glTextureName);
+            seatOwner.celtium$registry().unpublishExternalImage(glTextureName);
         }
-        VulkanGlTexture published = owner.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
+        VulkanGlTexture published = seatOwner.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
                 width, height, declaredLayout);
         if (published == null) {
             return;
@@ -1324,14 +1324,14 @@ final class PresentSwapchain {
             it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = it.next();
             if (entry.getLongValue() != identity) continue;
             int name = entry.getIntKey();
-            owner.celtium$registry().unpublishExternalImage(name);
+            seatOwner.celtium$registry().unpublishExternalImage(name);
             funnel.publishedTextures.removePublished(name);
             this.publishedFrameImages.remove(name);
             this.publishedFrameImageSlots.remove(name);
             it.remove();
         }
         if (this.publishedChainOutput != null && this.publishedChainIdentity == identity) {
-            owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+            seatOwner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainTexture = 0;
             this.publishedChainImage = 0L;
@@ -1347,7 +1347,7 @@ final class PresentSwapchain {
             it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = depthIt.next();
             int name = entry.getIntKey();
             if (funnel.publishedTextures.identityForDepthTexture(name) != identity) continue;
-            owner.celtium$registry().unpublishExternalImage(name);
+            seatOwner.celtium$registry().unpublishExternalImage(name);
             funnel.publishedTextures.removePublished(name);
             this.publishedFrameImages.remove(name);
             depthIt.remove();
@@ -1720,10 +1720,10 @@ final class PresentSwapchain {
                     int liveLayout = offTarget.sharedDepthLayout(depthKey);
                     republished = liveView == 0L || liveExtent == null
                             || liveLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED ? null
-                                    : owner.celtium$registry().publishExternalDepthImage(name, live, liveView,
+                                    : seatOwner.celtium$registry().publishExternalDepthImage(name, live, liveView,
                                             liveExtent[0], liveExtent[1], liveLayout);
                 } else {
-                    republished = owner.celtium$registry().publishExternalImage(name, live,
+                    republished = seatOwner.celtium$registry().publishExternalImage(name, live,
                             offTarget.chainPairColorViewAt(owner, this.publishedFrameImageSlots.get(name)),
                             funnel.targetWidth, funnel.targetHeight);
                     // A republished wrapper is a fresh wrapper: without the flag it declares SHADER_READ_ONLY over an
@@ -1739,7 +1739,7 @@ final class PresentSwapchain {
                     continue;
                 }
             }
-            owner.celtium$registry().unpublishExternalImage(name);
+            seatOwner.celtium$registry().unpublishExternalImage(name);
             this.publishedFrameImages.remove(name);
             this.publishedFrameImageIdentities.remove(name);
             this.publishedFrameImageSlots.remove(name);
@@ -1792,7 +1792,7 @@ final class PresentSwapchain {
                     return;
                 }
                 if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-                    owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+                    seatOwner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
                     this.publishedChainOutput = null;
                     this.publishedChainImage = 0L;
                     return;
@@ -1821,7 +1821,7 @@ final class PresentSwapchain {
                     continue;
                 }
                 if (slotImage != 0L && slotView != 0L) {
-                    VulkanGlTexture republished = owner.celtium$registry().publishExternalImage(name,
+                    VulkanGlTexture republished = seatOwner.celtium$registry().publishExternalImage(name,
                             slotImage, slotView, funnel.targetWidth, funnel.targetHeight);
                 if (republished != null) {
                     republished.notePairImage(true);
@@ -1831,7 +1831,7 @@ final class PresentSwapchain {
                     continue;
                 }
                 }
-                owner.celtium$registry().unpublishExternalImage(name);
+                seatOwner.celtium$registry().unpublishExternalImage(name);
                 this.publishedFrameImages.remove(name);
                 this.publishedFrameImageIdentities.remove(name);
                 this.publishedFrameImageSlots.remove(name);
@@ -1843,7 +1843,7 @@ final class PresentSwapchain {
             return;
         }
         if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-            owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+            seatOwner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainImage = 0L;
             return;

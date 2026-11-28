@@ -799,8 +799,6 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     static final int MARKS = 240;
 
-    static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
-
     int gpuMarkCount;
 
     final String[] gpuMarkLabels = new String[MARKS];

@@ -13,7 +13,7 @@ final class BackendDiagnostics {
     private FrameCoordinator frame;
     private Lane2ImmediateRecorder funnel;
     private PresentSwapchain present;
-    private VulkanBackendAdapter owner;
+    private VulkanBackendAdapter seatOwner;
 
     BackendDiagnostics() {
     }
@@ -22,14 +22,14 @@ final class BackendDiagnostics {
         this.frame = frame;
         this.funnel = funnel;
         this.present = present;
-        this.owner = owner;
+        this.seatOwner = owner;
     }
 
     /** The snapshot lines {@link #diagnostics()} builds and {@code record} appends to. */
     private final List<String> lines = new ArrayList<>();
 
     /** The distinct {@link #record} messages already printed; bounded so a message carrying a counter cannot grow it. */
-    private final java.util.Set<String> printedRecords = new java.util.HashSet<String>();
+    final java.util.Set<String> printedRecords = new java.util.HashSet<String>();
 
     void record(String diagnostic) {
         this.addLine(diagnostic);
@@ -291,7 +291,7 @@ final class BackendDiagnostics {
                 + " frameFenceWaitWorstMillis=" + frame.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + "retired"
-                + " readResolvedFromLastDrawnTarget=" + owner.textureCopyService.readResolvedFromLastDrawnTarget()
+                + " readResolvedFromLastDrawnTarget=" + seatOwner.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " windowOpenSites=[" + funnel.windowOpenSiteSummary() + "]"
                 + " windowRecordMillis=" + (funnel.windowRecordNanos / 1000000L)
@@ -546,7 +546,7 @@ final class BackendDiagnostics {
                 + " offTargetPairFramebuffers=[default-pair=" + funnel.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR)
                 + ",chain-pair=" + funnel.targetRegistry.chainPairFramebufferCreationsTotal() + "]"
                 + " otherTargetGroups=[atMainFlush=" + funnel.targetStatistics.otherTargetGroupsAtMainFlush()
-                + ",discarded=" + owner.otherTargetGroupsDiscarded
+                + ",discarded=" + seatOwner.otherTargetGroupsDiscarded
                 + ",windowFlush=" + funnel.otherTargetGroupsFlushedByWindow
                 + ",enqueuedForOtherTargets=" + funnel.groupsEnqueuedForOtherTargets
                 + ",acceptedForOtherTargets=" + funnel.acceptedForOtherTargets + "]"
@@ -632,13 +632,13 @@ final class BackendDiagnostics {
                 + " modelDrawRefusals=" + funnel.modelDrawRefusals
                 + " modelRunDropped=" + funnel.modelRunDropped
                 + " modelInstancesFailed=" + funnel.modelInstancesFailed
-                + " modelMissingMeshes=" + owner.modelGeometry.modelMissingMeshes()
+                + " modelMissingMeshes=" + seatOwner.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + funnel.modelLastRefusal
-                + " modelMeshLists=" + (owner.modelGeometry.modelMeshes() == null ? -1 : owner.modelGeometry.modelMeshes().size())
+                + " modelMeshLists=" + (seatOwner.modelGeometry.modelMeshes() == null ? -1 : seatOwner.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + owner.modelGeometry.modelMeshQuads()
-                + " modelMeshFailure=" + owner.modelGeometry.modelMeshFailure()
+                + " modelMeshQuads=" + seatOwner.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + seatOwner.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -673,21 +673,21 @@ final class BackendDiagnostics {
                 // unnecessary. It is a saving, not a loss, so it is counted beside the fills it replaces.
                 + " announcedCaptureSkips="
                 + org.soutalab.celtium.vulkan.TextureCaptureStore.celtium$announcedCaptureSkips()
-                + " textureCopiesServed=" + owner.textureCopyService.textureCopiesServed()
-                + " textureCopiesRefused=" + owner.textureCopyService.textureCopiesRefused()
-                + " textureCopiesReusedInFrame=" + owner.textureCopyService.textureCopiesReusedInFrame()
-                + " textureCopyReadbacks=" + owner.textureCopyService.textureCopyReadbacks()
-                + " textureCopyReadbackMillis=" + (owner.textureCopyService.textureCopyReadbackNanos() / 1000000L)
+                + " textureCopiesServed=" + seatOwner.textureCopyService.textureCopiesServed()
+                + " textureCopiesRefused=" + seatOwner.textureCopyService.textureCopiesRefused()
+                + " textureCopiesReusedInFrame=" + seatOwner.textureCopyService.textureCopiesReusedInFrame()
+                + " textureCopyReadbacks=" + seatOwner.textureCopyService.textureCopyReadbacks()
+                + " textureCopyReadbackMillis=" + (seatOwner.textureCopyService.textureCopyReadbackNanos() / 1000000L)
                 // The native route's own census: a copy the GPU wrote into the mirror directly, against one the blit
                 // refused (which then took the host route above). The two lines together are what says which path a
                 // leg's copies took, rather than the absence of a readback implying the blit ran.
-                + " textureCopiesServedPeakPerPresent=" + owner.textureCopyService.textureCopiesServedPeakPerPresent()
+                + " textureCopiesServedPeakPerPresent=" + seatOwner.textureCopyService.textureCopiesServedPeakPerPresent()
                 + " textureCopiesReServedAfterContentChange="
-                + owner.textureCopyService.textureCopiesReServedAfterContentChange()
-                + " textureCopyBlits=" + owner.textureCopyService.textureCopyBlits()
-                + " textureCopyBlitRefusals=" + owner.textureCopyService.textureCopyBlitRefusals()
-                + " lastTextureCopyBlitRefusal=[" + owner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lastTextureCopyRefusal=[" + owner.textureCopyService.lastTextureCopyRefusal() + "]"
+                + seatOwner.textureCopyService.textureCopiesReServedAfterContentChange()
+                + " textureCopyBlits=" + seatOwner.textureCopyService.textureCopyBlits()
+                + " textureCopyBlitRefusals=" + seatOwner.textureCopyService.textureCopyBlitRefusals()
+                + " lastTextureCopyBlitRefusal=[" + seatOwner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
+                + " lastTextureCopyRefusal=[" + seatOwner.textureCopyService.lastTextureCopyRefusal() + "]"
                 // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
                 // and did not get. Without the second number the rule's effect is inferred from a picture.
                 + " pairClearsRefusedOtherIdentity=" + funnel.targetStatistics.pairClearsRefusedOtherIdentity()
@@ -997,7 +997,7 @@ final class BackendDiagnostics {
                 java.nio.file.Path path = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                         "celtium-tex-" + dumpGroup.texture + "-" + dumpImage.width() + "x" + dumpImage.height()
                                 + "-n" + funnel.dumpedTextureImages + ".png");
-                boolean wrote = owner.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
+                boolean wrote = seatOwner.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
                         dumpImage.height(), path);
                 System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
                         + " " + dumpImage.width() + "x" + dumpImage.height() + " wrote=" + wrote
@@ -1295,7 +1295,7 @@ final class BackendDiagnostics {
                         break;
                     }
                     if (image instanceof VulkanGlTexture texture) {
-                        float mean = owner.textureCopyService.celtium$sampleImageMean(texture.image(),
+                        float mean = seatOwner.textureCopyService.celtium$sampleImageMean(texture.image(),
                                 texture.width(), texture.height());
                         if (means.length() > 0) {
                             means.append(' ');
@@ -1655,9 +1655,9 @@ final class BackendDiagnostics {
                 + " modelDrawRefusals=" + funnel.modelDrawRefusals
                 + " modelRecordedReplays=" + funnel.modelRecordedReplayCalls
                 + " modelFastPath[" + funnel.modelReplayFastPath.describe() + "]"
-                + " modelMissingMeshes=" + owner.modelGeometry.modelMissingMeshes()
+                + " modelMissingMeshes=" + seatOwner.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + funnel.modelLastRefusal
-                + " modelMeshLists=" + (owner.modelGeometry.modelMeshes() == null ? -1 : owner.modelGeometry.modelMeshes().size())
+                + " modelMeshLists=" + (seatOwner.modelGeometry.modelMeshes() == null ? -1 : seatOwner.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
                 + funnel.modelStats.run2()
@@ -1698,8 +1698,8 @@ final class BackendDiagnostics {
                 + funnel.modelStats.run1(funnel.modelDrawRefusals, funnel.modelLastRefusal)
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + owner.modelGeometry.modelMeshQuads()
-                + " modelMeshFailure=" + owner.modelGeometry.modelMeshFailure()
+                + " modelMeshQuads=" + seatOwner.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + seatOwner.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()

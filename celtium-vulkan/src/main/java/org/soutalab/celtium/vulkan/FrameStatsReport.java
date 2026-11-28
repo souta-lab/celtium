@@ -8,7 +8,7 @@ package org.soutalab.celtium.vulkan;
 final class FrameStatsReport {
     private final FrameCoordinator frame;
     private final Lane2ImmediateRecorder funnel;
-    VulkanBackendAdapter owner;
+    VulkanBackendAdapter seatOwner;
 
     FrameStatsReport(FrameCoordinator frame, Lane2ImmediateRecorder funnel) {
         this.frame = frame;
@@ -232,9 +232,9 @@ final class FrameStatsReport {
                                 / Math.max(1L, this.debugFrameReports))
                 + "]"
                 + (Lane2ImmediateRecorder.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
-                + " texCopy[calls=" + owner.copyReadSide.textureCopyCalls + " totalMs=" + (owner.copyReadSide.textureCopyNanos / 1000000L) + "]"
-                + " copyBlit[refusals=" + owner.textureCopyService.textureCopyBlitRefusals()
-                + " last=" + owner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
+                + " texCopy[calls=" + seatOwner.copyReadSide.textureCopyCalls + " totalMs=" + (seatOwner.copyReadSide.textureCopyNanos / 1000000L) + "]"
+                + " copyBlit[refusals=" + seatOwner.textureCopyService.textureCopyBlitRefusals()
+                + " last=" + seatOwner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + funnel.lazyMirrorSupplies + " rawWriteRefreshes=" + funnel.rawWriteRefreshes
                 + " current=" + funnel.rawWriteAlreadyCurrent
                 + " skips=" + funnel.lazyMirrorRetrySkips

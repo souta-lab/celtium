@@ -27,7 +27,7 @@ final class CopyReadSide {
     private final FrameCoordinator frame;
     private final Lane2ImmediateRecorder funnel;
     private final PresentSwapchain present;
-    VulkanBackendAdapter owner;
+    VulkanBackendAdapter seatOwner;
 
     CopyReadSide(FrameCoordinator frame, Lane2ImmediateRecorder funnel, PresentSwapchain present) {
         this.frame = frame;
@@ -661,7 +661,7 @@ final class CopyReadSide {
 
     /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
-        return owner.framePresentedFromVulkan;
+        return seatOwner.framePresentedFromVulkan;
     }
 
     /**
@@ -1293,14 +1293,14 @@ final class CopyReadSide {
         }
 
 
-        if (atlasId != 0 && (owner.atlasTexture == null || atlasId != funnel.atlasGlId || funnel.atlasRefreshCountdown <= 0)) {
+        if (atlasId != 0 && (seatOwner.atlasTexture == null || atlasId != funnel.atlasGlId || funnel.atlasRefreshCountdown <= 0)) {
             try {
                 // The image this call supplies, decided before anything is handed to the field. A name change is a
                 // reallocation: the registry entry for the old name was retired with it, so binding the kept object
                 // samples a dead image - measured as a fully black terrain after the reload re-stitched the atlas
                 // under a new GL name while this field still held the old mirror.
-                VulkanGlTexture image = owner.atlasTexture != null && atlasId == funnel.atlasGlId
-                        ? owner.atlasTexture : null;
+                VulkanGlTexture image = seatOwner.atlasTexture != null && atlasId == funnel.atlasGlId
+                        ? seatOwner.atlasTexture : null;
                 if (image == null) {
                     int[] size = textureSize(atlasId);
                     if (size[0] <= 0 || size[1] <= 0) {
@@ -1320,7 +1320,7 @@ final class CopyReadSide {
                 // threw left an image no upload ever filled in the field: the pass then drew it as the atlas instead of
                 // skipping with the reason recorded. A mirror this id already had stays in the field across a failed
                 // re-supply, because that image was established by an earlier one.
-                owner.atlasTexture = image;
+                seatOwner.atlasTexture = image;
                 // The terrain sampler asks the atlas for its GL name to read the game's GL_TEXTURE_MAX_LEVEL.
                 image.noteGlTextureName(atlasId);
                 funnel.atlasSourceGlId = atlasId;

@@ -996,6 +996,8 @@ public final class Lane2ImmediateRecorder {
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     static final int MAX_UNIFORM_PASSES = 6;
 
+    static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
+
     static {
         for (int f = 0; f < GROUP_MARK_LABELS.length; f++) {
             GROUP_MARK_LABELS[f] = "g" + f;
