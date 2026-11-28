@@ -805,7 +805,7 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     private final String[] gpuMarkLabels = new String[MARKS];
 
-    private String gpuMarkTimeline = "";
+    String gpuMarkTimeline = "";
 
 
     /** Writes a labelled GPU mark when the GPU pass report is collecting; otherwise nothing. */
@@ -822,13 +822,13 @@ public void setLastFrameReachedQueue(boolean reached) {
 
     int windowTimestampCount;
 
-    private long windowGpuMainNanos;
+    long windowGpuMainNanos;
 
-    private long windowGpuOffNanos;
+    long windowGpuOffNanos;
 
-    private long windowGpuMaxNanos;
+    long windowGpuMaxNanos;
 
-    private int windowGpuCount;
+    int windowGpuCount;
 
     /**
      * The slot that measures the whole frame's GPU time, from the start of the command buffer to its end.
@@ -888,12 +888,12 @@ public void setLastFrameReachedQueue(boolean reached) {
     private long statisticsReadFailures;
 
     /** The immediate window pass's last measured GPU time, in nanoseconds. */
-    private long immediatePassGpuNanos;
+    long immediatePassGpuNanos;
 
     private boolean immediatePassTimed;
 
     /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
-    private long frameGpuNanos;
+    long frameGpuNanos;
 
     private boolean frameGpuTimed;
 
@@ -908,9 +908,9 @@ public void setLastFrameReachedQueue(boolean reached) {
      * "after the last draw" says whether it is the handoff and acquire at the head of the frame or the composite and
      * present preparation at its tail - two different problems with different fixes.
      */
-    private long frameHeadNanos;
+    long frameHeadNanos;
 
-    private long frameTailNanos;
+    long frameTailNanos;
 
     private float timestampPeriod = 1.0f;
 
@@ -924,14 +924,14 @@ public void setLastFrameReachedQueue(boolean reached) {
      */
     private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
 
-    private final Reference2ReferenceMap<String, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
+    final Reference2ReferenceMap<String, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
 
     /**
      * The pack route's per-stage timings, under the pack pipeline's own stage names ({@code shadow} /
      * {@code gbuffers}): the same last-measured-value persistence as {@link #passTimings}, keyed by name
      * because one subpass object serves both stages in a frame and cannot name them apart.
      */
-    private final java.util.Map<String, Long> packPassTimings = new java.util.LinkedHashMap<>();
+    final java.util.Map<String, Long> packPassTimings = new java.util.LinkedHashMap<>();
 
     private int readbackSlots;
 
@@ -1866,7 +1866,7 @@ public void setLastFrameReachedQueue(boolean reached) {
                 // and made the fixture fail with "Vulkan bootstrap was expected but the command is missing".
                 this.reports.record("reference render: the Vulkan backend is not installed, so the frame is OpenGL");
             } else {
-                org.soutalab.celtium.vulkan.CeltiumBackends.install(this);
+                org.soutalab.celtium.vulkan.CeltiumBackends.install(this.owner);
             }
 
             if (SWAPCHAIN_PROBE) {

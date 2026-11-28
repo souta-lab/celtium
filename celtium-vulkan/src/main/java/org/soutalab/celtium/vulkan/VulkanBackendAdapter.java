@@ -626,23 +626,14 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return pending;
     }
 
-
-
-    /** Vanilla's framebuffer composites (framebufferRenderExt), drawn as native operations. */
-    final NativeFramebufferCompositor framebufferCompositor = new NativeFramebufferCompositor(this);
-
     public void compositeFramebuffer(long identity, boolean main, int texture, int sourceWidth, int sourceHeight,
             int textureWidth, int textureHeight, int width, int height, boolean opaque) {
-        this.framebufferCompositor.submit(identity, main, texture, sourceWidth, sourceHeight,
+        this.funnel.framebufferCompositor.submit(identity, main, texture, sourceWidth, sourceHeight,
                 textureWidth, textureHeight, width, height, opaque);
     }
 
-
-    /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
-    final ModelReplay modelReplay = new ModelReplay(this);
-
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
-        return this.modelReplay.celtium$drawModelList(listId, boundTextureId);
+        return this.funnel.modelReplay.celtium$drawModelList(listId, boundTextureId);
     }
 
 
@@ -1214,7 +1205,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.presentSwapchain.celtium$swapchainCreationFailure();
     }
 
-    private void runSwapchainProbe() {
+    void runSwapchainProbe() {
         this.presentSwapchain.runSwapchainProbe();
     }
 

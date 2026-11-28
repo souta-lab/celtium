@@ -518,7 +518,7 @@ final class PresentSwapchain {
             if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING) == 0) {
                 frame.reports.record("presenting the frame skipped: the default framebuffer is bound, so there is no frame content"
                         + " to present here");
-            } else if (funnel.ensureFrameTarget()) {
+            } else if (owner.ensureFrameTarget()) {
                 frame.frameSubmitReachedQueue = false;
                 funnel.frameTarget.beginFrame();
                 celtium$ensureBorrowedFrameImage();
@@ -720,7 +720,7 @@ final class PresentSwapchain {
         funnel.celtium$noteStalledOnDeviceLoss();
         // The present must not order after work still sitting in the frame buffer: paths that reach here without
         // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
-        funnel.celtium$finishFrameBuffer();
+        owner.celtium$finishFrameBuffer();
         funnel.celtium$dropSplashCanvasesAtSplashEnd();
         // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
         // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
@@ -788,7 +788,7 @@ final class PresentSwapchain {
                 if (Lane2ImmediateRecorder.PRESENT_DRAIN_FINISH_GUARD) {
                     // If the present-time drain opened and recorded into the unified frame buffer,
                     // close and queue it before the lastFrameReachedQueue gate and presentDirect().
-                    funnel.celtium$finishFrameBuffer();
+                    owner.celtium$finishFrameBuffer();
                 }
             } catch (RuntimeException | LinkageError error) {
                 // A failed drain must not stop the present: the queued work keeps its owner, and whatever
@@ -832,7 +832,7 @@ final class PresentSwapchain {
         }
         boolean reached;
         try {
-            if (!funnel.ensureFrameTarget()) {
+            if (!owner.ensureFrameTarget()) {
                 funnel.presentSkipReason = "frame target not available";
                 funnel.presentSkips++;
                 funnel.presentSkipsByReason[3]++;
@@ -908,7 +908,7 @@ final class PresentSwapchain {
                     && funnel.skyPresentProbeLines < Lane2ImmediateRecorder.SKY_FRAME_PROBE_LIMIT
                     && funnel.frameTarget.colorImage() != 0L) {
                 funnel.skyPresentProbeLines++;
-                int[] presentFramePixels = funnel.celtium$readImageRectangle(funnel.frameTarget.colorImage(), 0, 0,
+                int[] presentFramePixels = owner.celtium$readImageRectangle(funnel.frameTarget.colorImage(), 0, 0,
                         funnel.targetWidth, funnel.targetHeight);
                 System.out.println("[Celtium] CELTIUM_SKY_PRESENT_PROBE present=" + (owner.framePresentedFromVulkan + 1)
                         + " frame=" + frame.frameId
@@ -1247,9 +1247,9 @@ final class PresentSwapchain {
             return;
         }
         if (current != null) {
-            funnel.celtium$registry().unpublishExternalImage(glTextureName);
+            owner.celtium$registry().unpublishExternalImage(glTextureName);
         }
-        VulkanGlTexture published = funnel.celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
+        VulkanGlTexture published = owner.celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
         if (published == null) {
             return;
         }
@@ -1303,9 +1303,9 @@ final class PresentSwapchain {
             return;
         }
         if (current != null) {
-            funnel.celtium$registry().unpublishExternalImage(glTextureName);
+            owner.celtium$registry().unpublishExternalImage(glTextureName);
         }
-        VulkanGlTexture published = funnel.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
+        VulkanGlTexture published = owner.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
                 width, height, declaredLayout);
         if (published == null) {
             return;
@@ -1324,14 +1324,14 @@ final class PresentSwapchain {
             it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = it.next();
             if (entry.getLongValue() != identity) continue;
             int name = entry.getIntKey();
-            funnel.celtium$registry().unpublishExternalImage(name);
+            owner.celtium$registry().unpublishExternalImage(name);
             funnel.publishedTextures.removePublished(name);
             this.publishedFrameImages.remove(name);
             this.publishedFrameImageSlots.remove(name);
             it.remove();
         }
         if (this.publishedChainOutput != null && this.publishedChainIdentity == identity) {
-            funnel.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+            owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainTexture = 0;
             this.publishedChainImage = 0L;
@@ -1347,7 +1347,7 @@ final class PresentSwapchain {
             it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = depthIt.next();
             int name = entry.getIntKey();
             if (funnel.publishedTextures.identityForDepthTexture(name) != identity) continue;
-            funnel.celtium$registry().unpublishExternalImage(name);
+            owner.celtium$registry().unpublishExternalImage(name);
             funnel.publishedTextures.removePublished(name);
             this.publishedFrameImages.remove(name);
             depthIt.remove();
@@ -1720,10 +1720,10 @@ final class PresentSwapchain {
                     int liveLayout = offTarget.sharedDepthLayout(depthKey);
                     republished = liveView == 0L || liveExtent == null
                             || liveLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED ? null
-                                    : funnel.celtium$registry().publishExternalDepthImage(name, live, liveView,
+                                    : owner.celtium$registry().publishExternalDepthImage(name, live, liveView,
                                             liveExtent[0], liveExtent[1], liveLayout);
                 } else {
-                    republished = funnel.celtium$registry().publishExternalImage(name, live,
+                    republished = owner.celtium$registry().publishExternalImage(name, live,
                             offTarget.chainPairColorViewAt(owner, this.publishedFrameImageSlots.get(name)),
                             funnel.targetWidth, funnel.targetHeight);
                     // A republished wrapper is a fresh wrapper: without the flag it declares SHADER_READ_ONLY over an
@@ -1739,7 +1739,7 @@ final class PresentSwapchain {
                     continue;
                 }
             }
-            funnel.celtium$registry().unpublishExternalImage(name);
+            owner.celtium$registry().unpublishExternalImage(name);
             this.publishedFrameImages.remove(name);
             this.publishedFrameImageIdentities.remove(name);
             this.publishedFrameImageSlots.remove(name);
@@ -1792,7 +1792,7 @@ final class PresentSwapchain {
                     return;
                 }
                 if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-                    funnel.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+                    owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
                     this.publishedChainOutput = null;
                     this.publishedChainImage = 0L;
                     return;
@@ -1821,7 +1821,7 @@ final class PresentSwapchain {
                     continue;
                 }
                 if (slotImage != 0L && slotView != 0L) {
-                    VulkanGlTexture republished = funnel.celtium$registry().publishExternalImage(name,
+                    VulkanGlTexture republished = owner.celtium$registry().publishExternalImage(name,
                             slotImage, slotView, funnel.targetWidth, funnel.targetHeight);
                 if (republished != null) {
                     republished.notePairImage(true);
@@ -1831,7 +1831,7 @@ final class PresentSwapchain {
                     continue;
                 }
                 }
-                funnel.celtium$registry().unpublishExternalImage(name);
+                owner.celtium$registry().unpublishExternalImage(name);
                 this.publishedFrameImages.remove(name);
                 this.publishedFrameImageIdentities.remove(name);
                 this.publishedFrameImageSlots.remove(name);
@@ -1843,7 +1843,7 @@ final class PresentSwapchain {
             return;
         }
         if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-            funnel.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+            owner.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainImage = 0L;
             return;

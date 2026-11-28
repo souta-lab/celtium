@@ -745,7 +745,7 @@ public final class Lane2ImmediateRecorder {
      * fragment below the near plane would clamp to depth 0 and the terrain would fight the depth buffer that
      * OpenGL wrote. Reused instead of allocated per frame.
      */
-    private final Matrix4f vulkanProjection = new Matrix4f();
+    final Matrix4f vulkanProjection = new Matrix4f();
 
     private int command0Logged;
 
@@ -1175,6 +1175,15 @@ public final class Lane2ImmediateRecorder {
                     + " failures=" + this.framebufferHintFailures + " error=" + describe(error));
         }
     }
+
+
+
+    /** Vanilla's framebuffer composites (framebufferRenderExt), drawn as native operations. */
+    final NativeFramebufferCompositor framebufferCompositor = new NativeFramebufferCompositor(this);
+
+
+    /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
+    final ModelReplay modelReplay = new ModelReplay(this);
 
     {
         // Eye planes are fixed under the model view at the glTexGen call, which is this mirror's.
@@ -2268,7 +2277,7 @@ public final class Lane2ImmediateRecorder {
      * by it for the same reason. It counts recordings, not submissions, and
      * is unrelated to the context's completed-submission epoch.
      */
-    private long recordingEpoch;
+    long recordingEpoch;
 
     /**
      * The shadow stage's own E10 census stream (E10 shadow preparation): a second
@@ -2422,7 +2431,7 @@ public final class Lane2ImmediateRecorder {
     private int lightBindPrints;
 
     /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
-    private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
+    static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
 
     static final boolean TEXTURE_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
@@ -3761,9 +3770,9 @@ public final class Lane2ImmediateRecorder {
      * {@link #celtium$closePipelinePrewarm} runs at the head of the release, and
      * {@link #celtium$ensurePipelinePrewarm} builds a fresh pair for the next world.
      */
-    private PipelinePrewarm pipelinePrewarm;
+    PipelinePrewarm pipelinePrewarm;
 
-    private PipelinePrewarmCompiler pipelinePrewarmCompiler;
+    PipelinePrewarmCompiler pipelinePrewarmCompiler;
 
     /** Whether the startup warm set has been registered and warmed for the current world. */
     private boolean pipelinePrewarmWarmed;
@@ -12887,7 +12896,7 @@ this.frame.frameBufferOpen = false;
         // The prewarm stops first: its background compiler creates pipelines into the caches
         // this method is about to empty, against the render pass this world is giving up.
         celtium$closePipelinePrewarm();
-        this.owner.framebufferCompositor.release();
+        this.framebufferCompositor.release();
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
         java.util.Arrays.fill(this.prepareCache, null);
@@ -17116,7 +17125,7 @@ this.frame.frameBufferOpen = false;
      * registers the name and advances the count. Returns -1 when the pool is unusable, in which
      * case the close is a no-op and nothing is registered.
      */
-    private int celtium$beginNamedPassTimestamp() {
+    int celtium$beginNamedPassTimestamp() {
         if (this.frame.timestampPool == 0L || !this.frame.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
             return -1;
         }
@@ -17128,7 +17137,7 @@ this.frame.frameBufferOpen = false;
 
 
     /** Closes a slot opened by {@link #celtium$beginNamedPassTimestamp} under the given stage name. */
-    private void celtium$closeNamedPassTimestamp(int slot, String name) {
+    void celtium$closeNamedPassTimestamp(int slot, String name) {
         if (slot < 0) {
             return;
         }
@@ -17220,7 +17229,7 @@ this.frame.frameBufferOpen = false;
      * {@code M * P} where {@code M} maps clip z from [-1, 1] to [0, 1] and leaves x, y and w alone. The Y axis is
      * handled by the negative-height viewport instead, so the OpenGL matrices and culling stay untouched.
      */
-    private Matrix4fc vulkanProjection(Matrix4fc projection) {
+    Matrix4fc vulkanProjection(Matrix4fc projection) {
         this.vulkanProjection.set(projection);
         // z: OpenGL clip depth [-1, 1] to Vulkan [0, 1]  ->  row 2 becomes 0.5 * (row 2 + row 3)
         float c0z = 0.5f * (projection.m02() + projection.m03());
@@ -17250,7 +17259,7 @@ this.frame.frameBufferOpen = false;
 
 
     /** The frame target's framebuffer for a render pass; see {@link FramebufferCache#frame}. */
-    private long ensureFramebuffer(long renderPass) {
+    long ensureFramebuffer(long renderPass) {
         return framebufferCache().frame(renderPass, this.frameTarget.colorView(), this.frameTarget.depthView(),
                 this.targetWidth, this.targetHeight);
     }
@@ -17807,7 +17816,7 @@ this.frame.frameBufferOpen = false;
      * (VUID-vkCmdDrawIndexed-None-04789, which the item's acceptance leg gates on), so the area is passed in rather
      * than read from the window. Every other pass passes the frame's extent, which is what this always used.
      */
-    private void setViewportAndScissor(MemoryStack stack, int areaWidth, int areaHeight) {
+    void setViewportAndScissor(MemoryStack stack, int areaWidth, int areaHeight) {
         // Both are dynamic state, and dynamic state is not reset by vkCmdBeginRenderPass: within one command buffer
         // the values a previous window set are still in force. The trackers below already hold what the buffer has
         // (they are reset to their never-matching sentinels at beginCommands), so a window that wants the same
@@ -20764,7 +20773,7 @@ this.frame.frameBufferOpen = false;
                 if (group.modelRun != null) {
                     // A captured segment in front of this group executes before the model run it precedes.
                     celtium$flushBatchSegment();
-                    this.owner.modelReplay.celtium$drawModelRun(group);
+                    this.modelReplay.celtium$drawModelRun(group);
                     this.frame.gpuMark("run");
                     // A model run is drawn from the replay's own instance buffer, but it is still a group in the queue
                     // and a clear can ride it exactly as it rides a mesh group. This path used to `continue` past the
@@ -21999,7 +22008,7 @@ this.frame.frameBufferOpen = false;
 
 
     /** Short float formatting for the readback line. */
-    private static String fmt(float value) {
+    static String fmt(float value) {
         return String.format(java.util.Locale.ROOT, "%.1f", Float.valueOf(value));
     }
 

@@ -709,7 +709,7 @@ final class BackendDiagnostics {
                 + " " + FallbackPaths.summary()
                 + " " + frame.context.celtium$slabPoolSummary()
                 + " " + frame.context.celtium$slabDrainSummary()
-                + " " + owner.framebufferCompositor.describe()
+                + " " + funnel.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + funnel.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + funnel.textureStats.dynamicTextureFills()
                 + " readbackByOrigin=" + (funnel.textureRegistry != null ? funnel.textureRegistry.readbackByOrigin() : "none")
@@ -909,11 +909,11 @@ final class BackendDiagnostics {
                         || funnel.immediateStatistics.immediateBatchesOffered() <= funnel.immediateSubmitBaselineOffered ? 0
                 : (funnel.immediateSubmitNanos - funnel.immediateSubmitBaselineNanos)
                         / (funnel.immediateStatistics.immediateBatchesOffered() - funnel.immediateSubmitBaselineOffered))
-                + " submitBuckets=[<5us:" + b.immediateSubmitUnder5 + " 5-50:" + b.immediateSubmit5to50
+                + " submitBuckets=[<5us:" + funnel.immediateSubmitUnder5 + " 5-50:" + funnel.immediateSubmit5to50
                 + " 50-200:" + funnel.immediateSubmit50to200 + " >200us:" + funnel.immediateSubmitTailCalls
                 + " tailMillis=" + (funnel.immediateStatistics.immediateSubmitTailNanos() / 1000000L) + "]"
-                + " tailCarried=[flush:" + b.tailCarriedFlush + " supply:" + b.tailCarriedSupply
-                + " both:" + b.tailCarriedBoth + " neither:" + funnel.tailCarriedNeither + "]"
+                + " tailCarried=[flush:" + funnel.tailCarriedFlush + " supply:" + funnel.tailCarriedSupply
+                + " both:" + funnel.tailCarriedBoth + " neither:" + funnel.tailCarriedNeither + "]"
                 // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached

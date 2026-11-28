@@ -218,7 +218,7 @@ final class ModelReplay {
             b.ensureUsableLightmap();
             // Resolved before the guard so a replay counts once either way: the light-map coordinate it samples and the
             // combine colour its record carries.
-            float[] lightCoord = b.celtium$lightmapForGroup();
+            float[] lightCoord = b.owner.celtium$lightmapForGroup();
             float[] combineColor = b.lighting.celtium$envCombineColor();
             // The whole replay, when it is the one this path resolved last time: measured need, leg r16b-model-growth-4k -
             // 2,509,753 replays in 112 frames and 781 ms in this path (311 ns a replay) while modelInstances reported 98
@@ -505,7 +505,7 @@ final class ModelReplay {
             return false;
         }
         if (b.textureRegistry == null) {
-            b.textureRegistry = b.celtium$registry();
+            b.textureRegistry = b.owner.celtium$registry();
         }
         VulkanGlTexture image = b.textureRegistry.get(texture);
         int textureIndex = image == null ? -1 : b.celtium$bindlessIndex(image, texture);
@@ -595,7 +595,7 @@ final class ModelReplay {
         if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frame.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
             // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
             // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.
-            float[] lm = b.celtium$lightmapForGroup();
+            float[] lm = b.owner.celtium$lightmapForGroup();
             System.out.println("[Celtium] CELTIUM_MODEL_LIGHT list=" + listId + " lit=" + state[8] + " t=["
                     + modelView[12] + "," + modelView[13] + "," + modelView[14] + "] params="
                     + (light == null ? "null" : java.util.Arrays.toString(light)) + " lightmap="
