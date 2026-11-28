@@ -77,7 +77,7 @@ public abstract class ShaderGroupMixin {
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean mainIsGame = this.mainFramebuffer == minecraft.getFramebuffer();
         CeltiumBackend current = CeltiumBackends.current();
-        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) {
+        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter backend)) {
             celtium$skip("unavailable");
             return;
         }

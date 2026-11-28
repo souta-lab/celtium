@@ -31,11 +31,11 @@ public class OpenGlHelperMixin {
             }
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
+            if (!(current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter)) {
                 return;
             }
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
-                    (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+            org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan =
+                    (org.soutalab.celtium.vulkan.VulkanBackendAdapter) current;
             int bound = org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getInteger(0x8CA6);
             if (bound == Integer.MIN_VALUE) {
                 bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER_BINDING);

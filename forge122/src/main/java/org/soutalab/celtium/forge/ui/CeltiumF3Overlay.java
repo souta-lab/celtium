@@ -64,7 +64,7 @@ public final class CeltiumF3Overlay {
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
             if (backend != null) {
                 cachedSection.add("Terrain backend: " + backend.getName());
-                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                     cachedSection.add(vulkan.celtium$lane1DiagnosticsSummary());
                 }
             }

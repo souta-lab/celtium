@@ -1638,6 +1638,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.blendFunc(sourceFactor, destinationFactor);
     }
 
+    public void celtium$noteGameFramebuffer(long identity, int colorTexture, int depthTexture) {
+        this.funnel.celtium$noteGameFramebuffer(identity, colorTexture, depthTexture);
+    }
+
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
         this.funnel.celtium$rawAttachmentTextureDeleted(framebuffer);
     }
@@ -1649,6 +1653,10 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         this.funnel.bindFramebufferColorTexture(framebufferIdentity, colorTexture, width, height);
+    }
+
+    public void celtium$noteFramebufferName(long identity, int framebufferObject) {
+        this.funnel.celtium$noteFramebufferName(identity, framebufferObject);
     }
 
     @Override

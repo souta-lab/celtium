@@ -52,11 +52,11 @@ public abstract class GlStateManagerMixin {
             // The experiment draws the list itself; the GL replay is cancelled only when that draw actually happened.
             // No name and no counter takes part in the decision: "another path drew this" is the whole justification, and
             // when the experiment is off nothing is drawn and nothing is cancelled.
-            if (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.modelDrawEnabled()) {
+            if (org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.modelDrawEnabled()) {
                 boolean drawn = false;
                 org.soutalab.celtium.vulkan.CeltiumBackend current =
                         org.soutalab.celtium.vulkan.CeltiumBackends.current();
-                if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                     int boundTexture = org.soutalab.celtium.vulkan.NativeTextureBindings.current().texture2d(0);
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }

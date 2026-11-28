@@ -117,7 +117,7 @@ public class TextureUtilMixin {
             // BH-36/panorama: a bounded caller census for the int[] path, because "the game uploaded white" and "our
             // path filled white" are the same mirror line otherwise. id 8 and 20 both report
             // source=announced-int[] content=opaque=65536/65536 firstOpaque=0xffffffff with announced=0.
-            boolean nameScoped = glTextureId == org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.uploadCallerId();
+            boolean nameScoped = glTextureId == org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.uploadCallerId();
             boolean censusDue = nameScoped ? celtium$uploadCallerLogs < 200 : celtium$uploadCallerLogs < 16;
             // The splash only runs before a world exists, so with a world loaded the stack has nothing to say unless the
             // census wants it: the walk ran on every int[] upload - Forge's cloud colour texture every frame and the
@@ -187,7 +187,7 @@ public class TextureUtilMixin {
             // mirror alive across its per-update uploads.
             org.soutalab.celtium.vulkan.CeltiumBackend backend =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 vulkan.onGlTextureReallocated(glTextureId, width, height);
                 // The id rides along too: this method's own parameter names the texture it writes, and aiming the
                 // pixels at whatever is bound at hook time is how they were landing in the wrong texture.
@@ -212,7 +212,7 @@ public class TextureUtilMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend backend =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 vulkan.onGlTextureReallocated(glTextureId);
             }
         } catch (RuntimeException | LinkageError ignored) {

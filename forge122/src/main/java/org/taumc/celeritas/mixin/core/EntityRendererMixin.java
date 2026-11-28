@@ -43,7 +43,7 @@ public abstract class EntityRendererMixin {
             // Outside every pass by construction: renderWorld opens the frame, renderWorldPass runs inside it.
             org.soutalab.celtium.vulkan.CeltiumBackend backend =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 vulkan.celtium$frameBoundary();
             }
         } catch (RuntimeException | LinkageError ignored) {
@@ -61,6 +61,9 @@ public abstract class EntityRendererMixin {
     private void celtium$worldPassTimedBegin(float partialTicks, long finishTimeNano,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("world");
+        // D7 section 4.2 (iii): the pack's world-pass entry is driven from this head and nowhere else;
+        // with no pack active it costs one packActive branch inside ShaderPackAccess.
+        org.soutalab.celtium.forge.ui.ShaderPackAccess.onWorldPassBegin(partialTicks);
     }
 
     @Inject(method = "func_78471_a", at = @At("RETURN"), require = 0)
@@ -250,9 +253,9 @@ public abstract class EntityRendererMixin {
             // batch arrives before the next announcement: the renderer then asks GL for the binding on this unit.
             if (!celtium$lightmapUnitSent) {
                 CeltiumBackend handover = CeltiumBackends.current();
-                if (handover instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                if (handover instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
                     celtium$lightmapUnitSent = true;
-                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) handover)
+                    ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) handover)
                             .celtium$setLightmapUnit(net.minecraft.client.renderer.OpenGlHelper.lightmapTexUnit);
                 }
             }

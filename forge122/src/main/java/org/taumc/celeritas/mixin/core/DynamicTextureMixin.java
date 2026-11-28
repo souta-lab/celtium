@@ -50,7 +50,7 @@ public class DynamicTextureMixin {
                     }
                 }
             }
-            if (celtium$pixels != null && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (celtium$pixels != null && backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 // Use the object's id AND stored dimensions. The old two-argument overload made a direct
                 // GL45C.glGetTextureLevelParameteri call, which can terminate the JVM before a fixture exists
                 // when the GL-less stub advertises an honest 3.0 compatibility version (PR #62/#63, BH-35).

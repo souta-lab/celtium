@@ -445,7 +445,7 @@ public final class CeltiumFontGlyphCapture {
                     + " blendSrc=" + org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().blendSrcRgb()
                     + " blendDst=" + org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().blendDstRgb()
                     + " tex2d=" + org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().texture2dEnabled()
-                    + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
+                    + " dump=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$mirrorProbe(
                             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId()));
         }
         // The startup windows run before a backend exists and before the overlay matrices are installed (identity), so
@@ -633,9 +633,9 @@ public final class CeltiumFontGlyphCapture {
                     + " f4=" + f4 + " uv=[" + f2 / 256.0F + "," + f3 / 256.0F + "->"
                     + (f2 + f4) / 256.0F + "," + (f3 + 15.98F) / 256.0F + "] pos=" + posX + "," + posY
                     + " boundTex=" + org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId()
-                    + " mirror=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorDims(
+                    + " mirror=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$mirrorDims(
                             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId())
-                    + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
+                    + " dump=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$mirrorProbe(
                             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId()));
         }
         windows++;
@@ -721,9 +721,9 @@ public final class CeltiumFontGlyphCapture {
                         + " f4=" + f4 + " uv=[" + ATLAS_UV[0] + "," + ATLAS_UV[1] + "->"
                         + ATLAS_UV[2] + "," + ATLAS_UV[3] + "] pos=" + posX + "," + posY
                         + " boundTex=" + org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId()
-                    + " mirror=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorDims(
+                    + " mirror=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$mirrorDims(
                             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId())
-                    + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
+                    + " dump=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$mirrorProbe(
                             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().boundTextureId()));
             }
             float f5 = italic ? 1.0F : 0.0F;
@@ -853,7 +853,7 @@ public final class CeltiumFontGlyphCapture {
             backend = CeltiumBackends.current();
         }
         try {
-            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 boolean taken = vulkan.celtium$fontAppend(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
                         FORMAT_ID, bufferedQuadsBase, bufferedVertexCount, GL_TRIANGLE_STRIP);
                 int takenThisFlush;
@@ -948,7 +948,7 @@ public final class CeltiumFontGlyphCapture {
         if (backend == bufferedHookBackend) {
             return;
         }
-        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
             vulkan.celtium$setFontPreFlush(CeltiumFontGlyphCapture::bufferedPreFlush);
             // The same wiring for the cheap question: whether this capture is holding glyphs at all.
             vulkan.celtium$setFontCaptureWork(CeltiumFontGlyphCapture::hasBufferedQuads);
@@ -1303,7 +1303,7 @@ public final class CeltiumFontGlyphCapture {
             // inside them, 46.6 us per glyph). The run is flushed at the entry of every other submission and at every
             // group/pass/frame boundary, which is what makes the coalescing order-safe. A backend that cannot take the
             // append (no run, a matrix change, a stall) falls back to the per-glyph submission below, unchanged.
-            boolean appended = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+            boolean appended = backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan
                     && vulkan.celtium$fontAppend(format, stride, formatId, vertexAddress, MAX_VERTICES, drawMode);
             taken = appended
                     || backend.submitImmediateBatch(format, stride, formatId, vertexAddress, MAX_VERTICES, drawMode);
@@ -1396,7 +1396,7 @@ public final class CeltiumFontGlyphCapture {
     private static String mirroredMatrices() {
         try {
             CeltiumBackend backend = CeltiumBackends.current();
-            if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
+            if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan)) {
                 return "mirror=none";
             }
             float[] projection = vulkan.celtium$mirroredProjection();
@@ -1492,7 +1492,7 @@ public final class CeltiumFontGlyphCapture {
     private static String batchSummary() {
         org.soutalab.celtium.vulkan.CeltiumBackend backend =
                 org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
             return vulkan.celtium$fontBatchSummary();
         }
         return "fontRunsStarted=0 fontQuadsAppended=0 flushedIntervening=0 flushedBoundary=0 flushedStateChange=0"
@@ -1512,7 +1512,7 @@ public final class CeltiumFontGlyphCapture {
     private static String runCensus() {
         org.soutalab.celtium.vulkan.CeltiumBackend backend =
                 org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
             return vulkan.celtium$fontRetentionSummary() + " " + vulkan.celtium$fontStateSummary()
                     + " " + vulkan.celtium$fontBakeSummary();
         }

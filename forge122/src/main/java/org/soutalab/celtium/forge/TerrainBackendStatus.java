@@ -51,7 +51,7 @@ public final class TerrainBackendStatus {
         try {
             Object backend = CeltiumBackends.current();
             return backend != null
-                    && "org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend".equals(backend.getClass().getName());
+                    && "org.soutalab.celtium.vulkan.VulkanBackendAdapter".equals(backend.getClass().getName());
         } catch (RuntimeException | LinkageError absent) {
             return false;
         }

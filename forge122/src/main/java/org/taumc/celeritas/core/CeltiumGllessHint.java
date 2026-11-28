@@ -586,7 +586,7 @@ public final class CeltiumGllessHint {
         }
         int index = light - 0x4000; // GL_LIGHT0
         var state = org.soutalab.celtium.vulkan.CeltiumBackends.current()
-                instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+                instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan ? vulkan : null;
         if (state == null || index < 0 || index >= 2) {
             // Only as many components as this pname has: GL_SPOT_CUTOFF and the attenuation terms are single floats,
             // and writing four into a one-float buffer is an overwrite the driver would never do.
@@ -690,7 +690,7 @@ public final class CeltiumGllessHint {
         }
         int index = light - 0x4000;
         var state = org.soutalab.celtium.vulkan.CeltiumBackends.current()
-                instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+                instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan ? vulkan : null;
         if (state != null && index >= 0 && index < 2 && pname == 0x1203) {
             float[] directions = state.celtium$lightDirections();
             for (int i = 0; i < 3; i++) {
@@ -1745,7 +1745,7 @@ public final class CeltiumGllessHint {
                 org.soutalab.celtium.vulkan.FramebufferBindings.current().forgetName(name);
                 int color = org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().colorTexture(name);
                 var backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
-                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                     vulkan.celtium$rawFramebufferDeleted(name, color);
                 }
                 org.soutalab.celtium.vulkan.FramebufferAttachmentTable.current().framebufferDeleted(name);
@@ -3246,7 +3246,7 @@ public final class CeltiumGllessHint {
      * The serialisation that {@code RenderAheadManager} wants is not lost with it. Its fence exists to stop the CPU
      * running ahead of the GPU and to keep a persistently-mapped staging buffer from being overwritten before the
      * frame using it has finished. Under this renderer that bound is the frame-slot fence:
-     * {@code VulkanTerrainGpuBackend} acquires a slot per frame and, when the slot's previous submission is still in
+     * {@code VulkanBackendAdapter} acquires a slot per frame and, when the slot's previous submission is still in
      * flight, waits on that slot's own {@code vkWaitForFences} before it may reset and re-record it (the slot-reuse
      * wait, "OPT-08's retirement rule"), with a fixed number of slots. So at most {@code FRAME_SLOTS} submissions can
      * be in flight, which is the same bound the GL fence pair enforced.

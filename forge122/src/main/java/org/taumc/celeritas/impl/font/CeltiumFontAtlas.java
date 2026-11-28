@@ -175,7 +175,7 @@ public final class CeltiumFontAtlas {
             // Reproducing the tester's black screen needs a group that samples this atlas; menus that draw text through
             // the renderer's own font path have none. This hands the exact GL name to the renderer, which mirrors it the
             // way the group path would - including the whole-content upload the crash ends on.
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$requestDebugMirror(atlasName);
+            org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.celtium$requestDebugMirror(atlasName);
         }
     }
 

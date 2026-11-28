@@ -626,7 +626,7 @@ public class MinecraftMixin {
         // displayCrashReport), so the report and the throw live here, in the renderer's shape.
         org.soutalab.celtium.vulkan.CeltiumBackend installed =
                 org.soutalab.celtium.vulkan.CeltiumBackends.current();
-        if (installed instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend) {
+        if (installed instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkanBackend) {
             String swapchainFailure = vulkanBackend.celtium$swapchainCreationFailure();
             if (swapchainFailure != null) {
                 IllegalStateException failure = new IllegalStateException(swapchainFailure);
@@ -645,7 +645,7 @@ public class MinecraftMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan) {
                 // The frame's pending work is flushed at GL draw and bind boundaries, and a GL-less frame crosses none
                 // of them - measured on legs gv-cohort-fix154/155, where submitCommands was never entered and every
                 // present skipped with "no completed frame waiting". This is the boundary both paths do reach, so the
@@ -658,7 +658,7 @@ public class MinecraftMixin {
             // The failure itself is counted and reported on the backend (drawpath audit DP-14): this
             // catch used to discard it without a trace, so a present that threw every frame - in
             // GL-less, where the swap below is a no-op - silently deleted the frame's presentation.
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$noteSwapPointException("present", error);
+            org.soutalab.celtium.vulkan.VulkanBackendAdapter.celtium$noteSwapPointException("present", error);
         }
     }
 
@@ -676,7 +676,7 @@ public class MinecraftMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan
                     && vulkan.celtium$consumeSwapPendingFromVulkan()) {
                 // The frame is already on the swapchain, so only the swap is skipped: processMessages() is
                 // everything Display.update() does besides it - GLFW's events, the mouse position and the resize
@@ -690,7 +690,7 @@ public class MinecraftMixin {
             // A frame must still be shown if this fails, so the swap below happens.
             // Counted and reported like the present catch above (DP-14): a boundary flush or consume
             // that throws here otherwise leaves no record that the swap decision was ever reached.
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$noteSwapPointException("swap", error);
+            org.soutalab.celtium.vulkan.VulkanBackendAdapter.celtium$noteSwapPointException("swap", error);
         }
         org.lwjgl.opengl.Display.update();
     }

@@ -49,8 +49,8 @@ public abstract class FramebufferMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
+                ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) current)
                         .celtium$noteFramebufferHintFailure(seat, error);
             }
         } catch (RuntimeException | LinkageError ignored) {
@@ -62,7 +62,7 @@ public abstract class FramebufferMixin {
     @Inject(method = "func_178038_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$nativeComposite(int width, int height, boolean opaque, CallbackInfo info) {
         CeltiumBackend current = CeltiumBackends.current();
-        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) return;
+        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter backend)) return;
         Framebuffer self = (Framebuffer) (Object) this;
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
         backend.compositeFramebuffer(System.identityHashCode(self), mc.getFramebuffer() == self,
@@ -91,7 +91,7 @@ public abstract class FramebufferMixin {
     @Inject(method = "func_147608_a", at = @At("RETURN"), require = 0)
     private void celtium$retireDeletedFramebuffer(CallbackInfo info) {
         CeltiumBackend current = CeltiumBackends.current();
-        if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend) {
+        if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter backend) {
             backend.celtium$forgetDeletedFramebuffer(System.identityHashCode(this));
         }
     }
@@ -106,14 +106,14 @@ public abstract class FramebufferMixin {
             net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
                 // Which framebuffer this is decides whether a size difference means "the shared images are being
                 // replaced". The game binds its own differently-sized framebuffers on purpose (the loading screen's is
                 // 468x1018 against the window's 854x480), and treating those as a replacement made the next ordering
                 // flush drop the pending groups - the splash's own composite among them.
                 net.minecraft.client.Minecraft owner = net.minecraft.client.Minecraft.getMinecraft();
                 boolean main = owner != null && owner.getFramebuffer() == self;
-                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
+                ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) current)
                         .celtium$noteBindSize(self.framebufferWidth, self.framebufferHeight, main);
             }
         } catch (RuntimeException | LinkageError error) {
@@ -125,8 +125,8 @@ public abstract class FramebufferMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend probeBackend =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
+            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
+                ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) probeBackend)
                         .celtium$noteGlErrorAt("after bindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
             }
         } catch (RuntimeException | LinkageError error) {
@@ -179,13 +179,13 @@ public abstract class FramebufferMixin {
             // white clear then lands on the chain pair the logo was drawn into (measured: CELTIUM_FBO_CENSUS
             // name=23 identity=0x512b5e2 boundAsMain=false, and the presented loading frame stayed one colour).
             // The field is the fact, and the census is the one place that answers main-ness.
-            if (mc != null && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+            if (mc != null && backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
                 // The game's own framebuffer object, read through its accessor (the field itself is private): what
                 // matters is that it is asked on every bind, so the answer arrives while the splash's own framebuffer
                 // is the one being bound.
                 net.minecraft.client.shader.Framebuffer game = mc.getFramebuffer();
                 if (game != null) {
-                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$noteGameFramebuffer(
+                    ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) backend).celtium$noteGameFramebuffer(
                             System.identityHashCode(game), game.framebufferTexture, game.depthBuffer);
                 }
             }
@@ -194,8 +194,8 @@ public abstract class FramebufferMixin {
             // framebuffer is the measured case - its creation routed no glFramebufferTexture2D through the stub, so
             // the colour-texture chain cannot resolve it.
             if (self.framebufferObject != 0
-                    && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$noteFramebufferName(
+                    && backend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
+                ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) backend).celtium$noteFramebufferName(
                         identity, self.framebufferObject);
             }
         }
@@ -217,11 +217,11 @@ public abstract class FramebufferMixin {
             }
             org.soutalab.celtium.vulkan.CeltiumBackend current =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
+            if (!(current instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter)) {
                 return;
             }
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
-                    (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+            org.soutalab.celtium.vulkan.VulkanBackendAdapter vulkan =
+                    (org.soutalab.celtium.vulkan.VulkanBackendAdapter) current;
             // The framebuffer's own size is handed down as a fallback: the bound colour attachment can be a shared
             // image that died with a previous backend instance (a world change recreates the backend but not this
             // framebuffer), which reads back as 0x0 and leaves the frame target unbuildable forever otherwise.
@@ -259,8 +259,8 @@ public abstract class FramebufferMixin {
         try {
             org.soutalab.celtium.vulkan.CeltiumBackend probeBackend =
                     org.soutalab.celtium.vulkan.CeltiumBackends.current();
-            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
+            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanBackendAdapter) {
+                ((org.soutalab.celtium.vulkan.VulkanBackendAdapter) probeBackend)
                         .celtium$noteGlErrorAt("before unbindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
             }
         } catch (RuntimeException | LinkageError error) {
