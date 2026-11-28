@@ -161,7 +161,10 @@ public class PresentedFrameTrackerTestDriver {
                 tracker.snapshotCurrentWindow());
     }
 
-    static PresentedFrameTracker.VerdictEvaluation runPreWorldLeakShouldFail() {
+    static PresentedFrameTracker.VerdictEvaluation runPreWorldPresentsOutsideWindow() {
+        // The counter already stands at 17 before the first world frame (title/loading presents) and
+        // presents every world frame after that. Those pre-world presents belong outside the window:
+        // the verdict is about this world's frames, and the count is reported on its own line instead.
         PresentedFrameTracker tracker = new PresentedFrameTracker();
         for (int wf = 1; wf <= 128; wf++) {
             tracker.onWorldFrame(wf, 0x1111, 17 + wf, 0, 17 + wf, 17 + wf);
@@ -199,6 +202,7 @@ public class PresentedFrameTrackerTestDriver {
     public static void main(String[] args) {
         PresentedFrameTracker.VerdictEvaluation normal = runNormalSingleWorld();
         check(normal.passed && normal.delta == 0, "normal single world passes with delta 0");
+        check(normal.preWorldPresented == 0, "normal single world has no pre-world presents");
 
         PresentedFrameTracker.VerdictEvaluation rl1 = runRlcraftWithSkips(685, 683, 12, 700);
         check(rl1.passed, "RLCraft run 1 (683 skips) passes");
@@ -229,8 +233,10 @@ public class PresentedFrameTrackerTestDriver {
         PresentedFrameTracker.VerdictEvaluation swap = runBackendIdentityChange();
         check(swap.passed && Math.abs(swap.delta) <= 1, "backend identity change passes");
 
-        PresentedFrameTracker.VerdictEvaluation leak = runPreWorldLeakShouldFail();
-        check(!leak.passed && leak.delta == 18, "pre-world counter leak still fails");
+        PresentedFrameTracker.VerdictEvaluation preWorld = runPreWorldPresentsOutsideWindow();
+        check(preWorld.passed && preWorld.delta == 0, "pre-world presents are outside the window and pass");
+        check(preWorld.preWorldPresented == 18,
+                "pre-world presents are counted on their own line (counter at first world frame)");
 
         PresentedFrameTracker.VerdictEvaluation failedPresents = runFailedSwapchainShouldFail();
         check(!failedPresents.passed, "failed swapchain presents still fail");
@@ -294,6 +300,7 @@ class TestPresentedFrameTracker(unittest.TestCase):
         self.assertIn("new PresentedFrameTracker()", src)
         self.assertIn("celtium$frameTracker.onWorldFrame(", src)
         self.assertIn("celtium$frameTracker.evaluate(", src)
+        self.assertIn("picturePreWorldPresented_", src)
         self.assertIn("celtium$skipsAtArrival", src)
         # Ensure FMLModContainer annotation scanning never sees a hard VulkanTerrainGpuBackend signature.
         for line in src.splitlines():
