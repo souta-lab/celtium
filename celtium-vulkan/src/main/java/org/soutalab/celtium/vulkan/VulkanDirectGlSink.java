@@ -31,6 +31,7 @@ import java.util.Map;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VK11;
 import org.lwjgl.vulkan.VK13;
 import org.lwjgl.vulkan.VkClearAttachment;
 import org.lwjgl.vulkan.VkClearRect;
@@ -676,10 +677,15 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
                 int aspects = depthAspects(rec.format);
                 rec.depth = createAttachmentImage(width, height, rec.format,
                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, aspects);
-                if (textures.publishDirectGlDepthAttachment(id, rec.depth.image(), rec.depth.sampleView(),
-                        width, height, aspects) == null) {
+                try {
+                    if (textures.publishDirectGlDepthAttachment(id, rec.depth.image(), rec.depth.sampleView(),
+                            width, height, aspects) == null) {
+                        retireAttachment(rec.depth);
+                        return 0;
+                    }
+                } catch (RuntimeException | Error failure) {
                     retireAttachment(rec.depth);
-                    return 0;
+                    throw failure;
                 }
             }
             textureRecs.put((long) id, rec);
@@ -771,11 +777,16 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         @Override
         public long createFramebuffer(long[] colorTextureIds, long depthTextureId, int width, int height) {
             BackendCallCounters.noteLane3SinkCall();
-            TextureRec colorRec = colorTextureIds.length == 0 ? null : textureRecs.get(colorTextureIds[0]);
+            long colorTextureId = colorTextureIds == null || colorTextureIds.length == 0 ? 0 : colorTextureIds[0];
+            TextureRec colorRec = textureRecs.get(colorTextureId);
             TextureRec depthRec = textureRecs.get(depthTextureId);
-            VulkanGlTexture colorTexture = colorRec == null ? null : textures.existing((int) colorTextureIds[0]);
-            if (colorTexture != null && (colorRec.depth != null || colorRec.width < width || colorRec.height < height)
-                    || depthRec != null && (depthRec.depth == null || depthRec.width < width || depthRec.height < height)) {
+            VulkanGlTexture colorTexture = colorRec == null ? null : textures.existing((int) colorTextureId);
+            if (colorTextureId != 0 && (colorTexture == null || colorRec.depth != null
+                    || colorRec.width < width || colorRec.height < height)) {
+                return 0;
+            }
+            if (depthTextureId != 0 && (depthRec == null || depthRec.depth == null
+                    || depthRec.width < width || depthRec.height < height)) {
                 return 0;
             }
 
@@ -969,9 +980,9 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         if (srcDelta == 0 || dstDelta == 0) {
             return null;
         }
-        double srcAtZero = -src0 / srcDelta;
+        double srcAtZero = -(double) src0 / srcDelta;
         double srcAtLimit = (srcLimit - (double) src0) / srcDelta;
-        double dstAtZero = -dst0 / dstDelta;
+        double dstAtZero = -(double) dst0 / dstDelta;
         double dstAtLimit = (dstLimit - (double) dst0) / dstDelta;
         double start = Math.max(0, Math.max(Math.min(srcAtZero, srcAtLimit), Math.min(dstAtZero, dstAtLimit)));
         double end = Math.min(1, Math.min(Math.max(srcAtZero, srcAtLimit), Math.max(dstAtZero, dstAtLimit)));
@@ -1015,8 +1026,8 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         }
         int srcFeatures = formatFeatures(stack, source.format());
         int dstFeatures = sameFormat ? srcFeatures : formatFeatures(stack, destination.format());
-        if ((srcFeatures & org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) == 0
-                || (dstFeatures & org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT) == 0) {
+        if ((srcFeatures & VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) == 0
+                || (dstFeatures & VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT) == 0) {
             return null;
         }
         boolean copy = sameFormat && region.srcX1() - region.srcX0() == region.dstX1() - region.dstX0()
@@ -1084,20 +1095,21 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
 
     private int attachmentFormat(int glFormat) {
         return switch (glFormat) {
-            case 0x81A5 -> VK10.VK_FORMAT_D16_UNORM; // GL_DEPTH_COMPONENT16
-            case 0x81A6 -> VK10.VK_FORMAT_X8_D24_UNORM_PACK32; // GL_DEPTH_COMPONENT24
+            case 0x81A5 -> depthFormatOr(VK10.VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT);
+            case 0x81A6 -> depthFormatOr(VK10.VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D32_SFLOAT);
             case 0x1902, 0x81A7, 0x8CAC -> VK_FORMAT_D32_SFLOAT; // GL_DEPTH_COMPONENT, 32, 32F
-            case 0x84F9, 0x88F0 -> { // GL_DEPTH_STENCIL, GL_DEPTH24_STENCIL8
-                int required = VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
-                        | VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-                try (MemoryStack stack = MemoryStack.stackPush()) {
-                    yield (formatFeatures(stack, VK10.VK_FORMAT_D24_UNORM_S8_UINT) & required) == required
-                            ? VK10.VK_FORMAT_D24_UNORM_S8_UINT : VK10.VK_FORMAT_D32_SFLOAT_S8_UINT;
-                }
-            }
+            case 0x84F9, 0x88F0 -> depthFormatOr(VK10.VK_FORMAT_D24_UNORM_S8_UINT, VK10.VK_FORMAT_D32_SFLOAT_S8_UINT);
             case 0x8CAD -> VK10.VK_FORMAT_D32_SFLOAT_S8_UINT; // GL_DEPTH32F_STENCIL8
             default -> VK_FORMAT_R8G8B8A8_UNORM;
         };
+    }
+
+    private int depthFormatOr(int preferred, int fallback) {
+        int needed = VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
+                | VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return (formatFeatures(stack, preferred) & needed) == needed ? preferred : fallback;
+        }
     }
 
     private static int depthAspects(int format) {
@@ -1119,6 +1131,7 @@ public final class VulkanDirectGlSink implements DirectGlVulkanSink, DirectGlSin
         if (image == null) {
             return VK_IMAGE_LAYOUT_UNDEFINED;
         }
+        // Slab attachments use the registry's submission-aware layout record, including their first UNDEFINED use.
         return image.layout() == VK_IMAGE_LAYOUT_UNDEFINED
                 ? VulkanGlTexture.recordingLayoutOf(cmd.address(), image.handle()) : image.layout();
     }

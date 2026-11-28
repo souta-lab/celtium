@@ -21,6 +21,7 @@ public final class DirectGlFrameBridge {
     /**
      * Images of the active main rendering. Color is slot zero. Both images are single-sampled and
      * support transfer source and destination usage. The layouts must match the owner's rendering.
+     * The owner stores attachments when rendering ends so the sink can resume with LOAD.
      */
     public record MainImages(long colorImage, int colorLayout, long depthImage, int depthLayout,
                              boolean stencilAttached) {

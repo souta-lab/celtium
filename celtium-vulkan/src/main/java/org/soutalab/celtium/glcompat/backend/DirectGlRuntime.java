@@ -620,9 +620,6 @@ final class DirectGlRuntime {
 
     public void clear(int mask) {
         int aspects = framebufferAspects(mask);
-        if (!this.depthMask) {
-            aspects &= ~DirectGlVulkanSink.DEPTH_ASPECT;
-        }
         clearFramebuffer(aspects, this.clearColor[0], this.clearColor[1], this.clearColor[2],
                 this.clearColor[3], (float) this.clearDepth, this.clearStencil);
     }
@@ -654,6 +651,15 @@ final class DirectGlRuntime {
     }
 
     private void clearFramebuffer(int aspects, float r, float g, float b, float a, float depth, int stencil) {
+        if (!this.depthMask) {
+            aspects &= ~DirectGlVulkanSink.DEPTH_ASPECT;
+        }
+        if (this.stencilWriteMask == 0) {
+            aspects &= ~DirectGlVulkanSink.STENCIL_ASPECT;
+        }
+        if (!this.colorMask[0] && !this.colorMask[1] && !this.colorMask[2] && !this.colorMask[3]) {
+            aspects &= ~DirectGlVulkanSink.COLOR_ASPECT;
+        }
         if (this.sink == null || aspects == 0) {
             return;
         }
@@ -1953,17 +1959,13 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        rec.renderbufferAttachments.remove(attachment);
         if (texture == 0) {
             rec.textureAttachments.remove(attachment);
         } else {
             rec.textureAttachments.put(attachment, texture);
         }
-        if (rec.sinkCreated && this.sink != null) {
-            this.sink.framebufferOps().destroyFramebuffer(rec.sinkId);
-            rec.sinkCreated = false;
-            rec.sinkId = 0L;
-        }
-        updateFboExtent(rec);
+        invalidateFramebuffer(rec);
     }
 
     private void attachRenderbuffer(int fboId, int attachment, int renderbuffer) {
@@ -1971,37 +1973,42 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        rec.textureAttachments.remove(attachment);
         if (renderbuffer == 0) {
             rec.renderbufferAttachments.remove(attachment);
         } else {
             rec.renderbufferAttachments.put(attachment, renderbuffer);
         }
-        if (rec.sinkCreated && this.sink != null) {
-            this.sink.framebufferOps().destroyFramebuffer(rec.sinkId);
-            rec.sinkCreated = false;
-            rec.sinkId = 0L;
-        }
-        updateFboExtent(rec);
+        invalidateFramebuffer(rec);
     }
 
-    private void updateFboExtent(DirectGlRecords.Framebuffer rec) {
-        int width = 0, height = 0;
+    private void invalidateFramebuffer(DirectGlRecords.Framebuffer rec) {
+        if (rec.sinkCreated && this.sink != null) {
+            this.sink.framebufferOps().destroyFramebuffer(rec.sinkId);
+        }
+        rec.sinkCreated = false;
+        rec.sinkId = 0L;
+        updateFramebufferExtent(rec);
+    }
+
+    private void updateFramebufferExtent(DirectGlRecords.Framebuffer rec) {
+        int width = Integer.MAX_VALUE, height = Integer.MAX_VALUE;
         for (int textureId : rec.textureAttachments.values()) {
             DirectGlRecords.Texture texture = this.textures.get(textureId);
             if (texture != null) {
-                width = Math.max(width, texture.width);
-                height = Math.max(height, texture.height);
+                width = Math.min(width, texture.width);
+                height = Math.min(height, texture.height);
             }
         }
         for (int rbId : rec.renderbufferAttachments.values()) {
             DirectGlRecords.Renderbuffer rb = this.renderbuffers.get(rbId);
             if (rb != null) {
-                width = Math.max(width, rb.width);
-                height = Math.max(height, rb.height);
+                width = Math.min(width, rb.width);
+                height = Math.min(height, rb.height);
             }
         }
-        rec.width = width;
-        rec.height = height;
+        rec.width = width == Integer.MAX_VALUE ? 0 : width;
+        rec.height = height == Integer.MAX_VALUE ? 0 : height;
     }
 
     public void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
@@ -2143,7 +2150,17 @@ final class DirectGlRuntime {
     }
 
     public void deleteRenderbuffers(int renderbuffer) {
-        this.renderbuffers.remove(renderbuffer);
+        DirectGlRecords.Renderbuffer rec = this.renderbuffers.remove(renderbuffer);
+        if (rec != null) {
+            for (DirectGlRecords.Framebuffer fbo : this.framebuffers.values()) {
+                if (fbo.renderbufferAttachments.values().removeIf(id -> id == renderbuffer)) {
+                    invalidateFramebuffer(fbo);
+                }
+            }
+            if (this.sink != null && rec.sinkTextureId != 0L) {
+                this.sink.textureOps().destroyTexture(rec.sinkTextureId);
+            }
+        }
         if (this.boundRenderbuffer == renderbuffer) {
             this.boundRenderbuffer = 0;
         }
@@ -2167,13 +2184,20 @@ final class DirectGlRuntime {
         if (rec == null) {
             return;
         }
+        long previous = rec.sinkTextureId;
+        rec.sinkTextureId = this.sink == null || width <= 0 || height <= 0 ? 0L
+                : this.sink.textureOps().createTexture2D(width, height, internalformat, 1);
         rec.internalFormat = internalformat;
         rec.width = width;
         rec.height = height;
         rec.samples = samples;
-        if (this.sink != null && rec.sinkTextureId == 0L) {
-            // A renderbuffer is a sink texture the framebuffer assembly references by id.
-            rec.sinkTextureId = this.sink.textureOps().createTexture2D(width, height, internalformat, 1);
+        for (DirectGlRecords.Framebuffer fbo : this.framebuffers.values()) {
+            if (fbo.renderbufferAttachments.containsValue(this.boundRenderbuffer)) {
+                invalidateFramebuffer(fbo);
+            }
+        }
+        if (this.sink != null && previous != 0L) {
+            this.sink.textureOps().destroyTexture(previous);
         }
     }
 
@@ -2213,13 +2237,14 @@ final class DirectGlRuntime {
                 colorSinkId = rb.sinkTextureId;
             }
         }
+        updateFramebufferExtent(rec);
         if (rec.width <= 0 || rec.height <= 0) {
             return 0L;
         }
         rec.sinkId = this.sink.framebufferOps().createFramebuffer(
                 colorSinkId == 0L ? new long[0] : new long[] {colorSinkId},
                 depthSinkId, rec.width, rec.height);
-        rec.sinkCreated = true;
+        rec.sinkCreated = rec.sinkId != 0L;
         return rec.sinkId;
     }
 

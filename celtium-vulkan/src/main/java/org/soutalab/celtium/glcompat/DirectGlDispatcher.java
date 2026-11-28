@@ -24,6 +24,7 @@ import org.soutalab.celtium.glcompat.backend.DirectGlExecutor;
 public final class DirectGlDispatcher {
 
     private static LightStateRegister register;
+    private static final ThreadLocal<Integer> LANE3_DEPTH = ThreadLocal.withInitial(() -> 0);
 
     private DirectGlDispatcher() {
     }
@@ -43,11 +44,22 @@ public final class DirectGlDispatcher {
      * state, and the register is marked entered (its values are no longer stale).
      */
     public static void enterLane3() {
+        int depth = LANE3_DEPTH.get();
+        if (depth > 0) {
+            LANE3_DEPTH.set(depth + 1);
+            return;
+        }
         LightStateRegister current = register;
         if (current != null) {
             DirectGlExecutor.EXECUTOR.syncFromRegister(current);
             current.markLane3Entered();
         }
+        LANE3_DEPTH.set(1);
+    }
+
+    /** Whether the caller is inside a converter excursion on this thread. */
+    public static boolean inLane3() {
+        return LANE3_DEPTH.get() != 0;
     }
 
     /**
@@ -55,6 +67,12 @@ public final class DirectGlDispatcher {
      * the register is marked dirty for its Lane 2 readers.
      */
     public static void exitLane3() {
+        int depth = LANE3_DEPTH.get();
+        if (depth > 1) {
+            LANE3_DEPTH.set(depth - 1);
+            return;
+        }
+        LANE3_DEPTH.remove();
         LightStateRegister current = register;
         if (current != null) {
             DirectGlExecutor.EXECUTOR.syncToRegister(current);

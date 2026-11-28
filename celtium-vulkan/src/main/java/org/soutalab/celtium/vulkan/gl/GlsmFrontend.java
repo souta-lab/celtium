@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.soutalab.celtium.glcompat.DirectGlDispatcher;
+import org.soutalab.celtium.glcompat.backend.DirectGlExecutor;
 import org.soutalab.celtium.vulkan.CeltiumBackend;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 import org.soutalab.celtium.vulkan.RenderObjectIds;
@@ -4094,6 +4096,13 @@ public final class GlsmFrontend implements FunctionProvider {
 
     /** {@code glClearBufferfv} from the transformer's route: colour or depth, with the caller's value. */
     public static void celtium$clearBufferfv(int buffer, int drawBuffer, long value) {
+        if (DirectGlDispatcher.inLane3()) {
+            if (value != 0L && (buffer == 0x1800 || buffer == 0x1801)) { // GL_COLOR or GL_DEPTH
+                DirectGlExecutor.EXECUTOR.clearBufferfv(buffer, drawBuffer,
+                        org.lwjgl.system.MemoryUtil.memFloatBuffer(value, buffer == 0x1800 ? 4 : 1));
+            }
+            return;
+        }
         GlsmFrontend stub = installed;
         if (stub == null || value == 0L) {
             return;
@@ -4124,8 +4133,30 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
+    public static void celtium$clearBufferiv(int buffer, int drawBuffer, long value) {
+        if (DirectGlDispatcher.inLane3()) {
+            if (value != 0L && buffer == 0x1802) { // GL_STENCIL
+                DirectGlExecutor.EXECUTOR.clearBufferiv(buffer, drawBuffer,
+                        org.lwjgl.system.MemoryUtil.memIntBuffer(value, 1));
+            }
+            return;
+        }
+        celtium$clearBufferfv(buffer, drawBuffer, value);
+    }
+
+    public static void celtium$clearBufferuiv(int buffer, int drawBuffer, long value) {
+        if (!DirectGlDispatcher.inLane3()) {
+            celtium$clearBufferfv(buffer, drawBuffer, value);
+        }
+        // Lane 3's framebuffer colors are normalized, so it has no unsigned integer color target.
+    }
+
     /** {@code glClearBufferfi} from the transformer's route: the depth/stencil pair clear. */
     public static void celtium$clearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
+        if (DirectGlDispatcher.inLane3()) {
+            DirectGlExecutor.EXECUTOR.clearBufferfi(buffer, drawBuffer, depth, stencil);
+            return;
+        }
         GlsmFrontend stub = installed;
         if (stub == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
             return;

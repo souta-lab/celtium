@@ -2340,7 +2340,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitVarInsn(Opcodes.LLOAD, 2);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                        "glClearBufferfv", "(IIJ)V", false);
+                        name.substring(name.lastIndexOf("glClearBuffer")), "(IIJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
