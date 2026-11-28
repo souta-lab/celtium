@@ -3,13 +3,16 @@ package org.soutalab.celtium.vulkan;
 /**
  * The frame-stats report (the backend's {@code FRAME_STATS} switch, resolved through the harness):
  * frame intervals, bracket timings and per-family counters, printed as one CELTIUM_FRAME_STATS line
- * every 120 frames. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * every 120 frames. Moved out of {@link VulkanBackendAdapter} unchanged (2026-11-06).
  */
 final class FrameStatsReport {
-    private final VulkanTerrainGpuBackend b;
+    private final FrameCoordinator frame;
+    private final Lane2ImmediateRecorder funnel;
+    VulkanBackendAdapter owner;
 
-    FrameStatsReport(VulkanTerrainGpuBackend backend) {
-        this.b = backend;
+    FrameStatsReport(FrameCoordinator frame, Lane2ImmediateRecorder funnel) {
+        this.frame = frame;
+        this.funnel = funnel;
     }
 
     /** The frame-stats report's frame intervals and the previous report's counter values. */
@@ -69,10 +72,10 @@ final class FrameStatsReport {
     void celtium$frameStatsReport(String where) {
         long now = System.nanoTime();
         if (this.lastFrameBoundaryNanos != 0L) {
-            this.frameIntervals[b.frameIntervalCount++] = now - this.lastFrameBoundaryNanos;
+            this.frameIntervals[funnel.frameIntervalCount++] = now - this.lastFrameBoundaryNanos;
         }
         this.lastFrameBoundaryNanos = now;
-        if (b.frameIntervalCount < this.frameIntervals.length) {
+        if (funnel.frameIntervalCount < this.frameIntervals.length) {
             return;
         }
         // Snapshotted before the report is built, so the deltas describe the frames this report covers.
@@ -80,27 +83,27 @@ final class FrameStatsReport {
         long descriptorBindTotal = VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
-        long submitDelta = b.immediateSubmitNanos - this.lastImmediateSubmitNanos;
-        this.lastImmediateSubmitNanos = b.immediateSubmitNanos;
-        long acceptDecideDelta = b.acceptDecideNanos - this.lastAcceptDecideNanos;
-        long acceptPreflightDelta = b.acceptPreflightNanos - this.lastAcceptPreflightNanos;
-        long acceptTailDelta = b.acceptTailNanos - this.lastAcceptTailNanos;
-        long appendDelta = b.immediateStatistics.appendNanos() - this.lastAppendNanos;
-        this.lastAcceptDecideNanos = b.acceptDecideNanos;
-        this.lastAcceptPreflightNanos = b.acceptPreflightNanos;
-        this.lastAcceptTailNanos = b.acceptTailNanos;
-        this.lastAppendNanos = b.immediateStatistics.appendNanos();
-        this.lastAcceptedBatches = b.immediateStatistics.immediateBatchesOffered();
+        long submitDelta = funnel.immediateSubmitNanos - this.lastImmediateSubmitNanos;
+        this.lastImmediateSubmitNanos = funnel.immediateSubmitNanos;
+        long acceptDecideDelta = funnel.acceptDecideNanos - this.lastAcceptDecideNanos;
+        long acceptPreflightDelta = funnel.acceptPreflightNanos - this.lastAcceptPreflightNanos;
+        long acceptTailDelta = funnel.acceptTailNanos - this.lastAcceptTailNanos;
+        long appendDelta = funnel.immediateStatistics.appendNanos() - this.lastAppendNanos;
+        this.lastAcceptDecideNanos = funnel.acceptDecideNanos;
+        this.lastAcceptPreflightNanos = funnel.acceptPreflightNanos;
+        this.lastAcceptTailNanos = funnel.acceptTailNanos;
+        this.lastAppendNanos = funnel.immediateStatistics.appendNanos();
+        this.lastAcceptedBatches = funnel.immediateStatistics.immediateBatchesOffered();
         long drawFormDelta = VulkanDynamicMesh.DRAW_FORM_BINDS - this.lastDrawFormBinds;
         long bindFormDelta = VulkanDynamicMesh.BIND_FORM_BINDS - this.lastBindFormBinds;
         this.lastDrawFormBinds = VulkanDynamicMesh.DRAW_FORM_BINDS;
         this.lastBindFormBinds = VulkanDynamicMesh.BIND_FORM_BINDS;
-        long arenaPromotionsDelta = (b.frameArena == null ? 0 : b.frameArena.promotions()) - this.lastArenaPromotions;
-        long arenaBlockedDelta = (b.frameArena == null ? 0 : b.frameArena.blockedOpenings()) - this.lastArenaBlocked;
-        long arenaFallbacksDelta = b.submissionStatistics.frameArenaFallbackGroups() - this.lastArenaFallbacks;
-        this.lastArenaPromotions = b.frameArena == null ? 0 : b.frameArena.promotions();
-        this.lastArenaBlocked = b.frameArena == null ? 0 : b.frameArena.blockedOpenings();
-        this.lastArenaFallbacks = b.submissionStatistics.frameArenaFallbackGroups();
+        long arenaPromotionsDelta = (frame.frameArena == null ? 0 : frame.frameArena.promotions()) - this.lastArenaPromotions;
+        long arenaBlockedDelta = (frame.frameArena == null ? 0 : frame.frameArena.blockedOpenings()) - this.lastArenaBlocked;
+        long arenaFallbacksDelta = frame.submissionStatistics.frameArenaFallbackGroups() - this.lastArenaFallbacks;
+        this.lastArenaPromotions = frame.frameArena == null ? 0 : frame.frameArena.promotions();
+        this.lastArenaBlocked = frame.frameArena == null ? 0 : frame.frameArena.blockedOpenings();
+        this.lastArenaFallbacks = frame.submissionStatistics.frameArenaFallbackGroups();
         long itemPipelineDelta = VulkanImmediateItemRecordsPipeline.ITEM_PIPELINE_NANOS - this.lastItemPipelineNanos;
         long itemDescriptorDelta = VulkanImmediateItemRecordsPipeline.ITEM_DESCRIPTOR_NANOS - this.lastItemDescriptorNanos;
         long itemViewDelta = VulkanImmediateItemRecordsPipeline.ITEM_VIEW_NANOS - this.lastItemViewNanos;
@@ -111,30 +114,30 @@ final class FrameStatsReport {
         this.lastItemViewNanos = VulkanImmediateItemRecordsPipeline.ITEM_VIEW_NANOS;
         this.lastItemPushNanos = VulkanImmediateItemRecordsPipeline.ITEM_PUSH_NANOS;
         this.lastItemMeshNanos = VulkanImmediateItemRecordsPipeline.ITEM_MESH_NANOS;
-        long preTransformedDelta = b.immediateStatistics.preTransformedGroups() - this.lastPreTransformed;
-        long matrixSplitsDelta = b.immediateStatistics.matrixSplits() - this.lastMatrixSplits;
-        this.lastPreTransformed = b.immediateStatistics.preTransformedGroups();
-        this.lastMatrixSplits = b.immediateStatistics.matrixSplits();
-        long textureCountDelta = b.textureDrawCount - this.lastTextureDrawCount;
-        long itemCountDelta = b.itemDrawCount - this.lastItemDrawCount;
-        long blockCountDelta = b.blockDrawCount - this.lastBlockDrawCount;
-        long particleCountDelta = b.particleDrawCount - this.lastParticleDrawCount;
-        long genericCountDelta = b.genericDrawCount - this.lastGenericDrawCount;
-        this.lastTextureDrawCount = b.textureDrawCount;
-        this.lastItemDrawCount = b.itemDrawCount;
-        this.lastBlockDrawCount = b.blockDrawCount;
-        this.lastParticleDrawCount = b.particleDrawCount;
-        this.lastGenericDrawCount = b.genericDrawCount;
-        long textureDrawDelta = b.textureDrawNanos - this.lastTextureDrawNanos;
-        long itemDrawDelta = b.itemDrawNanos - this.lastItemDrawNanos;
-        long blockDrawDelta = b.blockDrawNanos - this.lastBlockDrawNanos;
-        long particleDrawDelta = b.particleDrawNanos - this.lastParticleDrawNanos;
-        long genericDrawDelta = b.genericDrawNanos - this.lastGenericDrawNanos;
-        this.lastTextureDrawNanos = b.textureDrawNanos;
-        this.lastItemDrawNanos = b.itemDrawNanos;
-        this.lastBlockDrawNanos = b.blockDrawNanos;
-        this.lastParticleDrawNanos = b.particleDrawNanos;
-        this.lastGenericDrawNanos = b.genericDrawNanos;
+        long preTransformedDelta = funnel.immediateStatistics.preTransformedGroups() - this.lastPreTransformed;
+        long matrixSplitsDelta = funnel.immediateStatistics.matrixSplits() - this.lastMatrixSplits;
+        this.lastPreTransformed = funnel.immediateStatistics.preTransformedGroups();
+        this.lastMatrixSplits = funnel.immediateStatistics.matrixSplits();
+        long textureCountDelta = funnel.textureDrawCount - this.lastTextureDrawCount;
+        long itemCountDelta = funnel.itemDrawCount - this.lastItemDrawCount;
+        long blockCountDelta = funnel.blockDrawCount - this.lastBlockDrawCount;
+        long particleCountDelta = funnel.particleDrawCount - this.lastParticleDrawCount;
+        long genericCountDelta = funnel.genericDrawCount - this.lastGenericDrawCount;
+        this.lastTextureDrawCount = funnel.textureDrawCount;
+        this.lastItemDrawCount = funnel.itemDrawCount;
+        this.lastBlockDrawCount = funnel.blockDrawCount;
+        this.lastParticleDrawCount = funnel.particleDrawCount;
+        this.lastGenericDrawCount = funnel.genericDrawCount;
+        long textureDrawDelta = funnel.textureDrawNanos - this.lastTextureDrawNanos;
+        long itemDrawDelta = funnel.itemDrawNanos - this.lastItemDrawNanos;
+        long blockDrawDelta = funnel.blockDrawNanos - this.lastBlockDrawNanos;
+        long particleDrawDelta = funnel.particleDrawNanos - this.lastParticleDrawNanos;
+        long genericDrawDelta = funnel.genericDrawNanos - this.lastGenericDrawNanos;
+        this.lastTextureDrawNanos = funnel.textureDrawNanos;
+        this.lastItemDrawNanos = funnel.itemDrawNanos;
+        this.lastBlockDrawNanos = funnel.blockDrawNanos;
+        this.lastParticleDrawNanos = funnel.particleDrawNanos;
+        this.lastGenericDrawNanos = funnel.genericDrawNanos;
         long viewDelta = VulkanImmediateTextureRecordsPipeline.VIEW_NANOS - this.lastViewNanos;
         long pushDelta = VulkanImmediateTextureRecordsPipeline.PUSH_CALL_NANOS - this.lastPushCallNanos;
         long meshDelta = VulkanImmediateTextureRecordsPipeline.MESH_BIND_NANOS - this.lastMeshBindNanos;
@@ -144,73 +147,73 @@ final class FrameStatsReport {
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 
-        if (VulkanTerrainGpuBackend.BUFFER_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_BUFFER_CENSUS groups=" + b.bufferCensusGroups
-                    + " vertexBuffers=" + b.bufferCensusVertexBuffers.size()
-                    + " indexBuffers=" + b.bufferCensusIndexBuffers.size()
-                    + " arenaBacked=" + b.bufferCensusArenaBacked
-                    + " owning=" + b.bufferCensusOwning);
-            b.bufferCensusGroups = 0L;
-            b.bufferCensusArenaBacked = 0L;
-            b.bufferCensusOwning = 0L;
-            b.bufferCensusVertexBuffers.clear();
-            b.bufferCensusIndexBuffers.clear();
+        if (Lane2ImmediateRecorder.BUFFER_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_BUFFER_CENSUS groups=" + funnel.bufferCensusGroups
+                    + " vertexBuffers=" + funnel.bufferCensusVertexBuffers.size()
+                    + " indexBuffers=" + funnel.bufferCensusIndexBuffers.size()
+                    + " arenaBacked=" + funnel.bufferCensusArenaBacked
+                    + " owning=" + funnel.bufferCensusOwning);
+            funnel.bufferCensusGroups = 0L;
+            funnel.bufferCensusArenaBacked = 0L;
+            funnel.bufferCensusOwning = 0L;
+            funnel.bufferCensusVertexBuffers.clear();
+            funnel.bufferCensusIndexBuffers.clear();
         }
-        if (VulkanTerrainGpuBackend.GROUP_CENSUS) {
+        if (Lane2ImmediateRecorder.GROUP_CENSUS) {
             StringBuilder census = new StringBuilder();
             String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
-            for (int i = 0; i < b.groupCensusCounts.length; i++) {
-                if (b.groupCensusCounts[i] == 0) {
+            for (int i = 0; i < funnel.groupCensusCounts.length; i++) {
+                if (funnel.groupCensusCounts[i] == 0) {
                     continue;
                 }
                 int family = i / 4;
                 int state = i % 4;
                 census.append(' ').append(families[family]).append((state & 2) != 0 ? "/blend" : "/opaque")
-                        .append((state & 1) != 0 ? "+dw" : "-dw").append('=').append(b.groupCensusCounts[i]);
+                        .append((state & 1) != 0 ? "+dw" : "-dw").append('=').append(funnel.groupCensusCounts[i]);
             }
-            System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + b.groupCensusMain + census);
-            java.util.Arrays.fill(b.groupCensusCounts, 0L);
-            b.groupCensusMain = 0;
+            System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + funnel.groupCensusMain + census);
+            java.util.Arrays.fill(funnel.groupCensusCounts, 0L);
+            funnel.groupCensusMain = 0;
         }
-        if (VulkanTerrainGpuBackend.DRAW_KEY_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + b.drawKeyGroups
-                    + " distinctKeys=" + b.drawKeyCounts.size()
-                    + " switches=" + b.drawKeySwitches
-                    + " largestBucket=" + b.drawKeyLargest
-                    + " arrayKeyRuns=" + (b.arrayKeyGroups - b.arrayKeySwitches)
-                    + " arrayKeySwitches=" + b.arrayKeySwitches
-                    + " arrayKeyDistinct=" + b.arrayKeyCounts.size()
-                    + " arrayKeyLargest=" + b.arrayKeyLargest);
-            b.drawKeyGroups = 0L;
-            b.drawKeySwitches = 0L;
-            b.drawKeyPrevious = 0L;
-            b.drawKeyLargest = 0;
-            b.drawKeyCounts.clear();
-            b.arrayKeyGroups = 0L;
-            b.arrayKeySwitches = 0L;
-            b.arrayKeyPrevious = 0L;
-            b.arrayKeyLargest = 0;
-            b.arrayKeyCounts.clear();
+        if (Lane2ImmediateRecorder.DRAW_KEY_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + funnel.drawKeyGroups
+                    + " distinctKeys=" + funnel.drawKeyCounts.size()
+                    + " switches=" + funnel.drawKeySwitches
+                    + " largestBucket=" + funnel.drawKeyLargest
+                    + " arrayKeyRuns=" + (funnel.arrayKeyGroups - funnel.arrayKeySwitches)
+                    + " arrayKeySwitches=" + funnel.arrayKeySwitches
+                    + " arrayKeyDistinct=" + funnel.arrayKeyCounts.size()
+                    + " arrayKeyLargest=" + funnel.arrayKeyLargest);
+            funnel.drawKeyGroups = 0L;
+            funnel.drawKeySwitches = 0L;
+            funnel.drawKeyPrevious = 0L;
+            funnel.drawKeyLargest = 0;
+            funnel.drawKeyCounts.clear();
+            funnel.arrayKeyGroups = 0L;
+            funnel.arrayKeySwitches = 0L;
+            funnel.arrayKeyPrevious = 0L;
+            funnel.arrayKeyLargest = 0;
+            funnel.arrayKeyCounts.clear();
         }
-        if (VulkanTerrainGpuBackend.RETAINED_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + b.retainedCensusGroups
-                    + " retainedAtAccept=" + b.retainedAccept
-                    + " preTransformEligible=" + b.preTransformEligible
-                    + " retained=" + b.retainedCensusRetained
-                    + " distinctMeshes=" + b.retainedCensusByMesh.size()
-                    + " largestBucket=" + b.retainedCensusLargest);
-            b.retainedCensusGroups = 0L;
-            b.retainedAccept = 0L;
-            b.preTransformEligible = 0L;
-            b.retainedCensusRetained = 0L;
-            b.retainedCensusLargest = 0;
-            b.retainedCensusByMesh.clear();
+        if (Lane2ImmediateRecorder.RETAINED_CENSUS) {
+            System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + funnel.retainedCensusGroups
+                    + " retainedAtAccept=" + funnel.retainedAccept
+                    + " preTransformEligible=" + funnel.preTransformEligible
+                    + " retained=" + funnel.retainedCensusRetained
+                    + " distinctMeshes=" + funnel.retainedCensusByMesh.size()
+                    + " largestBucket=" + funnel.retainedCensusLargest);
+            funnel.retainedCensusGroups = 0L;
+            funnel.retainedAccept = 0L;
+            funnel.preTransformEligible = 0L;
+            funnel.retainedCensusRetained = 0L;
+            funnel.retainedCensusLargest = 0;
+            funnel.retainedCensusByMesh.clear();
         }
-        long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, b.frameIntervalCount);
+        long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, funnel.frameIntervalCount);
         java.util.Arrays.sort(sorted);
         long p50 = sorted[sorted.length / 2];
         System.out.println("[Celtium] CELTIUM_FRAME_STATS site=" + where
-                + " frames=" + b.frameIntervalCount
+                + " frames=" + funnel.frameIntervalCount
                 + " ms[p50=" + String.format(java.util.Locale.ROOT, "%.2f", p50 / 1e6)
                 + " p95=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[(int) (sorted.length * 0.95)] / 1e6)
                 + " min=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[0] / 1e6)
@@ -218,27 +221,27 @@ final class FrameStatsReport {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + " " + b.celtium$prewarmSummary()
-                + (VulkanTerrainGpuBackend.BATCH_TIMINGS ? b.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
-                        + b.batchDistSummary() : "")
-                + " append[ms=" + (b.immediateStatistics.appendNanos() / 1000000L) + "]"
-                + " prepare[nanos=" + b.immediateStatistics.prepareImmediateNanos()
-                + " calls=" + b.immediateStatistics.prepareImmediateCalls()
+                + " " + funnel.celtium$prewarmSummary()
+                + (Lane2ImmediateRecorder.BATCH_TIMINGS ? funnel.offerStageNanosSummary() + " " + funnel.acceptSpanSummary() + " "
+                        + funnel.batchDistSummary() : "")
+                + " append[ms=" + (funnel.immediateStatistics.appendNanos() / 1000000L) + "]"
+                + " prepare[nanos=" + funnel.immediateStatistics.prepareImmediateNanos()
+                + " calls=" + funnel.immediateStatistics.prepareImmediateCalls()
                 + " perFrameMs=" + String.format(java.util.Locale.ROOT, "%.2f",
-                        b.immediateStatistics.prepareImmediateNanos() / 1e6
+                        funnel.immediateStatistics.prepareImmediateNanos() / 1e6
                                 / Math.max(1L, this.debugFrameReports))
                 + "]"
-                + (VulkanTerrainGpuBackend.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
-                + " texCopy[calls=" + b.copyReadSide.textureCopyCalls + " totalMs=" + (b.copyReadSide.textureCopyNanos / 1000000L) + "]"
-                + " copyBlit[refusals=" + b.textureCopyService.textureCopyBlitRefusals()
-                + " last=" + b.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lazyMirror[supplies=" + b.lazyMirrorSupplies + " rawWriteRefreshes=" + b.rawWriteRefreshes
-                + " current=" + b.rawWriteAlreadyCurrent
-                + " skips=" + b.lazyMirrorRetrySkips
-                + " failures=" + b.lazyMirrorFailures + "(supply=" + b.lazyMirrorSupplyFailures
-                + " raw=" + b.rawWriteFailures + " coalesced=" + b.coalescedRawWriteFailures + ")"
-                + " deferred=" + b.lazyMirrorDeferrals + " empty=" + b.lazyMirrorEmptyDeferrals
-                + " last=[" + b.lastLazyMirrorFailure + "]]"
+                + (Lane2ImmediateRecorder.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
+                + " texCopy[calls=" + owner.copyReadSide.textureCopyCalls + " totalMs=" + (owner.copyReadSide.textureCopyNanos / 1000000L) + "]"
+                + " copyBlit[refusals=" + owner.textureCopyService.textureCopyBlitRefusals()
+                + " last=" + owner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
+                + " lazyMirror[supplies=" + funnel.lazyMirrorSupplies + " rawWriteRefreshes=" + funnel.rawWriteRefreshes
+                + " current=" + funnel.rawWriteAlreadyCurrent
+                + " skips=" + funnel.lazyMirrorRetrySkips
+                + " failures=" + funnel.lazyMirrorFailures + "(supply=" + funnel.lazyMirrorSupplyFailures
+                + " raw=" + funnel.rawWriteFailures + " coalesced=" + funnel.coalescedRawWriteFailures + ")"
+                + " deferred=" + funnel.lazyMirrorDeferrals + " empty=" + funnel.lazyMirrorEmptyDeferrals
+                + " last=[" + funnel.lastLazyMirrorFailure + "]]"
                 // Which textures the supply part of the accept path is actually paying for. The count alone could not
                 // say: `rawWriteRefreshes` is 11-12 a world frame on the shipped profile and the supply part is 60% of
                 // the accept path, but "a mod re-declaring a texture it did not change" (now suppressed by the stub's
@@ -249,20 +252,20 @@ final class FrameStatsReport {
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
-                + b.celtium$terrainPerFrameSummary(b.frameIntervalCount)
-                + " preflush[groupsPerFrame=" + (b.preflushFrames == 0 ? 0
-                        : b.preflushGroupsDrained / b.preflushFrames) + "]"
-                + " framesNoClear=" + b.framesWithNoClearAtAll
-                + " drawn[perFrame=" + b.celtium$drawnGroupsPerFrame() + "]"
-                + " modelMerge[draws=" + b.modelRunsDrawn + " merged=" + b.modelRunsMerged + "]"
+                + funnel.celtium$terrainPerFrameSummary(funnel.frameIntervalCount)
+                + " preflush[groupsPerFrame=" + (funnel.preflushFrames == 0 ? 0
+                        : funnel.preflushGroupsDrained / funnel.preflushFrames) + "]"
+                + " framesNoClear=" + funnel.framesWithNoClearAtAll
+                + " drawn[perFrame=" + funnel.celtium$drawnGroupsPerFrame() + "]"
+                + " modelMerge[draws=" + funnel.modelRunsDrawn + " merged=" + funnel.modelRunsMerged + "]"
                 // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
                 // if the second number falls, and a zero on the first says the predicate never fired.
-                + " preTransform[groups=" + (b.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)
-                + " matrixSplits=" + (b.immediateStatistics.matrixSplits() - this.lastMatrixSplits) + "]"
+                + " preTransform[groups=" + (funnel.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)
+                + " matrixSplits=" + (funnel.immediateStatistics.matrixSplits() - this.lastMatrixSplits) + "]"
                 // Windows per frame: each window is a render pass plus a submission, and the A/B that removed the drawing
                 // left 0.5 ms a frame in the window machinery, so this count is what says whether coalescing windows is
                 // worth anything.
-                + " windows[perFrameX100=" + b.celtium$windowsPerFrameX100() + "]"
+                + " windows[perFrameX100=" + funnel.celtium$windowsPerFrameX100() + "]"
                 // The arena hypothesis for the 6 microseconds a mesh bind costs: a mesh that could not borrow one of the
                 // frame arena's slices owns its buffers, and owning buffers means two binds per draw that cannot be
                 // deduplicated. Promotion and fallback counts say whether that is happening at all.
@@ -274,7 +277,7 @@ final class FrameStatsReport {
                 + " forms[draw=" + drawFormDelta + " bind=" + bindFormDelta + "]"
                 // The accept path's split per frame, not cumulatively: the JFR puts submitImmediateBatch at the top of
                 // the render thread and the counters for its parts existed, but only as run totals.
-                + " acceptPerFrame[batches=" + (b.immediateStatistics.immediateBatchesOffered() - this.lastAcceptedBatches)
+                + " acceptPerFrame[batches=" + (funnel.immediateStatistics.immediateBatchesOffered() - this.lastAcceptedBatches)
                 + " decideMs=" + (acceptDecideDelta / 1_000_000L)
                 + " preflightMs=" + (acceptPreflightDelta / 1_000_000L)
                 + " tailMs=" + (acceptTailDelta / 1_000_000L)
@@ -304,10 +307,10 @@ final class FrameStatsReport {
                 // The frame's own serialisation: the fence wait on a slot, counted where vkWaitForFences is called. The
                 // pre-terrain flush reads 2.8 ms with zero groups, so this is the number that says whether that time is
                 // waiting for the GPU rather than working.
-                + " frameFenceWait[count=" + b.submissionStatistics.frameFenceWaitCount()
-                + " totalMs=" + b.submissionStatistics.frameFenceWaitMillis()
-                + " worstMs=" + b.submissionStatistics.frameFenceWaitWorstMillis() + "]");
+                + " frameFenceWait[count=" + frame.submissionStatistics.frameFenceWaitCount()
+                + " totalMs=" + frame.submissionStatistics.frameFenceWaitMillis()
+                + " worstMs=" + frame.submissionStatistics.frameFenceWaitWorstMillis() + "]");
         this.debugFrameReports++;
-        b.frameIntervalCount = 0;
+        funnel.frameIntervalCount = 0;
     }
 }

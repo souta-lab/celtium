@@ -5,7 +5,7 @@ import java.nio.IntBuffer;
 import org.lwjgl.system.MemoryStack;
 
 /**
- * The read side of the copy, extracted from {@code VulkanTerrainGpuBackend} (refactoring plan R11).
+ * The read side of the copy, extracted from {@code VulkanBackendAdapter} (refactoring plan R11).
  * <p>
  * What lives here is the banner region that began with the {@code glCopyTexImage2D} /
  * {@code glCopyTexSubImage2D} read side: the colour and depth copies and the {@link TextureCopyService}
@@ -24,10 +24,15 @@ import org.lwjgl.system.MemoryStack;
  */
 final class CopyReadSide {
 
-    private final VulkanTerrainGpuBackend backend;
+    private final FrameCoordinator frame;
+    private final Lane2ImmediateRecorder funnel;
+    private final PresentSwapchain present;
+    VulkanBackendAdapter owner;
 
-    CopyReadSide(VulkanTerrainGpuBackend backend) {
-        this.backend = backend;
+    CopyReadSide(FrameCoordinator frame, Lane2ImmediateRecorder funnel, PresentSwapchain present) {
+        this.frame = frame;
+        this.funnel = funnel;
+        this.present = present;
     }
 
     // ---- glCopyTexImage2D / glCopyTexSubImage2D: the read side of the copy --------------------------------------
@@ -141,7 +146,7 @@ final class CopyReadSide {
             return "invalid depth copy arguments: source=" + sourceDepthTexture + " dest=" + destDepthTexture
                     + " " + width + "x" + height;
         }
-        GllessFrameTarget target = this.backend.offTargetTarget();
+        GllessFrameTarget target = funnel.offTargetTarget();
         if (target == null) {
             return "the depth copy has no frame target to serve from";
         }
@@ -155,7 +160,7 @@ final class CopyReadSide {
             // already drawn into whatever target it drew into, not into a pair created now), so the refusal
             // stands, but the store is filled for the frames that follow.
             int sourceFbo = FramebufferAttachmentTable.current().framebufferForDepthTexture(sourceDepthTexture);
-            if (sourceFbo != 0) this.backend.celtium$registerRawFramebuffer(sourceFbo, false);
+            if (sourceFbo != 0) funnel.celtium$registerRawFramebuffer(sourceFbo, false);
             return "the depth copy's source texture " + sourceDepthTexture
                     + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
         }
@@ -163,7 +168,7 @@ final class CopyReadSide {
             // The destination's content is defined by this copy, so registering it now is exact rather than late:
             // its framebuffer's pair borrows the shared depth image and the copy lands in it below.
             int destFbo = FramebufferAttachmentTable.current().framebufferForDepthTexture(destDepthTexture);
-            if (destFbo != 0) this.backend.celtium$registerRawFramebuffer(destFbo, false);
+            if (destFbo != 0) funnel.celtium$registerRawFramebuffer(destFbo, false);
             destImage = target.sharedDepthImage(destKey);
             if (destImage == 0L) {
                 return "the depth copy's destination texture " + destDepthTexture
@@ -190,11 +195,11 @@ final class CopyReadSide {
                     + xoffset + "," + yoffset + " is not inside the shared depth images";
         }
         // The copy's ordering flush, not a draw boundary (the window census' stamp).
-        this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-        this.backend.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_COPY_ORDER);
+        funnel.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
+        funnel.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_COPY_ORDER);
         int sourceFrom = target.sharedDepthLayout(sourceKey);
         int destFrom = target.sharedDepthLayout(destKey);
-        org.lwjgl.vulkan.VkCommandBuffer commands = this.backend.context.beginCommands();
+        org.lwjgl.vulkan.VkCommandBuffer commands = frame.context.beginCommands();
         try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barriers =
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(2, stack);
@@ -265,13 +270,13 @@ final class CopyReadSide {
 
             org.lwjgl.vulkan.VkCommandBuffer submitted = commands;
             commands = null;
-            this.backend.context.celtium$submitDeferred(submitted, 0L);
-            this.backend.context.celtium$flushBatchedSubmits();
+            frame.context.celtium$submitDeferred(submitted, 0L);
+            frame.context.celtium$flushBatchedSubmits();
         } catch (RuntimeException | LinkageError error) {
-            if (commands != null && !this.backend.context.celtium$isDeviceLost()) {
-                this.backend.context.celtium$abandonCommands(commands);
+            if (commands != null && !frame.context.celtium$isDeviceLost()) {
+                frame.context.celtium$abandonCommands(commands);
             }
-            if (this.backend.context.celtium$isDeviceLost()) {
+            if (frame.context.celtium$isDeviceLost()) {
                 throw error;
             }
             return "the native depth copy threw: " + error;
@@ -374,38 +379,38 @@ final class CopyReadSide {
     private final class CopyHost implements TextureCopyService.Host {
         @Override
         public VulkanContext context() {
-            return CopyReadSide.this.backend.context;
+            return frame.context;
         }
 
         @Override
         public FrameImageTarget frameTarget() {
-            return CopyReadSide.this.backend.frameTarget;
+            return funnel.frameTarget;
         }
 
         @Override
         public GllessFrameTarget offTargetTarget() {
-            return CopyReadSide.this.backend.offTargetTarget();
+            return funnel.offTargetTarget();
         }
 
         @Override
         public int targetWidth() {
-            return CopyReadSide.this.backend.targetWidth;
+            return funnel.targetWidth;
         }
 
         @Override
         public int targetHeight() {
-            return CopyReadSide.this.backend.targetHeight;
+            return funnel.targetHeight;
         }
 
         /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
         @Override
         public long targetGeneration() {
-            return CopyReadSide.this.backend.targetRegistry.generation();
+            return funnel.targetRegistry.generation();
         }
 
         @Override
         public long frameId() {
-            return CopyReadSide.this.backend.frameId;
+            return frame.frameId;
         }
 
         /**
@@ -414,105 +419,105 @@ final class CopyReadSide {
          */
         @Override
         public long presentSerial() {
-            return CopyReadSide.this.backend.celtium$presentCount;
+            return funnel.celtium$presentCount;
         }
 
         /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
         @Override
         public long mainTargetIdentity() {
-            return CopyReadSide.this.backend.targetRegistry.mainIdentity();
+            return funnel.targetRegistry.mainIdentity();
         }
 
         @Override
         public int framebufferColorTextureName(long identity) {
-            return CopyReadSide.this.backend.framebufferColorTextureName(identity);
+            return funnel.framebufferColorTextureName(identity);
         }
 
         @Override
         public long currentRenderTarget() {
-            return CopyReadSide.this.backend.targetRegistry.currentIdentity();
+            return funnel.targetRegistry.currentIdentity();
         }
 
         @Override
         public boolean currentRenderTargetIsMain() {
-            return CopyReadSide.this.backend.targetRegistry.currentIsMain();
+            return funnel.targetRegistry.currentIsMain();
         }
 
         @Override
         public long lastDrawnOffTargetIdentity() {
-            return CopyReadSide.this.backend.lastDrawnOffTargetIdentity;
+            return funnel.lastDrawnOffTargetIdentity;
         }
 
         @Override
         public long lastDrawnOffTargetFrame() {
-            return CopyReadSide.this.backend.lastDrawnOffTargetFrame;
+            return funnel.lastDrawnOffTargetFrame;
         }
 
         @Override
         public long lastDrawnOffTargetPresent() {
-            return CopyReadSide.this.backend.lastDrawnOffTargetPresent;
+            return funnel.lastDrawnOffTargetPresent;
         }
 
         @Override
         public long lastDrawnImage() {
-            return CopyReadSide.this.backend.lastDrawnImage;
+            return funnel.lastDrawnImage;
         }
 
         @Override
         public long lastDrawnFrame() {
-            return CopyReadSide.this.backend.lastDrawnFrame;
+            return funnel.lastDrawnFrame;
         }
 
         @Override
         public long lastDrawnEpoch() {
-            return CopyReadSide.this.backend.lastDrawnEpoch;
+            return funnel.lastDrawnEpoch;
         }
 
         @Override
         public long passAttachedColorImage() {
-            return CopyReadSide.this.backend.passAttachedColorImage;
+            return funnel.passAttachedColorImage;
         }
 
         @Override
         public int passSubmissions() {
-            return CopyReadSide.this.backend.terrainStatistics.passSubmissions();
+            return funnel.terrainStatistics.passSubmissions();
         }
 
         @Override
         public int immediateWindowsThisFrame() {
-            return CopyReadSide.this.backend.immediateStatistics.immediateWindowsThisFrame();
+            return funnel.immediateStatistics.immediateWindowsThisFrame();
         }
 
         @Override
         public boolean immediateWindowBusy() {
-            return CopyReadSide.this.backend.immediateWindowBusy;
+            return funnel.immediateWindowBusy;
         }
 
         @Override
         public int immediateGroupCount() {
-            return CopyReadSide.this.backend.immediateGroups.size();
+            return funnel.immediateGroups.size();
         }
 
         @Override
         public boolean worldPassActive() {
-            return CopyReadSide.this.backend.worldPassActive;
+            return funnel.worldPassActive;
         }
 
         public boolean hasPendingImmediateWork() {
             // The group being filled counts: the panorama copies a rectangle it drew into in the same call sequence,
             // so the draw is in this group and not in a queued one when the copy asks whether anything is pending.
-            return CopyReadSide.this.backend.currentGroupUsed
-                    || !CopyReadSide.this.backend.immediateGroups.isEmpty();
+            return funnel.currentGroupUsed
+                    || !funnel.immediateGroups.isEmpty();
         }
 
         @Override
         public int recordedImmediateGroupCount() {
-            return CopyReadSide.this.backend.recordedImmediateGroups.size();
+            return frame.recordedImmediateGroups.size();
         }
 
         @Override
         public int currentGroupBatches() {
-            return CopyReadSide.this.backend.currentGroupBatches;
+            return funnel.currentGroupBatches;
         }
 
         @Override
@@ -524,50 +529,50 @@ final class CopyReadSide {
         public void flushPendingBeforeGlDraw() {
             // The copy host's flush is the copy path's ordering contract (TextureCopyService's own
             // statement of it), not a draw boundary: stamp it so its windows count as order.
-            CopyReadSide.this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
+            funnel.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             // The copy service's ordering flushes all arrive through this one delegation, so the E2
             // census stamps them here (item 695): copy-order is the call point, whichever copy asked.
-            CopyReadSide.this.backend.celtium$flushPendingForGlDrawCause(
+            funnel.celtium$flushPendingForGlDrawCause(
                     GlDrawWindowCensus.CAUSE_COPY_ORDER);
         }
 
         @Override
         public boolean submitCopySource() {
-            if (CopyReadSide.this.backend.immediateWindowBusy
-                    || CopyReadSide.this.backend.gpuStalled
-                    || CopyReadSide.this.backend.context.celtium$isDeviceLost()
+            if (funnel.immediateWindowBusy
+                    || frame.gpuStalled
+                    || frame.context.celtium$isDeviceLost()
                     || hasPendingImmediateWork()) return false;
-            CopyReadSide.this.backend.submitOpenFrameBuffer();
-            if (CopyReadSide.this.backend.frameBufferOpen
-                    || CopyReadSide.this.backend.commandState.recording()) return false;
-            CopyReadSide.this.backend.context.celtium$flushBatchedSubmits();
-            return !CopyReadSide.this.backend.gpuStalled
-                    && !CopyReadSide.this.backend.context.celtium$isDeviceLost();
+            funnel.submitOpenFrameBuffer();
+            if (frame.frameBufferOpen
+                    || frame.commandState.recording()) return false;
+            frame.context.celtium$flushBatchedSubmits();
+            return !frame.gpuStalled
+                    && !frame.context.celtium$isDeviceLost();
         }
 
         @Override
         public boolean waitForIdle() {
-            return CopyReadSide.this.backend.waitForIdle();
+            return funnel.waitForIdle();
         }
 
         @Override
         public long identityForColorTexture(int glTextureName) {
-            return CopyReadSide.this.backend.celtium$framebufferIdentityForColorTexture(glTextureName);
+            return funnel.celtium$framebufferIdentityForColorTexture(glTextureName);
         }
 
         @Override
         public long identityForFramebufferName(int framebufferObject) {
-            return CopyReadSide.this.backend.celtium$identityForFramebufferName(framebufferObject);
+            return funnel.celtium$identityForFramebufferName(framebufferObject);
         }
 
         @Override
         public void record(String diagnostic) {
-            CopyReadSide.this.backend.record(diagnostic);
+            frame.reports.record(diagnostic);
         }
 
         @Override
         public String describe(Throwable error) {
-            return VulkanTerrainGpuBackend.describe(error);
+            return Lane2ImmediateRecorder.describe(error);
         }
     }
 
@@ -615,7 +620,7 @@ final class CopyReadSide {
             }
             written = javax.imageio.ImageIO.write(out, "png", path.toFile());
         } catch (java.io.IOException | RuntimeException | LinkageError error) {
-            this.backend.record("chain frame dump write failed: " + VulkanTerrainGpuBackend.describe(error));
+            frame.reports.record("chain frame dump write failed: " + Lane2ImmediateRecorder.describe(error));
         }
         System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
                 + " written=" + written + " " + width + "x" + height
@@ -651,12 +656,12 @@ final class CopyReadSide {
 
     /** {@return whether a requested presented-image dump has been written}. */
     public boolean celtium$presentedImageDumpWritten() {
-        return this.backend.presentedImageDumpRequested && this.backend.swapchain != null && this.backend.swapchain.lastDumpWritten();
+        return funnel.presentedImageDumpRequested && funnel.swapchain != null && funnel.swapchain.lastDumpWritten();
     }
 
     /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
-        return this.backend.framePresentedFromVulkan;
+        return owner.framePresentedFromVulkan;
     }
 
     /**
@@ -667,12 +672,12 @@ final class CopyReadSide {
      * was drawn and never offered to the swapchain, a failed attempt is one the swapchain refused.
      */
     public int celtium$presentSkips() {
-        return this.backend.presentSkips;
+        return funnel.presentSkips;
     }
 
     /** {@return how many present calls reached the swapchain present}. */
     public int celtium$presentAttempts() {
-        return this.backend.presentAttempts;
+        return funnel.presentAttempts;
     }
 
     /**
@@ -684,7 +689,7 @@ final class CopyReadSide {
      * {@link #celtium$presentedFrameCount()} restarts with the world.
      */
     public int celtium$presentHookCalls() {
-        return this.backend.presentHookCalls;
+        return frame.presentHookCalls;
     }
 
     /**
@@ -700,7 +705,7 @@ final class CopyReadSide {
         if (fileName == null) {
             return -1;
         }
-        Integer frame = this.backend.presentedDumpWrittenFrames.get(fileName);
+        Integer frame = funnel.presentedDumpWrittenFrames.get(fileName);
         return frame == null ? -1 : frame.intValue();
     }
 
@@ -713,7 +718,7 @@ final class CopyReadSide {
      * GL exactly as the model draw asks for its texture.
      */
     public void celtium$setLightmapUnit(int unit) {
-        this.backend.lightmapUnit = unit;
+        funnel.lightmapUnit = unit;
     }
 
     /**
@@ -727,15 +732,15 @@ final class CopyReadSide {
      * could not be added to the shader alone.
      */
     public void setLightmapCoords(float x, float y) {
-        this.backend.lightmapCoordX = x;
-        this.backend.lightmapCoordY = y;
-        this.backend.immediateStatistics.noteLightmapCoordCalls();
-        this.backend.immediateStatistics.noteImmediateStateCalls();
+        funnel.lightmapCoordX = x;
+        funnel.lightmapCoordY = y;
+        funnel.immediateStatistics.noteLightmapCoordCalls();
+        funnel.immediateStatistics.noteImmediateStateCalls();
     }
 
     /** {@return whether a light-map coordinate has been captured since the renderer came up}. */
     private boolean lightmapCoordKnown() {
-        return this.backend.immediateStatistics.lightmapCoordCalls() > 0;
+        return funnel.immediateStatistics.lightmapCoordCalls() > 0;
     }
 
     /** The light-map coordinate pair the last capture stored, as {x, y}. */
@@ -743,10 +748,10 @@ final class CopyReadSide {
         // Held by queued groups and never written after: equal pairs share one array (2% of the client thread's
         // allocation was these two floats, one pair per model instance).
         float[] last = this.lastLightmapCoords;
-        if (last != null && last[0] == this.backend.lightmapCoordX && last[1] == this.backend.lightmapCoordY) {
+        if (last != null && last[0] == funnel.lightmapCoordX && last[1] == funnel.lightmapCoordY) {
             return last;
         }
-        last = new float[] {this.backend.lightmapCoordX, this.backend.lightmapCoordY};
+        last = new float[] {funnel.lightmapCoordX, funnel.lightmapCoordY};
         this.lastLightmapCoords = last;
         return last;
     }
@@ -798,8 +803,8 @@ final class CopyReadSide {
      * draw, it never enables it, so nothing lights that model by the world either.
      */
     float[] celtium$lightmapForGroup() {
-        if (!this.backend.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
-            this.backend.immediateStatistics.noteLightmapFullBrightGroups();
+        if (!funnel.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
+            funnel.immediateStatistics.noteLightmapFullBrightGroups();
             return FULL_BRIGHT_LIGHTMAP;
         }
         return lightmapCoordKnown() ? lightmapCoords() : null;
@@ -830,7 +835,7 @@ final class CopyReadSide {
         if (ready) {
             // The shared images match the framebuffer that is bound now, so the replacement window is over and ordering
             // flushes are meaningful again.
-            this.backend.targetRegistry.noteReplacementSettled();
+            funnel.targetRegistry.noteReplacementSettled();
         }
         return ready;
     }
@@ -851,37 +856,37 @@ final class CopyReadSide {
             ready = ensureFrameTarget(widthHint, heightHint);
         }
         if (ready) {
-            this.backend.targetRegistry.noteReplacementSettled();
+            funnel.targetRegistry.noteReplacementSettled();
         }
         return ready;
     }
 
     public int celtium$adoptableFramebuffer(int width, int height) {
-        if (!ADOPT_GAME_FRAMEBUFFER || this.backend.frameTarget == null) {
+        if (!ADOPT_GAME_FRAMEBUFFER || funnel.frameTarget == null) {
             return 0;
         }
-        return this.backend.frameTarget.adoptableFramebuffer(width, height);
+        return funnel.frameTarget.adoptableFramebuffer(width, height);
     }
 
     public int celtium$adoptedColorTexture() {
-        return this.backend.frameTarget == null ? 0 : this.backend.frameTarget.sharedColorTexture();
+        return funnel.frameTarget == null ? 0 : funnel.frameTarget.sharedColorTexture();
     }
 
     public int celtium$adoptedDepthTexture() {
-        return this.backend.frameTarget == null ? 0 : this.backend.frameTarget.sharedDepthTexture();
+        return funnel.frameTarget == null ? 0 : funnel.frameTarget.sharedDepthTexture();
     }
 
     public void celtium$noteFramebufferAdopted() {
-        this.backend.gameFramebufferAdopted++;
-        this.backend.gameFramebufferIsShared = true;
-        if (this.backend.frameTarget != null) {
-            this.backend.frameTarget.noteGameFramebufferAdopted();
+        funnel.gameFramebufferAdopted++;
+        funnel.gameFramebufferIsShared = true;
+        if (funnel.frameTarget != null) {
+            funnel.frameTarget.noteGameFramebufferAdopted();
         }
     }
 
     public boolean celtium$isSharedFramebuffer(int framebufferObject) {
-        return ADOPT_GAME_FRAMEBUFFER && this.backend.frameTarget != null
-                && this.backend.frameTarget.isSharedFramebuffer(framebufferObject);
+        return ADOPT_GAME_FRAMEBUFFER && funnel.frameTarget != null
+                && funnel.frameTarget.isSharedFramebuffer(framebufferObject);
     }
 
     /**
@@ -891,9 +896,9 @@ final class CopyReadSide {
      * produced in. Probes after it will read zero whatever happens, which is why the point is recorded with the code.
      */
     public void celtium$noteGlErrorAt(String where, int error) {
-        if (error != 0 && this.backend.firstGlErrorWhere == null) {
-            this.backend.firstGlErrorWhere = where;
-            this.backend.firstGlErrorCode = error;
+        if (error != 0 && funnel.firstGlErrorWhere == null) {
+            funnel.firstGlErrorWhere = where;
+            funnel.firstGlErrorCode = error;
         }
     }
 
@@ -966,30 +971,30 @@ final class CopyReadSide {
      * because the first texture registration happens before any world draw.
      */
     VulkanTextureRegistry celtium$registry() {
-        if (this.backend.textureRegistry == null) {
-            this.backend.textureRegistry = new VulkanTextureRegistry(this.backend.context);
+        if (funnel.textureRegistry == null) {
+            funnel.textureRegistry = new VulkanTextureRegistry(frame.context);
             // Stage 5 stage 3 (section 3.5): the registry's lifecycle hooks feed the context's one
             // bindless binding from here on. Injection happens at creation, before any texture
             // exists in the registry, so no registration can slip past the hook; a null binding
             // (device without array indexing, or the kill switch) leaves the hooks inert.
-            this.backend.textureRegistry.setBindlessBinding(this.backend.context.bindlessBinding());
+            funnel.textureRegistry.setBindlessBinding(frame.context.bindlessBinding());
             // S4: the direct-GL converter's sink is born with the one registry - its texture
             // seat IS this registry, so a converter texture and a terrain texture can never be
             // two mirrors of one name. Installed into the converter's executor here, once.
-            if (this.backend.directGlSink == null) {
-                int attachmentMemoryType = this.backend.context.memoryTypeIndex(0xFFFFFFFF,
+            if (funnel.directGlSink == null) {
+                int attachmentMemoryType = frame.context.memoryTypeIndex(0xFFFFFFFF,
                         org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         "direct-GL converter attachments");
-                this.backend.directGlAttachmentSlab =
+                funnel.directGlAttachmentSlab =
                         new org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab(
-                                this.backend.context.device(), attachmentMemoryType);
-                this.backend.directGlSink = new VulkanDirectGlSink(this.backend.context,
-                        this.backend.textureRegistry, this.backend.directGlAttachmentSlab);
+                                frame.context.device(), attachmentMemoryType);
+                funnel.directGlSink = new VulkanDirectGlSink(frame.context,
+                        funnel.textureRegistry, funnel.directGlAttachmentSlab);
                 org.soutalab.celtium.glcompat.backend.DirectGlExecutor.EXECUTOR
-                        .setSink(this.backend.directGlSink);
+                        .setSink(funnel.directGlSink);
             }
         }
-        return this.backend.textureRegistry;
+        return funnel.textureRegistry;
     }
 
     /**
@@ -1027,10 +1032,10 @@ final class CopyReadSide {
         // The modelview's z translation is printed with the x and y: the GUI's ortho maps z=0 to the near plane and
         // the overlay rendering puts the eye at z=-2000, so a group recorded without that translation lands outside
         // the clip volume and vanishes even though its x/y rectangle is on screen.
-        return "proj=" + VulkanTerrainGpuBackend.round3(this.backend.glProjection[0]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glProjection[5])
-                + " mv=" + VulkanTerrainGpuBackend.round3(this.backend.glModelView[0]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glModelView[5])
-                + " mvT=" + VulkanTerrainGpuBackend.round3(this.backend.glModelView[12]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glModelView[13]) + ","
-                + VulkanTerrainGpuBackend.round3(this.backend.glModelView[14]);
+        return "proj=" + Lane2ImmediateRecorder.round3(funnel.glProjection[0]) + "," + Lane2ImmediateRecorder.round3(funnel.glProjection[5])
+                + " mv=" + Lane2ImmediateRecorder.round3(funnel.glModelView[0]) + "," + Lane2ImmediateRecorder.round3(funnel.glModelView[5])
+                + " mvT=" + Lane2ImmediateRecorder.round3(funnel.glModelView[12]) + "," + Lane2ImmediateRecorder.round3(funnel.glModelView[13]) + ","
+                + Lane2ImmediateRecorder.round3(funnel.glModelView[14]);
     }
 
     boolean ensureFrameTarget() {
@@ -1046,8 +1051,8 @@ final class CopyReadSide {
             return ensureFrameTarget(window[0], window[1]);
         }
         int[] drawable = currentViewport();
-        int width = this.backend.mainFramebufferWidth > 0 ? this.backend.mainFramebufferWidth : drawable[2];
-        int height = this.backend.mainFramebufferHeight > 0 ? this.backend.mainFramebufferHeight : drawable[3];
+        int width = funnel.mainFramebufferWidth > 0 ? funnel.mainFramebufferWidth : drawable[2];
+        int height = funnel.mainFramebufferHeight > 0 ? funnel.mainFramebufferHeight : drawable[3];
         return ensureFrameTarget(width, height);
     }
 
@@ -1059,25 +1064,25 @@ final class CopyReadSide {
      * target would otherwise leave the target, and with it every draw, unrecoverable.
      */
     boolean ensureFrameTarget(int width, int height) {
-        if (this.backend.frameTarget != null && this.backend.frameTarget.matches(width, height)) {
+        if (funnel.frameTarget != null && funnel.frameTarget.matches(width, height)) {
             // Direct present path: the frame's swapchain borrow is established here, on the render path,
             // so it exists before the frame's first pass records against the target (a no-op while a
             // borrow is live or a recording is open).
-            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
+            present.celtium$ensureBorrowedFrameImage();
             return true;
         }
-        if (this.backend.frameTarget != null && this.backend.celtium$recordingOpen()) {
+        if (funnel.frameTarget != null && funnel.celtium$recordingOpen()) {
             // A size change can arrive while the frame's unified command buffer is still recording - the real launch
             // does exactly this once, when the window it opened at 854x480 goes fullscreen at the monitor size, and the
             // first attempt released the old pair's images and its framebuffer under the open recording. The validation
             // layer named it (VUID-vkEndCommandBuffer-commandBuffer-00059: two images and a framebuffer destroyed while
             // bound) and the next submission took the device down, which was the black screen. A target whose size has
             // to change is therefore refused for this recording and rebuilt on the next one, when nothing is open.
-            this.backend.frameTargetRecreationDeferred++;
-            if (this.backend.frameTargetRecreationDeferred <= 8) {
-                System.out.println("[Celtium] CELTIUM_FRAME_TARGET_DEFERRED from=" + this.backend.targetWidth + "x"
-                        + this.backend.targetHeight + " to=" + width + "x" + height
-                        + " count=" + this.backend.frameTargetRecreationDeferred + " (a recording is open)");
+            funnel.frameTargetRecreationDeferred++;
+            if (funnel.frameTargetRecreationDeferred <= 8) {
+                System.out.println("[Celtium] CELTIUM_FRAME_TARGET_DEFERRED from=" + funnel.targetWidth + "x"
+                        + funnel.targetHeight + " to=" + width + "x" + height
+                        + " count=" + funnel.frameTargetRecreationDeferred + " (a recording is open)");
             }
             return false;
         }
@@ -1085,23 +1090,23 @@ final class CopyReadSide {
         // framebuffer, and the validation layer caught the first attempt doing exactly this -
         // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
         // The same rule as delete() and region eviction, applied to the path a resize takes.
-        if (!this.backend.celtium$settleGpuForReadSide("frame target recreation")) {
+        if (!funnel.celtium$settleGpuForReadSide("frame target recreation")) {
             // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
             return false;
         }
-        if (!VulkanTerrainGpuBackend.celtium$frameTargetReplaceable(this.backend.destroyFramebuffer())) {
+        if (!Lane2ImmediateRecorder.celtium$frameTargetReplaceable(funnel.destroyFramebuffer())) {
             // The framebuffers could not be freed, so they still name the old target's views: deleting them here is
             // what left a later window's begin pointing at a dead view (issue #423, item 372 hole 1). Same direction
             // as the failed settle above - the old target keeps drawing, the recreation is retried on a later frame.
-            this.backend.record("frame target " + width + "x" + height + " recreation refused: its framebuffers could not be freed");
+            frame.reports.record("frame target " + width + "x" + height + " recreation refused: its framebuffers could not be freed");
             return false;
         }
-        if (this.backend.frameTarget != null) {
-            this.backend.frameTarget.delete();
-            this.backend.frameTarget = null;
+        if (funnel.frameTarget != null) {
+            funnel.frameTarget.delete();
+            funnel.frameTarget = null;
             // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
             // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
-            this.backend.targetRegistry.noteFrameTargetReplaced();
+            funnel.targetRegistry.noteFrameTargetReplaced();
         }
         // Stage 1 BGRA ignition: the new target's colour format follows the swapchain's, so the present
         // path gets its chance to create a generation before the target reads the decision - otherwise
@@ -1109,25 +1114,25 @@ final class CopyReadSide {
         // state and no BGRA surface could ever be borrowed. A failed creation is not fatal here: the
         // target then takes the classic format and the session presents composed (the context records
         // that degradation at the note).
-        this.backend.presentSwapchain.ensureSwapchain();
+        present.ensureSwapchain();
         try {
             // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
             // signalled and consumed by Vulkan submissions alone.
-            this.backend.frameTarget = GllessFrameTarget.create(this.backend.context, width, height);
+            funnel.frameTarget = GllessFrameTarget.create(frame.context, width, height);
             // GLSM stage 2: the new target latches its frame clears into the backend's shared
             // frame state on the stage-2 route (a no-op shape off it - the attach is cheap
             // and the target only reads the state when the route is on).
-            this.backend.celtium$attachFrameState();
-            if (this.backend.gameFramebufferIsShared) {
-                this.backend.frameTarget.noteGameFramebufferAdopted();
+            funnel.celtium$attachFrameState();
+            if (funnel.gameFramebufferIsShared) {
+                funnel.frameTarget.noteGameFramebufferAdopted();
             }
-            this.backend.targetWidth = width;
-            this.backend.targetHeight = height;
+            funnel.targetWidth = width;
+            funnel.targetHeight = height;
             // The fresh target's first frame borrows its swapchain image from here (see the match path).
-            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
+            present.celtium$ensureBorrowedFrameImage();
             return true;
         } catch (RuntimeException | LinkageError error) {
-            this.backend.record("frame target " + width + "x" + height + " failed: " + VulkanTerrainGpuBackend.describe(error));
+            frame.reports.record("frame target " + width + "x" + height + " failed: " + Lane2ImmediateRecorder.describe(error));
             return false;
         }
     }
@@ -1271,7 +1276,7 @@ final class CopyReadSide {
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
-        if (VulkanTerrainGpuBackend.TEXTURE_DIAGNOSTICS && atlasId != 0 && this.backend.diagnosedTextures.add(atlasId)) {
+        if (Lane2ImmediateRecorder.TEXTURE_DIAGNOSTICS && atlasId != 0 && funnel.diagnosedTextures.add(atlasId)) {
             int levels = 0;
             while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
                     org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
@@ -1288,48 +1293,48 @@ final class CopyReadSide {
         }
 
 
-        if (atlasId != 0 && (this.backend.atlasTexture == null || atlasId != this.backend.atlasGlId || this.backend.atlasRefreshCountdown <= 0)) {
+        if (atlasId != 0 && (owner.atlasTexture == null || atlasId != funnel.atlasGlId || funnel.atlasRefreshCountdown <= 0)) {
             try {
                 // The image this call supplies, decided before anything is handed to the field. A name change is a
                 // reallocation: the registry entry for the old name was retired with it, so binding the kept object
                 // samples a dead image - measured as a fully black terrain after the reload re-stitched the atlas
                 // under a new GL name while this field still held the old mirror.
-                VulkanGlTexture image = this.backend.atlasTexture != null && atlasId == this.backend.atlasGlId
-                        ? this.backend.atlasTexture : null;
+                VulkanGlTexture image = owner.atlasTexture != null && atlasId == funnel.atlasGlId
+                        ? owner.atlasTexture : null;
                 if (image == null) {
                     int[] size = textureSize(atlasId);
                     if (size[0] <= 0 || size[1] <= 0) {
                         // No storage to mirror yet. Creating an image of an unknown size is what produced a 1x1
                         // mirror that the upload then had to replace, so the frame is skipped and the question is
                         // asked again when the atlas exists.
-                        this.backend.atlasRefreshCountdown = 0;
+                        funnel.atlasRefreshCountdown = 0;
                         return;
                     }
                     // The registry owns the image; the backend samples that same object, so an announced patch and the
                     // descriptor look at one image instead of two.
                     image = celtium$registry().imageFor(atlasId, size[0], size[1], true);
                 }
-                this.backend.celtium$establishAtlasImage(atlasId, image, "atlas");
+                funnel.celtium$establishAtlasImage(atlasId, image, "atlas");
                 // The field names the mirror only once its supply has run. The terrain pass's skip guard asks this
                 // field for null, so assigning before the supply - which is what this method did - is how a supply that
                 // threw left an image no upload ever filled in the field: the pass then drew it as the atlas instead of
                 // skipping with the reason recorded. A mirror this id already had stays in the field across a failed
                 // re-supply, because that image was established by an earlier one.
-                this.backend.atlasTexture = image;
+                owner.atlasTexture = image;
                 // The terrain sampler asks the atlas for its GL name to read the game's GL_TEXTURE_MAX_LEVEL.
                 image.noteGlTextureName(atlasId);
-                this.backend.atlasSourceGlId = atlasId;
+                funnel.atlasSourceGlId = atlasId;
                 int[] atlasSize = textureSize(atlasId);
-                this.backend.record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
-                this.backend.atlasGlId = atlasId;
-                this.backend.atlasRefreshCountdown = 400;
+                frame.reports.record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
+                funnel.atlasGlId = atlasId;
+                funnel.atlasRefreshCountdown = 400;
             } catch (RuntimeException | LinkageError error) {
-                this.backend.record("block atlas upload failed: " + VulkanTerrainGpuBackend.describe(error));
-                this.backend.atlasRefreshFailures++;
-                this.backend.atlasRefreshCountdown = 400;
+                frame.reports.record("block atlas upload failed: " + Lane2ImmediateRecorder.describe(error));
+                funnel.atlasRefreshFailures++;
+                funnel.atlasRefreshCountdown = 400;
             }
         }
-        this.backend.atlasRefreshCountdown--;
+        funnel.atlasRefreshCountdown--;
     }
 
     /**
@@ -1344,62 +1349,62 @@ final class CopyReadSide {
             // No name to mirror: the source is not installed yet, or it answered its "cannot answer" -1. A negative id
             // used to reach imageFor() as an extent of 0x0, which threw IllegalArgumentException into the catch below on
             // every frame of the window before the game side installed the supplier.
-            this.backend.lightmapRefreshCountdown--;
+            funnel.lightmapRefreshCountdown--;
             return;
         }
-        if (!(this.backend.lightmapTexture == null || lightmapId != this.backend.lightmapGlId
-                || this.backend.lightmapRefreshCountdown <= 0)) {
-            this.backend.lightmapRefreshCountdown--;
+        if (!(funnel.lightmapTexture == null || lightmapId != funnel.lightmapGlId
+                || funnel.lightmapRefreshCountdown <= 0)) {
+            funnel.lightmapRefreshCountdown--;
             return;
         }
         try {
-            if (this.backend.lightmapTexture == null || lightmapId != this.backend.lightmapGlId) {
+            if (funnel.lightmapTexture == null || lightmapId != funnel.lightmapGlId) {
                 // A different name owns a different mirror. The old image stays in the registry under the name it was
                 // created for; what must not happen is this field naming it for the new id.
-                this.backend.lightmapTexture = null;
-                this.backend.lightmapGlId = lightmapId;
+                funnel.lightmapTexture = null;
+                funnel.lightmapGlId = lightmapId;
                 // The one route that can establish the light map: the DynamicTexture's own pixels answer both its
                 // content and, when the stub recorded no extent, its size. Creating the image here and supplying it
                 // below was the route that could not succeed - its readback always misses the light map's NULL-data
                 // level - and the content-less field it left behind switched the working route off for the rest of the
                 // run (see ensureLightmapMirror).
-                this.backend.ensureLightmapMirror();
+                funnel.ensureLightmapMirror();
             }
-            if (this.backend.lightmapTexture != null) {
-                if (this.backend.lightmapIdentityLogs < 4) {
-                    this.backend.lightmapIdentityLogs++;
+            if (funnel.lightmapTexture != null) {
+                if (funnel.lightmapIdentityLogs < 4) {
+                    funnel.lightmapIdentityLogs++;
                     org.soutalab.celtium.vulkan.VulkanGlTexture registryEntry =
                             celtium$registry().get(lightmapId);
-                    this.backend.record("lightmap identity: glId=" + lightmapId
-                            + " boundView=" + Long.toHexString(this.backend.lightmapTexture.view())
-                            + " boundFull=" + this.backend.lightmapTexture.hasFullContent()
+                    frame.reports.record("lightmap identity: glId=" + lightmapId
+                            + " boundView=" + Long.toHexString(funnel.lightmapTexture.view())
+                            + " boundFull=" + funnel.lightmapTexture.hasFullContent()
                             + " registryView=" + (registryEntry == null ? "none"
                                     : Long.toHexString(registryEntry.view()))
                             + " registryFull=" + (registryEntry == null ? "none"
                                     : Boolean.toString(registryEntry.hasFullContent()))
-                            + " same=" + (registryEntry == this.backend.lightmapTexture));
+                            + " same=" + (registryEntry == funnel.lightmapTexture));
                 }
                 // Back on the announcement path, which is the light map's real source: the black it produced was the
                 // announced array's shape (one int[] per row where the consumer reads one int[] for the whole of level
                 // 0), not this call. With the producer fixed, an announcement-only run measures the same band as the
                 // readback did - 102.4/63.9/58.5 - so the readback detour is gone and the image has one owner again.
-                this.backend.celtium$establishAtlasImage(lightmapId, this.backend.lightmapTexture, "lightmap");
-                this.backend.lightmapSourceGlId = lightmapId;
+                funnel.celtium$establishAtlasImage(lightmapId, funnel.lightmapTexture, "lightmap");
+                funnel.lightmapSourceGlId = lightmapId;
                 int[] lightmapSize = textureSize(lightmapId);
-                this.backend.record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
-                this.backend.lightmapGlId = lightmapId;
-                this.backend.lightmapRefreshCountdown = 1;
+                frame.reports.record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
+                funnel.lightmapGlId = lightmapId;
+                funnel.lightmapRefreshCountdown = 1;
             } else {
                 // Nothing could supply it this pass. The field stays null so the pass-skip guard names the light map as
                 // the mirror that is missing, instead of drawing with an image no upload ever filled; the next
                 // attempt is the one ensureLightmapMirror bounds by the level's content serial.
-                this.backend.lightmapRefreshCountdown = 1;
+                funnel.lightmapRefreshCountdown = 1;
             }
         } catch (RuntimeException | LinkageError error) {
-            this.backend.record("lightmap upload failed: " + VulkanTerrainGpuBackend.describe(error));
-            this.backend.lightmapRefreshCountdown = 1;
+            frame.reports.record("lightmap upload failed: " + Lane2ImmediateRecorder.describe(error));
+            funnel.lightmapRefreshCountdown = 1;
         }
-        this.backend.lightmapRefreshCountdown--;
+        funnel.lightmapRefreshCountdown--;
     }
 
     /**

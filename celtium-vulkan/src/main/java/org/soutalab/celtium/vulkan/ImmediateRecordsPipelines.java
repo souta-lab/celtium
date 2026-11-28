@@ -11,7 +11,7 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * <p>Every immediate family has exactly one pipeline form - the record-reading one - and this
  * class is where those pipelines live: one branch-keyed cache per family and the single
  * creation dispatch the prepare branches and the pipeline prewarm's creation actions share,
- * moved out of {@link VulkanTerrainGpuBackend} when the per-group forms were deleted. The
+ * moved out of {@link Lane2ImmediateRecorder} when the per-group forms were deleted. The
  * branch key is the backend's own fold ({@code celtium$immediateBranchKey}: the prepared key
  * folded with the pass mix, the line bit preserved), so an entry built under one pass never
  * answers under another (the R-06 format-axis contract), and the caches are concurrent
@@ -30,7 +30,7 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * the batch by name, as it does for a failed descriptor.
  */
 final class ImmediateRecordsPipelines {
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
 
     // The branch key folds the prepared key with the pass, not with the format, so two
     // textured variants sharing a state and a pass would fold to the same key: the textured
@@ -76,7 +76,7 @@ final class ImmediateRecordsPipelines {
             VulkanImmediateTextureRecordsPipeline> textureArrayPipelines =
             new ConcurrentHashMap<>();
 
-    ImmediateRecordsPipelines(VulkanTerrainGpuBackend backend) {
+    ImmediateRecordsPipelines(Lane2ImmediateRecorder backend) {
         this.b = backend;
     }
 
@@ -164,90 +164,90 @@ final class ImmediateRecordsPipelines {
             // the twin is built against the record store's layout, so the store is ensured first, and a store
             // that cannot be created declines the build (the prepare then refuses the batch by name, as it does
             // for a failed descriptor).
-            if (!this.b.celtium$ensureDrawRecords()) {
+            if (!b.celtium$ensureDrawRecords()) {
                 return null;
             }
             return celtium$recordsParticlePipeline(format, key, pass,
-                    VulkanTerrainGpuBackend.celtium$blendState(state),
-                    VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]), targetColors);
+                    Lane2ImmediateRecorder.celtium$blendState(state),
+                    Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]), targetColors);
         }
         // Every family's only form reads the draw records now, so the store is ensured for all
         // of them, where the per-group forms needed it only for their twins.
-        if (!this.b.celtium$ensureDrawRecords()) {
+        if (!b.celtium$ensureDrawRecords()) {
             return null;
         }
-        long recordsLayout = this.b.drawRecords.descriptorSetLayout();
+        long recordsLayout = b.drawRecords.descriptorSetLayout();
         if (format == VulkanImmediateFormats.ITEM) {
             // The lit bit only: the per-group lit/unlit census stays at the prepare branch, which
             // runs per group, while this creation path runs per distinct state.
             boolean itemLit = state.length > 8 && state[8] != 0;
-            return VulkanImmediateItemRecordsPipeline.create(this.b.context, pass,
-                    VulkanTerrainGpuBackend.celtium$blendState(state),
+            return VulkanImmediateItemRecordsPipeline.create(b.context, pass,
+                    Lane2ImmediateRecorder.celtium$blendState(state),
                     state[3] != 0, state[4] != 0, state[5],
-                    VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]), itemLit,
+                    Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]), itemLit,
                     recordsLayout, targetColors);
         }
         if (format == VulkanImmediateFormats.BLOCK) {
-            return VulkanImmediateBlockRecordsPipeline.create(this.b.context, pass,
-                    VulkanTerrainGpuBackend.celtium$blendState(state),
+            return VulkanImmediateBlockRecordsPipeline.create(b.context, pass,
+                    Lane2ImmediateRecorder.celtium$blendState(state),
                     state[3] != 0, state[4] != 0, state[5],
-                    VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]),
+                    Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]),
                     recordsLayout, targetColors);
         }
         if (format == VulkanImmediateFormats.POSITION_COLOR_TEXGEN) {
-            return VulkanImmediateTextureRecordsPipeline.createForTexGen(this.b.context, pass,
-                    VulkanTerrainGpuBackend.celtium$blendState(state),
+            return VulkanImmediateTextureRecordsPipeline.createForTexGen(b.context, pass,
+                    Lane2ImmediateRecorder.celtium$blendState(state),
                     state[3] != 0, state[4] != 0, state[5],
-                    VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]),
+                    Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]),
                     recordsLayout, targetColors);
         }
         if (format >= 2) {
-            int compareOp = VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]);
+            int compareOp = Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]);
             // Experiment switch for the POSITION_NORMAL box: every one of its batches reaches this draw and the
             // box is absent from the full-mask picture (62 accepted, 62 drawn, no pixels), while the same group
             // drawn with format 10 alone lands exactly where GROUP_BOUNDS puts it. Turning its depth test off
             // separates "the fragments are rejected by the depth the window draws against" from "the draw does not
             // reach the image at all". Default on, so the shipped behaviour is unchanged.
             boolean positionNormalDepthTest = state[3] != 0
-                    && VulkanTerrainGpuBackend.POSITION_NORMAL_DEPTH_TEST;
-            VulkanColorBlendState colorBlend = VulkanTerrainGpuBackend.celtium$blendState(state);
+                    && Lane2ImmediateRecorder.POSITION_NORMAL_DEPTH_TEST;
+            VulkanColorBlendState colorBlend = Lane2ImmediateRecorder.celtium$blendState(state);
             return format == VulkanImmediateFormats.COMBINE4
                     ? VulkanImmediateTextureRecordsPipeline.createForCombine4(
-                    this.b.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp,
+                    b.context, pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp,
                     recordsLayout, targetColors)
                     : format == VulkanImmediateFormats.POSITION_TEX_NORMAL_FLOAT
-                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexNormalFloat(this.b.context,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexNormalFloat(b.context,
                     pass, colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout,
                     targetColors)
                     : format == VulkanImmediateFormats.POSITION_NORMAL
-                    ? VulkanImmediateTextureRecordsPipeline.createForPositionNormal(this.b.context, pass,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPositionNormal(b.context, pass,
                     colorBlend, positionNormalDepthTest, state[4] != 0, state[5], compareOp, recordsLayout,
                     targetColors)
                     : format == VulkanImmediateFormats.POSITION_TEX_NORMAL
-                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexNormal(this.b.context, pass,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexNormal(b.context, pass,
                     colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout, targetColors)
                     : format == VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL
-                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexColorNormal(this.b.context, pass,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTexColorNormal(b.context, pass,
                     colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout, targetColors)
                     : format == VulkanImmediateFormats.POSITION
-                    ? VulkanImmediateTextureRecordsPipeline.createForPosition(this.b.context, pass,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPosition(b.context, pass,
                     colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout, targetColors)
                     : format == VulkanImmediateFormats.POSITION_TEX
-                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTex(this.b.context, pass,
+                    ? VulkanImmediateTextureRecordsPipeline.createForPositionTex(b.context, pass,
                     colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout, targetColors)
-                    : VulkanImmediateTextureRecordsPipeline.create(this.b.context, pass,
+                    : VulkanImmediateTextureRecordsPipeline.create(b.context, pass,
                     colorBlend, state[3] != 0, state[4] != 0, state[5], compareOp, recordsLayout, targetColors);
         }
-        boolean lineBatch = (key & VulkanTerrainGpuBackend.LINE_KEY_BIT) != 0;
-        VulkanColorBlendState colorBlend = VulkanTerrainGpuBackend.celtium$blendState(state);
+        boolean lineBatch = (key & Lane2ImmediateRecorder.LINE_KEY_BIT) != 0;
+        VulkanColorBlendState colorBlend = Lane2ImmediateRecorder.celtium$blendState(state);
         return lineBatch
-                ? VulkanImmediateColourRecordsPipeline.createForLines(this.b.context, pass, colorBlend,
+                ? VulkanImmediateColourRecordsPipeline.createForLines(b.context, pass, colorBlend,
                         state[3] != 0, state[4] != 0, state[5],
-                        VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]),
+                        Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]),
                         recordsLayout, targetColors)
-                : VulkanImmediateColourRecordsPipeline.create(this.b.context, pass, colorBlend,
+                : VulkanImmediateColourRecordsPipeline.create(b.context, pass, colorBlend,
                         state[3] != 0, state[4] != 0, state[5],
-                        VulkanTerrainGpuBackend.celtium$vkCompareOp(state[7]),
+                        Lane2ImmediateRecorder.celtium$vkCompareOp(state[7]),
                         recordsLayout, targetColors);
     }
 
@@ -268,16 +268,16 @@ final class ImmediateRecordsPipelines {
      */
     VulkanImmediateParticleRecordsPipeline celtium$recordsParticlePipeline(int format, long key, long pass,
             VulkanColorBlendState colorBlend, int depthCompareOp, int colorAttachments) {
-        long branchKey = VulkanTerrainGpuBackend.celtium$immediateBranchKey(format, key, pass);
+        long branchKey = Lane2ImmediateRecorder.celtium$immediateBranchKey(format, key, pass);
         VulkanImmediateParticleRecordsPipeline twin =
                 this.particlePipelines.get(Long.valueOf(branchKey));
         if (twin == null) {
-            if (this.b.drawRecords == null) {
+            if (b.drawRecords == null) {
                 return null;
             }
-            twin = VulkanImmediateParticleRecordsPipeline.create(this.b.context, pass, colorBlend,
+            twin = VulkanImmediateParticleRecordsPipeline.create(b.context, pass, colorBlend,
                     true, false, VulkanCullState.NONE, depthCompareOp,
-                    this.b.drawRecords.descriptorSetLayout(), colorAttachments);
+                    b.drawRecords.descriptorSetLayout(), colorAttachments);
             this.particlePipelines.put(Long.valueOf(branchKey), twin);
         }
         return twin;

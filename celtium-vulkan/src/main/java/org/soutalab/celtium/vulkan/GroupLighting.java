@@ -5,12 +5,12 @@ import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
 /**
  * The lit group's light payload - the two GL lights rotated into model space, the ambient and each diffuse - with
  * the shared-array cache, the replay variants and the replay's projection and combine colour. Moved out of
- * {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * {@link Lane2ImmediateRecorder} unchanged (2026-11-06).
  */
 final class GroupLighting {
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
 
-    GroupLighting(VulkanTerrainGpuBackend backend) {
+    GroupLighting(Lane2ImmediateRecorder backend) {
         this.b = backend;
     }
 
@@ -112,7 +112,7 @@ final class GroupLighting {
         if (b.modelReplayInputCache.reuseProjection(projectionVersion)) {
             return b.modelReplayProjection;
         }
-        VulkanTerrainGpuBackend.remapClipDepth(projectionNow, b.modelReplayProjection);
+        Lane2ImmediateRecorder.remapClipDepth(projectionNow, b.modelReplayProjection);
         b.modelReplayInputCache.noteProjection(projectionVersion);
         return b.modelReplayProjection;
     }

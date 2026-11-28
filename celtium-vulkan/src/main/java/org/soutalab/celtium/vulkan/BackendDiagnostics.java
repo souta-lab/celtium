@@ -6,18 +6,43 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 /**
- * The backend's diagnostic reports and bounded diagnostic lines, moved out of {@link VulkanTerrainGpuBackend}
+ * The backend's diagnostic reports and bounded diagnostic lines, moved out of {@link VulkanBackendAdapter}
  * unchanged: what they read is the backend's state, through {@link #b}; nothing here changes what is drawn.
  */
 final class BackendDiagnostics {
-    private final VulkanTerrainGpuBackend b;
+    private FrameCoordinator frame;
+    private Lane2ImmediateRecorder funnel;
+    private PresentSwapchain present;
+    private VulkanBackendAdapter owner;
 
-    BackendDiagnostics(VulkanTerrainGpuBackend backend) {
-        this.b = backend;
+    BackendDiagnostics() {
+    }
+
+    void bind(FrameCoordinator frame, Lane2ImmediateRecorder funnel, PresentSwapchain present, VulkanBackendAdapter owner) {
+        this.frame = frame;
+        this.funnel = funnel;
+        this.present = present;
+        this.owner = owner;
     }
 
     /** The snapshot lines {@link #diagnostics()} builds and {@code record} appends to. */
     private final List<String> lines = new ArrayList<>();
+
+    /** The distinct {@link #record} messages already printed; bounded so a message carrying a counter cannot grow it. */
+    private final java.util.Set<String> printedRecords = new java.util.HashSet<String>();
+
+    void record(String diagnostic) {
+        this.addLine(diagnostic);
+        // Also printed: diagnostics() rebuilds the list on every call, so a recorded failure (an ordering flush that
+        // dropped its batches, a stalled device, a refused window) was discarded unprinted the next time the report or
+        // F3 asked - RLCraft's 741 ordering-flush failures were visible only as a counter. One tag, so the log
+        // limiter bounds it (-Dceltium.debug.logLinesPerTag lifts the bound for a verification run).
+        // Each distinct message once: some records are informational and repeat every frame (the light map's name),
+        // and thousands of copies would bury the failures this line exists for.
+        if (this.printedRecords.size() < 4096 && this.printedRecords.add(diagnostic)) {
+            System.out.println("[Celtium] CELTIUM_RECORD " + diagnostic);
+        }
+    }
 
     /** {@return the current snapshot lines (what the backend's describe() appends).} */
     List<String> lines() {
@@ -38,7 +63,7 @@ final class BackendDiagnostics {
      */
     private String bindlessSummary() {
         org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
-                b.context == null ? null : b.context.celtium$bindlessBindingOrNull();
+                frame.context == null ? null : frame.context.celtium$bindlessBindingOrNull();
         return binding == null ? "absent"
                 : "registered" + binding.registeredCount() + "/pending" + binding.pendingReleases();
     }
@@ -52,7 +77,7 @@ final class BackendDiagnostics {
      */
     private long bindlessOverflowDraws() {
         org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
-                b.context == null ? null : b.context.celtium$bindlessBindingOrNull();
+                frame.context == null ? null : frame.context.celtium$bindlessBindingOrNull();
         return binding == null ? 0L : binding.overflowRegistrations();
     }
 
@@ -64,7 +89,7 @@ final class BackendDiagnostics {
      */
     private String textureUploadSummary() {
         TextureUploadService service =
-                b.context == null ? null : b.context.celtium$textureUploadServiceOrNull();
+                frame.context == null ? null : frame.context.celtium$textureUploadServiceOrNull();
         return "textureUploadSubmits=" + (service == null ? 0L : service.submits())
                 + " textureUploadBytes=" + (service == null ? 0L : service.uploadedBytes())
                 + " textureUploadDeferredBytes=" + (service == null ? 0L : service.deferredBytesTotal());
@@ -97,7 +122,7 @@ final class BackendDiagnostics {
      */
     private String frameRingSummary() {
         org.soutalab.celtium.vulkan.hal.FrameLinearRing ring =
-                b.context == null ? null : b.context.celtium$frameLinearRingOrNull();
+                frame.context == null ? null : frame.context.celtium$frameLinearRingOrNull();
         if (ring == null) {
             return "absent";
         }
@@ -127,7 +152,7 @@ final class BackendDiagnostics {
      * Printed unconditionally.
      */
     private String recordsStoreSummary() {
-        InstanceDataStore store = b.drawRecords;
+        InstanceDataStore store = funnel.drawRecords;
         if (store == null) {
             return "absent";
         }
@@ -157,10 +182,10 @@ final class BackendDiagnostics {
      * missing field.
      */
     private String nonQuadByModeSummary() {
-        return "offered=" + nonQuadModeCounts(b.nonQuadOfferedByMode)
-                + " emitted=" + nonQuadModeCounts(b.nonQuadEmittedByMode)
-                + " delegated=" + nonQuadModeCounts(b.nonQuadDelegatedByMode)
-                + " dropped=" + nonQuadModeCounts(b.nonQuadDroppedByMode);
+        return "offered=" + nonQuadModeCounts(funnel.nonQuadOfferedByMode)
+                + " emitted=" + nonQuadModeCounts(funnel.nonQuadEmittedByMode)
+                + " delegated=" + nonQuadModeCounts(funnel.nonQuadDelegatedByMode)
+                + " dropped=" + nonQuadModeCounts(funnel.nonQuadDroppedByMode);
     }
 
     private static String nonQuadModeCounts(long[] counts) {
@@ -194,7 +219,7 @@ final class BackendDiagnostics {
 
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
-                + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
+                + (frame.context != null && frame.context.dynamicRenderingSupported()) + "] "
                 // DP-01/DP-02/DP-03/DP-29: the silent-loss censuses, printed unconditionally like the bracket
                 // readings above - a loss counter that only prints when diagnostics are on is the invisibility
                 // these audits closed. offerDeaths is the pre-backend population offerRefusals cannot see;
@@ -202,35 +227,35 @@ final class BackendDiagnostics {
                 + "celtium/offerDeaths[" + OfferFunnelCensus.summary() + "] "
                 + "celtium/nativeDrawSkips[" + NativeDrawSkipCensus.summary() + "] "
                 + "celtium/noCameraSkips[" + NoCameraSkipCensus.summary() + "] "
-                + "celtium/vulkan-check passes=" + b.terrainStatistics.passSubmissions() + " skipped=" + b.terrainStatistics.passSkips() + " errors="
-                + b.terrainStatistics.passErrors() + " lastDraw=" + b.terrainStatistics.lastDrawCommands() + " lastSections=" + b.terrainStatistics.lastSectionsDrawn()
-                + " skipReason=" + (b.terrainStatistics.lastSkipReason() == null ? "none" : b.terrainStatistics.lastSkipReason().replace(' ', '_'))
-                + " immediateState=" + b.immediateStatistics.immediateStateCalls() + " immediateOffered=" + b.immediateStatistics.immediateBatchesOffered()
-                + " frameId=" + b.frameId + " flushCount=" + b.immediateStatistics.flushCount()
+                + "celtium/vulkan-check passes=" + funnel.terrainStatistics.passSubmissions() + " skipped=" + funnel.terrainStatistics.passSkips() + " errors="
+                + funnel.terrainStatistics.passErrors() + " lastDraw=" + funnel.terrainStatistics.lastDrawCommands() + " lastSections=" + funnel.terrainStatistics.lastSectionsDrawn()
+                + " skipReason=" + (funnel.terrainStatistics.lastSkipReason() == null ? "none" : funnel.terrainStatistics.lastSkipReason().replace(' ', '_'))
+                + " immediateState=" + funnel.immediateStatistics.immediateStateCalls() + " immediateOffered=" + funnel.immediateStatistics.immediateBatchesOffered()
+                + " frameId=" + frame.frameId + " flushCount=" + funnel.immediateStatistics.flushCount()
                 + " bindless=" + bindlessSummary()
                 + " bindlessOverflowDraws=" + bindlessOverflowDraws()
                 + " " + textureUploadSummary()
-                + " " + (b.modelInstances == null ? "modelInstances[absent failed=" + b.modelInstancesFailed + "]"
-                        : b.modelInstances.describe())
-                + " textureIndex=hit" + b.textureIndexHits + "/miss" + b.textureIndexMisses
+                + " " + (funnel.modelInstances == null ? "modelInstances[absent failed=" + funnel.modelInstancesFailed + "]"
+                        : funnel.modelInstances.describe())
+                + " textureIndex=hit" + funnel.textureIndexHits + "/miss" + funnel.textureIndexMisses
                 // The offer state-key cache's hit rate. It was collected and never printed, so "the key is cached"
                 // could not be told from "the cache misses on every offer" - and the cache was a single entry keyed on
                 // the layout id, which is exactly the shape that misses on a format alternation. Printed here so the
                 // next leg answers it with a number instead of a reading of the code.
-                + " stateKeyCache=hit" + b.celtium$stateKeyCacheSummary()
-                + " orderPreservingFlushes=" + b.immediateStatistics.orderPreservingFlushes()
-                + " actualFlushes=" + b.immediateStatistics.actualFlushes()
-                + " actualFlushMillis=" + (b.immediateStatistics.actualFlushNanos() / 1000000L)
-                + " actualFlushWorstMillis=" + (b.immediateStatistics.actualFlushWorstNanos() / 1000000L)
-                + " actualFlushCpuMillis=" + (b.immediateStatistics.actualFlushCpuNanos() / 1000000L)
+                + " stateKeyCache=hit" + funnel.celtium$stateKeyCacheSummary()
+                + " orderPreservingFlushes=" + funnel.immediateStatistics.orderPreservingFlushes()
+                + " actualFlushes=" + funnel.immediateStatistics.actualFlushes()
+                + " actualFlushMillis=" + (funnel.immediateStatistics.actualFlushNanos() / 1000000L)
+                + " actualFlushWorstMillis=" + (funnel.immediateStatistics.actualFlushWorstNanos() / 1000000L)
+                + " actualFlushCpuMillis=" + (funnel.immediateStatistics.actualFlushCpuNanos() / 1000000L)
                 // Where a batch's time goes, per batch, with -Dceltium.vulkan.batchTimings=true. The counters existed but
                 // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
                 // the preparation" had no answer in a run.
-                + (b.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerStageNanosSummary() : "")
+                + (funnel.BATCH_TIMINGS ? funnel.immediateStatistics.batchTimingSummary() + funnel.offerStageNanosSummary() : "")
                 // "off" rather than "0/0": the per-frame hash is opt-in, and a counter that can only read zero would
                 // invite "no two frames were identical" from a number that was never measured.
-                + " identicalFrameSignatures=" + (b.FRAME_SIGNATURE
-                        ? b.identicalFrameSignatures + "/" + b.comparedFrameSignatures : "off")
+                + " identicalFrameSignatures=" + (funnel.FRAME_SIGNATURE
+                        ? frame.identicalFrameSignatures + "/" + frame.comparedFrameSignatures : "off")
                 // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
                 // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
                 // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.
@@ -238,11 +263,11 @@ final class BackendDiagnostics {
                 + " bootstrapQueueWaitMillis=" + VulkanContext.bootstrapQueueWaitMillis
                 + " bootstrapQueueWaitWorstMillis=" + VulkanContext.bootstrapQueueWaitWorstMillis
                 + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
-                + " submitReasons=" + b.context.submitReasons()
+                + " submitReasons=" + frame.context.submitReasons()
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
-                + " " + b.context.uploadBatchSummary()
-                + " " + (b.frameArena == null ? "frameArena=not-created" : b.frameArena.describe())
+                + " " + frame.context.uploadBatchSummary()
+                + " " + (frame.frameArena == null ? "frameArena=not-created" : frame.frameArena.describe())
                 + " frameRing=[" + frameRingSummary() + "]"
                 + " recordsStore=[" + recordsStoreSummary() + "]"
                 + " celtium/nonQuadByMode[" + nonQuadByModeSummary() + "]"
@@ -252,49 +277,49 @@ final class BackendDiagnostics {
                 // offer funnel's aggregate refusal count (DP-01) - the per-format refusal detail lives in
                 // the Forge layer and prints only under diagnostics, so this total is the always-readable
                 // half of that pair.
-                + " batchDroppedDraws=" + b.batchDroppedDraws
-                + " batchDiscardedSegments=" + b.batchDiscardedSegments
-                + " offerRefusals=" + b.offerRefusals
-                + " frameArenaFallbackGroups=" + b.submissionStatistics.frameArenaFallbackGroups()
-                + " frameSlots=" + b.FRAME_SLOTS + " frameSlotReuseWaits=" + b.scheduler.slotReuseWaits()
-                + " slotPolls=" + b.scheduler.slotPolls() + " slotPollConfirms=" + b.scheduler.slotPollConfirms()
-                + " slotWaitConfirms=" + b.scheduler.slotWaitConfirms()
-                + " submitSequence=" + b.scheduler.submitSequence()
-                + " completedSubmitSequence=" + b.scheduler.completedSubmitSequence()
-                + " frameFenceWaitMillis=" + b.submissionStatistics.frameFenceWaitMillis()
-                + " frameFenceWaitCount=" + b.submissionStatistics.frameFenceWaitCount()
-                + " frameFenceWaitWorstMillis=" + b.submissionStatistics.frameFenceWaitWorstMillis()
+                + " batchDroppedDraws=" + funnel.batchDroppedDraws
+                + " batchDiscardedSegments=" + funnel.batchDiscardedSegments
+                + " offerRefusals=" + funnel.offerRefusals
+                + " frameArenaFallbackGroups=" + frame.submissionStatistics.frameArenaFallbackGroups()
+                + " frameSlots=" + frame.FRAME_SLOTS + " frameSlotReuseWaits=" + frame.scheduler.slotReuseWaits()
+                + " slotPolls=" + frame.scheduler.slotPolls() + " slotPollConfirms=" + frame.scheduler.slotPollConfirms()
+                + " slotWaitConfirms=" + frame.scheduler.slotWaitConfirms()
+                + " submitSequence=" + frame.scheduler.submitSequence()
+                + " completedSubmitSequence=" + frame.scheduler.completedSubmitSequence()
+                + " frameFenceWaitMillis=" + frame.submissionStatistics.frameFenceWaitMillis()
+                + " frameFenceWaitCount=" + frame.submissionStatistics.frameFenceWaitCount()
+                + " frameFenceWaitWorstMillis=" + frame.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + "retired"
-                + " readResolvedFromLastDrawnTarget=" + b.textureCopyService.readResolvedFromLastDrawnTarget()
+                + " readResolvedFromLastDrawnTarget=" + owner.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
-                + " windowOpenSites=[" + b.windowOpenSiteSummary() + "]"
-                + " windowRecordMillis=" + (b.windowRecordNanos / 1000000L)
-                + " windowRecords=" + b.windowRecords
-                + " windowRecordPerFrameMillis=" + (b.frameId == 0L ? -1.0
-                        : Math.round((double) b.windowRecordNanos / 1000000.0 / b.frameId * 100.0) / 100.0)
-                + " drawSites=[" + b.drawSiteSummary() + "]"
-                + " abParity=[" + b.abParitySummary() + "]"
-                + " pushComponents=[" + b.pushComponentSummary() + "]"
-                + " pushBlockHits=" + b.pushBlockHits
-                + " pushBlockMisses=" + b.pushBlockMisses
-                + " pushBlockEntries=" + b.pushBlocks.size()
-                + " pushBlockClears=" + b.pushBlockClears
-                + " retainedGeometry=[" + (b.retainedGeometry == null ? "unused" : b.retainedGeometry.summary()) + "]"
-                + " batchReuseHits=" + b.batchReuseHits
-                + " batchReuseMisses=" + b.batchReuseMisses
-                + " batchReuseLastFrameSize=" + b.batchReuseLastFrame.size()
+                + " windowOpenSites=[" + funnel.windowOpenSiteSummary() + "]"
+                + " windowRecordMillis=" + (funnel.windowRecordNanos / 1000000L)
+                + " windowRecords=" + funnel.windowRecords
+                + " windowRecordPerFrameMillis=" + (frame.frameId == 0L ? -1.0
+                        : Math.round((double) funnel.windowRecordNanos / 1000000.0 / frame.frameId * 100.0) / 100.0)
+                + " drawSites=[" + funnel.drawSiteSummary() + "]"
+                + " abParity=[" + funnel.abParitySummary() + "]"
+                + " pushComponents=[" + funnel.pushComponentSummary() + "]"
+                + " pushBlockHits=" + funnel.pushBlockHits
+                + " pushBlockMisses=" + funnel.pushBlockMisses
+                + " pushBlockEntries=" + funnel.pushBlocks.size()
+                + " pushBlockClears=" + funnel.pushBlockClears
+                + " retainedGeometry=[" + (funnel.retainedGeometry == null ? "unused" : funnel.retainedGeometry.summary()) + "]"
+                + " batchReuseHits=" + funnel.batchReuseHits
+                + " batchReuseMisses=" + funnel.batchReuseMisses
+                + " batchReuseLastFrameSize=" + funnel.batchReuseLastFrame.size()
                 + " pushElided=" + VulkanPushCache.SHARED.skipped()
                 + " pushIssued=" + VulkanPushCache.SHARED.issued()
-                + " splashSourcedGroups=" + b.targetStatistics.splashSourcedGroups()
-                + " splashCanvasInvalidations=" + b.targetStatistics.splashCanvasInvalidations()
-                + " immediateDrawSiteLogged=" + b.immediateStatistics.immediateDrawSiteLogged()
-                + " unflushedTargetGroupsDropped=" + b.targetStatistics.unflushedTargetGroupsDropped()
-                + " unflushedTargetDropTargets=[" + b.unflushedTargetDropSummary() + "]"
-                + " drainedOtherTargetPasses=" + b.targetStatistics.drainedOtherTargetPasses()
+                + " splashSourcedGroups=" + funnel.targetStatistics.splashSourcedGroups()
+                + " splashCanvasInvalidations=" + funnel.targetStatistics.splashCanvasInvalidations()
+                + " immediateDrawSiteLogged=" + funnel.immediateStatistics.immediateDrawSiteLogged()
+                + " unflushedTargetGroupsDropped=" + funnel.targetStatistics.unflushedTargetGroupsDropped()
+                + " unflushedTargetDropTargets=[" + funnel.unflushedTargetDropSummary() + "]"
+                + " drainedOtherTargetPasses=" + funnel.targetStatistics.drainedOtherTargetPasses()
                 + " flushEntries=[" + flushEntrySummary() + "]"
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
-                + " gpuStalled=" + b.gpuStalled
+                + " gpuStalled=" + frame.gpuStalled
                 // Drawpath audit DP-04/DP-05/DP-06/DP-36: the terrain executors' and pack
                 // path's silent-failure quantities, previously visible only as one printed
                 // line at the moment of failure (or, for region skips, only inside the
@@ -305,110 +330,110 @@ final class BackendDiagnostics {
                 // summary that never mentions them.
                 + " terrainEngines=[" + "retired" + "]"
                 + " failedPipelines=" + 0L
-                + " atlasRefreshFailures=" + b.atlasRefreshFailures
-                + " packTerrainRefused=" + b.packTerrainRefused
-                + " packTerrainSkippedRegions=" + b.packTerrainSkippedRegions
+                + " atlasRefreshFailures=" + funnel.atlasRefreshFailures
+                + " packTerrainRefused=" + funnel.packTerrainRefused
+                + " packTerrainSkippedRegions=" + funnel.packTerrainSkippedRegions
                 + " demonicaBridge=[" + "retired" + "]"
-                + " deviceWaitToken=" + b.submissionStatistics.deviceWaitToken()
-                + " stalledGeometryDrops=" + b.submissionStatistics.stalledGeometryDrops()
-                + " stalledGeometryDroppedBatches=" + b.submissionStatistics.stalledGeometryDroppedBatches()
-                + " stallOrigin=" + (b.submissionStatistics.stallOrigin() == null ? "none" : b.submissionStatistics.stallOrigin().replace(' ', '_'))
-                + " windowFlushFailures=" + b.targetStatistics.windowFlushFailures()
-                + " windowFlushFailureFrame=" + b.targetStatistics.windowFlushFailureFrame()
-                + " groupViewportSets=" + b.immediateStatistics.groupViewportSets()
-                + " stateSkipsViewport=" + b.immediateStatistics.stateSkipsViewport()
-                + " stateSkipsScissor=" + b.immediateStatistics.stateSkipsScissor()
-                + " stateSkipsDepthBias=" + b.immediateStatistics.stateSkipsDepthBias()
-                + " cullEnabledGroups=" + b.immediateStatistics.cullEnabledGroups()
-                + " cullDisabledGroups=" + b.immediateStatistics.cullDisabledGroups()
+                + " deviceWaitToken=" + frame.submissionStatistics.deviceWaitToken()
+                + " stalledGeometryDrops=" + frame.submissionStatistics.stalledGeometryDrops()
+                + " stalledGeometryDroppedBatches=" + frame.submissionStatistics.stalledGeometryDroppedBatches()
+                + " stallOrigin=" + (frame.submissionStatistics.stallOrigin() == null ? "none" : frame.submissionStatistics.stallOrigin().replace(' ', '_'))
+                + " windowFlushFailures=" + funnel.targetStatistics.windowFlushFailures()
+                + " windowFlushFailureFrame=" + funnel.targetStatistics.windowFlushFailureFrame()
+                + " groupViewportSets=" + funnel.immediateStatistics.groupViewportSets()
+                + " stateSkipsViewport=" + funnel.immediateStatistics.stateSkipsViewport()
+                + " stateSkipsScissor=" + funnel.immediateStatistics.stateSkipsScissor()
+                + " stateSkipsDepthBias=" + funnel.immediateStatistics.stateSkipsDepthBias()
+                + " cullEnabledGroups=" + funnel.immediateStatistics.cullEnabledGroups()
+                + " cullDisabledGroups=" + funnel.immediateStatistics.cullDisabledGroups()
                 // The signature cache's hit rate: the capture it replaces is twenty-one inputs and two hash lookups on
                 // every offer, so "how often the versions answered for it" is the number that says whether the cache
                 // is doing anything on this scene. hits/misses, printed rather than inferred.
-                + " stateSignatureCache=" + b.celtium$signatureCacheSummary()
+                + " stateSignatureCache=" + funnel.celtium$signatureCacheSummary()
                 // The offer key cache's hit rate, beside the signature cache's: a hit skips the sixteen-int mapping,
                 // the hash and the per-offer census, and leaves the scratch array for the slow path to materialise.
                 // The two rates differ because this key also carries the layout id, which changes between offers the
                 // signature does not.
-                + " stateKeyCache=" + b.celtium$stateKeyCacheSummary()
+                + " stateKeyCache=" + funnel.celtium$stateKeyCacheSummary()
                 // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
                 // immediateDepthBiasedGroups declared and incremented with zero print sites, so "the bias was
                 // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
                 // first four events printed). Both are now in the verification summary.
-                + " immediateDepthBiasedGroups=" + b.immediateStatistics.immediateDepthBiasedGroups()
+                + " immediateDepthBiasedGroups=" + funnel.immediateStatistics.immediateDepthBiasedGroups()
                 // Every bracket's open count, enabled or not: an empty framePassSplit cannot say whether a bracket
                 // ran, and the missing HUD turns on exactly that (GuiIngameMixin's `gui` bracket against a HUD that may
                 // never be drawn).
                 + " passBegins=[" + FramePassTimings.passBeginCallsSummary() + "]"
                 // Which textures and formats each identity carried: the stage census the HUD question needs, because an
                 // identity's first group says nothing about the families that arrive later in the frame.
-                + " targetStages=[" + b.celtium$targetStagesSummary() + "]"
+                + " targetStages=[" + funnel.celtium$targetStagesSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
                 + " terrainDrawCallMillis=" + (0L / 1_000_000L)
-                + " terrainBindMillis=" + (b.terrainBindNanos / 1_000_000L)
+                + " terrainBindMillis=" + (funnel.terrainBindNanos / 1_000_000L)
                 + " terrainPacketMillis=" + (0L / 1_000_000L)
                 + " terrainBatchMillis=" + (0L / 1_000_000L)
                 + " terrainIndirectSetupMillis=" + (0L / 1_000_000L)
                 + " terrainIndirectBindMillis=" + (0L / 1_000_000L)
                 + " terrainPacketCacheHits=" + 0L
                 + " terrainBindSkips=" + 0L
-                + " terrainPassBeginMillis=" + (b.terrainPassBeginNanos / 1_000_000L)
-                + " terrainUniformMillis=" + (b.terrainUniformNanos / 1_000_000L)
-                + " polygonOffsetFillEnabled=" + b.rasterState.polygonOffsetFillEnabled()
-                + " polygonOffsetCalled=" + b.rasterState.polygonOffsetCalled()
+                + " terrainPassBeginMillis=" + (funnel.terrainPassBeginNanos / 1_000_000L)
+                + " terrainUniformMillis=" + (funnel.terrainUniformNanos / 1_000_000L)
+                + " polygonOffsetFillEnabled=" + funnel.rasterState.polygonOffsetFillEnabled()
+                + " polygonOffsetCalled=" + funnel.rasterState.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
                 // to the shared chain pair, so the counter is what says the fix fired and the owner is what makes it
                 // attributable - the panorama's faces were wiped by exactly such a clear before this existed.
-                + " gameClearsDroppedForeignTarget=" + (b.offTargetTarget() == null ? -1
-                        : b.offTargetTarget().gameClearsDroppedForeignTargetCount())
-                + " lastDroppedClearOwner=" + (b.offTargetTarget() == null ? -1
-                        : b.offTargetTarget().lastDroppedClearOwnerName())
-                + " lineBatchesNarrowed=" + b.immediateStatistics.lineBatchesNarrowed()
+                + " gameClearsDroppedForeignTarget=" + (funnel.offTargetTarget() == null ? -1
+                        : funnel.offTargetTarget().gameClearsDroppedForeignTargetCount())
+                + " lastDroppedClearOwner=" + (funnel.offTargetTarget() == null ? -1
+                        : funnel.offTargetTarget().lastDroppedClearOwnerName())
+                + " lineBatchesNarrowed=" + funnel.immediateStatistics.lineBatchesNarrowed()
                 // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
                 // many batches carried an alpha pair the old pipelines could not express, how many carried a write
                 // mask that was not all four channels, and which alpha comparison reached the shader. Before the fix
                 // the first two were zero by construction (the capture never read them) and the third did not exist.
-                + " blendGroups=" + b.immediateStatistics.blendGroups()
-                + " blendAlphaNonDefaultGroups=" + b.immediateStatistics.blendAlphaNonDefaultGroups()
-                + " partialColorMaskGroups=" + b.immediateStatistics.partialColorMaskGroups()
-                + " lastPartialColorMask=0x" + Integer.toHexString(b.immediateStatistics.lastPartialColorMask())
-                + " colorMaskHistogram=" + b.colorMaskHistogramText()
-                + " nonAddBlendEquationGroups=" + b.immediateStatistics.nonAddBlendEquationGroups()
-                + " scissorBoundarySplits=" + b.immediateStatistics.scissorBoundarySplits()
-                + " lightParamBoundarySplits=" + b.immediateStatistics.lightParamBoundarySplits()
-                + " scissorCapturedGroups=" + b.immediateStatistics.scissorCapturedGroups()
-                + " scissorLateCapturedGroups=" + b.immediateStatistics.scissorLateCapturedGroups()
-                + " alphaFuncGroups=" + b.immediateStatistics.alphaFuncGroups()
-                + " nonGreaterAlphaFuncGroups=" + b.immediateStatistics.nonGreaterAlphaFuncGroups()
-                + " alphaTestDisabledGroups=" + b.immediateStatistics.alphaTestDisabledGroups()
-                + " lastAlphaFunc=" + b.immediateStatistics.lastAlphaFunc()
-                + " alphaSelectorCounts=" + b.alphaSelectorSummary()
+                + " blendGroups=" + funnel.immediateStatistics.blendGroups()
+                + " blendAlphaNonDefaultGroups=" + funnel.immediateStatistics.blendAlphaNonDefaultGroups()
+                + " partialColorMaskGroups=" + funnel.immediateStatistics.partialColorMaskGroups()
+                + " lastPartialColorMask=0x" + Integer.toHexString(funnel.immediateStatistics.lastPartialColorMask())
+                + " colorMaskHistogram=" + funnel.colorMaskHistogramText()
+                + " nonAddBlendEquationGroups=" + funnel.immediateStatistics.nonAddBlendEquationGroups()
+                + " scissorBoundarySplits=" + funnel.immediateStatistics.scissorBoundarySplits()
+                + " lightParamBoundarySplits=" + funnel.immediateStatistics.lightParamBoundarySplits()
+                + " scissorCapturedGroups=" + funnel.immediateStatistics.scissorCapturedGroups()
+                + " scissorLateCapturedGroups=" + funnel.immediateStatistics.scissorLateCapturedGroups()
+                + " alphaFuncGroups=" + funnel.immediateStatistics.alphaFuncGroups()
+                + " nonGreaterAlphaFuncGroups=" + funnel.immediateStatistics.nonGreaterAlphaFuncGroups()
+                + " alphaTestDisabledGroups=" + funnel.immediateStatistics.alphaTestDisabledGroups()
+                + " lastAlphaFunc=" + funnel.immediateStatistics.lastAlphaFunc()
+                + " alphaSelectorCounts=" + funnel.alphaSelectorSummary()
                 + " samplerFilters=" + VulkanGlTexture.samplerFilterCensus()
-                + " lastAlphaPushRef=" + b.round3(b.immediateStatistics.lastAlphaPushReference())
-                + " alphaReferenceValues=" + b.alphaReferenceValueSummary()
-                + " windowFlushRetainedBatches=" + b.targetStatistics.windowFlushRetainedBatches()
-                + " lastWindowFlushFailure=" + (b.lastWindowFlushFailure == null ? "none"
-                        : b.lastWindowFlushFailure.replace(' ', '_').substring(0,
-                                Math.min(200, b.lastWindowFlushFailure.length())))
+                + " lastAlphaPushRef=" + funnel.round3(funnel.immediateStatistics.lastAlphaPushReference())
+                + " alphaReferenceValues=" + funnel.alphaReferenceValueSummary()
+                + " windowFlushRetainedBatches=" + funnel.targetStatistics.windowFlushRetainedBatches()
+                + " lastWindowFlushFailure=" + (funnel.lastWindowFlushFailure == null ? "none"
+                        : funnel.lastWindowFlushFailure.replace(' ', '_').substring(0,
+                                Math.min(200, funnel.lastWindowFlushFailure.length())))
                 // The ordering flush's own bounded catch: the site the user's loading screen latched at before it was
                 // bounded, so the next leg reads whether it still happens and what it throws.
-                + " orderingFlushFailures=" + b.immediateStatistics.orderingFlushFailures()
-                + " orderingFlushDroppedBatches=" + b.immediateStatistics.orderingFlushDroppedBatches()
-                + " lastOrderingFlushFailure=" + (b.lastOrderingFlushFailure == null ? "none"
-                        : b.lastOrderingFlushFailure.replace(' ', '_').substring(0,
-                                Math.min(200, b.lastOrderingFlushFailure.length())))
-                + " batchCallCount=" + b.batchCallCount
-                + " batchCallMillis=" + (b.batchCallNanos / 1000000L)
-                + " batchCallWorstMillis=" + (b.batchCallWorstNanos / 1000000L)
-                + " batchCallOpeningMillis=" + (b.batchCallOpeningNanos / 1000000L)
-                + " batchCallOpeningCount=" + b.batchCallOpeningCount
-                + " batchCallCpuMillis=" + (b.batchCallCpuNanos / 1000000L)
-                + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
-                + " threadWaitedMillis=" + b.threadWaitedMillis()
-                + " threadBlockedMillis=" + b.threadBlockedMillis()
-                + " threadCpuTotalMillis=" + (b.threadCpuNanos() / 1000000L)
-                + " uniformPreparationFailures=" + b.immediateStatistics.uniformPreparationFailures()
-                + " lastUniformPreparationFailure=" + b.immediateStatistics.lastUniformPreparationFailure()
-                + " regionUploadFailures=" + b.regionUploadFailures
+                + " orderingFlushFailures=" + funnel.immediateStatistics.orderingFlushFailures()
+                + " orderingFlushDroppedBatches=" + funnel.immediateStatistics.orderingFlushDroppedBatches()
+                + " lastOrderingFlushFailure=" + (funnel.lastOrderingFlushFailure == null ? "none"
+                        : funnel.lastOrderingFlushFailure.replace(' ', '_').substring(0,
+                                Math.min(200, funnel.lastOrderingFlushFailure.length())))
+                + " batchCallCount=" + funnel.batchCallCount
+                + " batchCallMillis=" + (funnel.batchCallNanos / 1000000L)
+                + " batchCallWorstMillis=" + (funnel.batchCallWorstNanos / 1000000L)
+                + " batchCallOpeningMillis=" + (funnel.batchCallOpeningNanos / 1000000L)
+                + " batchCallOpeningCount=" + funnel.batchCallOpeningCount
+                + " batchCallCpuMillis=" + (funnel.batchCallCpuNanos / 1000000L)
+                + " threadCpuSupported=" + org.soutalab.celtium.vulkan.Lane2ImmediateRecorder.THREAD_CPU_SUPPORTED
+                + " threadWaitedMillis=" + funnel.threadWaitedMillis()
+                + " threadBlockedMillis=" + funnel.threadBlockedMillis()
+                + " threadCpuTotalMillis=" + (funnel.threadCpuNanos() / 1000000L)
+                + " uniformPreparationFailures=" + funnel.immediateStatistics.uniformPreparationFailures()
+                + " lastUniformPreparationFailure=" + funnel.immediateStatistics.lastUniformPreparationFailure()
+                + " regionUploadFailures=" + funnel.regionUploadFailures
                 + " sectionsLeftUnbuilt=" + 0L
                 + " deferredUploads=[batches=" + 0L
                 + " outputs=" + 0L
@@ -432,42 +457,42 @@ final class BackendDiagnostics {
                         && 0L == 0L)
                 + "]"
                 + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
-                + " lastRegionUploadFailure=" + b.lastRegionUploadFailure
-                + " innerWallCpu=[preflight " + (b.immediateStatistics.prepareImmediateNanos() / 1000000L) + "/"
-                + (b.preflightCpuNanos / 1000000L) + ", append " + (b.immediateStatistics.appendNanos() / 1000000L) + "/"
-                + (b.appendCpuNanos / 1000000L) + ", groupCreate " + (b.immediateStatistics.groupCreateNanos() / 1000000L) + "/"
-                + (b.groupCreateCpuNanos / 1000000L) + "]"
-                + " prepareImmediateCalls=" + b.immediateStatistics.prepareImmediateCalls()
-                + " prepareImmediateMillis=" + (b.immediateStatistics.prepareImmediateNanos() / 1000000L)
-                + " groupCreateCount=" + b.immediateStatistics.groupCreateCount() + " animatedUploadFlushes=" + b.animatedUploadFlushes
-                + " inWorldAnimMirror=" + b.inWorldAnimMirrorCalls + "/" + (b.inWorldAnimMirrorNanos / 1000L) + "us/worst"
-                + (b.inWorldAnimMirrorWorstNanos / 1000L) + "us" + " sharedIndexRegenerations=" + b.sharedIndexRegenerations
-                + " groupCreateMillis=" + (b.immediateStatistics.groupCreateNanos() / 1000000L)
-                + " appendCount=" + b.immediateStatistics.appendCount()
-                + " appendMillis=" + (b.immediateStatistics.appendNanos() / 1000000L)
-                + " programQueryCount=" + b.immediateStatistics.programQueryCount()
-                + " programQueryMillis=" + (b.immediateStatistics.programQueryNanos() / 1000000L)
-                + " matrixCopyMillis=" + (b.immediateStatistics.matrixCopyNanos() / 1000000L)
-                + " captureStateMillis=" + (b.immediateStatistics.captureStateNanos() / 1000000L)
-                + " stateKeyMillis=" + (b.immediateStatistics.stateKeyNanos() / 1000000L)
-                + " prepareCache=" + b.prepareCacheSummary()
-                + " groupDrawCount=" + b.immediateStatistics.groupDrawCount()
-                + " groupDrawMillis=" + (b.immediateStatistics.groupDrawNanos() / 1000000L)
-                + " groupCloneCount=" + b.immediateStatistics.groupCloneCount()
-                + " groupCloneMillis=" + (b.immediateStatistics.groupCloneNanos() / 1000000L)
-                + " preTransformedGroups=" + b.immediateStatistics.preTransformedGroups()
-                + " preTransformedBatches=" + b.immediateStatistics.preTransformedBatches()
-                + " preTransformedVertices=" + b.immediateStatistics.preTransformedVertices()
-                + " selfCompositeSkips=" + b.immediateStatistics.selfCompositeSkips()
-                + " framebufferHintFailures=" + b.framebufferHintFailures
-                + " pairNameSamplingDraws=" + b.pairNameSamplingDraws
-                + " presentedDumpFailure=" + (b.swapchain == null ? "none" : b.swapchain.lastDumpFailure())
-                + " matrixSplits=" + b.immediateStatistics.matrixSplits()
-                + " groupSplits[" + b.groupSplitCensus.summary() + "]"
-                + " groupCloses=" + b.groupClosesForcingStart
-                + " flushBeforeGlDraw=" + b.flushBeforeGlDrawCalls
-                + " flushBeforeGlDrawWithGroups=" + b.flushBeforeGlDrawWithGroups
-                + " mergeRefusals=" + b.mergeRefusalSummary()
+                + " lastRegionUploadFailure=" + funnel.lastRegionUploadFailure
+                + " innerWallCpu=[preflight " + (funnel.immediateStatistics.prepareImmediateNanos() / 1000000L) + "/"
+                + (funnel.preflightCpuNanos / 1000000L) + ", append " + (funnel.immediateStatistics.appendNanos() / 1000000L) + "/"
+                + (funnel.appendCpuNanos / 1000000L) + ", groupCreate " + (funnel.immediateStatistics.groupCreateNanos() / 1000000L) + "/"
+                + (funnel.groupCreateCpuNanos / 1000000L) + "]"
+                + " prepareImmediateCalls=" + funnel.immediateStatistics.prepareImmediateCalls()
+                + " prepareImmediateMillis=" + (funnel.immediateStatistics.prepareImmediateNanos() / 1000000L)
+                + " groupCreateCount=" + funnel.immediateStatistics.groupCreateCount() + " animatedUploadFlushes=" + funnel.animatedUploadFlushes
+                + " inWorldAnimMirror=" + funnel.inWorldAnimMirrorCalls + "/" + (funnel.inWorldAnimMirrorNanos / 1000L) + "us/worst"
+                + (funnel.inWorldAnimMirrorWorstNanos / 1000L) + "us" + " sharedIndexRegenerations=" + funnel.sharedIndexRegenerations
+                + " groupCreateMillis=" + (funnel.immediateStatistics.groupCreateNanos() / 1000000L)
+                + " appendCount=" + funnel.immediateStatistics.appendCount()
+                + " appendMillis=" + (funnel.immediateStatistics.appendNanos() / 1000000L)
+                + " programQueryCount=" + funnel.immediateStatistics.programQueryCount()
+                + " programQueryMillis=" + (funnel.immediateStatistics.programQueryNanos() / 1000000L)
+                + " matrixCopyMillis=" + (funnel.immediateStatistics.matrixCopyNanos() / 1000000L)
+                + " captureStateMillis=" + (funnel.immediateStatistics.captureStateNanos() / 1000000L)
+                + " stateKeyMillis=" + (funnel.immediateStatistics.stateKeyNanos() / 1000000L)
+                + " prepareCache=" + funnel.prepareCacheSummary()
+                + " groupDrawCount=" + funnel.immediateStatistics.groupDrawCount()
+                + " groupDrawMillis=" + (funnel.immediateStatistics.groupDrawNanos() / 1000000L)
+                + " groupCloneCount=" + funnel.immediateStatistics.groupCloneCount()
+                + " groupCloneMillis=" + (funnel.immediateStatistics.groupCloneNanos() / 1000000L)
+                + " preTransformedGroups=" + funnel.immediateStatistics.preTransformedGroups()
+                + " preTransformedBatches=" + funnel.immediateStatistics.preTransformedBatches()
+                + " preTransformedVertices=" + funnel.immediateStatistics.preTransformedVertices()
+                + " selfCompositeSkips=" + funnel.immediateStatistics.selfCompositeSkips()
+                + " framebufferHintFailures=" + funnel.framebufferHintFailures
+                + " pairNameSamplingDraws=" + funnel.pairNameSamplingDraws
+                + " presentedDumpFailure=" + (funnel.swapchain == null ? "none" : funnel.swapchain.lastDumpFailure())
+                + " matrixSplits=" + funnel.immediateStatistics.matrixSplits()
+                + " groupSplits[" + funnel.groupSplitCensus.summary() + "]"
+                + " groupCloses=" + funnel.groupClosesForcingStart
+                + " flushBeforeGlDraw=" + funnel.flushBeforeGlDrawCalls
+                + " flushBeforeGlDrawWithGroups=" + funnel.flushBeforeGlDrawWithGroups
+                + " mergeRefusals=" + funnel.mergeRefusalSummary()
                 // One packet's time, split at the one boundary every immediate family shares. groupDrawMillis is the
                 // caller's total; pushing is what remains after the bind and draw halves below are taken out.
                 + " packetPipelineMillis=" + PacketCost.pipelineBindMillis()
@@ -478,142 +503,142 @@ final class BackendDiagnostics {
                 + " packetBindMillis=" + PacketCost.bindMillis()
                 + " packetDrawMillis=" + PacketCost.drawMillis()
                 + " packetCalls=" + PacketCost.packets()
-                + " packetRuns[" + b.packetRunCensus.summary() + "]"
+                + " packetRuns[" + funnel.packetRunCensus.summary() + "]"
                 + " packetBindMicros=" + PacketCost.bindMicros()
                 + " packetDrawMicros=" + PacketCost.drawMicros()
                 + " packetBindSkips=" + PacketCost.bindSkips()
-                + " " + b.groupSplitCensus.affineSummary()
-                + " fastMergedBatches=" + b.immediateStatistics.fastMergedBatches()
-                + " prepLookupMillis=" + (b.immediateStatistics.prepLookupNanos() / 1000000L)
-                + " prepTerrainPipelineMillis=" + (b.immediateStatistics.prepTerrainPipelineNanos() / 1000000L)
-                + " prepRegistryMillis=" + (b.immediateStatistics.prepRegistryNanos() / 1000000L)
+                + " " + funnel.groupSplitCensus.affineSummary()
+                + " fastMergedBatches=" + funnel.immediateStatistics.fastMergedBatches()
+                + " prepLookupMillis=" + (funnel.immediateStatistics.prepLookupNanos() / 1000000L)
+                + " prepTerrainPipelineMillis=" + (funnel.immediateStatistics.prepTerrainPipelineNanos() / 1000000L)
+                + " prepRegistryMillis=" + (funnel.immediateStatistics.prepRegistryNanos() / 1000000L)
                 + " regAnnouncedCalls=" + VulkanTextureRegistry.ANNOUNCED_CALLS
                 + " regAnnouncedMillis=" + (VulkanTextureRegistry.ANNOUNCED_NANOS / 1000000L)
                 + " regStaleCalls=" + VulkanTextureRegistry.STALE_CALLS
                 + " regStaleMillis=" + (VulkanTextureRegistry.STALE_NANOS / 1000000L)
                 + " regHitCalls=" + VulkanTextureRegistry.HIT_CALLS
                 + " regAnnouncedSkips=" + VulkanTextureRegistry.ANNOUNCED_SKIPS
-                + " prepBranchMillis=" + (b.immediateStatistics.prepBranchNanos() / 1000000L)
+                + " prepBranchMillis=" + (funnel.immediateStatistics.prepBranchNanos() / 1000000L)
                 + " descriptorHits=" + VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_HITS
-                + " descriptorMisses=" + VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + b.immediateStatistics.clearOrderFlushes()
-                + " clearOrderZeroMask=" + b.clearOrderFlushesZeroMask
-                + " clearOrderSkipped=" + b.clearOrderSkipped + " clearOrderNoTargetMask=" + b.clearOrderNoTargetMask
-                + " mainClearsQueued=" + b.mainClearsQueuedCount()
-                + " mainClearsRescued=" + b.mainClearsRescuedCount()
-                + " mainClearRefusals=[" + b.mainClearRefusalSummary() + "]"
-                + " flushReasons=[" + b.flushReasonSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
-                + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
-                + " refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
-                + " partialMirrorRefusals=" + b.immediateStatistics.partialMirrorRefusals()
-                + " partialMirrorsCompleted=" + b.immediateStatistics.partialMirrorsCompleted()
-                + " offTargetPassesSkippedEmpty=" + b.targetStatistics.offTargetPassesSkippedEmpty()
-                + " offTargetPerTarget=[" + b.offTargetPerTarget() + "]"
-                + " offTargetPairs=[" + b.frameTargetPairSummary() + "]"
-                + " offTargetPairClears=[default-pair=" + b.defaultPairClears
-                + ",chain-pair=" + b.chainPairClears + "]"
-                + " gameClearAttribution=[latchedForFrame=" + b.targetStatistics.gameClearsLatchedForFrame()
-                + ",routedToPairs=" + b.gameClearsRoutedToPairs
-                + ",queuedOnGroups=" + b.gameClearsQueued
-                + ",inPassArm=" + b.gameClearsInPassArm
-                + ",appliedInPass=" + b.gameClearsAppliedInPass
-                + ",standaloneSubmits=" + b.gameClearsSubmittedStandalone
-                + ",latchedForPairs=" + b.gameClearsLatchedForPairs + "]"
-                + " offTargetPairFramebuffers=[default-pair=" + b.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR)
-                + ",chain-pair=" + b.targetRegistry.chainPairFramebufferCreationsTotal() + "]"
-                + " otherTargetGroups=[atMainFlush=" + b.targetStatistics.otherTargetGroupsAtMainFlush()
-                + ",discarded=" + b.otherTargetGroupsDiscarded
-                + ",windowFlush=" + b.otherTargetGroupsFlushedByWindow
-                + ",enqueuedForOtherTargets=" + b.groupsEnqueuedForOtherTargets
-                + ",acceptedForOtherTargets=" + b.acceptedForOtherTargets + "]"
-                + " immediateRecordedBatches=" + b.immediateStatistics.immediateRecordedBatches()
-                + " immediateSubmittedBatches=" + b.immediateStatistics.immediateSubmittedBatches()
-                + " immediateCompletedBatches=" + b.immediateStatistics.immediateCompletedBatches()
-                + " immediateRetries=" + b.immediateStatistics.immediateRetryCount()
-                + " invalidImmediateRecords=" + b.immediateStatistics.invalidImmediateRecords()
-                + " backendCommandBuffer=" + Long.toHexString(b.commandBuffer.address())
-                + " backendCommandState=" + b.commandState.state()
-                + " offTargetRefusals=" + (b.offTargetRefusalsByReason.isEmpty()
-                        ? "none" : b.offTargetRefusalsByReason.toString())
+                + " descriptorMisses=" + VulkanImmediateTextureRecordsPipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + funnel.immediateStatistics.clearOrderFlushes()
+                + " clearOrderZeroMask=" + funnel.clearOrderFlushesZeroMask
+                + " clearOrderSkipped=" + funnel.clearOrderSkipped + " clearOrderNoTargetMask=" + funnel.clearOrderNoTargetMask
+                + " mainClearsQueued=" + funnel.mainClearsQueuedCount()
+                + " mainClearsRescued=" + funnel.mainClearsRescuedCount()
+                + " mainClearRefusals=[" + funnel.mainClearRefusalSummary() + "]"
+                + " flushReasons=[" + funnel.flushReasonSummary() + " flushSiteCounts=" + funnel.flushSiteSummary() + "]"
+                + " offTargetByTarget=[" + funnel.offTargetSummary() + "] offTargetTargets=" + funnel.targetStatistics.offTargetTargetsCreated()
+                + " refusedBeforeAppend=" + funnel.immediateStatistics.refusedBeforeAppend()
+                + " partialMirrorRefusals=" + funnel.immediateStatistics.partialMirrorRefusals()
+                + " partialMirrorsCompleted=" + funnel.immediateStatistics.partialMirrorsCompleted()
+                + " offTargetPassesSkippedEmpty=" + funnel.targetStatistics.offTargetPassesSkippedEmpty()
+                + " offTargetPerTarget=[" + funnel.offTargetPerTarget() + "]"
+                + " offTargetPairs=[" + funnel.frameTargetPairSummary() + "]"
+                + " offTargetPairClears=[default-pair=" + funnel.defaultPairClears
+                + ",chain-pair=" + funnel.chainPairClears + "]"
+                + " gameClearAttribution=[latchedForFrame=" + funnel.targetStatistics.gameClearsLatchedForFrame()
+                + ",routedToPairs=" + funnel.gameClearsRoutedToPairs
+                + ",queuedOnGroups=" + funnel.gameClearsQueued
+                + ",inPassArm=" + funnel.gameClearsInPassArm
+                + ",appliedInPass=" + funnel.gameClearsAppliedInPass
+                + ",standaloneSubmits=" + funnel.gameClearsSubmittedStandalone
+                + ",latchedForPairs=" + funnel.gameClearsLatchedForPairs + "]"
+                + " offTargetPairFramebuffers=[default-pair=" + funnel.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR)
+                + ",chain-pair=" + funnel.targetRegistry.chainPairFramebufferCreationsTotal() + "]"
+                + " otherTargetGroups=[atMainFlush=" + funnel.targetStatistics.otherTargetGroupsAtMainFlush()
+                + ",discarded=" + owner.otherTargetGroupsDiscarded
+                + ",windowFlush=" + funnel.otherTargetGroupsFlushedByWindow
+                + ",enqueuedForOtherTargets=" + funnel.groupsEnqueuedForOtherTargets
+                + ",acceptedForOtherTargets=" + funnel.acceptedForOtherTargets + "]"
+                + " immediateRecordedBatches=" + funnel.immediateStatistics.immediateRecordedBatches()
+                + " immediateSubmittedBatches=" + funnel.immediateStatistics.immediateSubmittedBatches()
+                + " immediateCompletedBatches=" + funnel.immediateStatistics.immediateCompletedBatches()
+                + " immediateRetries=" + funnel.immediateStatistics.immediateRetryCount()
+                + " invalidImmediateRecords=" + funnel.immediateStatistics.invalidImmediateRecords()
+                + " backendCommandBuffer=" + Long.toHexString(frame.commandBuffer.address())
+                + " backendCommandState=" + frame.commandState.state()
+                + " offTargetRefusals=" + (funnel.offTargetRefusalsByReason.isEmpty()
+                        ? "none" : funnel.offTargetRefusalsByReason.toString())
                 // Off-target passes whose routing failed and were redirected into the frame image
                 // instead (drawpath audit DP-33): the pass still draws, into a different image, so
                 // without this count the redirect was visible only in the last failure's text.
-                + " offTargetRedirects=" + b.offTargetRedirects
-                + " offTargetOffered=" + b.targetStatistics.offTargetOffered() + " offTargetAccepted=" + b.targetStatistics.offTargetAccepted()
-                + " offTargetDrawn=" + b.targetStatistics.offTargetDrawn() + " offTargetCopiedBack=" + b.targetStatistics.offTargetCopiedBack()
-                + " outsideWorldPassAccepted=" + b.targetStatistics.outsideWorldPassAccepted()
-                + " descriptorSets=" + b.descriptorSetCensus()
+                + " offTargetRedirects=" + funnel.offTargetRedirects
+                + " offTargetOffered=" + funnel.targetStatistics.offTargetOffered() + " offTargetAccepted=" + funnel.targetStatistics.offTargetAccepted()
+                + " offTargetDrawn=" + funnel.targetStatistics.offTargetDrawn() + " offTargetCopiedBack=" + funnel.targetStatistics.offTargetCopiedBack()
+                + " outsideWorldPassAccepted=" + funnel.targetStatistics.outsideWorldPassAccepted()
+                + " descriptorSets=" + funnel.descriptorSetCensus()
                 // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
                 // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
                 // expected; the injected-failure leg is what distinguishes "nothing failed" from "not wired".
                 + " pipelineBuildRollbacks=" + VulkanImmediateTextureRecordsPipeline.BUILD_ROLLBACKS.get()
-                + " inPlaceRefreshes=" + (b.textureRegistry != null ? b.textureRegistry.inPlaceRefreshes() : 0)
-                + " mirroredTextures=" + (b.textureRegistry != null ? b.textureRegistry.mirrorCount() : 0)
-                + " externalImages=[" + (b.textureRegistry != null
-                        ? b.textureRegistry.externalSummary() : "none") + "]"
+                + " inPlaceRefreshes=" + (funnel.textureRegistry != null ? funnel.textureRegistry.inPlaceRefreshes() : 0)
+                + " mirroredTextures=" + (funnel.textureRegistry != null ? funnel.textureRegistry.mirrorCount() : 0)
+                + " externalImages=[" + (funnel.textureRegistry != null
+                        ? funnel.textureRegistry.externalSummary() : "none") + "]"
                 // Condition (c) evidence: what the swapchain last presented, and whether the present was accepted. With
                 // presentMarker the image is cleared to magenta (1,0,1), whose 8-bit channel mean is ~170, so a
                 // presented mean near 170 says the swapchain image held this renderer's frame rather than nothing.
-                + " presentSucceeded=" + (b.swapchain != null && b.swapchain.lastPresentSucceeded())
-                + " presentSubmitDone=" + (b.swapchain != null && b.swapchain.lastPresentSubmitDone())
+                + " presentSucceeded=" + (funnel.swapchain != null && funnel.swapchain.lastPresentSucceeded())
+                + " presentSubmitDone=" + (funnel.swapchain != null && funnel.swapchain.lastPresentSubmitDone())
                 + " depthFormat=" + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
                 + " depthFormatDecision=[" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + "]"
                 // Which leg of the clear-attribution A/B this run is. On by default; the control leg sets
                 // -Dceltium.vulkan.gameClearLatch=false, and a reader of one report must be able to tell which is
                 // which without a log. Surfaced here and not in b.diagnostics(): that list is not part of the report.
-                + " gameClearLatch=" + (b.celtium$gameClearLatchEnabled() ? "on" : "off")
-                + " presentedMean=" + (b.swapchain != null ? b.swapchain.lastPresentedMean() : -1.0f)
-                + " swapPointCalls=" + b.presentSwapchain.swapPointCalls
-                + " swapPointMillis=" + (b.presentSwapchain.swapPointNanos / 1000000L)
-                + " swapPointFlushMillis=" + (b.presentSwapchain.swapPointFlushNanos / 1000000L)
-                + " swapPointWorstMs=" + (b.presentSwapchain.swapPointWorstNanos / 1000000L)
-                + " presentStages[" + (b.swapchain != null
+                + " gameClearLatch=" + (funnel.celtium$gameClearLatchEnabled() ? "on" : "off")
+                + " presentedMean=" + (funnel.swapchain != null ? funnel.swapchain.lastPresentedMean() : -1.0f)
+                + " swapPointCalls=" + present.swapPointCalls
+                + " swapPointMillis=" + (present.swapPointNanos / 1000000L)
+                + " swapPointFlushMillis=" + (present.swapPointFlushNanos / 1000000L)
+                + " swapPointWorstMs=" + (present.swapPointWorstNanos / 1000000L)
+                + " presentStages[" + (funnel.swapchain != null
                         ? org.soutalab.celtium.vulkan.VulkanSwapchain.presentStageSummary() : "none") + "]"
-                + " swapPointImageMillis=" + (b.presentSwapchain.swapPointImageNanos / 1000000L)
-                + " swapPointImageMs[p50/p95/worst=" + b.celtium$distribution(b.presentSwapchain.swapPointImageRing, b.presentSwapchain.swapPointImageRingCount) + "]"
-                + " submitToFenceMs[p50/p95/worst=" + b.celtium$distribution(b.submitToFenceRing, b.submitToFenceRingCount) + "]"
-                + " swapPointDumpMillis=" + (b.presentSwapchain.swapPointDumpNanos / 1000000L)
-                + " swapPointPollMillis=" + (b.presentSwapchain.swapPointPollNanos / 1000000L)
+                + " swapPointImageMillis=" + (present.swapPointImageNanos / 1000000L)
+                + " swapPointImageMs[p50/p95/worst=" + frame.celtium$distribution(present.swapPointImageRing, present.swapPointImageRingCount) + "]"
+                + " submitToFenceMs[p50/p95/worst=" + frame.celtium$distribution(frame.submitToFenceRing, frame.submitToFenceRingCount) + "]"
+                + " swapPointDumpMillis=" + (present.swapPointDumpNanos / 1000000L)
+                + " swapPointPollMillis=" + (present.swapPointPollNanos / 1000000L)
                 // The swap point's swallowed exceptions (DP-14): a leg's completion gate reads this
                 // == 0, so a present path that threw its frames away cannot pass as a quiet run.
-                + " swapPointExceptions=" + VulkanTerrainGpuBackend.swapPointExceptions
+                + " swapPointExceptions=" + VulkanBackendAdapter.swapPointExceptions
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=native-owner"
                 // The lit ITEM family's fog: 0 lit-fog groups with a 256-byte block means the fix is compiled but never
                 // written, and the skip counter names the remaining unfogged shape (a non-perspective projection).
-                + " litFogGroups=" + b.litFogGroupCount()
-                + " litFogSkippedNonPerspective=" + b.litFogSkipCount()
-                + " boundTextureSamples=" + b.textureStats.boundTextureComparisons()
-                + " boundTextureMismatches=" + b.textureStats.boundTextureMismatches()
-                + " announcedDynamicTextures=" + b.textureStats.announcedDynamicTextures()
-                + " colorMirrorUses=" + b.textureStats.colorMirrorUses()
+                + " litFogGroups=" + funnel.litFogGroupCount()
+                + " litFogSkippedNonPerspective=" + funnel.litFogSkipCount()
+                + " boundTextureSamples=" + funnel.textureStats.boundTextureComparisons()
+                + " boundTextureMismatches=" + funnel.textureStats.boundTextureMismatches()
+                + " announcedDynamicTextures=" + funnel.textureStats.announcedDynamicTextures()
+                + " colorMirrorUses=" + funnel.textureStats.colorMirrorUses()
                 // The refusal counters belong in this summary, not in b.diagnostics(): b.diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
-                + " modelDraws=" + b.modelDraws
-                + " modelEnqueueMillis=" + b.modelStats.enqueueMillis()
-                + " modelEnqueueCalls=" + b.modelStats.enqueueCalls()
-                + " modelEnqueueMicrosPerCall=" + b.modelStats.enqueueMicrosPerCall()
-                + " modelRepeatsPrev=" + b.modelStats.repeatReplays()
-                + " modelRepeatsPercent=" + b.modelStats.repeatPercent()
+                + " modelDraws=" + funnel.modelDraws
+                + " modelEnqueueMillis=" + funnel.modelStats.enqueueMillis()
+                + " modelEnqueueCalls=" + funnel.modelStats.enqueueCalls()
+                + " modelEnqueueMicrosPerCall=" + funnel.modelStats.enqueueMicrosPerCall()
+                + " modelRepeatsPrev=" + funnel.modelStats.repeatReplays()
+                + " modelRepeatsPercent=" + funnel.modelStats.repeatPercent()
                 // What the replay input cache skipped: a hit is a 3x3 inverse + two square roots (light) or a 4x4
                 // multiply (projection) that produced bytes already in hand. The miss side is what a scene that
                 // repeats nothing would pay, so the pair is the measurement of this optimisation on that scene.
-                + " modelReplayCache[" + b.modelReplayInputCache.describe() + "]"
+                + " modelReplayCache[" + funnel.modelReplayInputCache.describe() + "]"
                 // The whole-replay fast path: hits are replays whose record this path wrote without resolving the
                 // state, the texture, the affine, the light map or the lit payload again; the miss reasons say which
                 // half of the guard a scene fails, so a scene that repeats nothing reports that instead of a saving.
-                + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
-                + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
-                + " modelDrawRefusals=" + b.modelDrawRefusals
-                + " modelRunDropped=" + b.modelRunDropped
-                + " modelInstancesFailed=" + b.modelInstancesFailed
-                + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
-                + " modelLastRefusal=" + b.modelLastRefusal
-                + " modelMeshLists=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
+                + " modelFastPath[" + funnel.modelReplayFastPath.describe() + "]"
+                + " texMatrixGroups=" + funnel.immediateStatistics.texMatrixGroups()
+                + " modelDrawRefusals=" + funnel.modelDrawRefusals
+                + " modelRunDropped=" + funnel.modelRunDropped
+                + " modelInstancesFailed=" + funnel.modelInstancesFailed
+                + " modelMissingMeshes=" + owner.modelGeometry.modelMissingMeshes()
+                + " modelLastRefusal=" + funnel.modelLastRefusal
+                + " modelMeshLists=" + (owner.modelGeometry.modelMeshes() == null ? -1 : owner.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + b.modelGeometry.modelMeshQuads()
-                + " modelMeshFailure=" + b.modelGeometry.modelMeshFailure()
+                + " modelMeshQuads=" + owner.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + owner.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -632,76 +657,76 @@ final class BackendDiagnostics {
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
-                + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
+                + " shaderProgramRefusals=" + funnel.immediateStatistics.shaderProgramRefusals()
                 // Lane 3 reports its refusal total and the fixed categories consumed by the loss gate.
                 + " " + org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.refusalSummary()
                 // The native-pass refusals (DP-37): until now they existed only in the
                 // CELTIUM_NATIVE_PASS census line at snapshot time, outside this verify body.
-                + " nativePassExecRefusals=" + b.nativePassRegistry.executionRefusalCount()
-                + " nativePassCompileRefusals=" + b.nativePassRegistry.compileRefusalCount()
-                + " acceptedBatches=" + b.immediateStatistics.frameAccepted()
-                + " imageFilledMirrors=" + (b.textureRegistry != null ? b.textureRegistry.imageUploads() : 0)
+                + " nativePassExecRefusals=" + funnel.nativePassRegistry.executionRefusalCount()
+                + " nativePassCompileRefusals=" + funnel.nativePassRegistry.compileRefusalCount()
+                + " acceptedBatches=" + funnel.immediateStatistics.frameAccepted()
+                + " imageFilledMirrors=" + (funnel.textureRegistry != null ? funnel.textureRegistry.imageUploads() : 0)
                 + " imageUploadsSkipped="
-                + (b.textureRegistry != null ? b.textureRegistry.imageUploadsSkipped() : 0)
-                + " announcedUploads=" + b.textureStats.announcedUploads() + " animatedImageFills=" + b.textureStats.animatedImageFills()
+                + (funnel.textureRegistry != null ? funnel.textureRegistry.imageUploadsSkipped() : 0)
+                + " announcedUploads=" + funnel.textureStats.announcedUploads() + " animatedImageFills=" + funnel.textureStats.animatedImageFills()
                 // The animation announcement's one-shot skip: a patch whose capture the announcement made
                 // unnecessary. It is a saving, not a loss, so it is counted beside the fills it replaces.
                 + " announcedCaptureSkips="
                 + org.soutalab.celtium.vulkan.TextureCaptureStore.celtium$announcedCaptureSkips()
-                + " textureCopiesServed=" + b.textureCopyService.textureCopiesServed()
-                + " textureCopiesRefused=" + b.textureCopyService.textureCopiesRefused()
-                + " textureCopiesReusedInFrame=" + b.textureCopyService.textureCopiesReusedInFrame()
-                + " textureCopyReadbacks=" + b.textureCopyService.textureCopyReadbacks()
-                + " textureCopyReadbackMillis=" + (b.textureCopyService.textureCopyReadbackNanos() / 1000000L)
+                + " textureCopiesServed=" + owner.textureCopyService.textureCopiesServed()
+                + " textureCopiesRefused=" + owner.textureCopyService.textureCopiesRefused()
+                + " textureCopiesReusedInFrame=" + owner.textureCopyService.textureCopiesReusedInFrame()
+                + " textureCopyReadbacks=" + owner.textureCopyService.textureCopyReadbacks()
+                + " textureCopyReadbackMillis=" + (owner.textureCopyService.textureCopyReadbackNanos() / 1000000L)
                 // The native route's own census: a copy the GPU wrote into the mirror directly, against one the blit
                 // refused (which then took the host route above). The two lines together are what says which path a
                 // leg's copies took, rather than the absence of a readback implying the blit ran.
-                + " textureCopiesServedPeakPerPresent=" + b.textureCopyService.textureCopiesServedPeakPerPresent()
+                + " textureCopiesServedPeakPerPresent=" + owner.textureCopyService.textureCopiesServedPeakPerPresent()
                 + " textureCopiesReServedAfterContentChange="
-                + b.textureCopyService.textureCopiesReServedAfterContentChange()
-                + " textureCopyBlits=" + b.textureCopyService.textureCopyBlits()
-                + " textureCopyBlitRefusals=" + b.textureCopyService.textureCopyBlitRefusals()
-                + " lastTextureCopyBlitRefusal=[" + b.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lastTextureCopyRefusal=[" + b.textureCopyService.lastTextureCopyRefusal() + "]"
+                + owner.textureCopyService.textureCopiesReServedAfterContentChange()
+                + " textureCopyBlits=" + owner.textureCopyService.textureCopyBlits()
+                + " textureCopyBlitRefusals=" + owner.textureCopyService.textureCopyBlitRefusals()
+                + " lastTextureCopyBlitRefusal=[" + owner.textureCopyService.lastTextureCopyBlitRefusal() + "]"
+                + " lastTextureCopyRefusal=[" + owner.textureCopyService.lastTextureCopyRefusal() + "]"
                 // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
                 // and did not get. Without the second number the rule's effect is inferred from a picture.
-                + " pairClearsRefusedOtherIdentity=" + b.targetStatistics.pairClearsRefusedOtherIdentity()
-                + " windowDrawsToFrameImage=" + b.targetStatistics.windowDrawsToFrameImage()
-                + " windowFramesMarkedPresentable=" + b.targetStatistics.windowFramesMarkedPresentable()
-                + " lastPairClearRefusal=[" + b.targetStatistics.lastPairClearRefusal() + "]"
-                + " vanillaPostRuns=" + b.frameCoordinator.vanillaPostRuns()
-                + " vanillaPostPasses=" + b.frameCoordinator.vanillaPostPasses()
-                + " postChainCreationFailures=" + b.frameCoordinator.postChainCreationFailures()
-                + " postChainUnsupportedRefusals=" + b.frameCoordinator.postChainUnsupportedRefusals()
-                + " chainInputFlushFailures=" + b.frameCoordinator.chainInputFlushFailures()
+                + " pairClearsRefusedOtherIdentity=" + funnel.targetStatistics.pairClearsRefusedOtherIdentity()
+                + " windowDrawsToFrameImage=" + funnel.targetStatistics.windowDrawsToFrameImage()
+                + " windowFramesMarkedPresentable=" + funnel.targetStatistics.windowFramesMarkedPresentable()
+                + " lastPairClearRefusal=[" + funnel.targetStatistics.lastPairClearRefusal() + "]"
+                + " vanillaPostRuns=" + frame.vanillaPostRuns()
+                + " vanillaPostPasses=" + frame.vanillaPostPasses()
+                + " postChainCreationFailures=" + frame.postChainCreationFailures()
+                + " postChainUnsupportedRefusals=" + frame.postChainUnsupportedRefusals()
+                + " chainInputFlushFailures=" + frame.chainInputFlushFailures()
                 + " " + StageGate.system().summary()
                 + " " + VulkanContext.pipelineCreationSummary()
                 // The prewarm's fallback census, beside the creation summary it qualifies: a warm
                 // window with no synchronous creations reads very differently when the number of
                 // draws it substituted is zero than when it is not.
-                + " " + b.celtium$prewarmSummary()
+                + " " + funnel.celtium$prewarmSummary()
                 + " " + VulkanContext.memoryAllocationSummary()
                 + " " + FallbackPaths.summary()
-                + " " + b.context.celtium$slabPoolSummary()
-                + " " + b.context.celtium$slabDrainSummary()
-                + " " + b.framebufferCompositor.describe()
-                + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
-                + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()
-                + " readbackByOrigin=" + (b.textureRegistry != null ? b.textureRegistry.readbackByOrigin() : "none")
+                + " " + frame.context.celtium$slabPoolSummary()
+                + " " + frame.context.celtium$slabDrainSummary()
+                + " " + owner.framebufferCompositor.describe()
+                + " directMirrorFromAnnouncement=" + funnel.textureStats.directMirrorFromAnnouncement()
+                + " dynamicTextureFills=" + funnel.textureStats.dynamicTextureFills()
+                + " readbackByOrigin=" + (funnel.textureRegistry != null ? funnel.textureRegistry.readbackByOrigin() : "none")
                 + " mirrorsCreatedByAnnouncement="
-                + (b.textureRegistry != null ? b.textureRegistry.createdByAnnouncement() : 0)
-                + " swapchainOutOfDate=" + (b.swapchain != null ? (b.swapchain.outOfDate() ? 1 : 0) : -1)
-                + " acquireOutOfDate=" + (b.swapchain != null ? b.swapchain.acquireOutOfDate() : -1)
-                + " retiredFlushes=" + b.submissionStatistics.retiredFlushes() + " retire=" + VulkanRetireQueue.describe()
-                + " lastFrameAccepted=" + b.immediateStatistics.lastFrameAccepted() + " lastFrameDrawn=" + b.immediateStatistics.lastFrameDrawn()
-                + " immediateTaken=" + b.immediateStatistics.immediateTaken() + " immediateGroupsFlushed=" + b.immediateStatistics.immediateGroupsFlushed()
-                + " rawWriteGate=[skips=" + b.rawWriteGateSkips + " flushes=" + b.rawWriteGateFlushes + "]"
-                + " immediateGroupsClosed=" + b.immediateStatistics.immediateGroupsClosed()
-                + " immediateMaxGroupVertices=" + b.immediateStatistics.immediateMaxGroupVertices()
-                + " immediateRefusal=" + b.celtium$refusalText().replace(' ', '_')
-                + " snapshotCaptures=" + b.immediateStatistics.snapshotCaptures() + " snapshotServed=" + b.immediateStatistics.snapshotServedCaptures()
-                + " textureRefusalsBeforeAccept=" + b.textureStats.textureRefusalsBeforeAccept()
-                + " postAcceptDroppedGroups=" + b.immediateStatistics.postAcceptDroppedGroups()
+                + (funnel.textureRegistry != null ? funnel.textureRegistry.createdByAnnouncement() : 0)
+                + " swapchainOutOfDate=" + (funnel.swapchain != null ? (funnel.swapchain.outOfDate() ? 1 : 0) : -1)
+                + " acquireOutOfDate=" + (funnel.swapchain != null ? funnel.swapchain.acquireOutOfDate() : -1)
+                + " retiredFlushes=" + frame.submissionStatistics.retiredFlushes() + " retire=" + VulkanRetireQueue.describe()
+                + " lastFrameAccepted=" + funnel.immediateStatistics.lastFrameAccepted() + " lastFrameDrawn=" + funnel.immediateStatistics.lastFrameDrawn()
+                + " immediateTaken=" + funnel.immediateStatistics.immediateTaken() + " immediateGroupsFlushed=" + funnel.immediateStatistics.immediateGroupsFlushed()
+                + " rawWriteGate=[skips=" + funnel.rawWriteGateSkips + " flushes=" + funnel.rawWriteGateFlushes + "]"
+                + " immediateGroupsClosed=" + funnel.immediateStatistics.immediateGroupsClosed()
+                + " immediateMaxGroupVertices=" + funnel.immediateStatistics.immediateMaxGroupVertices()
+                + " immediateRefusal=" + funnel.celtium$refusalText().replace(' ', '_')
+                + " snapshotCaptures=" + funnel.immediateStatistics.snapshotCaptures() + " snapshotServed=" + funnel.immediateStatistics.snapshotServedCaptures()
+                + " textureRefusalsBeforeAccept=" + funnel.textureStats.textureRefusalsBeforeAccept()
+                + " postAcceptDroppedGroups=" + funnel.immediateStatistics.postAcceptDroppedGroups()
                 // The post-accept loss aggregate (drawpath audit DP-10): the loss counters are scattered
                 // across three statistics owners, so no single key let a reader gate on "nothing accepted
                 // was lost". The members: postAcceptDroppedGroups (ordering-flush replacement drops),
@@ -709,47 +734,47 @@ final class BackendDiagnostics {
                 // staleGroupRefusals and immediateGroupsDiscarded. Each member counts in its own unit
                 // (groups or batches, as its seat defines them); the aggregate is a zero gate - it is read
                 // as "== 0", where the units cannot mislead.
-                + " totalPostAcceptDrops=" + (b.immediateStatistics.postAcceptDroppedGroups()
-                        + b.immediateStatistics.orderingFlushDroppedBatches()
-                        + b.submissionStatistics.stalledGeometryDroppedBatches()
-                        + b.targetStatistics.unflushedTargetGroupsDropped()
-                        + b.immediateStatistics.staleGroupRefusals()
-                        + b.immediateStatistics.immediateGroupsDiscarded())
-                + " particleDescriptorRefusals=" + b.immediateStatistics.particleDescriptorRefusals()
-                + " gpuStalled=" + b.gpuStalled + " stalledStops=" + b.submissionStatistics.stalledStops()
-                + " publishedFrameTexturesCreated=" + b.publishedTextures.created()
-                + " publishedFrameTexturesUnpublished=" + b.publishedTextures.unpublished()
+                + " totalPostAcceptDrops=" + (funnel.immediateStatistics.postAcceptDroppedGroups()
+                        + funnel.immediateStatistics.orderingFlushDroppedBatches()
+                        + frame.submissionStatistics.stalledGeometryDroppedBatches()
+                        + funnel.targetStatistics.unflushedTargetGroupsDropped()
+                        + funnel.immediateStatistics.staleGroupRefusals()
+                        + funnel.immediateStatistics.immediateGroupsDiscarded())
+                + " particleDescriptorRefusals=" + funnel.immediateStatistics.particleDescriptorRefusals()
+                + " gpuStalled=" + frame.gpuStalled + " stalledStops=" + frame.submissionStatistics.stalledStops()
+                + " publishedFrameTexturesCreated=" + funnel.publishedTextures.created()
+                + " publishedFrameTexturesUnpublished=" + funnel.publishedTextures.unpublished()
                 // The attach-side rule's counter: a published name that stands for the image the pass attaches is kept
                 // out of the sampling-side transition, which is the VUID-00900 fix. It must be visible, because a rule
                 // that silently stops transitioning an image is indistinguishable from one that forgot to.
-                + " publishedFrameTexturesSkippedForAttach=" + b.publishedTextures.skippedForAttach()
+                + " publishedFrameTexturesSkippedForAttach=" + funnel.publishedTextures.skippedForAttach()
                 // A name whose image was recreated under it is unpublished at the point of use: a barrier on the freed
                 // handle was measured as a validation error followed by a SIGSEGV inside libvulkan_radeon.
-                + " publishedFrameTexturesStalePruned=" + b.publishedTextures.stalePruned()
-                + " publishedFrameTexturesRepublished=" + b.publishedTextures.republished()
+                + " publishedFrameTexturesStalePruned=" + funnel.publishedTextures.stalePruned()
+                + " publishedFrameTexturesRepublished=" + funnel.publishedTextures.republished()
                 // A group that outlived its texture wrapper: the descriptor is rebuilt from the current wrapper, or the
                 // group is refused. Both are counted because "the picture lost a batch" and "the device was lost" are
                 // different outcomes and only the counter says which happened.
-                + " staleGroupDescriptorsRebuilt=" + b.immediateStatistics.staleGroupDescriptorsRebuilt()
-                + " evictedSetDescriptorsRebuilt=" + b.immediateStatistics.evictedSetDescriptorsRebuilt()
-                + " staleGroupRefusals=" + b.immediateStatistics.staleGroupRefusals()
-                + " stalledTeardownSkips=" + b.submissionStatistics.stalledTeardownSkips()
-                + " idleWaits=" + b.submissionStatistics.idleWaits() + " injectedIdleFailures=" + b.submissionStatistics.injectedIdleFailures()
+                + " staleGroupDescriptorsRebuilt=" + funnel.immediateStatistics.staleGroupDescriptorsRebuilt()
+                + " evictedSetDescriptorsRebuilt=" + funnel.immediateStatistics.evictedSetDescriptorsRebuilt()
+                + " staleGroupRefusals=" + funnel.immediateStatistics.staleGroupRefusals()
+                + " stalledTeardownSkips=" + frame.submissionStatistics.stalledTeardownSkips()
+                + " idleWaits=" + frame.submissionStatistics.idleWaits() + " injectedIdleFailures=" + frame.submissionStatistics.injectedIdleFailures()
                 // A timed-out fence wait is retried before the latch: a resize or a swapchain rebuild produces transient
                 // timeouts, and latching on the first one stopped the renderer for the session (measured on the
                 // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
-                + " idleWaitTimeouts=" + b.submissionStatistics.idleWaitTimeouts() + " idleWaitRetries=" + b.submissionStatistics.idleWaitRetries()
-                + " terrainPasses=" + b.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + b.terrainStatistics.immediateOnlyPasses()
+                + " idleWaitTimeouts=" + frame.submissionStatistics.idleWaitTimeouts() + " idleWaitRetries=" + frame.submissionStatistics.idleWaitRetries()
+                + " terrainPasses=" + funnel.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + funnel.terrainStatistics.immediateOnlyPasses()
                 // Item 384: terrain passes drawn into the bound mod framebuffer's chain pair
                 // (terrainToBoundTarget) - the routing half of the bloom-halo split belongs in
                 // this summary, the one the fixture reads, not only in b.diagnostics().
-                + " terrainPassesToBoundTarget=" + b.terrainPassesToBoundTarget()
+                + " terrainPassesToBoundTarget=" + funnel.terrainPassesToBoundTarget()
                 // Item 644 follow-up (bdisc2): the bound-target refusal census was collected and printed
                 // only on the diagnostics() line, never on this VERIFY summary, so a leg reading the
                 // summary the fixture surfaces could not see attempts or refusals at all. Same summary
                 // string the diagnostics line uses, so the two cannot drift apart.
-                + b.boundTargetCensusSummary()
-                + " worldPassBoundaryFlushes=" + b.terrainStatistics.worldPassBoundaryFlushes()
+                + funnel.boundTargetCensusSummary()
+                + " worldPassBoundaryFlushes=" + funnel.terrainStatistics.worldPassBoundaryFlushes()
                 // Item 328 (V-03): the terrain frame budget's cumulative account - what the per-frame caps
                 // dropped and what the rebuild discipline deferred or reused - so a leg that hit either says
                 // so in the summary the fixture reads, not only in the bounded stdout line.
@@ -764,7 +789,7 @@ final class BackendDiagnostics {
                 // and never printed, so a healthy run (no drops, no budget line) had no V4 material at all.
                 + " terrainBudgetDrawnVertices=" + 0L
                 + " terrainBudgetDrawnDraws=" + 0L
-                + " " + b.terrainStatisticsSummary()
+                + " " + funnel.terrainStatisticsSummary()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
                 // reports. VulkanContext.bootstrapQueueWaits is incremented by b.beginCommands()'s vkQueueWaitIdle and
                 // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -
@@ -777,19 +802,19 @@ final class BackendDiagnostics {
                 + " arenaCreateMillis=" + (0L / 1000000L)
                 + " arenaGrowthCopies=" + 0L
                 + " arenaPages=" + 0L
-                + " textureDiagnostics=" + b.TEXTURE_DIAGNOSTICS + " diagnosed=" + b.diagnosedTextures.size()
-                + " blendObserved=" + b.immediateStatistics.blendObserved() + "(" + b.observedBlendSrc + "," + b.observedBlendDst + ")"
-                + " blendPairs=" + b.blendPairs + " blendFuncIgnored=" + b.immediateStatistics.blendFuncIgnored()
-                + " blendOutlier=\"" + (b.blendOutlier == null ? "none" : b.blendOutlier) + "\""
+                + " textureDiagnostics=" + funnel.TEXTURE_DIAGNOSTICS + " diagnosed=" + funnel.diagnosedTextures.size()
+                + " blendObserved=" + funnel.immediateStatistics.blendObserved() + "(" + funnel.observedBlendSrc + "," + funnel.observedBlendDst + ")"
+                + " blendPairs=" + funnel.blendPairs + " blendFuncIgnored=" + funnel.immediateStatistics.blendFuncIgnored()
+                + " blendOutlier=\"" + (funnel.blendOutlier == null ? "none" : funnel.blendOutlier) + "\""
                 // The 2-argument glBlendFunc calls, which used to reach the counters but not the mirror. A run whose
                 // value here is 0 and whose picture has an additive layer is a run where the call never arrived.
-                + " blendFuncTwoArg=" + b.immediateStatistics.blendFuncTwoArgCalls()
-                + " lastTwoArgBlendPair=\"" + b.immediateStatistics.lastTwoArgBlendPair() + "\""
-                + " particleDescriptorFailure=\"" + b.immediateStatistics.particleDescriptorFailureReason() + "\""
-                + " acceptedByFormat=[" + b.celtium$perFormat(b.acceptedByFormat) + "]"
-                + " drawnByFormat=[" + b.celtium$perFormat(b.drawnByFormat) + "]"
-                + " droppedByFormat=[" + b.celtium$perFormat(b.postAcceptDroppedByFormat) + "]"
-                + " passBoundaryFlushes=" + b.immediateStatistics.passBoundaryFlushes() + " matrixDiagnostics=" + b.MATRIX_DIAGNOSTICS
+                + " blendFuncTwoArg=" + funnel.immediateStatistics.blendFuncTwoArgCalls()
+                + " lastTwoArgBlendPair=\"" + funnel.immediateStatistics.lastTwoArgBlendPair() + "\""
+                + " particleDescriptorFailure=\"" + funnel.immediateStatistics.particleDescriptorFailureReason() + "\""
+                + " acceptedByFormat=[" + funnel.celtium$perFormat(funnel.acceptedByFormat) + "]"
+                + " drawnByFormat=[" + funnel.celtium$perFormat(funnel.drawnByFormat) + "]"
+                + " droppedByFormat=[" + funnel.celtium$perFormat(funnel.postAcceptDroppedByFormat) + "]"
+                + " passBoundaryFlushes=" + funnel.immediateStatistics.passBoundaryFlushes() + " matrixDiagnostics=" + funnel.MATRIX_DIAGNOSTICS
                 // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
                 // than from a hand-written list: the list stopped at 9 and hid POSITION_NORMAL's own entry, which is
                 // the same shape as the counters that hid ids 6..10 before. droppedByFormat is incremented at the
@@ -805,7 +830,7 @@ final class BackendDiagnostics {
                 // is still held. immediateGroupsKeptForOtherTargets is printed because it names a way a group
                 // can be held back; a counter with no increment site anywhere is not printed at all - the
                 // reader-wiring pass removed those rather than leave a permanent zero on the line.
-                + " immediateGroupsDrawn=" + b.immediateStatistics.immediateGroupsDrawn()
+                + " immediateGroupsDrawn=" + funnel.immediateStatistics.immediateGroupsDrawn()
                 + " groupPool=[created=" + ImmediateGroup.poolCreated + " reused=" + ImmediateGroup.poolReused
                 + " recycled=" + ImmediateGroup.poolRecycled + "]"
                 // Every vkQueueSubmit the process issued, all paths together: the owned target's per-stage
@@ -816,79 +841,79 @@ final class BackendDiagnostics {
                 // all: lightmapCoordGroups counts the groups whose captured coordinate reached the push block and
                 // lightmapFullBrightGroups the GUI-stage groups that were given the full-bright pair instead. A
                 // hotbar leg that reports the capture without the second number cannot say which coordinate was drawn.
-                + " lightmapCoordCalls=" + b.immediateStatistics.lightmapCoordCalls()
-                + " lightmapCoordGroups=" + b.immediateStatistics.lightmapCoordGroups()
-                + " lightmapFullBrightGroups=" + b.immediateStatistics.lightmapFullBrightGroups()
+                + " lightmapCoordCalls=" + funnel.immediateStatistics.lightmapCoordCalls()
+                + " lightmapCoordGroups=" + funnel.immediateStatistics.lightmapCoordGroups()
+                + " lightmapFullBrightGroups=" + funnel.immediateStatistics.lightmapFullBrightGroups()
                 // The hook's own census: a zero here means the enableLightmap/disableLightmap injection never ran, and
                 // the full-bright rule then degrades to the captured coordinate rather than to full-bright entities.
-                + " lightmapUnitEnables=" + b.immediateStatistics.lightmapUnitEnables()
-                + " lightmapUnitDisables=" + b.immediateStatistics.lightmapUnitDisables()
+                + " lightmapUnitEnables=" + funnel.immediateStatistics.lightmapUnitEnables()
+                + " lightmapUnitDisables=" + funnel.immediateStatistics.lightmapUnitDisables()
                 // The ITEM variant split, so "the GUI item is bright" can be read as "it was lit and the coordinate was
                 // full-bright" or as "it was never lit at all" rather than assumed from the picture.
-                + " itemLitGroups=" + b.immediateStatistics.itemLitGroups()
-                + " itemLitGuiGroups=" + b.immediateStatistics.itemLitGuiGroups()
-                + " itemUnlitGroups=" + b.immediateStatistics.itemUnlitGroups()
-                + " itemUnlitGuiGroups=" + b.immediateStatistics.itemUnlitGuiGroups()
+                + " itemLitGroups=" + funnel.immediateStatistics.itemLitGroups()
+                + " itemLitGuiGroups=" + funnel.immediateStatistics.itemLitGuiGroups()
+                + " itemUnlitGroups=" + funnel.immediateStatistics.itemUnlitGroups()
+                + " itemUnlitGuiGroups=" + funnel.immediateStatistics.itemUnlitGuiGroups()
                 // The strip separators, in the census as well as in the font summary. The summary is printed by a
                 // shutdown hook, and a leg whose fixture exits early loses it - measured: the font-strip2 leg has no
                 // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
                 // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
-                + b.fontStats.run0()
-                + " " + b.fontStats.retentionSummary()
+                + funnel.fontStats.run0()
+                + " " + funnel.fontStats.retentionSummary()
                 // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
                 // make impossible - 248 lines against 1,628,711 arrivals is what they actually said.
-                + " bindTextureCalls=" + b.textureStats.bindTextureCalls()
-                + " bindShortCircuits=" + b.textureStats.bindShortCircuits()
-                + " immediateStateCalls=" + b.immediateStatistics.immediateStateCalls()
-                + " immediateGroupsDiscarded=" + b.immediateStatistics.immediateGroupsDiscarded()
-                + " immediateGroupsKeptForOtherTargets=" + b.immediateStatistics.immediateGroupsKeptForOtherTargets()
-                + " groupsStaleTargetGeneration=" + b.immediateStatistics.groupsStaleTargetGeneration()
-                + " groupsStaleWorldEpoch=" + b.immediateStatistics.groupsStaleWorldEpoch()
-                + " worldEpoch=" + b.worldEpoch
-                + " groupsDiscardedAtWorldTeardown=" + b.immediateStatistics.groupsDiscardedAtWorldTeardown()
-                + " groupsDiscardedAtFullTeardown=" + b.immediateStatistics.groupsDiscardedAtFullTeardown()
-                + " immediateWindows=" + b.immediateStatistics.immediateWindows()
-                + " immediateWindowsThisFrame=" + b.immediateStatistics.immediateWindowsThisFrame()
-                + " pendingImmediateIndices=" + b.pendingImmediateIndices
-                + " immediateGroupsPending=" + b.immediateGroups.size()
-                + " recordedGroupsHeld=" + b.recordedImmediateGroups.size()
-                + " retiredGroupsHeld=" + b.retiredImmediateGroups.size()
-                + " lastTerrainPassFrame=" + b.terrainStatistics.lastTerrainPassFrame() + " frameId=" + b.frameId
-                + " matrixMirrorDelta=proj:" + b.immediateStatistics.mirroredProjectionDelta() + ",view:" + b.mirroredModelViewDelta
+                + " bindTextureCalls=" + funnel.textureStats.bindTextureCalls()
+                + " bindShortCircuits=" + funnel.textureStats.bindShortCircuits()
+                + " immediateStateCalls=" + funnel.immediateStatistics.immediateStateCalls()
+                + " immediateGroupsDiscarded=" + funnel.immediateStatistics.immediateGroupsDiscarded()
+                + " immediateGroupsKeptForOtherTargets=" + funnel.immediateStatistics.immediateGroupsKeptForOtherTargets()
+                + " groupsStaleTargetGeneration=" + funnel.immediateStatistics.groupsStaleTargetGeneration()
+                + " groupsStaleWorldEpoch=" + funnel.immediateStatistics.groupsStaleWorldEpoch()
+                + " worldEpoch=" + funnel.worldEpoch
+                + " groupsDiscardedAtWorldTeardown=" + funnel.immediateStatistics.groupsDiscardedAtWorldTeardown()
+                + " groupsDiscardedAtFullTeardown=" + funnel.immediateStatistics.groupsDiscardedAtFullTeardown()
+                + " immediateWindows=" + funnel.immediateStatistics.immediateWindows()
+                + " immediateWindowsThisFrame=" + funnel.immediateStatistics.immediateWindowsThisFrame()
+                + " pendingImmediateIndices=" + funnel.pendingImmediateIndices
+                + " immediateGroupsPending=" + funnel.immediateGroups.size()
+                + " recordedGroupsHeld=" + frame.recordedImmediateGroups.size()
+                + " retiredGroupsHeld=" + frame.retiredImmediateGroups.size()
+                + " lastTerrainPassFrame=" + funnel.terrainStatistics.lastTerrainPassFrame() + " frameId=" + frame.frameId
+                + " matrixMirrorDelta=proj:" + funnel.immediateStatistics.mirroredProjectionDelta() + ",view:" + funnel.mirroredModelViewDelta
                 // The application side of the stub's raw glMultMatrixf arrival census. Without this print the field was
                 // an instrument with no output (proj-channel found it incremented at :3102 and printed nowhere), and
                 // "arrivals without a mirrored multiply" is the pair that says a raw call reached GL with no owner.
-                + ",mirroredMultiplies:" + b.mirroredMultiplies
-                + ",comparisons:" + b.matrixComparisons + ",exact:" + b.matrixExactComparisons
-                + ",translateCalls:" + b.translateCalls + ",zeroTranslates:" + b.translateZeroCalls
-                + ",passSplits:" + b.passSplits + ",target:" + b.targetRegistry.currentIdentity()
-                + ",worstView[" + (b.worstModelViewSample == null ? "none" : b.worstModelViewSample) + "]"
-                + " trace[" + String.join(" ", b.trace) + "]"
-                + ",steadyComparisons:" + b.steadyComparisons + ",crossPassSkipped:" + b.crossPassComparisonsSkipped + ",midSetupSkipped:" + b.midSetupComparisonsSkipped
-                + ",steadyDelta=proj:" + b.steadyProjectionDelta + ",view:" + b.steadyModelViewDelta
-                + ",derivedProj:" + b.derivedProjections + ",refused:" + b.derivedProjectionRefusals
-                + ",cameraSeeds:" + b.cameraSetupSeeds
-                + ",derivedCompared:" + b.derivedProjectionComparisons
-                + ",writeId:" + b.derivedWriteIdentity + ",compareId:" + b.derivedCompareIdentity
-                + ",loadIdentityWhilePending:" + b.loadIdentityWhilePending
-                + ",loadIdentityByMode=proj:" + b.loadIdentityByMode[0] + ",view:" + b.loadIdentityByMode[1]
-                + ",matrixModeByMode=proj:" + b.matrixModeCallsByMode[0] + ",view:" + b.matrixModeCallsByMode[1]
-                + ",derivedDelta:" + b.derivedProjectionDelta
-                + " derivedWorst[" + (b.derivedProjectionWorst == null ? "none" : b.derivedProjectionWorst) + "]"
-                + " matrixDump[" + (b.matrixDump == null ? "none" : b.matrixDump) + "]"
-                + " immediateSubmitAvgNs=" + (b.immediateStatistics.immediateBatchesOffered() == 0 ? 0
-                : b.immediateSubmitNanos / b.immediateStatistics.immediateBatchesOffered())
-                + " immediateSubmitWorldAvgNs=" + (b.immediateSubmitBaselineNanos < 0
-                        || b.immediateStatistics.immediateBatchesOffered() <= b.immediateSubmitBaselineOffered ? 0
-                : (b.immediateSubmitNanos - b.immediateSubmitBaselineNanos)
-                        / (b.immediateStatistics.immediateBatchesOffered() - b.immediateSubmitBaselineOffered))
+                + ",mirroredMultiplies:" + funnel.mirroredMultiplies
+                + ",comparisons:" + funnel.matrixComparisons + ",exact:" + funnel.matrixExactComparisons
+                + ",translateCalls:" + funnel.translateCalls + ",zeroTranslates:" + funnel.translateZeroCalls
+                + ",passSplits:" + funnel.passSplits + ",target:" + funnel.targetRegistry.currentIdentity()
+                + ",worstView[" + (funnel.worstModelViewSample == null ? "none" : funnel.worstModelViewSample) + "]"
+                + " trace[" + String.join(" ", funnel.trace) + "]"
+                + ",steadyComparisons:" + funnel.steadyComparisons + ",crossPassSkipped:" + funnel.crossPassComparisonsSkipped + ",midSetupSkipped:" + funnel.midSetupComparisonsSkipped
+                + ",steadyDelta=proj:" + funnel.steadyProjectionDelta + ",view:" + funnel.steadyModelViewDelta
+                + ",derivedProj:" + funnel.derivedProjections + ",refused:" + funnel.derivedProjectionRefusals
+                + ",cameraSeeds:" + funnel.cameraSetupSeeds
+                + ",derivedCompared:" + funnel.derivedProjectionComparisons
+                + ",writeId:" + funnel.derivedWriteIdentity + ",compareId:" + funnel.derivedCompareIdentity
+                + ",loadIdentityWhilePending:" + funnel.loadIdentityWhilePending
+                + ",loadIdentityByMode=proj:" + funnel.loadIdentityByMode[0] + ",view:" + funnel.loadIdentityByMode[1]
+                + ",matrixModeByMode=proj:" + funnel.matrixModeCallsByMode[0] + ",view:" + funnel.matrixModeCallsByMode[1]
+                + ",derivedDelta:" + funnel.derivedProjectionDelta
+                + " derivedWorst[" + (funnel.derivedProjectionWorst == null ? "none" : funnel.derivedProjectionWorst) + "]"
+                + " matrixDump[" + (funnel.matrixDump == null ? "none" : funnel.matrixDump) + "]"
+                + " immediateSubmitAvgNs=" + (funnel.immediateStatistics.immediateBatchesOffered() == 0 ? 0
+                : funnel.immediateSubmitNanos / funnel.immediateStatistics.immediateBatchesOffered())
+                + " immediateSubmitWorldAvgNs=" + (funnel.immediateSubmitBaselineNanos < 0
+                        || funnel.immediateStatistics.immediateBatchesOffered() <= funnel.immediateSubmitBaselineOffered ? 0
+                : (funnel.immediateSubmitNanos - funnel.immediateSubmitBaselineNanos)
+                        / (funnel.immediateStatistics.immediateBatchesOffered() - funnel.immediateSubmitBaselineOffered))
                 + " submitBuckets=[<5us:" + b.immediateSubmitUnder5 + " 5-50:" + b.immediateSubmit5to50
-                + " 50-200:" + b.immediateSubmit50to200 + " >200us:" + b.immediateSubmitTailCalls
-                + " tailMillis=" + (b.immediateStatistics.immediateSubmitTailNanos() / 1000000L) + "]"
+                + " 50-200:" + funnel.immediateSubmit50to200 + " >200us:" + funnel.immediateSubmitTailCalls
+                + " tailMillis=" + (funnel.immediateStatistics.immediateSubmitTailNanos() / 1000000L) + "]"
                 + " tailCarried=[flush:" + b.tailCarriedFlush + " supply:" + b.tailCarriedSupply
-                + " both:" + b.tailCarriedBoth + " neither:" + b.tailCarriedNeither + "]"
+                + " both:" + b.tailCarriedBoth + " neither:" + funnel.tailCarriedNeither + "]"
                 // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
@@ -906,17 +931,17 @@ final class BackendDiagnostics {
                 // Counted at the junction and in the stub; printed here so a leg answers with numbers.
                 + " targetFormats=[" + TargetFormatCensus.summary() + "]"
                 + " presentMode=[" + VulkanSwapchain.presentModeSummary()
-                + " rebuilds=" + b.submissionStatistics.presentModeRebuilds()
-                + " outOfDateRebuilds=" + b.submissionStatistics.outOfDateRebuilds()
-                + " surfaceLostRebuilds=" + b.submissionStatistics.surfaceLostRebuilds() + "]"
+                + " rebuilds=" + frame.submissionStatistics.presentModeRebuilds()
+                + " outOfDateRebuilds=" + frame.submissionStatistics.outOfDateRebuilds()
+                + " surfaceLostRebuilds=" + frame.submissionStatistics.surfaceLostRebuilds() + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
                 + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
-                + " matrixChannels=persp:" + b.immediateStatistics.perspectiveCalls() + ",frustum:" + b.frustumCalls
-                + ",gluPerspective:" + b.mirroredGluPerspectives + ",gluSkipped:"
-                + b.skippedGluPerspectives + ",gluSites:" + b.gluPerspectiveShapes.size()
-                + ",gluSkipSites:" + b.gluPerspectiveSkips.size()
-                + ",mode:" + b.matrixModeCalls + ",identity:" + b.loadIdentityCalls
-                + ",texture:" + b.textureStats.bindTextureCalls()
+                + " matrixChannels=persp:" + funnel.immediateStatistics.perspectiveCalls() + ",frustum:" + funnel.frustumCalls
+                + ",gluPerspective:" + funnel.mirroredGluPerspectives + ",gluSkipped:"
+                + funnel.skippedGluPerspectives + ",gluSites:" + funnel.gluPerspectiveShapes.size()
+                + ",gluSkipSites:" + funnel.gluPerspectiveSkips.size()
+                + ",mode:" + funnel.matrixModeCalls + ",identity:" + funnel.loadIdentityCalls
+                + ",texture:" + funnel.textureStats.bindTextureCalls()
                 + " " + lossAggregateSummary()
                 + " " + CeltiumLogLimiter.suppressionSummary();
     }
@@ -932,14 +957,14 @@ final class BackendDiagnostics {
      * bundle promotes on their own keys (the batch route's dropped draws) are deliberately not members.
      */
     private String lossAggregateSummary() {
-        long postAcceptDroppedGroups = b.immediateStatistics.postAcceptDroppedGroups();
-        long orderingFlushFailures = b.immediateStatistics.orderingFlushFailures();
-        long orderingFlushDroppedBatches = b.immediateStatistics.orderingFlushDroppedBatches();
-        long stalledGeometryDrops = b.submissionStatistics.stalledGeometryDrops();
-        long stalledGeometryDroppedBatches = b.submissionStatistics.stalledGeometryDroppedBatches();
-        long unflushedTargetGroupsDropped = b.targetStatistics.unflushedTargetGroupsDropped();
-        long windowFlushFailures = b.targetStatistics.windowFlushFailures();
-        long staleGroupRefusals = b.immediateStatistics.staleGroupRefusals();
+        long postAcceptDroppedGroups = funnel.immediateStatistics.postAcceptDroppedGroups();
+        long orderingFlushFailures = funnel.immediateStatistics.orderingFlushFailures();
+        long orderingFlushDroppedBatches = funnel.immediateStatistics.orderingFlushDroppedBatches();
+        long stalledGeometryDrops = frame.submissionStatistics.stalledGeometryDrops();
+        long stalledGeometryDroppedBatches = frame.submissionStatistics.stalledGeometryDroppedBatches();
+        long unflushedTargetGroupsDropped = funnel.targetStatistics.unflushedTargetGroupsDropped();
+        long windowFlushFailures = funnel.targetStatistics.windowFlushFailures();
+        long staleGroupRefusals = funnel.immediateStatistics.staleGroupRefusals();
         long total = postAcceptDroppedGroups + orderingFlushFailures + orderingFlushDroppedBatches
                 + stalledGeometryDrops + stalledGeometryDroppedBatches + unflushedTargetGroupsDropped
                 + windowFlushFailures + staleGroupRefusals;
@@ -956,11 +981,11 @@ final class BackendDiagnostics {
 
     /** The bounded window diagnostics {@link #b.drawPendingImmediate(Long)} used to run inline; see the call site. */
     void celtium$windowDiagnostics(long target) {
-        if (b.DUMP_TEXTURE_IDS != null && b.dumpedTextureImages < 8 && b.presentHookCalls >= 120) {
-            for (int di = 0; di < b.immediateGroups.size(); di++) {
-                ImmediateGroup dumpGroup = b.immediateGroups.get(di);
-                if (!b.DUMP_TEXTURE_IDS.contains(dumpGroup.texture)
-                        || !b.dumpedTextureIds.add(dumpGroup.texture)) {
+        if (funnel.DUMP_TEXTURE_IDS != null && funnel.dumpedTextureImages < 8 && frame.presentHookCalls >= 120) {
+            for (int di = 0; di < funnel.immediateGroups.size(); di++) {
+                ImmediateGroup dumpGroup = funnel.immediateGroups.get(di);
+                if (!funnel.DUMP_TEXTURE_IDS.contains(dumpGroup.texture)
+                        || !funnel.dumpedTextureIds.add(dumpGroup.texture)) {
                     // Once per texture: the same id drawn every frame used to spend the whole budget on itself.
                     continue;
                 }
@@ -968,11 +993,11 @@ final class BackendDiagnostics {
                 if (dumpImage == null || dumpImage.image() == 0L) {
                     continue;
                 }
-                b.dumpedTextureImages++;
+                funnel.dumpedTextureImages++;
                 java.nio.file.Path path = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                         "celtium-tex-" + dumpGroup.texture + "-" + dumpImage.width() + "x" + dumpImage.height()
-                                + "-n" + b.dumpedTextureImages + ".png");
-                boolean wrote = b.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
+                                + "-n" + funnel.dumpedTextureImages + ".png");
+                boolean wrote = owner.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
                         dumpImage.height(), path);
                 System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
                         + " " + dumpImage.width() + "x" + dumpImage.height() + " wrote=" + wrote
@@ -984,11 +1009,11 @@ final class BackendDiagnostics {
                 break;
             }
         }
-        if (b.VERTEX_DUMP_TEXTURE >= 0 && b.textureVertexDumps < 6 && !b.immediateGroups.isEmpty()) {
-            ImmediateGroup probeGroup = b.immediateGroups.get(0);
-            if (probeGroup.texture == b.VERTEX_DUMP_TEXTURE && probeGroup.mesh != null
+        if (funnel.VERTEX_DUMP_TEXTURE >= 0 && funnel.textureVertexDumps < 6 && !funnel.immediateGroups.isEmpty()) {
+            ImmediateGroup probeGroup = funnel.immediateGroups.get(0);
+            if (probeGroup.texture == funnel.VERTEX_DUMP_TEXTURE && probeGroup.mesh != null
                     && probeGroup.mesh.vertexAddress() != 0L) {
-                b.textureVertexDumps++;
+                funnel.textureVertexDumps++;
                 long probeBase = probeGroup.mesh.vertexAddress();
                 int probeStride = 24;
                 StringBuilder probeVertices = new StringBuilder();
@@ -1007,22 +1032,22 @@ final class BackendDiagnostics {
                                 Float.valueOf(probeGroup.texMatrix[2]), Float.valueOf(probeGroup.texMatrix[3]),
                                 Float.valueOf(probeGroup.texMatrix[4]), Float.valueOf(probeGroup.texMatrix[5]));
                 long probeImage = probeGroup.textureImage == null ? 0L : probeGroup.textureImage.image();
-                long frameImage = b.frameTarget == null ? 0L : b.frameTarget.colorImage();
-                System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + b.VERTEX_DUMP_TEXTURE + " groups="
-                        + b.immediateGroups.size() + " texMat=" + matrix
+                long frameImage = funnel.frameTarget == null ? 0L : funnel.frameTarget.colorImage();
+                System.out.println("[Celtium] CELTIUM_TEX_VERTICES id=" + funnel.VERTEX_DUMP_TEXTURE + " groups="
+                        + funnel.immediateGroups.size() + " texMat=" + matrix
                         + " image=0x" + Long.toHexString(probeImage)
                         + " frameImage=0x" + Long.toHexString(frameImage)
                         + " selfSampling=" + (probeImage != 0L && probeImage == frameImage)
-                        + " attached=0x" + Long.toHexString(b.passAttachedColorImage)
-                        + " feedback=" + (probeImage != 0L && probeImage == b.passAttachedColorImage)
+                        + " attached=0x" + Long.toHexString(funnel.passAttachedColorImage)
+                        + " feedback=" + (probeImage != 0L && probeImage == funnel.passAttachedColorImage)
                         + probeVertices);
             }
         }
-        if (b.WINDOW_CENSUS && b.immediateGroups.size() >= 10 && b.windowCensusLines < 80
-                && b.groupDetailDumps < 3) {
-            b.groupDetailDumps++;
-            for (int gi = 0; gi < b.immediateGroups.size(); gi++) {
-                ImmediateGroup detail = b.immediateGroups.get(gi);
+        if (funnel.WINDOW_CENSUS && funnel.immediateGroups.size() >= 10 && funnel.windowCensusLines < 80
+                && funnel.groupDetailDumps < 3) {
+            funnel.groupDetailDumps++;
+            for (int gi = 0; gi < funnel.immediateGroups.size(); gi++) {
+                ImmediateGroup detail = funnel.immediateGroups.get(gi);
                 if (detail.mesh == null || detail.mesh.vertexAddress() == 0L) {
                     continue;
                 }
@@ -1037,47 +1062,47 @@ final class BackendDiagnostics {
                                 Float.valueOf(org.lwjgl.system.MemoryUtil.memGetFloat(at + 16L))));
             }
         }
-        if (b.WINDOW_CENSUS && b.windowCensusLines < 80) {
-            b.windowCensusLines++;
+        if (funnel.WINDOW_CENSUS && funnel.windowCensusLines < 80) {
+            funnel.windowCensusLines++;
             java.util.LinkedHashSet<Integer> censusTextures = new java.util.LinkedHashSet<Integer>();
-            for (int ci = 0; ci < b.immediateGroups.size() && censusTextures.size() < 6; ci++) {
-                censusTextures.add(Integer.valueOf(b.immediateGroups.get(ci).texture));
+            for (int ci = 0; ci < funnel.immediateGroups.size() && censusTextures.size() < 6; ci++) {
+                censusTextures.add(Integer.valueOf(funnel.immediateGroups.get(ci).texture));
             }
             System.out.println("[Celtium] CELTIUM_WINDOW_CENSUS target=0x" + Long.toHexString(target)
-                    + " groups=" + b.immediateGroups.size() + " textures=" + censusTextures
-                    + " projection=" + b.projectionSummary(b.immediateGroups.isEmpty() ? null
-                            : b.immediateGroups.get(0).projection)
-                    + " viewport=" + b.liveViewportWidth + "x" + b.liveViewportHeight
-                    + " frame=" + b.frameId);
+                    + " groups=" + funnel.immediateGroups.size() + " textures=" + censusTextures
+                    + " projection=" + funnel.projectionSummary(funnel.immediateGroups.isEmpty() ? null
+                            : funnel.immediateGroups.get(0).projection)
+                    + " viewport=" + funnel.liveViewportWidth + "x" + funnel.liveViewportHeight
+                    + " frame=" + frame.frameId);
         }
-        if (b.immediateGroups.size() >= 100) {
+        if (funnel.immediateGroups.size() >= 100) {
             // Counted every time, not only while the diagnostic line is allowed: the question this answers is how many
             // large windows a menu frame draws, and a log bounded to twelve cannot say that.
-            b.largeWindowGroups += b.immediateGroups.size();
-            b.largeWindows++;
-            if (b.largeWindows <= 12) {
-                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW presents=" + b.presentHookCalls
-                        + " groups=" + b.immediateGroups.size() + " viewport=" + b.liveViewportWidth
-                        + "x" + b.liveViewportHeight + " target=0x" + Long.toHexString(target));
+            funnel.largeWindowGroups += funnel.immediateGroups.size();
+            funnel.largeWindows++;
+            if (funnel.largeWindows <= 12) {
+                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW presents=" + frame.presentHookCalls
+                        + " groups=" + funnel.immediateGroups.size() + " viewport=" + funnel.liveViewportWidth
+                        + "x" + funnel.liveViewportHeight + " target=0x" + Long.toHexString(target));
             }
-            if (PeriodicLog.ENABLED && b.largeWindows % 60 == 0) {
-                System.out.println("[Celtium] CELTIUM_LARGE_WINDOWS windows=" + b.largeWindows
-                        + " groups=" + b.largeWindowGroups + " frame=" + b.frameId
-                        + " presents=" + b.presentHookCalls);
+            if (PeriodicLog.ENABLED && funnel.largeWindows % 60 == 0) {
+                System.out.println("[Celtium] CELTIUM_LARGE_WINDOWS windows=" + funnel.largeWindows
+                        + " groups=" + funnel.largeWindowGroups + " frame=" + frame.frameId
+                        + " presents=" + frame.presentHookCalls);
             }
         }
-        if (b.windowRouteLogs < 12 && b.immediateGroups.size() >= 100) {
-            b.windowRouteLogs++;
-            boolean isMainTarget = target == b.targetRegistry.mainIdentity();
+        if (funnel.windowRouteLogs < 12 && funnel.immediateGroups.size() >= 100) {
+            funnel.windowRouteLogs++;
+            boolean isMainTarget = target == funnel.targetRegistry.mainIdentity();
             int exactDistinct = 0;
             int identityMatrices = 0;
             java.util.List<float[]> seen = new java.util.ArrayList<float[]>();
             java.util.Map<Long, java.util.List<float[]>> byPlacement =
                     new java.util.LinkedHashMap<Long, java.util.List<float[]>>();
             java.util.LinkedHashSet<Integer> textures = new java.util.LinkedHashSet<Integer>();
-            for (int i = 0; i < b.immediateGroups.size(); i++) {
-                float[] mv = b.immediateGroups.get(i).modelView;
-                textures.add(Integer.valueOf(b.immediateGroups.get(i).texture));
+            for (int i = 0; i < funnel.immediateGroups.size(); i++) {
+                float[] mv = funnel.immediateGroups.get(i).modelView;
+                textures.add(Integer.valueOf(funnel.immediateGroups.get(i).texture));
                 if (mv == null || mv.length < 16) {
                     continue;
                 }
@@ -1148,8 +1173,8 @@ final class BackendDiagnostics {
             }
             java.util.LinkedHashSet<Long> descriptors = new java.util.LinkedHashSet<Long>();
             java.util.LinkedHashSet<Object> textureImages = new java.util.LinkedHashSet<Object>();
-            for (int i = 0; i < b.immediateGroups.size(); i++) {
-                ImmediateGroup group = b.immediateGroups.get(i);
+            for (int i = 0; i < funnel.immediateGroups.size(); i++) {
+                ImmediateGroup group = funnel.immediateGroups.get(i);
                 if (group.prepared != null) {
                     descriptors.add(Long.valueOf(group.prepared.descriptor));
                 }
@@ -1185,8 +1210,8 @@ final class BackendDiagnostics {
             }
             java.util.LinkedHashSet<Integer> alphas = new java.util.LinkedHashSet<Integer>();
             StringBuilder firstQuad = new StringBuilder();
-            for (int i = 0; i < b.immediateGroups.size() && i < 64; i++) {
-                ImmediateGroup group = b.immediateGroups.get(i);
+            for (int i = 0; i < funnel.immediateGroups.size() && i < 64; i++) {
+                ImmediateGroup group = funnel.immediateGroups.get(i);
                 if (group.mesh == null || group.formatId != 2) {
                     continue;
                 }
@@ -1202,12 +1227,12 @@ final class BackendDiagnostics {
                     }
                 }
             }
-            for (int i = 0; i < b.immediateGroups.size(); i++) {
-                ImmediateGroup group = b.immediateGroups.get(i);
+            for (int i = 0; i < funnel.immediateGroups.size(); i++) {
+                ImmediateGroup group = funnel.immediateGroups.get(i);
                 if (group.mesh == null || group.formatId != 2 || group.mesh.vertexAddress() == 0L) {
                     continue;
                 }
-                if (b.VERTEX_DUMP_TEXTURE >= 0 && group.texture != b.VERTEX_DUMP_TEXTURE) {
+                if (funnel.VERTEX_DUMP_TEXTURE >= 0 && group.texture != funnel.VERTEX_DUMP_TEXTURE) {
                     continue;
                 }
                 long base = group.mesh.vertexAddress();
@@ -1229,8 +1254,8 @@ final class BackendDiagnostics {
                 // The tile offsets, which are what makes 384 stacked quads a blur rather than one picture: vanilla moves each
             // by a fraction of a block (about 0.05 in the unit-square model space), so their magnitudes matter.
             StringBuilder offsets = new StringBuilder();
-            for (int gi = 0; gi < b.immediateGroups.size() && gi < 8; gi++) {
-                float[] offsetMv = b.immediateGroups.get(gi).modelView;
+            for (int gi = 0; gi < funnel.immediateGroups.size() && gi < 8; gi++) {
+                float[] offsetMv = funnel.immediateGroups.get(gi).modelView;
                 if (offsetMv == null || offsetMv.length < 16) {
                     continue;
                 }
@@ -1249,8 +1274,8 @@ final class BackendDiagnostics {
                     + " values=" + alphas + " firstQuad=[" + firstQuad.toString().trim() + "]");
             int textured = 0;
             String firstTextureMatrix = "none";
-            for (int i = 0; i < b.immediateGroups.size(); i++) {
-                float[] texMatrix = b.immediateGroups.get(i).texMatrix;
+            for (int i = 0; i < funnel.immediateGroups.size(); i++) {
+                float[] texMatrix = funnel.immediateGroups.get(i).texMatrix;
                 if (texMatrix != null) {
                     textured++;
                     if ("none".equals(firstTextureMatrix)) {
@@ -1261,8 +1286,8 @@ final class BackendDiagnostics {
                 }
             }
             System.out.println("[Celtium] CELTIUM_WINDOW_TEXMATRIX withMatrix=" + textured
-                    + " groups=" + b.immediateGroups.size() + " first=" + firstTextureMatrix);
-            if (b.SAMPLE_WINDOW_IMAGES) {
+                    + " groups=" + funnel.immediateGroups.size() + " first=" + firstTextureMatrix);
+            if (funnel.SAMPLE_WINDOW_IMAGES) {
                 StringBuilder means = new StringBuilder();
                 int sampled = 0;
                 for (Object image : textureImages) {
@@ -1270,7 +1295,7 @@ final class BackendDiagnostics {
                         break;
                     }
                     if (image instanceof VulkanGlTexture texture) {
-                        float mean = b.textureCopyService.celtium$sampleImageMean(texture.image(),
+                        float mean = owner.textureCopyService.celtium$sampleImageMean(texture.image(),
                                 texture.width(), texture.height());
                         if (means.length() > 0) {
                             means.append(' ');
@@ -1283,11 +1308,11 @@ final class BackendDiagnostics {
             System.out.println("[Celtium] CELTIUM_WINDOW_IMAGES distinct=" + textureImages.size()
                     + " images=[" + imageDetail + "]");
             System.out.println("[Celtium] CELTIUM_WINDOW_DESCRIPTORS distinct=" + descriptors.size()
-                    + " groups=" + b.immediateGroups.size() + " textureImages=" + textureImages.size()
+                    + " groups=" + funnel.immediateGroups.size() + " textureImages=" + textureImages.size()
                     + " first=[" + descriptorList + "]");
             java.util.LinkedHashSet<Object> pipelines = new java.util.LinkedHashSet<Object>();
-            for (int i = 0; i < b.immediateGroups.size(); i++) {
-                ImmediateGroup group = b.immediateGroups.get(i);
+            for (int i = 0; i < funnel.immediateGroups.size(); i++) {
+                ImmediateGroup group = funnel.immediateGroups.get(i);
                 if (group.prepared != null) {
                     pipelines.add(group.prepared.pipeline);
                 }
@@ -1321,19 +1346,19 @@ final class BackendDiagnostics {
             System.out.println("[Celtium] CELTIUM_WINDOW_PIPELINES distinct=" + pipelines.size()
                     + " " + pipelineSummary);
             System.out.println("[Celtium] CELTIUM_MODELVIEW_EXACT distinct=" + exactDistinct
-                    + " groups=" + b.immediateGroups.size() + " identity=" + identityMatrices
+                    + " groups=" + funnel.immediateGroups.size() + " identity=" + identityMatrices
                     + " placements=" + byPlacement.size() + " perTileRotations=[" + perTile + "]"
                     + " textures=[" + textureList + "]"
                     + " route=" + GllessFrameTarget.routeLabelForBinding(target, isMainTarget)
-                    + " projection=" + b.projectionSummary(b.immediateGroups.get(0).projection));
+                    + " projection=" + funnel.projectionSummary(funnel.immediateGroups.get(0).projection));
         }
     }
 
     void celtium$reportWindowState() {
-        if (!b.WINDOW_DIAG) {
+        if (!funnel.WINDOW_DIAG) {
             return;
         }
-        ++b.windowDiagFrames;
+        ++funnel.windowDiagFrames;
         long window = CeltiumWindow.sdlWindowPointer();
         int[] pixels = new int[2];
         boolean havePixels = CeltiumWindow.sdlPixelSize(pixels);
@@ -1350,7 +1375,7 @@ final class BackendDiagnostics {
         } catch (ReflectiveOperationException | LinkageError failed) {
             display = "unavailable(" + failed.getClass().getSimpleName() + ")";
         }
-        System.out.println("[Celtium] CELTIUM_WINDOW_STATE frame=" + b.windowDiagFrames
+        System.out.println("[Celtium] CELTIUM_WINDOW_STATE frame=" + funnel.windowDiagFrames
                 + " sdl=" + (window == 0L ? "none" : "0x" + Long.toHexString(window))
                 + " flags=0x" + Long.toHexString(flags)
                 + " pixelSize=" + (havePixels ? pixels[0] + "x" + pixels[1] : "unknown")
@@ -1359,14 +1384,14 @@ final class BackendDiagnostics {
 
     /** {@return one line per target the drain visited}, with its entry counts. */
     String flushEntrySummary() {
-        if (b.flushEntryPassesByTarget.isEmpty()) {
+        if (funnel.flushEntryPassesByTarget.isEmpty()) {
             return "none";
         }
         StringBuilder text = new StringBuilder();
-        for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry : b.flushEntryPassesByTarget.long2IntEntrySet()) {
+        for (it.unimi.dsi.fastutil.longs.Long2IntMap.Entry entry : funnel.flushEntryPassesByTarget.long2IntEntrySet()) {
             text.append(Long.toHexString(entry.getLongKey())).append(":entries=").append(entry.getIntValue())
                     .append(",groupsAtEntry=")
-                    .append(b.flushEntryGroupsByTarget.get(entry.getLongKey()))
+                    .append(funnel.flushEntryGroupsByTarget.get(entry.getLongKey()))
                     .append(' ');
         }
         return text.toString().trim();
@@ -1375,9 +1400,9 @@ final class BackendDiagnostics {
     /** {@return the offer-stage histogram}, so a stopped offer names its branch. */
     String offerStageSummary() {
         StringBuilder text = new StringBuilder();
-        for (int i = 0; i < b.offerStageReached.length; i++) {
-            if (b.offerStageReached[i] != 0) {
-                text.append(i).append(':').append(b.offerStageReached[i]).append(' ');
+        for (int i = 0; i < funnel.offerStageReached.length; i++) {
+            if (funnel.offerStageReached[i] != 0) {
+                text.append(i).append(':').append(funnel.offerStageReached[i]).append(' ');
             }
         }
         return text.length() == 0 ? "none" : text.toString().trim();
@@ -1391,28 +1416,28 @@ final class BackendDiagnostics {
      * can. The packed colour identifies the test geometry (the fixture draws with 255, 64, 64, 200).
      */
     void reportGroupBounds(ImmediateGroup group) {
-        if (!b.wantedGroupBoundsFormat(group.formatId)) {
+        if (!funnel.wantedGroupBoundsFormat(group.formatId)) {
             // The format filter is checked before the cap so that a run narrowed to one layout is not spent on the
             // first six groups of every other layout.
             return;
         }
-        if (b.frameId < b.GROUP_BOUNDS_MIN_FRAME) {
+        if (frame.frameId < funnel.GROUP_BOUNDS_MIN_FRAME) {
             // Same reason, one level up: the loading screen and the menu own the first frames' groups, so a bounded
             // budget has to skip them to reach the frame the question is about.
             return;
         }
-        if (b.GROUP_BOUNDS_GUI_ONLY && !FramePassTimings.guiSectionActive()) {
+        if (funnel.GROUP_BOUNDS_GUI_ONLY && !FramePassTimings.guiSectionActive()) {
             // {@code -Dceltium.vulkan.groupBoundsGuiOnly=true}: only the groups created inside the HUD's own function.
             // Measured need (leg r212-world-hud19): the frame under test holds 39 immediate groups of which 23 are the
             // HUD's, so a bounded budget spent on the frame's first groups answers about the world and never about the
             // overlay - the same shape of mistake as the loading screen owning every early line.
             return;
         }
-        int limit = b.GROUP_BOUNDS_DIAGNOSTICS ? b.GROUP_BOUNDS_LIMIT : 6;
-        if (b.immediateDiagnostics >= limit) {
+        int limit = funnel.GROUP_BOUNDS_DIAGNOSTICS ? funnel.GROUP_BOUNDS_LIMIT : 6;
+        if (funnel.immediateDiagnostics >= limit) {
             return;
         }
-        b.immediateDiagnostics++;
+        funnel.immediateDiagnostics++;
         try {
             VulkanDynamicMesh mesh = group.mesh;
             float[] projection = group.projection;
@@ -1462,16 +1487,16 @@ final class BackendDiagnostics {
                     // would move the picture, and the two are indistinguishable from the bounds alone. The same
                     // stride applies to the texture coordinates, which is what names the quad (the sun's is u=0,
                     // the moon's first vertex u=0.25 of the phase atlas).
-                    positions.append(vertex > 0 ? ";" : "").append(b.round3(x)).append(',').append(b.round3(y))
-                            .append(',').append(b.round3(z));
+                    positions.append(vertex > 0 ? ";" : "").append(funnel.round3(x)).append(',').append(funnel.round3(y))
+                            .append(',').append(funnel.round3(z));
                     if (stride >= 20) {
                         uvs.append(vertex > 0 ? ";" : "")
-                                .append(b.round3(MemoryUtil.memGetFloat(offset + 12))).append(',')
-                                .append(b.round3(MemoryUtil.memGetFloat(offset + 16)));
+                                .append(funnel.round3(MemoryUtil.memGetFloat(offset + 12))).append(',')
+                                .append(funnel.round3(MemoryUtil.memGetFloat(offset + 16)));
                     }
-                    perVertex.append(vertex > 0 ? ";" : "").append(b.round3(cx / cw)).append(',')
-                            .append(b.round3(cy / cw)).append(',').append(b.round3(cz / cw)).append(',')
-                            .append(b.round3(cw));
+                    perVertex.append(vertex > 0 ? ";" : "").append(funnel.round3(cx / cw)).append(',')
+                            .append(funnel.round3(cy / cw)).append(',').append(funnel.round3(cz / cw)).append(',')
+                            .append(funnel.round3(cw));
                 }
                 if (cw <= 0.0f) {
                     behind++;
@@ -1501,40 +1526,40 @@ final class BackendDiagnostics {
             // The clip values are the renderer's own arithmetic on the group's own matrices, so they separate "the
             // matrices are not what the draw uses" from "the matrices are wrong".
             boolean panoramaChain = group.formatId == 2 && group.texture >= 46 && group.texture <= 51
-                    && !b.worldPassActive;
-            if (((group.formatId == 6 || group.formatId == 7) && b.worldPassActive) || panoramaChain
-                    || (b.GROUP_BOUNDS_GUI_ONLY && FramePassTimings.guiSectionActive())) {
+                    && !funnel.worldPassActive;
+            if (((group.formatId == 6 || group.formatId == 7) && funnel.worldPassActive) || panoramaChain
+                    || (funnel.GROUP_BOUNDS_GUI_ONLY && FramePassTimings.guiSectionActive())) {
                 // The GUI-only filter is added to this condition as well as to the entry: the HUD's groups are
                 // format 6/7/2 with worldPass=false, so the world-pass branch never printed their model-view or their
                 // vertices - and those are the two fields that say whether a quad measured at NDC (0,0) collapsed
                 // because its vertices are one point or because its model-view is degenerate. Measured on leg
                 // r212-world-hud20: all 23 of the frame's HUD groups report ndc x[-0.00..0.00] y[-0.00..0.00] with a
                 // correct ortho (m00=0.005 m11=-0.008), and nothing in that line said which of the two it was.
-                chain = " mv=" + b.matrixText(modelView)
+                chain = " mv=" + funnel.matrixText(modelView)
                         + " verts=[" + positions + "]"
                         + " uv=[" + uvs + "]"
                         + " clip=[" + perVertex + "]"
-                        + " rot=[" + b.currentGroupRotations + "]";
-            } else if (group.formatId == VulkanImmediateFormats.ITEM && !b.worldPassActive) {
+                        + " rot=[" + funnel.currentGroupRotations + "]";
+            } else if (group.formatId == VulkanImmediateFormats.ITEM && !funnel.worldPassActive) {
                 // The GUI item family, added 2026-10-11: RenderItem draws a GUI item through
                 // BufferBuilder.begin(7, DefaultVertexFormats.ITEM) - id 4 - so a sprite that comes out at the wrong
                 // size is either this group's model-view (its scale is exactly diag(16,-16,16) with a translation of
                 // (x+8, y+8, 100+zLevel), from RenderItem.setupGuiTransform) or the ITEM layout being read at the
                 // wrong stride. The model-view is printed here so the two are told apart from one line: a wrong scale
                 // shows in mv[0]/mv[5], a wrong stride shows in verts=[...] while mv stays 16/-16.
-                chain = " mv=" + b.matrixText(modelView)
+                chain = " mv=" + funnel.matrixText(modelView)
                         + " verts=[" + positions + "]"
                         + " uv=[" + uvs + "]"
                         + " clip=[" + perVertex + "]"
-                        + " rot=[" + b.currentGroupRotations + "]";
+                        + " rot=[" + funnel.currentGroupRotations + "]";
             }
             // On stdout as well as in the report: the report keeps only the last recorded line, and the question this
             // answers - which groups an artefact frame is made of - is a sequence, not a sample. frame/group tie the
             // line to the frame dump the PNG is of, and the projection's own columns say whether the group was
             // captured with the world perspective, an ortho, or a stale stack.
-            System.out.println("[Celtium] CELTIUM_GROUP_BOUNDS frame=" + b.frameId
-                    + " group=" + b.immediateStatistics.immediateGroupsClosed() + " fmt=" + group.formatId
-                    + " worldPass=" + b.worldPassActive + " target=" + group.target
+            System.out.println("[Celtium] CELTIUM_GROUP_BOUNDS frame=" + frame.frameId
+                    + " group=" + funnel.immediateStatistics.immediateGroupsClosed() + " fmt=" + group.formatId
+                    + " worldPass=" + funnel.worldPassActive + " target=" + group.target
                     + " texture=" + group.texture + " batches=" + group.batches
                     // The pipeline class this group was prepared for, beside the layout it carries. A group can be
                     // accepted, closed and drawn and still leave no pixels when the pipeline it drew with does not
@@ -1559,25 +1584,25 @@ final class BackendDiagnostics {
                     // clipped before any fragment exists - which is indistinguishable from "not drawn" in a counter.
                     // Measured need: the hovered-slot highlight is the only fmt-1 group of its frame with a write mask
                     // that excludes alpha, and the clip was the last captured value that had never been printed.
-                    + " vp=" + b.boxText(group.viewportValues)
-                    + " clip=" + b.boxText(group.scissorBox) + " clipOn=" + group.scissorEnabled
+                    + " vp=" + funnel.boxText(group.viewportValues)
+                    + " clip=" + funnel.boxText(group.scissorBox) + " clipOn=" + group.scissorEnabled
                     + " vertices=" + vertices + " indices=" + mesh.indexCount()
                     + " colour0=" + colour
                     // The attribute itself, read from the group's own vertex memory, beside the value the state
                     // capture produced: "the attribute is zero" and "the attribute is fine and something else ate
                     // the fragment" are different findings, and colour0 alone cannot tell them apart.
-                    + " vertexColour0=" + b.celtium$firstVertexColour(group, mesh)
+                    + " vertexColour0=" + funnel.celtium$firstVertexColour(group, mesh)
                     // round3, not fmt3: the GUI's ortho has m00 = 2/ScaledWidth, which at the pinned pose is
                     // 0.00469 - a *correct* GUI projection and a collapsed one both print "0.00" under fmt3's two
                     // decimals, so the field could not answer the one question it exists for. The trap is the same
                     // shape as the 16-byte-stride and pointerStride=1 readings: the instrument did not read what it
                     // looked like it read. m11 = -2/ScaledHeight = -0.00833 is the second tell.
-                    + " proj=[m00=" + b.round3(projection[0]) + " m11=" + b.round3(projection[5])
-                    + " m22=" + b.round3(projection[10]) + " m32=" + b.round3(projection[14]) + "]"
+                    + " proj=[m00=" + funnel.round3(projection[0]) + " m11=" + funnel.round3(projection[5])
+                    + " m22=" + funnel.round3(projection[10]) + " m32=" + funnel.round3(projection[14]) + "]"
                     // The drawing state the group was captured with, which is what decides whether a group that
                     // measures on-screen can still be rejected: a depth-tested quad drawn after the world pass is
                     // tested against the world's depth unless something cleared the depth attachment in between.
-                    + " state=" + b.stateText(group.state)
+                    + " state=" + funnel.stateText(group.state)
                     // The texture matrix the group was captured with, because it is the one input that moves a
                     // correct-looking quad's UVs somewhere else: a stale affine left on unit 0 by an earlier draw
                     // transforms this group's texture coordinates, and the sample then lands outside the sprite -
@@ -1585,15 +1610,15 @@ final class BackendDiagnostics {
                     // measured case (its fragments are alpha-discarded with the real atlas bound), and this field is
                     // what tells "the group carries a transform" from "it does not".
                     + " texMat=" + (group.texMatrix == null ? "none"
-                            : b.round3(group.texMatrix[0]) + "," + b.round3(group.texMatrix[1]) + ","
-                                    + b.round3(group.texMatrix[2]) + "," + b.round3(group.texMatrix[3]) + ","
-                                    + b.round3(group.texMatrix[4]) + "," + b.round3(group.texMatrix[5]))
+                            : funnel.round3(group.texMatrix[0]) + "," + funnel.round3(group.texMatrix[1]) + ","
+                                    + funnel.round3(group.texMatrix[2]) + "," + funnel.round3(group.texMatrix[3]) + ","
+                                    + funnel.round3(group.texMatrix[4]) + "," + funnel.round3(group.texMatrix[5]))
                     + " ndc " + bounds + chain);
-            b.record("group " + b.immediateDiagnostics + ": vertices=" + vertices
+            this.record("group " + funnel.immediateDiagnostics + ": vertices=" + vertices
                     + " indices=" + mesh.indexCount() + " colour0=" + colour
                     + " proj=[m00=" + projection[0] + " m11=" + projection[5] + "] ndc " + bounds);
         } catch (RuntimeException | LinkageError error) {
-            b.record("group diagnostic failed: " + b.describe(error));
+            this.record("group diagnostic failed: " + funnel.describe(error));
         }
     }
     List<String> diagnostics() {
@@ -1613,29 +1638,29 @@ final class BackendDiagnostics {
         // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
         // descriptor-set collisions that no log ever showed.
         this.lines.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary());
-        if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS) {
+        if (Lane2ImmediateRecorder.HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
-            this.lines.add("acceptance: refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
+            this.lines.add("acceptance: refusedBeforeAppend=" + funnel.immediateStatistics.refusedBeforeAppend()
                     + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
                 + " submitFaultInjections=" + VulkanSubmitFault.injections()
                 + " submitRequests=" + VulkanSubmitFault.requests()
                 + " textureFaultInjections=" + VulkanTextureFault.injections()
-                + " textureUploadFailures=" + b.textureUploadFailures
-                + " lastTextureUploadFailure=" + b.lastTextureUploadFailure
+                + " textureUploadFailures=" + funnel.textureUploadFailures
+                + " lastTextureUploadFailure=" + funnel.lastTextureUploadFailure
                 + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
-                + b.modelStats.run0(b.modelDraws)
-                + " texMatrixGroups=" + b.immediateStatistics.texMatrixGroups()
-                + " modelDrawRefusals=" + b.modelDrawRefusals
-                + " modelRecordedReplays=" + b.modelRecordedReplayCalls
-                + " modelFastPath[" + b.modelReplayFastPath.describe() + "]"
-                + " modelMissingMeshes=" + b.modelGeometry.modelMissingMeshes()
-                + " modelLastRefusal=" + b.modelLastRefusal
-                + " modelMeshLists=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
+                + funnel.modelStats.run0(funnel.modelDraws)
+                + " texMatrixGroups=" + funnel.immediateStatistics.texMatrixGroups()
+                + " modelDrawRefusals=" + funnel.modelDrawRefusals
+                + " modelRecordedReplays=" + funnel.modelRecordedReplayCalls
+                + " modelFastPath[" + funnel.modelReplayFastPath.describe() + "]"
+                + " modelMissingMeshes=" + owner.modelGeometry.modelMissingMeshes()
+                + " modelLastRefusal=" + funnel.modelLastRefusal
+                + " modelMeshLists=" + (owner.modelGeometry.modelMeshes() == null ? -1 : owner.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + b.modelStats.run2()
+                + funnel.modelStats.run2()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -1644,24 +1669,24 @@ final class BackendDiagnostics {
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
-                + " textureDeletions=" + b.glTextureDeletions
-                + " atlasReestablished=" + b.atlasReestablished
-                + " lightmapReestablished=" + b.lightmapReestablished
-                + " texturePatchCost=" + (b.textureRegistry == null ? "-" : b.textureRegistry.patchCostSummary())
+                + " textureDeletions=" + funnel.glTextureDeletions
+                + " atlasReestablished=" + funnel.atlasReestablished
+                + " lightmapReestablished=" + funnel.lightmapReestablished
+                + " texturePatchCost=" + (funnel.textureRegistry == null ? "-" : funnel.textureRegistry.patchCostSummary())
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
                 + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
-                + " prepareDescriptorFailures=" + b.prepareDescriptorFailures
-                + " lastPrepareFailure=" + b.lastPrepareFailure
-                + " groupsQueued=" + b.immediateGroups.size()
-                + " groupsRecorded=" + b.recordedImmediateGroups.size()
-                + " groupsRetired=" + b.retiredImmediateGroups.size()
-                + " groupsStaleTargetGeneration=" + b.immediateStatistics.groupsStaleTargetGeneration()
-                + " targetGeneration=" + b.targetRegistry.generation()
-                + " groupsStaleWorldEpoch=" + b.immediateStatistics.groupsStaleWorldEpoch()
-                + " worldEpoch=" + b.worldEpoch
-                + " groupsDiscardedAtWorldTeardown=" + b.immediateStatistics.groupsDiscardedAtWorldTeardown()
-                + " groupsDiscardedAtFullTeardown=" + b.immediateStatistics.groupsDiscardedAtFullTeardown()
+                + " prepareDescriptorFailures=" + funnel.prepareDescriptorFailures
+                + " lastPrepareFailure=" + funnel.lastPrepareFailure
+                + " groupsQueued=" + funnel.immediateGroups.size()
+                + " groupsRecorded=" + frame.recordedImmediateGroups.size()
+                + " groupsRetired=" + frame.retiredImmediateGroups.size()
+                + " groupsStaleTargetGeneration=" + funnel.immediateStatistics.groupsStaleTargetGeneration()
+                + " targetGeneration=" + funnel.targetRegistry.generation()
+                + " groupsStaleWorldEpoch=" + funnel.immediateStatistics.groupsStaleWorldEpoch()
+                + " worldEpoch=" + funnel.worldEpoch
+                + " groupsDiscardedAtWorldTeardown=" + funnel.immediateStatistics.groupsDiscardedAtWorldTeardown()
+                + " groupsDiscardedAtFullTeardown=" + funnel.immediateStatistics.groupsDiscardedAtFullTeardown()
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -1669,12 +1694,12 @@ final class BackendDiagnostics {
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
-                + " modelDraws=" + b.modelDraws
-                + b.modelStats.run1(b.modelDrawRefusals, b.modelLastRefusal)
+                + " modelDraws=" + funnel.modelDraws
+                + funnel.modelStats.run1(funnel.modelDrawRefusals, funnel.modelLastRefusal)
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + b.modelGeometry.modelMeshQuads()
-                + " modelMeshFailure=" + b.modelGeometry.modelMeshFailure()
+                + " modelMeshQuads=" + owner.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + owner.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -1693,16 +1718,16 @@ final class BackendDiagnostics {
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
-                + " shaderProgramRefusals=" + b.immediateStatistics.shaderProgramRefusals()
-                + " shaderProgramRefusedIds=" + b.shaderProgramRefusedIds
-                + " shaderProgramRefusedPrograms=" + b.programRefusalsText()
-                + " terrainPassesToBoundTarget=" + b.terrainPassesToBoundTarget
-                + b.boundTargetCensusSummary()
-                    + " textureRefusals=" + b.textureStats.textureRefusalsBeforeAccept()
-                    + " accepted=" + b.immediateStatistics.frameAccepted());
+                + " shaderProgramRefusals=" + funnel.immediateStatistics.shaderProgramRefusals()
+                + " shaderProgramRefusedIds=" + funnel.shaderProgramRefusedIds
+                + " shaderProgramRefusedPrograms=" + funnel.programRefusalsText()
+                + " terrainPassesToBoundTarget=" + funnel.terrainPassesToBoundTarget
+                + funnel.boundTargetCensusSummary()
+                    + " textureRefusals=" + funnel.textureStats.textureRefusalsBeforeAccept()
+                    + " accepted=" + funnel.immediateStatistics.frameAccepted());
         }
-        if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS && b.frameTarget != null) {
-            String timings = b.frameTarget.takeTimingSummary();
+        if (Lane2ImmediateRecorder.HANDOFF_TIMINGS && funnel.frameTarget != null) {
+            String timings = funnel.frameTarget.takeTimingSummary();
             if (timings != null) {
                 this.lines.add(timings);
             }

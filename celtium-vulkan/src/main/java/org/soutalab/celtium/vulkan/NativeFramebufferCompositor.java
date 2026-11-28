@@ -10,7 +10,7 @@ import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
  */
 final class NativeFramebufferCompositor {
     private static final float[] IDENTITY = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
     private LeasedResource<VulkanDynamicMesh> quad;
     private float uMax, vMax;
     private long queued, selfCopiesSkipped;
@@ -30,7 +30,7 @@ final class NativeFramebufferCompositor {
     private int scissorCacheWidth = -1;
     private int scissorCacheHeight = -1;
 
-    NativeFramebufferCompositor(VulkanTerrainGpuBackend backend) { this.b = backend; }
+    NativeFramebufferCompositor(Lane2ImmediateRecorder backend) { this.b = backend; }
 
     void submit(long sourceIdentity, boolean sourceIsMain, int texture, int sourceWidth, int sourceHeight,
             int textureWidth, int textureHeight, int width, int height, boolean opaque) {
@@ -129,7 +129,7 @@ final class NativeFramebufferCompositor {
         } else {
             group.scissorBox = null;
         }
-        group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
+        group.stamp = GroupStamp.obtain(b.frame.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
         group.batches = 1;
         // Queued with the stamp: the queue gained a group for this target, and countGroupsForTarget's cached answer
         // must not keep saying 0 (item 342 item A - the stale 0 kept this composite undrawn until the boundary drop).

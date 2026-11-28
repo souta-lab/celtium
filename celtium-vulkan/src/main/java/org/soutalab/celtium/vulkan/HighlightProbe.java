@@ -3,13 +3,13 @@ package org.soutalab.celtium.vulkan;
 /**
  * The hovered-slot highlight probe (-Dceltium.vulkan.probeHighlight=true): poisons one small group's vertex colours
  * at accept, reads them back at the draw, and can borrow the neighbour's pipeline, so a missing GUI overlay can be
- * told apart as a lost fragment or a lost command. Moved out of {@link VulkanTerrainGpuBackend} unchanged
+ * told apart as a lost fragment or a lost command. Moved out of {@link Lane2ImmediateRecorder} unchanged
  * (2026-11-06).
  */
 final class HighlightProbe {
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
 
-    HighlightProbe(VulkanTerrainGpuBackend backend) {
+    HighlightProbe(Lane2ImmediateRecorder backend) {
         this.b = backend;
     }
 
@@ -71,7 +71,7 @@ final class HighlightProbe {
      * been poisoned. Only the printed lines are bounded now; the write is not.
      */
     void celtium$probeHighlightAccept(ImmediateGroup group, VulkanDynamicMesh mesh) {
-        if (!PROBE_HIGHLIGHT || b.frameId < PROBE_HIGHLIGHT_MIN_FRAME) {
+        if (!PROBE_HIGHLIGHT || b.frame.frameId < PROBE_HIGHLIGHT_MIN_FRAME) {
             return;
         }
         if (group.formatId != VulkanImmediateFormats.POSITION_COLOR || mesh == null || mesh.layout() == null) {
@@ -94,7 +94,7 @@ final class HighlightProbe {
         if (this.probeHighlightGroups > 3) {
             return;
         }
-        System.out.println("[Celtium] CELTIUM_PROBE_POISON frame=" + b.frameId + " group="
+        System.out.println("[Celtium] CELTIUM_PROBE_POISON frame=" + b.frame.frameId + " group="
                 + b.immediateStatistics.immediateGroupsClosed() + " vertices=" + vertices
                 + " stride=" + stride + " was=0x80ffffff now=0xffff00ff target=" + group.target
                 + " onMain=" + (group.target == b.targetRegistry.mainIdentity())
@@ -123,7 +123,7 @@ final class HighlightProbe {
             this.probeDrawPrints++;
         }
         Object pipeline = group.prepared == null ? null : group.prepared.pipeline;
-        System.out.println("[Celtium] CELTIUM_PROBE_DRAW frame=" + b.frameId + " group="
+        System.out.println("[Celtium] CELTIUM_PROBE_DRAW frame=" + b.frame.frameId + " group="
                 + b.immediateStatistics.immediateGroupsClosed() + " anomaly=" + anomaly
                 + " colourNow=0x" + Integer.toHexString(now)
                 + " strideNow=" + (mesh.layout() == null ? -1 : mesh.layout().stride)
@@ -139,7 +139,7 @@ final class HighlightProbe {
                 + " indexBuffer=0x" + Long.toHexString(mesh.indexBuffer())
                 + " vertexBind=" + mesh.vertexBindOffset() + " indexBind=" + mesh.indexBindOffset()
                 + " postClears=" + (group.postClears == null ? 0 : group.postClears.size())
-                + " passOpen=" + (b.commandState != null && b.commandState.inRenderPass())
+                + " passOpen=" + (b.frame.commandState != null && b.frame.commandState.inRenderPass())
                 + " passImage=0x" + Long.toHexString(b.passAttachedColorImage));
     }
 
@@ -161,7 +161,7 @@ final class HighlightProbe {
         }
         if (this.probeBorrowPrints < 3) {
             this.probeBorrowPrints++;
-            System.out.println("[Celtium] CELTIUM_PROBE_BORROW frame=" + b.frameId
+            System.out.println("[Celtium] CELTIUM_PROBE_BORROW frame=" + b.frame.frameId
                     + " from=0x" + Integer.toHexString(System.identityHashCode(prepared.pipeline))
                     + " to=0x" + Integer.toHexString(System.identityHashCode(borrowed))
                     + " borrowedHandle=0x" + Long.toHexString(borrowed.celtium$handle())

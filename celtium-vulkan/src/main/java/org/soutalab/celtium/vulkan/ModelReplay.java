@@ -8,10 +8,10 @@ import static org.lwjgl.vulkan.VK10.*;
 
 /**
  * Native replay of compiled model display lists: the per-group mesh path and the instanced runs. Moved out of
- * {@link VulkanTerrainGpuBackend} unchanged; the state it reads stays there.
+ * {@link Lane2ImmediateRecorder} unchanged; the state it reads stays there.
  */
 final class ModelReplay {
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
 
     // -- interface 2 receptacle (S3-a item 5) --------------------------------------
     // While a pack stage is active, replayed model draws belong to the stage's
@@ -21,7 +21,7 @@ final class ModelReplay {
 
     private org.soutalab.celtium.core.shader.NonTerrainPackTarget packTarget;
 
-    ModelReplay(VulkanTerrainGpuBackend backend) {
+    ModelReplay(Lane2ImmediateRecorder backend) {
         this.b = backend;
     }
 
@@ -75,12 +75,12 @@ final class ModelReplay {
             b.modelEntryLogs++;
             System.out.println("[Celtium] CELTIUM_MODEL_ENTRY list=" + listId + " texture=" + boundTextureId
                     + " modelDraw=" + b.MODEL_DRAW + " targetKnown=" + b.targetRegistry.targetKnown()
-                    + " frame=" + b.frameId);
+                    + " frame=" + b.frame.frameId);
         }
         if (VulkanDiagnostics.enabled()) {
             // Phase B sizing: how many model draws share one (list, texture) in a frame, i.e. what an indirect multi-draw
             // would collapse. The collector reports on the frame change, so nothing new is printed from here.
-            CeltiumModelBatchGroups.note(b.frameId, listId, boundTextureId);
+            CeltiumModelBatchGroups.note(b.frame.frameId, listId, boundTextureId);
         }
         // Which render target each model replay lands on. The entity-outline pass binds its own framebuffer, sets
         // renderOutlines and re-runs the same display lists through RenderLivingBase.renderModel
@@ -94,19 +94,19 @@ final class ModelReplay {
             // The limit is asked first, as on the layer path below: with the add first, the dedupe set kept
             // growing after the lines were spent - one entry per (list, target) per world, never cleared (audit F2).
             if (b.modelOffTargetLogs < b.MODEL_OFFTARGET_LOG_LIMIT
-                    && b.modelOffTargetLogged.add(listId + "@" + callTarget)) {
+                    && b.owner.modelOffTargetLogged.add(listId + "@" + callTarget)) {
                 b.modelOffTargetLogs++;
-                VulkanDynamicMesh looked = b.modelGeometry.meshFor(listId);
+                VulkanDynamicMesh looked = b.owner.modelGeometry.meshFor(listId);
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
                         + " target=" + callTarget + " main=" + b.targetRegistry.mainIdentity()
                         + " modelDraw=" + b.MODEL_DRAW + " frameTargetKnown=" + b.targetRegistry.targetKnown()
-                        + " meshes=" + (b.modelGeometry.modelMeshes() == null ? -1 : b.modelGeometry.modelMeshes().size())
+                        + " meshes=" + (b.owner.modelGeometry.modelMeshes() == null ? -1 : b.owner.modelGeometry.modelMeshes().size())
                         + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
             }
             if ((b.modelOffTargetCalls == 1 || b.modelOffTargetCalls % 32 == 0) && VulkanDiagnostics.enabled()) {
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + b.modelOffTargetCalls
                         + " drawn=" + b.modelOffTargetDraws
-                        + " missingMeshes=" + b.modelGeometry.modelMissingMeshes()
+                        + " missingMeshes=" + b.owner.modelGeometry.modelMissingMeshes()
                         + " refusals=" + b.modelDrawRefusals
                         + " lastRefusal=[" + b.modelLastRefusal + "]");
             }
@@ -117,11 +117,11 @@ final class ModelReplay {
         if (b.MODEL_ONLY_LIST != 0 && listId != b.MODEL_ONLY_LIST) {
             return false;
         }
-        VulkanDynamicMesh mesh = b.modelGeometry.meshFor(listId);
+        VulkanDynamicMesh mesh = b.owner.modelGeometry.meshFor(listId);
         if ((mesh == null || mesh.isEmpty()) && b.context != null
                 && VulkanModelQuadCapture.quadsForList(listId) > 0
                 && (b.modelMeshBuiltCaptureVersion != VulkanModelQuadCapture.captureVersion()
-                    || b.modelGeometry.requestMissingCapturedListRebuild(
+                    || b.owner.modelGeometry.requestMissingCapturedListRebuild(
                             listId, VulkanModelQuadCapture.quadsForList(listId),
                             VulkanModelQuadCapture.captureVersion()))) {
             // The table is built at the frame's first terrain pass, and a model's own replay can come before the
@@ -134,7 +134,7 @@ final class ModelReplay {
             // the GPU table after a world switch, perform one bounded reconciliation
             // for that list and version rather than silently losing its first draws.
             b.celtium$buildModelMeshes();
-            mesh = b.modelGeometry.meshFor(listId);
+            mesh = b.owner.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
             if (org.soutalab.celtium.core.state.RecordedListProbes.current().hasRecordedList(listId)) {
@@ -158,13 +158,13 @@ final class ModelReplay {
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
             // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
             // into "list N, texture M, no mesh", which is the only form in which it can be fixed.
-            b.modelGeometry.noteMissingMesh();
-            if (b.modelGeometry.shouldLogMissingMesh(listId)) {
+            b.owner.modelGeometry.noteMissingMesh();
+            if (b.owner.modelGeometry.shouldLogMissingMesh(listId)) {
                 System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
                         + " capturedQuads=" + VulkanModelQuadCapture.quadsForList(listId)
                         + " captureVersion=" + VulkanModelQuadCapture.captureVersion()
                         + " cachedVersion=" + b.modelMeshBuiltCaptureVersion
-                        + " meshBuildFailure=" + b.modelGeometry.modelMeshFailure()
+                        + " meshBuildFailure=" + b.owner.modelGeometry.modelMeshFailure()
                         + " (no GPU mesh available; GL-less cannot replay this list)"
                         + " caller=" + celtium$gameCaller());
             }
@@ -420,7 +420,7 @@ final class ModelReplay {
         group.viewportValues = b.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
-        group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
+        group.stamp = GroupStamp.obtain(b.frame.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
         // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
         // census only at the immediate path's creation site the verification line listed a single identity (the loading
         // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
@@ -457,13 +457,13 @@ final class ModelReplay {
             // Coalesced to one flush per target change within a frame: the first off-target batch of a pass flushes the
             // batches of that pass, and the later batches of the same target/frame are left for the next change. Per
             // batch this was a submit and a wait each time (`frameIntervalP95Ms=1946`, world frames 43-63 -> 48).
-            if (b.frameId != b.modelOffTargetFlushedFrame || target != b.modelOffTargetFlushedTarget) {
-                b.modelOffTargetFlushedFrame = b.frameId;
+            if (b.frame.frameId != b.modelOffTargetFlushedFrame || target != b.modelOffTargetFlushedTarget) {
+                b.modelOffTargetFlushedFrame = b.frame.frameId;
                 b.modelOffTargetFlushedTarget = target;
                 long recordedBefore = b.immediateStatistics.immediateRecordedBatches();
                 long flushesBefore = b.immediateStatistics.actualFlushes();
                 // The target-change handoff is an ordering flush, not a draw boundary (the window
-                // census' stamp in VulkanTerrainGpuBackend).
+                // census' stamp in Lane2ImmediateRecorder).
                 b.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
                 b.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
                 if (b.modelOffTargetFlushLogs < b.MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
@@ -473,7 +473,7 @@ final class ModelReplay {
                             + " flushes+" + (b.immediateStatistics.actualFlushes() - flushesBefore)
                             + " windowBusy=" + b.immediateWindowBusy
                             + " target=" + target + " groupsLeft=" + b.immediateGroups.size()
-                            + " frame=" + b.frameId);
+                            + " frame=" + b.frame.frameId);
                 }
             } else {
                 b.modelOffTargetCoalesced++;
@@ -530,10 +530,10 @@ final class ModelReplay {
                 return false;
             }
             b.modelInstances = created;
-            created.beginFrame(b.frameId);
+            created.beginFrame(b.frame.frameId);
         }
         VulkanModelInstances instances = b.modelInstances;
-        instances.syncPool(b.modelGeometry.modelMeshes());
+        instances.syncPool(b.owner.modelGeometry.modelMeshes());
         int listId = mesh.ownerList();
         if (!instances.hasList(listId)) {
             instances.noteMissing();
@@ -552,7 +552,7 @@ final class ModelReplay {
                 && java.util.Arrays.equals(open.projection, projection) && !b.fog.movedFrom(open.fog)
                 && open.modelRun.pipeline.renderPass == pass
                 && java.util.Arrays.equals(open.viewportValues, viewport)
-                && open.stamp != null && open.stamp.frameId == b.frameId
+                && open.stamp != null && open.stamp.frameId == b.frame.frameId
                 && instances.sameBuffers(open.modelRun);
         if (!extend) {
             VulkanModelInstances.Pipeline pipeline;
@@ -572,7 +572,7 @@ final class ModelReplay {
             group.modelRun = instances.openRun(pipeline);
             group.fog = b.fog.snapshot();
             group.viewportValues = viewport;
-            group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
+            group.stamp = GroupStamp.obtain(b.frame.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
             // Same rule as the display-list path above: a model run is a queue addition of its own, so the count cache
             // must be invalidated with it - a model run's cached 0 is the pack-scale candidate in item 342's §8.
             b.celtium$queueImmediateGroup(group);
@@ -592,7 +592,7 @@ final class ModelReplay {
         // Cached on the rotation and the light state: the same payload was rebuilt for every replay of a scene whose
         // entities share an orientation (2.5 M rebuilds in one pack leg; the cache's miss counter says how many remain).
         float[] light = b.lighting.celtium$replayLight(state, modelView);
-        if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
+        if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frame.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
             // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
             // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.
             float[] lm = b.celtium$lightmapForGroup();
@@ -638,10 +638,10 @@ final class ModelReplay {
         ModelReplayFastPath.Probe probe = fast.probe();
         probe.listId = listId;
         probe.texture = texture;
-        probe.frameId = b.frameId;
+        probe.frameId = b.frame.frameId;
         probe.target = target;
         probe.pass = b;
-        probe.meshTable = b.modelGeometry.modelMeshes();
+        probe.meshTable = b.owner.modelGeometry.modelMeshes();
         probe.openGroup = b.openModelRunGroup;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
@@ -698,7 +698,7 @@ final class ModelReplay {
                 || open.target != target
                 || open.modelRun == null
                 || open.modelRun.pipeline.renderPass != cached.renderPass
-                || open.stamp == null || open.stamp.frameId != b.frameId
+                || open.stamp == null || open.stamp.frameId != b.frame.frameId
                 || !java.util.Arrays.equals(open.projection, projection)
                 || b.fog.movedFrom(open.fog)
                 || !java.util.Arrays.equals(open.viewportValues, b.currentGroupViewportValues)
@@ -759,7 +759,7 @@ final class ModelReplay {
         ModelReplayFastPath.Probe probe = fast.probe();
         probe.listId = listId;
         probe.texture = texture;
-        probe.frameId = b.frameId;
+        probe.frameId = b.frame.frameId;
         probe.target = b.targetRegistry.currentIdentity();
         probe.pass = b;
         probe.renderPass = open.modelRun.pipeline.renderPass;
@@ -781,7 +781,7 @@ final class ModelReplay {
         }
         probe.lightValid = light != null;
         probe.lightCoordValid = lightCoord != null;
-        probe.meshTable = b.modelGeometry.modelMeshes();
+        probe.meshTable = b.owner.modelGeometry.modelMeshes();
         probe.openGroup = open;
         probe.instances = b.modelInstances;
         probe.registry = b.textureRegistry;
@@ -811,7 +811,7 @@ final class ModelReplay {
                 b.context.celtium$bindlessBindingOrNull();
         if (b.modelInstances == null || bindlessBinding == null) {
             b.modelRunDropped++;
-            b.retiredImmediateGroups.add(group);
+            b.frame.retiredImmediateGroups.add(group);
             b.immediateStatistics.noteImmediateGroupsDiscarded();
             return;
         }
@@ -820,7 +820,7 @@ final class ModelReplay {
             b.celtium$setGroupViewport(groupStack, group, b.passAreaWidth, b.passAreaHeight);
         }
         if (b.passBiasC != 0.0F || b.passBiasS != 0.0F) {
-            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(b.commandBuffer, 0.0F, 0.0F, 0.0F);
+            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(b.frame.commandBuffer, 0.0F, 0.0F, 0.0F);
             b.passBiasC = 0.0F;
             b.passBiasS = 0.0F;
         }
@@ -857,7 +857,7 @@ final class ModelReplay {
         b.immediateStatistics.noteImmediateGroupsFlushed();
         b.frameDrawn++;
         b.drawnByFormat[VulkanImmediateFormats.ITEM] += batches;
-        b.recordedImmediateGroups.add(group);
+        b.frame.recordedImmediateGroups.add(group);
         b.celtium$recordQueuedClearsInPass(group.postClears, group.target);
         group.postClears = null;
     }

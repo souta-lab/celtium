@@ -3,12 +3,12 @@ package org.soutalab.celtium.vulkan;
 /**
  * Whether the open immediate group can take the next batch: the colour, texture matrix, scissor, fog and tex-gen
  * comparisons against what the group captured, and the texture-matrix reads they share. Moved out of {@link
- * VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * Lane2ImmediateRecorder} unchanged (2026-11-06).
  */
 final class GroupChange {
-    private final VulkanTerrainGpuBackend b;
+    private final Lane2ImmediateRecorder b;
 
-    GroupChange(VulkanTerrainGpuBackend backend) {
+    GroupChange(Lane2ImmediateRecorder backend) {
         this.b = backend;
     }
 

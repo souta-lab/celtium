@@ -49,17 +49,26 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * Runs on the client/render thread with a current GL context, like the OpenGL backend it replaces.
  */
-public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageStateGuard.DepthAlphaSink {
-    /** Alignment required for dynamic uniform buffer offsets. Tightened at construction from the device limits. */
-    private static final int MIN_UNIFORM_ALIGNMENT = 256;
+/**
+ * The Lane 2 immediate-recording funnel: the backend's second seat after the S3-b E7 split.
+ * Everything the monolith recorded - immediate groups, windows, chain pairs, the pack terrain
+ * handoff, texture mirrors and the batcher - lives here, reached from the frame coordinator
+ * for frame state and from the thin backend adapter for the installed surface.
+ */
+public final class Lane2ImmediateRecorder {
 
-    /**
-     * The slot-wait decision point's fallback counters (Stage 2): every {@code waitForSlot} call that
-     * actually waits on a pending submission is one attempt, confirmed by the timeline wait (fast) or
-     * by the fence wait it falls through to (fallback). Counting only - rendering behaviour is unchanged.
-     */
-    private static final FallbackPaths.Handle TIMELINE_WAIT_PATH =
-            FallbackPaths.register(FallbackPaths.SYNC_TIMELINE);
+    final VulkanContext context;
+    final FrameCoordinator frame;
+    final BackendDiagnostics reports;
+    PresentSwapchain presentSwapchain;
+    VulkanBackendAdapter owner;
+
+    Lane2ImmediateRecorder(VulkanContext context, FrameCoordinator frame, BackendDiagnostics reports) {
+        this.context = context;
+        this.frame = frame;
+        this.reports = reports;
+    }
+
 
     /**
      * Bytes per dynamic uniform block. Mirrors {@code CeltiumSolidUniforms} in
@@ -68,82 +77,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int UNIFORM_BYTES = 80;
 
-    final VulkanContext context;
-    private DynamicLightService dynamicLightService;
-    private final int uniformAlignment;
-    // ---------------------------------------------------------------- R7: the frame coordinator
-
-    /** The submit sequence's view of this renderer. One owner per fact: the frame state stays here. */
-    final FrameCoordinator frameCoordinator = new FrameCoordinator(new FrameCoordinator.Host() {
-        @Override public VkCommandBuffer commandBuffer() { return VulkanTerrainGpuBackend.this.commandBuffer; }
-        @Override public void recordFrameEndTimestamp() {
-            VulkanTerrainGpuBackend.this.recordFrameEndTimestamp();
-        }
-        @Override public void recordHiZBuild() {
-            VulkanTerrainGpuBackend.this.celtium$recordHiZBuild();
-        }
-        @Override public VulkanCommandBufferState commandState() { return VulkanTerrainGpuBackend.this.commandState; }
-        @Override public VulkanContext context() { return VulkanTerrainGpuBackend.this.context; }
-        @Override public long fence() { return VulkanTerrainGpuBackend.this.fence; }
-        @Override public VulkanFrameArena frameArena() { return VulkanTerrainGpuBackend.this.frameArena; }
-        @Override public long frameId() { return VulkanTerrainGpuBackend.this.frameId; }
-        @Override public int frameSlot() { return VulkanTerrainGpuBackend.this.frameSlot; }
-        @Override public void celtium$noteDirectSubmit() { VulkanTerrainGpuBackend.this.celtium$noteDirectSubmit(); }
-        @Override public boolean frameSubmitReachedQueue() { return VulkanTerrainGpuBackend.this.frameSubmitReachedQueue; }
-        @Override public FrameImageTarget frameTarget() { return VulkanTerrainGpuBackend.this.frameTarget; }
-        @Override public boolean gpuStalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
-        @Override public ImmediateStatistics immediateStatistics() { return VulkanTerrainGpuBackend.this.immediateStatistics; }
-        @Override public boolean immediateWindowBusy() { return VulkanTerrainGpuBackend.this.immediateWindowBusy; }
-        @Override public boolean lastFrameReachedQueue() { return VulkanTerrainGpuBackend.this.lastFrameReachedQueue; }
-        @Override public java.util.List<ImmediateGroup> recordedImmediateGroups() { return VulkanTerrainGpuBackend.this.recordedImmediateGroups; }
-        @Override public java.util.List<ImmediateGroup> retiredImmediateGroups() { return VulkanTerrainGpuBackend.this.retiredImmediateGroups; }
-        @Override public FrameSubmissionScheduler scheduler() { return VulkanTerrainGpuBackend.this.scheduler; }
-        @Override public boolean submissionPending() { return VulkanTerrainGpuBackend.this.submissionPending; }
-        @Override public SubmissionStatistics submissionStatistics() { return VulkanTerrainGpuBackend.this.submissionStatistics; }
-        @Override public RenderTargetRegistry targetRegistry() { return VulkanTerrainGpuBackend.this.targetRegistry; }
-        @Override public int failImmediateSubmits() { return VulkanTerrainGpuBackend.this.failImmediateSubmits; }
-        @Override public void noteImmediateSubmitFailure() { VulkanTerrainGpuBackend.this.failImmediateSubmits--; }
-        @Override public void check(int result, String operation) { VulkanTerrainGpuBackend.check(result, operation); }
-        @Override public void record(String message) { VulkanTerrainGpuBackend.this.record(message); }
-        @Override public void setSubmissionPending(boolean pending) { VulkanTerrainGpuBackend.this.submissionPending = pending; }
-        @Override public void setFrameSubmitReachedQueue(boolean reached) { VulkanTerrainGpuBackend.this.frameSubmitReachedQueue = reached; }
-        @Override public boolean frameBufferOpen() { return VulkanTerrainGpuBackend.this.frameBufferOpen; }
-        @Override public void setFrameBufferOpen(boolean open) { VulkanTerrainGpuBackend.this.frameBufferOpen = open; }
-        @Override public void celtium$submitSlotDeferred(VkCommandBuffer commandBuffer, long[] waitSemaphores,
-                int[] waitStages, long[] signalSemaphores) {
-            VulkanTerrainGpuBackend.this.celtium$submitSlotDeferred(commandBuffer, waitSemaphores, waitStages,
-                    signalSemaphores);
-        }
-        @Override public void setLastFrameReachedQueue(boolean reached) {
-            // Temporary probe (2026-10-15): the present skips every frame with "no completed frame waiting" even though
-            // the pass-submission counter shows frames being submitted, so the question is whether this setter is ever
-            // called with true at all. Bounded to a dozen lines.
-            if (reached && celtium$lastFrameReachedQueueLogs++ < 12) {
-                System.out.println("[Celtium] CELTIUM_FRAME_QUEUED reached=true call=" + celtium$lastFrameReachedQueueLogs
-                        + " presentHookCalls=" + VulkanTerrainGpuBackend.this.presentHookCalls);
-            }
-            VulkanTerrainGpuBackend.this.lastFrameReachedQueue = reached;
-            if (reached) {
-                VulkanTerrainGpuBackend.this.queuedFrameId = VulkanTerrainGpuBackend.this.frameId;
-            }
-        }
-    });
-
-
-
-
-
     FrameImageTarget frameTarget;
+
     /** Standalone frame-compatible render pass for UI-only frames - only used when no terrain pass has run. */
     long uiRenderPass;
+
     /** The VkFormat {@link #uiRenderPass} was built for; 0 while none exists. */
     private int uiRenderPassFormat;
-    /**
-     * UI passes retired by a frame-format change (Stage 1 BGRA ignition): kept, not destroyed, until
-     * teardown - a pass may still be named by submitted command buffers, and the variant caches take the
-     * same keep-until-teardown line. Bounded by the number of frame formats (two).
-     */
-    private final java.util.ArrayList<Long> retiredUiRenderPasses = new java.util.ArrayList<>();
 
     long uiRenderPass() {
         // The pass must declare the frame's format: before the first frame target exists the context's
@@ -153,17 +93,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // picture difference.
         int frameFormat = this.context.celtium$frameColorFormat();
         if (this.uiRenderPass != 0L && this.uiRenderPassFormat != frameFormat) {
-            this.retiredUiRenderPasses.add(this.uiRenderPass);
+            this.owner.retiredUiRenderPasses.add(this.uiRenderPass);
             this.uiRenderPass = 0L;
-            record("standalone UI render pass retired: the frame format moved to " + frameFormat);
+            this.reports.record("standalone UI render pass retired: the frame format moved to " + frameFormat);
         }
         if (this.uiRenderPass == 0L) {
             this.uiRenderPass = VulkanTerrainPipeline.createFrameRenderPass(this.context);
             this.uiRenderPassFormat = frameFormat;
-            record("standalone UI render pass created for the no-terrain-pass frame");
+            this.reports.record("standalone UI render pass created for the no-terrain-pass frame");
         }
         return this.uiRenderPass;
     }
+
 
     /**
      * {@return the frame's own format class} (Stage 1 BGRA ignition, QUEUE 404 rule R1 revised): the class
@@ -179,6 +120,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.context.celtium$frameFormatClass();
     }
 
+
     /**
      * The render pass a mod's own framebuffer draws through: the frame pass' attachments and subpass with the depth
      * attachment cleared and discarded. Created on first use, like the standalone UI pass.
@@ -191,13 +133,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     long chainPairRenderPass() {
         if (this.chainPairRenderPass == 0L) {
             this.chainPairRenderPass = VulkanTerrainPipeline.createChainPairRenderPass(this.context);
-            record("chain-pair render pass created (depth cleared and discarded)");
+            this.reports.record("chain-pair render pass created (depth cleared and discarded)");
             TargetFormatClass frameClass = celtium$frameFormatClass();
             System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + frameClass
                     + " vk=" + frameClass.vkFormat() + " count=1 discard=true");
         }
         return this.chainPairRenderPass;
     }
+
 
     /**
      * The chain-pair render pass for a framebuffer with {@code colorAttachments} colour targets, cached per
@@ -213,13 +156,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments);
             this.chainPairRenderPassesByCount[colorAttachments] = cached;
-            record("chain-pair MRT render pass created (colors=" + colorAttachments + ")");
+            this.reports.record("chain-pair MRT render pass created (colors=" + colorAttachments + ")");
             TargetFormatClass frameClass = celtium$frameFormatClass();
             System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + frameClass
                     + " vk=" + frameClass.vkFormat() + " count=" + colorAttachments + " discard=true");
         }
         return cached;
     }
+
 
     /**
      * {@return the variant key of a chain-pair render pass}: the (colour attachment count, Vk colour format)
@@ -229,6 +173,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static long celtium$chainPassKey(int colorCount, int vkFormat) {
         return ((long) colorCount << 32) | (vkFormat & 0xFFFF_FFFFL);
     }
+
 
     /**
      * The one-colour chain-pair pass for a pair allocated in {@code formatClass} (QUEUE 404, S4). The
@@ -245,6 +190,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return chainPairVariantPass(1, formatClass);
     }
 
+
     /**
      * The chain-pair render pass for {@code colorAttachments} colour targets in {@code formatClass}
      * (QUEUE 404, S4): the variant keyed by (count, class). The frame's class delegates to the per-count
@@ -257,6 +203,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return chainPairVariantPass(Math.max(1, colorAttachments), formatClass);
     }
 
+
     /** Creates (once) and returns the discard-depth variant chain pass for a non-default (count, class). */
     private long chainPairVariantPass(int colorAttachments, TargetFormatClass formatClass) {
         long key = celtium$chainPassKey(colorAttachments, formatClass.vkFormat());
@@ -266,7 +213,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     formatClass.vkFormat());
             this.chainPairVariantPasses.put(key, cached);
             this.chainPairVariantColorCounts.put(cached, colorAttachments);
-            record("chain-pair variant render pass created (class=" + formatClass
+            this.reports.record("chain-pair variant render pass created (class=" + formatClass
                     + " colors=" + colorAttachments + ")");
             System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + formatClass
                     + " vk=" + formatClass.vkFormat() + " count=" + colorAttachments
@@ -274,6 +221,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return cached;
     }
+
 
     /** Creates (once) and returns a load/store-depth multi-target render pass for shader-pack terrain passes. */
     private long frameVariantRenderPass(int colorAttachments, TargetFormatClass formatClass) {
@@ -288,6 +236,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return cached;
     }
 
+
     /**
      * The frame-shaped pass (load/store, one colour) in {@code formatClass} - the pass immediate and
      * mod-program pipelines are built against when the current target is a non-default-class pair
@@ -299,16 +248,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     long formatClassPipelinePass(TargetFormatClass formatClass) {
         int slot = formatClass.ordinal();
-        long cached = this.formatClassPipelinePasses[slot];
+        long cached = this.owner.formatClassPipelinePasses[slot];
         if (cached == 0L) {
             cached = VulkanTerrainPipeline.createFrameRenderPass(this.context, formatClass.vkFormat());
-            this.formatClassPipelinePasses[slot] = cached;
-            record("format-class pipeline render pass created (class=" + formatClass + ")");
+            this.owner.formatClassPipelinePasses[slot] = cached;
+            this.reports.record("format-class pipeline render pass created (class=" + formatClass + ")");
             System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + formatClass
                     + " vk=" + formatClass.vkFormat() + " count=1 discard=false");
         }
         return cached;
     }
+
 
     /** {@return whether a render pass is one of the chain-pair passes} (any colour count, any format class). */
     boolean isChainPairRenderPass(long renderPass) {
@@ -325,6 +275,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return this.chainPairVariantColorCounts.containsKey(renderPass);
     }
+
 
     /**
      * {@return how many colour attachments a chain-pair render pass has}, or 0 when it is not one. The
@@ -343,6 +294,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.chainPairVariantColorCounts.getOrDefault(renderPass, 0);
     }
 
+
     /**
      * A chain pair's depth is always discarded: a mod's own framebuffer draws through the chain-pair pass, never
      * through the frame pass again loading and storing the pair's depth. Pinned on: the switch was the A/B for
@@ -350,6 +302,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * same-pose comparison, and that comparison adopted the discard side.
      */
     static final boolean CHAIN_PAIR_DISCARD_DEPTH = true;
+
 
     /**
      * {@code -Dceltium.vulkan.targetFormatClass=RGBA16_FLOAT} forces every chain pair's format class
@@ -363,6 +316,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static final TargetFormatClass FORCED_TARGET_FORMAT_CLASS = celtium$parseForcedTargetFormatClass(
             System.getProperty("celtium.vulkan.targetFormatClass", "default"));
+
 
     /** {@return the class a {@code celtium.vulkan.targetFormatClass} value names}, or null for no forcing. */
     static TargetFormatClass celtium$parseForcedTargetFormatClass(String propertyValue) {
@@ -381,10 +335,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return null;
     }
 
+
     /** The chain-pair render pass handle, or 0 before the first mod-framebuffer window asked for it. */
     long chainPairRenderPass;
+
     /** The multi-target chain-pair render passes, indexed by colour attachment count (2..8 used). */
     final long[] chainPairRenderPassesByCount = new long[9];
+
     /**
      * The non-default-class chain-pair passes (QUEUE 404, S4), keyed by
      * {@link #celtium$chainPassKey(int, int)}: only (count, class) combinations a pair actually resolved to
@@ -392,13 +349,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairVariantPasses =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+
     /** Load/store-depth multi-target render passes for shader-pack terrain passes (gbuffers_terrain / shadow). */
     final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap frameVariantPasses =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+
     /** Host-side state bracket for pack terrain executions; see {@link PackStageStateGuard}. */
     private final PackStageStateGuard packStageStateGuard = new PackStageStateGuard();
+
     private static final boolean PACK_TERRAIN_PROGRAMS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
+
     /**
      * The item 328 rebuild discipline, applied to the pack route's shadow stage (shadow-diff-1): when on,
      * a shadow-stage batch rebuild that the frame's {@link TerrainFrameBudget} allowance does not cover is
@@ -408,6 +369,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
+
     /**
      * The Angelica (Iris) shadow result-cache shape, applied to the pack route's shadow stage
      * (alpha-shadow-cache-form; supersedes the alpha-shadow-interval record-skipping shape as the
@@ -428,26 +390,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_CACHE =
             Boolean.getBoolean("celtium.vulkan.packShadowCache");
+
     /** Angelica's snapshot age cap: a snapshot older than this is never restored (250 ms). */
     private static final long PACK_SHADOW_CACHE_MAX_AGE_NANOS = 250_000_000L;
+
     /** Angelica's ShadowGraphGate base threshold: sun rotation, in degrees, that forces a redraw. */
     private static final double PACK_SHADOW_CACHE_SUN_THRESHOLD_DEGREES = 0.03;
+
     /** Whether the snapshot pair currently holds a captured terrain result. */
     private boolean packShadowCacheValid;
+
     /** Draw identity / snapshot identity / extent / colour count of the captured result. */
     private long packShadowCacheIdentity;
+
     private long packShadowCacheSnapshotIdentity;
+
     private int packShadowCacheWidth;
+
     private int packShadowCacheHeight;
+
     private int packShadowCacheColors;
+
     /** Sun direction at the capture (unit vector, world space as read from the shadow model-view). */
     private final float[] packShadowCacheSunDirection = new float[3];
+
     /** Shadow camera position at the capture (the shadow model-view's translation components). */
     private final float[] packShadowCacheCameraPosition = new float[3];
+
     /** {@code System.nanoTime()} of the capture; the 250 ms age cap is measured against it. */
     private long packShadowCacheCaptureNanos;
+
     private long packShadowCacheCaptured;
+
     private long packShadowCacheRestored;
+
 
     /**
      * {@return the dedicated snapshot chain-pair identity for a shadow draw identity}: a bijective mix,
@@ -458,6 +434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         long snapshot = (drawIdentity ^ 0x5A17CA5E57A70001L) * 0x9E3779B97F4A7C15L;
         return snapshot == drawIdentity ? snapshot ^ 1L : snapshot;
     }
+
 
     /**
      * {@return the sun direction implied by a shadow model-view matrix}: the negated third column of
@@ -477,12 +454,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return new float[]{x / length, y / length, z / length};
     }
 
+
     /** {@return the angle between two unit sun directions, in degrees}. */
     static double celtium$packShadowSunAngleDegrees(float[] a, float[] b) {
         double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         dot = Math.max(-1.0, Math.min(1.0, dot));
         return Math.toDegrees(Math.acos(dot));
     }
+
 
     /**
      * {@return Angelica's elevation-scaled gate threshold, in degrees}: the base 0.03 degrees divided
@@ -496,10 +475,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return PACK_SHADOW_CACHE_SUN_THRESHOLD_DEGREES / scale;
     }
 
+
     /** {@return the shadow camera position read from a shadow model-view's translation}. */
     static float[] celtium$packShadowCameraPosition(org.joml.Matrix4fc modelView) {
         return new float[]{modelView.m30(), modelView.m31(), modelView.m32()};
     }
+
 
     /**
      * {@return whether a pack shadow stage must record terrain instead of restoring the snapshot}:
@@ -518,11 +499,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return ageNanos > PACK_SHADOW_CACHE_MAX_AGE_NANOS || sunAngleDegrees >= sunThresholdDegrees
                 || cameraMoved;
     }
+
     private int packTerrainDrawnLogs;
+
     private int packTerrainRefusedLogs;
+
     private int packTerrainHandoffLogs;
+
     /** Package-private (not private) so BackendDiagnostics can carry it into CELTIUM_VERIFY (DP-36). */
     long packTerrainSkippedRegions;
+
     /**
      * Every pack terrain refusal, counted at the report seat (drawpath audit DP-36):
      * unlike {@link #packTerrainRefusedLogs}, which caps the printed lines at 24, this
@@ -530,11 +516,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * on refusals it never saw printed.
      */
     long packTerrainRefused;
+
     /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-    /** The frame-shaped pipeline passes for non-default classes, indexed by class ordinal (0 = unused). */
-    final long[] formatClassPipelinePasses = new long[TargetFormatClass.values().length];
+
 
     /**
      * {@return the pipeline cache key for a batch offered under {@code classOrdinal}}: the state key with the
@@ -555,6 +541,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return mixed | flag;
     }
 
+
     /**
      * {@return the pipeline cache key with the target's colour count folded in}: the count beside the
      * class, in the same shape as {@link #celtium$pipelineKey} - the line bit saved and restored, the
@@ -574,6 +561,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return mixed | flag;
     }
 
+
     /**
      * {@return the format class of the pair the current target's batches will be drawn into}: the frame's
      * class for identity 0 and the main identity (rule R1 - {@code RGBA8_UNORM} on a classic surface,
@@ -590,6 +578,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return target == null ? celtium$frameFormatClass() : target.chainPairFormatClass(identity);
     }
 
+
     /**
      * Counts one framebuffer bit-count answer against the current target's pair class (QUEUE 405, S6):
      * the stub answers {@code GL_RED_BITS} and its siblings with the delivered frame's 8 bits, and while
@@ -600,8 +589,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public void celtium$noteTargetFormatBitsAnswer(int pname, int answeredBits) {
         TargetFormatCensus.noteBitsAnswer(pname, answeredBits, celtium$currentPairFormatClass());
     }
+
     int targetWidth;
+
     int targetHeight;
+
     /**
      * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
      * <p>
@@ -614,6 +606,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the sampling-side transition at that site was moving the image the pass was about to attach.
      */
     long passAttachedColorImage;
+
     /**
      * Every colour image the pass being begun attaches, for a multi-target window (index = slot); null when the
      * pass attaches one colour image, which is what {@link #passAttachedColorImage} alone describes. The
@@ -621,6 +614,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the tuple is kept out of the sampling layout exactly as slot 0's name is.
      */
     long[] passAttachedColorImages;
+
     /**
      * Depth image the pass being begun attaches (shared depth for a routed shadow/depth target), or 0 when the pass
      * uses a private depth image. Checked alongside {@link #passAttachedColorImage} so the sampling-side transition
@@ -628,6 +622,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code vkCmdBeginRenderPass} (shadow §3.4 / item 537 wall (c)).
      */
     long passAttachedDepthImage;
+
 
     /** {@return whether the pass this window or terrain pass records attaches this image as color or depth}. */
     boolean celtium$passAttachesImage(long image) {
@@ -639,6 +634,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return celtium$passAttachesColorImage(image);
     }
+
 
     /** {@return whether the pass this window records attaches this image as one of its colour targets}. */
     boolean celtium$passAttachesColorImage(long image) {
@@ -659,6 +655,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+
     /**
      * The serial of the frame a once-per-frame latch belongs to.
      * <p>
@@ -678,13 +675,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.celtium$presentCount;
     }
 
+
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
     private int windowDrawLogs;
+
     /** Loading-phase windows whose submission was marked as the frame the present may take (see the window close path). */
     private int pairClearRefusalLogs;
+
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     int defaultPairClears;
+
     int chainPairClears;
+
     /**
      * glClear attribution, counted where the request is read: {@code gameClearsLatchedForFrame} were issued while the
      * game's own main framebuffer was bound (they clear the delivered image), {@code gameClearsRoutedToPairs} while
@@ -693,10 +695,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code CELTIUM_CLEAR_LATCH} lines with the values they carried.
      */
     int gameClearsRoutedToPairs;
+
     private int gameClearLatchLog;
+
     private static final int GAME_CLEAR_LATCH_LINES =
             Integer.getInteger("celtium.clearlatch.lines", 6).intValue();
+
     private String lastOffTargetFailure = "none";
+
     /**
      * Off-target passes that failed target routing and were redirected into the frame image
      * (the catch in {@code recordImmediateOnlyPass} that sets {@link #lastOffTargetFailure}).
@@ -705,6 +711,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * only narrated (drawpath audit DP-33). Package-private for the verification summary.
      */
     long offTargetRedirects;
+
     /**
      * Immediate batches this backend refused at the {@code submitImmediateBatch} entry, counted
      * unconditionally at the one funnel every offer passes through. The per-format refusal map
@@ -714,11 +721,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     long offerRefusals;
 
-    VulkanGlTexture atlasTexture;
     VulkanGlTexture lightmapTexture;
+
     int atlasGlId = -1;
+
     int lightmapGlId = -1;
+
     long atlasRefreshCountdown;
+
     /**
      * Atlas mirror re-supplies that failed and entered the 400-frame backoff (drawpath
      * audit DP-04): while the atlas is unestablished, every terrain pass skips until the
@@ -726,16 +736,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code CELTIUM_VERIFY} rather than only in the record line of the moment.
      */
     long atlasRefreshFailures;
+
     long lightmapRefreshCountdown;
 
-    private long commandPool;
-    VkCommandBuffer commandBuffer;
-    private long fence;
-    private long frameIndex;
-    /** The arena's own frame counter: advanced at every frame boundary, world pass or not. */
-    private long arenaFrameId;
-    /** Whether a world snapshot ran since the last frame boundary, so the menu-only resets know to stay out. */
-    private boolean frameSnapshotSinceBoundary;
 
     /**
      * The OpenGL projection remapped from the OpenGL clip-depth range [-1, 1] to Vulkan's [0, 1]. Without it every
@@ -745,23 +748,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private final Matrix4f vulkanProjection = new Matrix4f();
 
     private int command0Logged;
-    private long readbackBuffer;
-    /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
-    private static final int READBACK_SLOTS = 32;
-    private final long[] readbackOffsets = new long[READBACK_SLOTS];
-    /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
-    private static final int READBACK_COPY_BYTES = 64;
-    /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
-    private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
-    /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
 
+    private final long[] readbackOffsets = new long[FrameCoordinator.READBACK_SLOTS];
 
-    private long readbackMemory;
-    private long readbackMapped;
     /** Test-only ({@code -Dceltium.vulkan.worldMatrixCensus=true}): print the world model-view once per run. */
     private static final boolean WORLD_MATRIX_CENSUS =
             Boolean.getBoolean("celtium.vulkan.worldMatrixCensus");
+
     private boolean worldMatrixCensusDone;
+
 
     /**
      * {@code -Dceltium.vulkan.skyCensus=true}: one line per frame whose count of sky-sized {@code POSITION} batches
@@ -775,14 +770,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * apart without a second guess.
      */
     private static final boolean SKY_CENSUS = Boolean.getBoolean("celtium.vulkan.skyCensus");
-    /**
-     * The frame the renderer last finished, for diagnostics that run outside it (the swapchain's flicker sampler).
-     * <p>
-     * The pair the sampler compares is two presents, and a present is not a frame: the loading screen presents hundreds
-     * of frames before the world exists. Without this number a census line cannot be tied to either frame of the pair,
-     * which is exactly the correlation the sky band needs.
-     */
-    static volatile long lastFinishedFrameId;
+
     /**
      * {@code -Dceltium.vulkan.skyPoison=true}: draws the sky plane's group in magenta.
      * <p>
@@ -792,6 +780,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * frame only means the draw is issued but its pixels are not there.
      */
     private static final boolean SKY_POISON = Boolean.getBoolean("celtium.vulkan.skyPoison");
+
     /**
      * {@code -Dceltium.vulkan.skyNoFog=true}: draws the sky plane's group with the fog selector cleared.
      * <p>
@@ -800,6 +789,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is the sky colour, so a frame that stays the fog colour is a frame whose plane never reached the image.
      */
     private static final boolean SKY_NO_FOG = Boolean.getBoolean("celtium.vulkan.skyNoFog");
+
     /**
      * {@code -Dceltium.vulkan.skyNoDepth=true}: draws the sky plane's group with the depth test off.
      * <p>
@@ -809,13 +799,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is what happens, without changing anything else about the draw.
      */
     private static final boolean SKY_NO_DEPTH = Boolean.getBoolean("celtium.vulkan.skyNoDepth");
+
     private static final int SKY_CENSUS_LIMIT =
             Integer.getInteger("celtium.vulkan.skyCensusLines", 200).intValue();
+
     private int skyCensusBatches;
+
     private int skyCensusLastCount = -1;
+
     private int skyCensusLines;
+
     private String skyCensusFirst = "none";
+
     private String skyCensusLastState = "none";
+
     /**
      * The sky group as it was actually drawn, printed once per distinct state.
      * <p>
@@ -827,17 +824,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int SKY_GROUP_LIMIT =
             Integer.getInteger("celtium.vulkan.skyGroupLines", 80).intValue();
+
     private String skyGroupStateThisFrame;
+
     private String skyGroupStateLast = "none";
+
     private int skyGroupLines;
+
     /**
      * The sunset glow fan: {@code POSITION_COLOR}, 18 vertices, {@code GL_TRIANGLE_FAN}, drawn by
      * {@code RenderGlobal.renderSky} at {@code RenderGlobal:1383}. It is the other candidate for the sky band - a radial
      * gradient about the zenith - so the census counts it beside the plane rather than assuming which one the band is.
      */
     private int skyFanBatches;
+
     private String skyFanFirst = "none";
+
     private String skyFanLastState = "none";
+
     /**
      * {@code -Dceltium.vulkan.skyFrameProbe=<n>}: for the frames from n on (bounded), read the frame image's sky band at
      * the frame boundary and print it beside the number of sky draws the frame issued.
@@ -853,11 +857,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is the picture's bottom), the same order {@code readImageRectangle} returns.
      */
     static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
+
     static final int SKY_FRAME_PROBE_LIMIT =
             Integer.getInteger("celtium.vulkan.skyFrameProbeLimit", 24).intValue();
+
     private int skyFrameProbeLines;
+
     /** Sky draws issued in the frame that is running; the probe prints it for the frame that just ended. */
     int skyDrawsThisFrame;
+
     /**
      * The same band read from the frame image immediately before the present blits it.
      * <p>
@@ -866,13 +874,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is the only remaining pair of shapes for a draw that is issued, counted and absent from the picture.
      */
     int skyPresentProbeLines;
+
     /** Lines of the per-draw probe, bounded like the other two. */
     private int skyDrawProbeLines;
 
-    private boolean submissionPending;
-    VulkanCommandBufferState commandState;
     private long activeImmediateTarget;
-    final java.util.List<ImmediateGroup> recordedImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
+
     /**
      * When and against which frame-target generation a queued group was built.
      * <p>
@@ -893,6 +900,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * check and a target replacement cannot disagree.
      */
     final RenderTargetRegistry targetRegistry = new RenderTargetRegistry();
+
     /**
      * GLSM stage 2 (glsm-stage2-design.md §3.1): the frame-target state machine. S2-2 moved
      * the clear issue/application state into its ClearState behind the stage-2 flag; stage 5
@@ -901,6 +909,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * fields), so every clear site below reads this owner only.
      */
     final GlsmFrameState glsmFrameState = new GlsmFrameState();
+
     /**
      * Bumped when a world's resources are released, so a queued group from the previous world can never be drawn.
      * <p>
@@ -911,9 +920,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * it, and the teardown drops the queue rather than leaving it for the next world.
      */
     int worldEpoch;
+
     /** Groups retired by the one drain that has no later one: the backend's own last teardown. */
     private long offTargetRecordedBatches, offTargetCompletedBatches;
-    private int failImmediateSubmits;
+
     /**
      * Recordings unwound by the double window-flush failure path, so "the abandon also reset the command state"
      * is a number in the log rather than a claim about the code. A non-zero value beside
@@ -922,26 +932,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     long abandonedWindowRecordings;
 
+
     /** {@return recordings unwound by the double window-flush failure path}. */
     public long abandonedWindowRecordings() {
         return this.abandonedWindowRecordings;
     }
 
-    /** Restricted to the small validation scene, so retry is exercised after a real batch was accepted. */
-    public void injectImmediateSubmitFailure(int count) {
-        if (!HarnessConfig.bool("commandBufferTargets", false) || count < 0 || count > 1)
-            throw new IllegalArgumentException("submit failure injection requires the target acceptance fixture");
-        this.failImmediateSubmits = count;
-    }
     int currentGroupBatches;
+
     int[] currentGroupViewportValues;
+
     /** The lighting generation the open group was created under; see {@code Lane2ImmediateState.lightGeneration()}. */
     private long currentGroupLightGeneration;
+
     /** The verification line's output contract, whose ownership moved to {@link BackendReport} in plan R1c. */
     private final BackendReport report = new BackendReport();
 
+
     /** Presents seen, so the summary has a trigger on a path that runs while a GUI screen is open. */
     int celtium$presentCount;
+
 
     /**
      * Groups whose clip came from the live record because the group opened with the scissor disabled.
@@ -952,17 +962,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private PreparedImmediate currentPreparedImmediate;
 
-    /**
-     * {@return whether this frame's recordings are being coalesced into one open frame buffer}.
-     * <p>
-     * An immediate window's groups are recorded into the open unified buffer and the submission happens at the
-     * frame boundary, so the execution counters cannot advance at a bind the way they do on the direct path. A
-     * validation client has to read this to assert the right contract instead of encoding one mode's timing as
-     * the rule.
-     */
-    public boolean celtium$unifiedFrameBuffer() {
-        return !this.gpuStalled;
-    }
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
     public long[] immediateExecutionCounters() {
@@ -973,20 +972,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.offTargetRecordedBatches, this.offTargetCompletedBatches, this.immediateStatistics.immediateRetryCount()};
     }
 
-    /**
-     * Whether the shared images are currently handed to Vulkan. The round trip is per *frame*, not per pass: the
-     * terrain is drawn by three passes in a row and handing the images back between them costs a full colour copy
-     */
-    /** CPU time spent inside the GL/Vulkan handoff, so the debug overlay can show what the round trip costs. */
-    private long handoffNanos;
-    private long handoffSamples;
-    private long handoffWorstNanos;
-    private int frameOpens;
     private boolean windowOpen;
-    private int frameCloses;
+
     private int renderCalls;
+
     boolean swapchainProbeDone;
+
     VulkanSwapchain swapchain;
+
 
     /**
      * Consecutive refused swapchain creations, latched for the escalation the swap point polls through
@@ -999,548 +992,42 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final SwapchainCreationEscalation swapchainCreationEscalation = new SwapchainCreationEscalation();
 
+
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     private static final int MAX_UNIFORM_PASSES = 6;
 
-    /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
-    private static final int TIMESTAMP_SLOTS = 320;
-    /**
-     * Labelled single timestamps along the last command buffer (queries {@code MARK_BASE..}), written only while the
-     * GPU pass report collects: the delta between two marks is the GPU time of the commands recorded between them -
-     * barriers and clears included, which no pass bracket owns.
-     */
-    private static final int MARK_BASE = 64;
-    private static final int MARKS = 240;
-    private static final String[] GROUP_MARK_LABELS = new String[VulkanImmediateFormats.COUNT];
     static {
-        for (int f = 0; f < GROUP_MARK_LABELS.length; f++) {
-            GROUP_MARK_LABELS[f] = "g" + f;
+        for (int f = 0; f < FrameCoordinator.GROUP_MARK_LABELS.length; f++) {
+            FrameCoordinator.GROUP_MARK_LABELS[f] = "g" + f;
         }
     }
-    private int gpuMarkCount;
-    private final String[] gpuMarkLabels = new String[MARKS];
-    private String gpuMarkTimeline = "";
 
-    /** Writes a labelled GPU mark when the GPU pass report is collecting; otherwise nothing. */
-    private void gpuMark(String label) {
-        if (this.timestampPool == 0L || !this.timestampsUsable || this.gpuMarkCount >= MARKS
-                || !org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || this.commandBuffer == null) {
-            return;
-        }
-        this.gpuMarkLabels[this.gpuMarkCount] = label;
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + MARK_BASE + this.gpuMarkCount);
-        this.gpuMarkCount++;
-    }
     /**
      * The window slots: one pair per immediate window of the frame, up to {@link #WINDOW_SLOTS}. The single reserved
      * pair before this measured only whichever window ran last (about one in ten), so the integrated GPU's frame
      * outside the terrain passes - 1.6 of 2.3 ms on the UHD 630 - could not be attributed.
      */
     private static final int WINDOW_SLOT_BASE = 16;
-    private static final int WINDOW_SLOTS = 12;
-    private int windowTimestampCount;
-    private final long[] windowTimestampTargets = new long[WINDOW_SLOTS];
-    private long windowGpuMainNanos;
-    private long windowGpuOffNanos;
-    private long windowGpuMaxNanos;
-    private int windowGpuCount;
-    /**
-     * The slot that measures the whole frame's GPU time, from the start of the command buffer to its end.
-     * <p>
-     * The terrain passes and the immediate window together account for under two milliseconds on the integrated GPU
-     * while the frame takes nine, so the question the per-pass numbers cannot answer is whether the GPU is busy for
-     * the rest or idle while the host waits. This one pair answers exactly that.
-     */
-    private static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
-    private long timestampPool;
 
-    /**
-     * The pipeline-statistics instrument's queries per frame slot (item 359). Eight is headroom, not an
-     * invariant: a frame records three passes by default, four with the cutout split, and the shadow view
-     * records through the same loop - so the count is not derived from {@link #MAX_UNIFORM_PASSES}, which
-     * bounds uniform blocks, not passes. A pass that finds no free query is counted in
-     * {@link #statisticsDroppedPasses}, never silently skipped.
-     */
-    private static final int STATS_PER_SLOT = 8;
-    /** The statistics pool: a query type of its own, so it cannot share the timestamp pool. */
-    private long statisticsPool;
-    /** Queries written per frame slot in that slot's current recording, and the bitmask of those already read. */
-    private final int[] statisticsSlotCounts = new int[FRAME_SLOTS];
-    private final int[] statisticsSlotConsumed = new int[FRAME_SLOTS];
-    /** Per-slot, per-query snapshots taken at record time: the pass, its logical draws, sections and charge. */
-    private final String[][] statisticsSlotPasses = new String[FRAME_SLOTS][STATS_PER_SLOT];
-    private final long[][] statisticsSlotDraws = new long[FRAME_SLOTS][STATS_PER_SLOT];
-    private final long[][] statisticsSlotSections = new long[FRAME_SLOTS][STATS_PER_SLOT];
-    private final long[][] statisticsSlotCharges = new long[FRAME_SLOTS][STATS_PER_SLOT];
-    /** The open query's accumulated unsorted budget charge, summed as its batches are charged. */
-    private long statisticsChargeAccum;
-    /** Window (since the last printed line) and cumulative totals, per pass; see TerrainStatisticsReport. */
-    private final java.util.Map<String, long[]> statisticsWindowTotals =
-            new Reference2ObjectOpenHashMap<>();
+    private static final int WINDOW_SLOTS = 12;
+
+    private final long[] windowTimestampTargets = new long[WINDOW_SLOTS];
+
     private final java.util.Map<String, long[]> statisticsTotals =
             new Reference2ObjectOpenHashMap<>();
-    private long statisticsWindowStartFrame = -1L;
-    private long statisticsLastPrintFrame = -1L;
-    private long statisticsSamples;
-    private long statisticsDroppedPasses;
-    private long statisticsDroppedSamples;
-    private long statisticsReadFailures;
-    /** The immediate window pass's last measured GPU time, in nanoseconds. */
-    private long immediatePassGpuNanos;
-    private boolean immediatePassTimed;
-    /** The whole frame's last measured GPU time, in nanoseconds, and whether this frame recorded it. */
-    private long frameGpuNanos;
-    private boolean frameGpuTimed;
-    /** Whether this frame's end timestamp has been written, so a frame that takes both end paths writes it once. */
-    private boolean frameEndTimestampWritten;
-    /**
-     * The part of the frame's GPU time that happens before the first pass starts and after the last one ends.
-     * <p>
-     * The passes are timed, and so is the whole frame; the difference between those two numbers is what the integrated
-     * GPU spends outside any pass, and it is several milliseconds there. Splitting it into "before the first draw" and
-     * "after the last draw" says whether it is the handoff and acquire at the head of the frame or the composite and
-     * present preparation at its tail - two different problems with different fixes.
-     */
-    private long frameHeadNanos;
-    private long frameTailNanos;
-    private float timestampPeriod = 1.0f;
 
-    // The GPU pass timings are reported by GpuPassTimingReport, which owns the format and the interval.
-    private boolean timestampsUsable;
-    /**
-     * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
-     * on hardware that can: {@code -Dceltium.vulkan.forceNoTimestamps=true}.
-     */
-    private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
-    private final Reference2ReferenceMap<String, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
-    /**
-     * The pack route's per-stage timings, under the pack pipeline's own stage names ({@code shadow} /
-     * {@code gbuffers}): the same last-measured-value persistence as {@link #passTimings}, keyed by name
-     * because one subpass object serves both stages in a frame and cannot name them apart.
-     */
-    private final java.util.Map<String, Long> packPassTimings = new java.util.LinkedHashMap<>();
-    private int readbackSlots;
-    private long readbackOffset;
     private int timestampSlots;
 
-    private final Reference2ReferenceMap<Integer, String> timestampPasses = new Reference2ReferenceOpenHashMap<>();
-    /** Which pack stage each live timed slot belongs to, for the slots the pack route armed. */
-    private final java.util.Map<Integer, String> timestampPackPassNames = new java.util.HashMap<>();
-
-    /** The offset of the recording frame slot's query range within the timestamp pool. */
-    private int celtium$timestampPoolBase() {
-        return this.frameSlot * TIMESTAMP_SLOTS;
-    }
-    /**
-     * Per-submission snapshots of the timing state above, and which of them a readback may consume.
-     * The live accumulators are moved into a snapshot at submit time and restart empty; the readback
-     * consumes a snapshot only once the scheduler confirms its submission. See TerrainTimingReadback
-     * for why reading the live state instead filed zero for every frame.
-     */
-    private final TerrainTimingReadback timingReadback = new TerrainTimingReadback();
-    /** The readback's census: snapshots consumed, and timestamp slots a consumed read found unavailable. */
-    private long timingSnapshotsRead;
-    private long timingSlotsUnavailable;
-    private boolean readbackPending;
-    private boolean readbackDone;
-
-    public VulkanTerrainGpuBackend(VulkanContext context) {
-        this.context = context;
-        // OPT-07 lifetime rule: a deleter asks whether an open recording could still name its resource. The backend is
-        // the only place that knows - the unified frame buffer, an open window recording, or a recording in progress -
-        // so it installs the probe here, before any resource can be deleted.
-        context.celtium$setRecordingOpenProbe(() -> this.frameBufferOpen || this.immediateWindowBusy
-                || this.commandState.recording());
-        // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
-        // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
-        context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
-        this.uniformAlignment = Math.max(MIN_UNIFORM_ALIGNMENT,
-                Integer.highestOneBit(Math.max(MIN_UNIFORM_ALIGNMENT, this.alignmentFromDevice())));
-        createCommandResources();
-        this.nativePassExecutor = new PassExecutor(this.context, this.targetRegistry,
-                this.publishedTextures, this.nativePassRegistry);
-        // The vanilla post executor resolves its targets through the renderer's existing
-        // publications (ruling section 5.2); the coordinator holds no mirror of its own.
-        this.frameCoordinator.setVanillaPostPublications(this.publishedTextures);
-        celtium$installWindowSplitExitHook();
-        celtium$installFontCensusExitHook();
-        // The pipeline prewarm pair (Stage 5 slice S5-0): created with the backend so its
-        // fallback counter exists for every diagnostic report, and registered with the context
-        // so the context's teardown stops its background compiler before the device goes away.
-        // The startup warm set itself is registered later, at the first world prepare
-        // (celtium$ensurePipelinePrewarm), when a terrain render pass exists to build against.
-        this.pipelinePrewarmCompiler = new PipelinePrewarmCompiler();
-        this.pipelinePrewarm = new PipelinePrewarm(this.pipelinePrewarmCompiler);
-        context.celtium$setPipelinePrewarm(this.pipelinePrewarm);
-}
-
-    /**
-     * Creates the instance that exists from window creation, before any world renderer does.
-     * <p>
-     * This is the menu, the loading screens and every GUI-only frame: under the GL-less window the game draws them from
-     * client-memory vertex arrays, which the stub decodes and hands to {@code CeltiumBackends} - a holder that used
-     * to stay empty until a world was loaded, so those draws went to nobody and nothing presented. Measured on the
-     * user's own launch: 524,288 client-memory draws decoded and every one of them refused with "no terrain backend is
-     * installed". The same instance is later adopted by the world renderer
-     * ({@link #celtium$adoptTerrainState}), so one renderer serves the whole process instead of one per configuration.
-     */
-    public static VulkanTerrainGpuBackend createForWindow(VulkanContext context) {
-        VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context);
-        backend.windowBackend = true;
-        backend.windowOwned = true;
-        return backend;
-    }
-
-    /** The loading screen's own surface (S3-b addendum 4-1): owns the native screen and its dump state. */
-    private final LoadingScreenSurface loadingSurface = new LoadingScreenSurface();
-
-    /**
-     * Presents Forge's loading screen ({@link NativeLoadingScreen}): Forge's loader supplies the progress and the
-     * splash configuration, this path draws Forge's frame into its own image and presents it.
-     * <p>
-     * The frame is laid out at {@link LoadingScreenSurface#layoutSize} rather than at the requested size the caller passes:
-     * those are the game's cached display fields, frozen at the requested size for the whole load, while the
-     * swapchain this presents through already follows the window.
-     *
-     * @param colors background, barBorder, bar, barBackground, memoryGood, memoryWarn, memoryLow (RGB)
-     * @return the size the frame was laid out and presented at, or {@code null} when nothing was presented
-     */
-    public int[] presentLoadingProgress(int width, int height, int[] colors, boolean showMemory, boolean rotate,
-            int logoOffset, java.awt.image.BufferedImage logo, java.awt.image.BufferedImage forge,
-            java.awt.image.BufferedImage font, String[] titles, String[] messages, int[] steps, int[] totals,
-            int angle) {
-        if (!this.windowBackend || this.gpuStalled || !ensureSwapchain()) return null;
-        return this.loadingSurface.present(this.context, this.swapchain, width, height, colors, showMemory,
-                rotate, logoOffset, logo, forge, font, titles, messages, steps, totals, angle);
-    }
-
-    public void finishLoadingProgress() {
-        this.loadingSurface.finish(() -> settleGpu("loading screen finished"));
-    }
-
-    /** True while this instance exists only for the window and no world renderer has adopted it yet. */
-    private boolean windowBackend;
-    /**
-     * True for the instance the window created, for the life of the process.
-     * <p>
-     * It never clears, unlike {@code windowBackend}: the world renderer adopts this instance and the world's teardown
-     * must not destroy it. {@code RenderSectionManager.destroy()} calls {@code delete()} on every world unload
-     * (RenderSectionManager.java:923, reached from SimpleWorldRenderer.unloadWorld/unloadWorld), and if that released
-     * the device, the frame target and the swapchain, quitting to the title screen would blank the menu again with no
-     * second chance - the creation hook is latched. So a window-owned instance releases its terrain resources and
-     * detaches, and keeps everything a menu frame needs.
-     */
-    private boolean windowOwned;
-
-    /** {@return whether this instance was created at window creation and no world renderer has adopted it yet}. */
-    public boolean celtium$isWindowBackend() {
-        return this.windowBackend;
-    }
-
-    /** {@return the ownership flags and delete count}, for the line that reports a backend being replaced. */
-    public String celtium$ownershipSummary() {
-        return "windowOwned=" + this.windowOwned + " windowBackend=" + this.windowBackend + " deletes=" + this.deleteCalls;
-    }
-
-    private int deleteCalls;
-
-    /**
-     * Whether the full (non-window) teardown in {@link #celtium$deleteSettled()} ran to its end. A second
-     * {@link #delete()} after that has nothing left to release - every handle it would touch is already
-     * zeroed or destroyed - and re-running the settle and the release sequence over that state is the
-     * double teardown this flag exists to refuse (issue #425). The window-owned exit never sets it: that
-     * path is a per-world release and is called once per world by design, and the stalled / settle-failed
-     * exits do not set it either, because a later delete may still have the settle succeed.
-     */
-    private boolean fullyDeleted;
-
-    /**
-     * {@return the name of the Vulkan device this renderer draws with}, or {@code null} when there is none.
-     * <p>
-     * The stub answers {@code GL_RENDERER} - which F3 shows and the fixture records as {@code glRenderer} - from this,
-     * because under the GL-less window the GL renderer string is the stub's own name and tells a user nothing about
-     * which GPU is rendering: the user's own report of "stub gl" in F3 is exactly that doubt. {@code GL_VENDOR} stays
-     * "Celtium" so a GL-less leg is still identifiable in a report, and a configuration with no native device keeps
-     * the stub string as well.
-     */
-    public String celtium$nativeDeviceName() {
-        try {
-            return this.context == null ? null : this.context.deviceName();
-        } catch (RuntimeException | LinkageError error) {
-            return null;
-        }
-    }
-
-    /**
-     * Hands a loaded world to the window-time instance (S2-b): the dynamic light service the Lane 1
-     * terrain path gathers its per-frame sources through. The device, the command resources, the frame
-     * target and the swapchain are the ones already in use, so the first world frame finds them warm.
-     * The presented-frame counter is restarted here for the reason the old adoption restarted it: it
-     * names world frames, and the window-time instance has already presented menu frames.
-     */
-    public void celtium$adoptWorld(DynamicLightService dynamicLightService) {
-        this.dynamicLightService = dynamicLightService;
-        if (this.lane1 != null) {
-            this.lane1.clearWorld();
-        }
-        this.lane1PreparedFrame = -1L;
-        this.windowBackend = false;
-        if (this.framePresentedFromVulkan != 0) {
-            record("presented-frame counter reset at adoption: was " + this.framePresentedFromVulkan
-                    + " pre-world presents, the numbering starts with the world");
-            this.framePresentedFromVulkan = 0;
-        }
-        record("the world adopted the window-time backend: dynamicLights=" + (dynamicLightService != null));
-    }
-
-    // ------------------------------------------------------------------
-    // Lane 1 terrain (S2-b): the resident frontend and its frame entry.
-    // ------------------------------------------------------------------
-
-    private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend lane1;
-    private long lane1PreparedFrame = -1L;
-    /** The frame whose S1 cull dispatch has been recorded (once per frame, first main layer). */
-    private long lane1CullDispatchedFrame = -1L;
-
-    @Override
-    public void celtium$setTextureCellTable(int[] packedCells) {
-        celtium$lane1().setTextureCellTable(packedCells);
-    }
-
-    @Override
-    public void celtium$setTextureRectTable(float[] packedRects) {
-        celtium$lane1().setTextureRectTable(packedRects);
-    }
-
-    /** Lane 1 store/draw counters for the F3 panel and status reports; never starts the frontend. */
-    public String celtium$lane1DiagnosticsSummary() {
-        String base = this.lane1 == null ? "lane1 sections=0 (not started)" : this.lane1.diagnosticsSummary();
-        base += " atlasW=" + (this.atlasTexture == null ? -1 : this.atlasTexture.width());
-        return base + " drawCalls=" + this.lane1DrawCalls + " guardCmd=" + this.lane1GuardCmd
-                + " guardStall=" + this.lane1GuardStall + " guardTarget=" + this.lane1GuardTarget
-                + " guardPass=" + this.lane1GuardPass + " guardViews=" + this.lane1GuardViews
-                + " recordPass=" + this.lane1RecordPasses;
-    }
-
-    private long lane1DrawCalls;
-    private long lane1GuardCmd;
-    private long lane1GuardStall;
-    private long lane1GuardTarget;
-    private long lane1GuardPass;
-    private long lane1GuardViews;
-    private long lane1RecordPasses;
-
-    private org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend celtium$lane1() {
-        if (this.lane1 == null) {
-            this.lane1 = new org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend(this.context);
-        }
-        return this.lane1;
-    }
 
     /** The world-lifetime half of the Lane 1 residency: every section goes, the device stays. */
     void celtium$releaseLane1World() {
-        if (this.lane1 != null) {
-            this.lane1.clearWorld();
+        if (this.owner.lane1 != null) {
+            this.owner.lane1.clearWorld();
         }
-        this.lane1PreparedFrame = -1L;
-        this.lane1CullDispatchedFrame = -1L;
+        this.owner.lane1PreparedFrame = -1L;
+        this.owner.lane1CullDispatchedFrame = -1L;
     }
 
-    @Override
-    public void celtium$lane1UploadSection(int x, int y, int z,
-            org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometry geometry) {
-        celtium$lane1().uploadSection(x, y, z, geometry,
-                this.scheduler == null ? 0L : this.scheduler.submitSequence());
-    }
-
-    @Override
-    public void celtium$lane1RemoveSection(int x, int y, int z) {
-        if (this.lane1 != null) {
-            this.lane1.removeSection(x, y, z,
-                    this.scheduler == null ? 0L : this.scheduler.submitSequence());
-        }
-    }
-
-    @Override
-    public boolean celtium$lane1HasSection(int x, int y, int z) {
-        return this.lane1 != null && this.lane1.hasSection(x, y, z);
-    }
-
-    @Override
-    public int celtium$lane1SectionCount() {
-        return this.lane1 == null ? 0 : this.lane1.sectionCount();
-    }
-
-    /**
-     * One terrain layer through the Lane 1 path, in the frame shell the retired pass used: the
-     * pre-terrain flush first (the sky and the void plane are queued immediate work that must land
-     * before the terrain), then the frame render pass over the frame target with the layer's draws
-     * inside it. The pass loads colour and depth, so the layers compose in vanilla's order.
-     */
-    @Override
-    public void celtium$lane1DrawLayer(int layerOrdinal, float[] projection, float[] modelView,
-                                       double cameraX, double cameraY, double cameraZ) {
-        // S2 of the fixed template: a terrain layer records into the frame's main stage.
-        this.frameCoordinator.markStage(FrameCoordinator.Stage.MAIN_RENDER);
-        this.lane1DrawCalls++;
-        if (this.commandBuffer == null) {
-            this.lane1GuardCmd++;
-            return;
-        }
-        if (this.gpuStalled) {
-            this.lane1GuardStall++;
-            return;
-        }
-        if (this.frameTarget == null || this.commandState == null) {
-            this.lane1GuardTarget++;
-            return;
-        }
-        if (this.commandState.inRenderPass()) {
-            this.lane1GuardPass++;
-            return;
-        }
-        org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend = celtium$lane1();
-        if (this.lane1PreparedFrame != this.frameId) {
-            // The retired terrain pass refreshed the atlas/lightmap mirrors once per frame
-            // before drawing; the lane1 entry inherits that seat, or the mirrors never
-            // establish and every layer is skipped at the views guard below.
-            refreshTextures();
-            celtium$lane1PrepareFrame(frontend, projection, modelView, cameraX, cameraY, cameraZ);
-            this.lane1PreparedFrame = this.frameId;
-        }
-        if (this.atlasTexture == null || this.lightmapTexture == null
-                || this.atlasTexture.view() == 0L || this.lightmapTexture.view() == 0L) {
-            this.lane1GuardViews++;
-            return;
-        }
-        if (this.lane1CullDispatchedFrame != this.frameId) {
-            // S1 of the fixed template records here, once per frame, ahead of the first main
-            // layer pass: the GPU cull dispatch fills the indirect regions the layer passes
-            // consume (the CPU visible-set scan is the fallback the frontend keeps when the
-            // dispatch does not arm). Bracketed by the stage's G0 timestamp pair (G2-30).
-            this.lane1CullDispatchedFrame = this.frameId;
-            int cullSlot = celtium$beginNamedPassTimestamp();
-            try {
-                frontend.recordCullDispatch(this.commandBuffer, this.frameSlot);
-            } finally {
-                celtium$closeNamedPassTimestamp(cullSlot, "S1_cull_lightgrid");
-            }
-        }
-        celtium$preflushBeforeTerrain();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
-            long renderPass = uiRenderPass();
-            long framebuffer = ensureFramebuffer(renderPass);
-            org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
-                    celtium$terrainBeginInfo(renderPass, framebuffer, this.targetWidth, this.targetHeight);
-            org.soutalab.celtium.core.shader.TerrainPassKind kind =
-                    org.soutalab.celtium.core.shader.TerrainPassKind.values()[layerOrdinal];
-            int passSlot = celtium$beginNamedPassTimestamp();
-            vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
-            this.commandState.beginPass(this.activeImmediateTarget);
-            try {
-                setViewportAndScissor(stack, this.targetWidth, this.targetHeight);
-                this.lane1RecordPasses++;
-                // G2-30's named Lane 1 CPU bracket: the regular rewiring of the existing
-                // terrainRecord slot onto the seated recordPass call.
-                FramePassTimings.begin("terrainRecord");
-                try {
-                    frontend.recordPass(
-                            kind,
-                            this.commandBuffer, renderPass, this.frameSlot,
-                            this.atlasTexture.view(), this.lightmapTexture.view(),
-                            this.atlasTexture.width() / 16.0f);
-                } finally {
-                    FramePassTimings.end("terrainRecord");
-                }
-            } finally {
-                vkCmdEndRenderPass(this.commandBuffer);
-                this.commandState.endPass();
-                celtium$closeNamedPassTimestamp(passSlot, celtium$lane1PassTimingName(kind));
-            }
-        }
-    }
-
-    /**
-     * Publishes one frame's Lane 1 view state: the combined matrix for the frustum planes
-     * (camera-relative space), the translation-free view-projection the vertex shader applies after subtracting the
-     * camera position itself, the dynamic lights gathered through the adopted service, and the
-     * immediate path's fog state.
-     */
-    private void celtium$lane1PrepareFrame(
-            org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend,
-            float[] projection, float[] modelView, double cameraX, double cameraY, double cameraZ) {
-        // S1 of the fixed template: this publication is the frame's cull + light-grid
-        // state (frustum, view, dynamic-light grid) the terrain stages consume.
-        this.frameCoordinator.markStage(FrameCoordinator.Stage.CULL_LIGHTGRID);
-        // The shadow JOML's buffer read goes through Unsafe and needs a direct buffer; the
-        // driver's matrices arrive as heap float[], so they are set element-wise instead
-        // (column-major, the same order the array carries). FloatBuffer.wrap on a heap
-        // array segfaulted in MemUtilUnsafe the first time this seat was reached.
-        Matrix4f proj = new Matrix4f().set(
-                projection[0], projection[1], projection[2], projection[3],
-                projection[4], projection[5], projection[6], projection[7],
-                projection[8], projection[9], projection[10], projection[11],
-                projection[12], projection[13], projection[14], projection[15]);
-        Matrix4f mv = new Matrix4f().set(
-                modelView[0], modelView[1], modelView[2], modelView[3],
-                modelView[4], modelView[5], modelView[6], modelView[7],
-                modelView[8], modelView[9], modelView[10], modelView[11],
-                modelView[12], modelView[13], modelView[14], modelView[15]);
-        // The frustum and the shader transform are both origin-relative: the extractor
-        // combines the Vulkan projection with the translation-free model-view (the
-        // model-view operating on camera-relative positions), which is the same product
-        // the vertex stage applies after the section relativization. The plane spec is
-        // the Gribb-Hartmann set this seat used to hand-roll (near = row 2 under the
-        // Vulkan depth convention); the extractor additionally falls back to permissive
-        // planes for a non-finite or singular transform instead of publishing garbage.
-        Matrix4f mvZero = new Matrix4f(mv);
-        mvZero.m30(0.0f);
-        mvZero.m31(0.0f);
-        mvZero.m32(0.0f);
-        float[] vulkanProj = new float[16];
-        vulkanProjection(proj).get(vulkanProj);
-        float[] mvZeroValues = new float[16];
-        mvZero.get(mvZeroValues);
-        org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.View frameView =
-                org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.extract(
-                        new org.soutalab.celtium.core.frame.CameraPose(cameraX, cameraY, cameraZ, 0.0f, 0.0f),
-                        vulkanProj, mvZeroValues,
-                        org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.DepthConvention
-                                .VULKAN_ZERO_TO_ONE);
-        java.util.List<org.soutalab.celtium.vulkan.terrain.lane1.LightGridBuilder.PointLight> lights =
-                new java.util.ArrayList<>();
-        DynamicLightService service = this.dynamicLightService;
-        if (service != null) {
-            float[] gathered = new float[4 * DynamicLightService.MAX_LIGHTS];
-            int count = service.gatherLights(gathered, cameraX, cameraY, cameraZ);
-            for (int i = 0; i < count; i++) {
-                float level = gathered[i * 4 + 3];
-                if (level <= 0.0f) {
-                    continue;
-                }
-                float strength = level / 15.0f;
-                lights.add(new org.soutalab.celtium.vulkan.terrain.lane1.LightGridBuilder.PointLight(
-                        cameraX + gathered[i * 4], cameraY + gathered[i * 4 + 1],
-                        cameraZ + gathered[i * 4 + 2], level + 2.0f,
-                        1.0f, 0.92f, 0.78f, strength * strength));
-            }
-        }
-        int fogMode = 0;
-        if (this.fog.enabled()) {
-            fogMode = switch (this.fog.glMode()) {
-                case 0x2600 -> 1;
-                case 0x0800 -> 2;
-                case 0x0801 -> 3;
-                default -> 1;
-            };
-        }
-        frontend.prepareFrame(frameView, lights,
-                this.fog.getFogColor(), this.fog.getFogStart(), this.fog.getFogEnd(),
-                this.fog.getFogDensity(), fogMode, this.frameId);
-        frontend.collectCompleted();
-    }
 
     /**
      * The batch factory this backend installs. Held as one instance per backend so {@link #uninstall()} can tell
@@ -1554,7 +1041,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public String describe() {
         StringBuilder builder = new StringBuilder("vulkan");
         builder.append(" [").append(this.context.deviceName()).append(']');
-        builder.append(" regions=").append(this.lane1 == null ? 0 : this.lane1.sectionCount());
+        builder.append(" regions=").append(this.owner.lane1 == null ? 0 : this.owner.lane1.sectionCount());
         builder.append(" draws=").append(this.terrainStatistics.lastDrawCommands());
         builder.append(" sections=").append(this.terrainStatistics.lastSectionsDrawn());
         if (this.frameTarget != null) {
@@ -1566,16 +1053,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return builder.toString();
     }
 
-    public List<String> diagnostics() {
-        return this.reports.diagnostics();
-    }
-
-    // ------------------------------------------------------------------ CeltiumBackend
-
-    @Override
-    public String getName() {
-        return "vulkan";
-    }
 
 
 
@@ -1583,26 +1060,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
     final NativeRasterState rasterState = NativeRasterState.current();
+
     final Lane2ImmediateState immediateState = org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().immediate();
-    /** The diagnostic reports (BackendDiagnostics); they read this backend's state and change nothing it draws. */
-    final BackendDiagnostics reports = new BackendDiagnostics(this);
 
-    /** The post-process chain bridge: runs a collected shader chain natively, adopts its framebuffers and keeps the textures it publishes to the game in the right layout. */
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$publishFrameTexture(int glTextureName, long image, long view, int width, int height) {
-        this.presentSwapchain.celtium$publishFrameTexture(glTextureName, image, view, width, height);
-    }
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$publishFrameDepthTexture(int glTextureName, long image, long view, int width, int height,
-            int declaredLayout, long depthKey) {
-        this.presentSwapchain.celtium$publishFrameDepthTexture(glTextureName, image, view, width, height, declaredLayout, depthKey);
-    }
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$forgetPublishedTarget(long identity) {
-        this.presentSwapchain.celtium$forgetPublishedTarget(identity);
-    }
 
     /**
      * The mean colour of a small rectangle of an image, as {@code (r,g,b)}, read back through the copy path.
@@ -1615,7 +1075,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (image == 0L) {
             return "none";
         }
-        int[] pixels = this.celtium$readImageRectangle(image, x, y, size, size);
+        int[] pixels = this.owner.celtium$readImageRectangle(image, x, y, size, size);
         if (pixels == null || pixels.length < size * size) {
             return "unreadable";
         }
@@ -1631,6 +1091,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         long count = (long) size * size;
         return "(" + (red / count) + "," + (green / count) + "," + (blue / count) + ")";
     }
+
 
     /**
      * {@return a live chain pair's colour image handle}, preferring the current target's pair, or 0 when this is not
@@ -1656,6 +1117,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return 0L;
     }
 
+
     /** {@return the same identity's live colour view}, following {@link #celtium$livePairImage}'s pick. */
     long celtium$livePairView() {
         GllessFrameTarget live = this.offTargetTarget();
@@ -1676,31 +1138,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
 
-
-
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$transitionPublishedFrameTextures(boolean general) {
-        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general);
-    }
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth) {
-        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth);
-    }
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth,
-            long[] attachImages) {
-        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth, attachImages);
-    }
-
-
-    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
-    void celtium$syncPublishedChainOutput(long identity, long chainPairColorImage) {
-        this.presentSwapchain.celtium$syncPublishedChainOutput(identity, chainPairColorImage);
-    }
-
     /** Writes every chain pair at its own extent; see {@code VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT}. */
     void dumpChainPairs(String stage) {
         GllessFrameTarget glless = this.offTargetTarget();
@@ -1713,40 +1150,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (image == 0L || extent == null) {
                 continue;
             }
-            this.celtium$dumpOwnedImage("pair-0x" + Long.toHexString(chainId.longValue()), image,
+            this.owner.celtium$dumpOwnedImage("pair-0x" + Long.toHexString(chainId.longValue()), image,
                     "celtium-" + stage + ".png", "identity=0x" + Long.toHexString(chainId.longValue())
                             + " extent=" + extent[0] + "x" + extent[1], (int) extent[0], (int) extent[1]);
         }
     }
 
+
     /** Framebuffer hint/probe failures the FramebufferMixin boundary swallowed (drawpath audit DP-34). */
     long framebufferHintFailures;
 
-    /**
-     * The frame coordinator whose entrances the ShaderGroupMixin boundary calls (ruling
-     * section 5.2): the vanilla post chain runs through {@code runVanillaPostChain}, never
-     * through a delegator on this class.
-     */
-    public FrameCoordinator celtium$frameCoordinator() {
-        return this.frameCoordinator;
-    }
-
-    /**
-     * Counts a chain-input flush failure (DP-32). The mixin's catch at the chain boundary used to
-     * swallow these whole: a flush that keeps failing leaves the pending geometry unsubmitted at
-     * exactly the moment the chain reads the frame, and the run showed a chain reading stale content
-     * with no record anywhere. The count itself lives on the frame coordinator (the verify line's
-     * seat since the ruling's step 4); this seat keeps the bounded print. Counted always, printed
-     * for the first few.
-     */
-    public void celtium$noteChainInputFlushFailure(Throwable error) {
-        this.frameCoordinator.noteChainInputFlushFailure();
-        long failures = this.frameCoordinator.chainInputFlushFailures();
-        if (failures <= 3) {
-            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH_FAILED failures="
-                    + failures + " error=" + describe(error));
-        }
-    }
 
     /**
      * Counts a framebuffer hint/probe failure (DP-34). The FramebufferMixin seats are deliberately
@@ -1763,63 +1176,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
-    public int celtium$flushPendingForChainInput() {
-        // M-6 wired (FL-1 F-6): the chain-input boundary records into the single flush census
-        // at this entry.
-        // The chain input's flush orders the pending work before the chain reads it; it is an
-        // ordering flush, not a draw boundary (the window census' stamp).
-        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-        // The body the PostChainBridge used to run for this entry, seated here with the bridge's
-        // retirement (ruling step 5): the model path coalesces its own flushes to one per target
-        // change, so the batches that arrived after that first flush are still queued at chain
-        // time - this records them against the current target before the chain reads it.
-        if (this.gpuStalled || this.immediateWindowBusy) {
-            return 0;
-        }
-        int pending = this.countGroupsForTarget(this.targetRegistry.currentIdentity());
-        if (pending == 0) {
-            return 0;
-        }
-        this.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
-        if (this.chainInputBatchLogs <= 12) {
-            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH frame=" + this.frameId
-                    + " target=" + this.targetRegistry.currentIdentity() + " groups=" + pending
-                    + " recordedTotal=" + this.immediateStatistics.immediateRecordedBatches());
-        }
-        return pending;
-    }
-
-
-    /** Vanilla's framebuffer composites (framebufferRenderExt), drawn as native operations. */
-    final NativeFramebufferCompositor framebufferCompositor = new NativeFramebufferCompositor(this);
-
-    public void compositeFramebuffer(long identity, boolean main, int texture, int sourceWidth, int sourceHeight,
-            int textureWidth, int textureHeight, int width, int height, boolean opaque) {
-        this.framebufferCompositor.submit(identity, main, texture, sourceWidth, sourceHeight,
-                textureWidth, textureHeight, width, height, opaque);
-    }
-
-    /** Native replay of compiled model display lists: the per-group mesh path and the instanced runs. */
-    final ModelReplay modelReplay = new ModelReplay(this);
-
-    public boolean celtium$drawModelList(int listId, int boundTextureId) {
-        return this.modelReplay.celtium$drawModelList(listId, boundTextureId);
-    }
-
-
-    /**
-     * {@return a machine-readable summary of what this backend actually drew}. The fixture reads it to decide
-     * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
-     * queue, so submissions, skips and errors are counted instead.
-     */
-    public String verificationSummary() {
-        return this.reports.verificationSummary();
-    }
     {
         // Eye planes are fixed under the model view at the glTexGen call, which is this mirror's.
         NativeTexGen.current().bindMatrices(this.immediateState);
     }
+
     private String immediateLastRefusal = "unrecorded";
+
     /**
      * The shape the unrecorded marker stands for, stored primitive: the offer path used to build the full
      * "unrecorded (format=.. stride=.. mode=.. count=..)" string on every offered batch - ~300 string
@@ -1828,7 +1191,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * working; the detail is expanded at the read sites by {@link #celtium$refusalText()}.
      */
     private int immediateOfferFormat = -1;
+
     private int immediateOfferStride, immediateOfferMode, immediateOfferVertices;
+
     /**
      * How many batches were offered. Not the shape of the current one: this field and {@code immediateOfferVertices}
      * used to be the same variable, so a refusal that reported "count=5" named a four-vertex batch (the field was set
@@ -1836,8 +1201,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * rather than a count of anything.
      */
     private int immediateOfferCount;
+
     /** The checkpoint the offer path last passed, so an unnamed refusal can still say where it stopped. */
     private int offerStage;
+
     /**
      * Whether the immediate path draws, off by default.
      * <p>
@@ -1851,8 +1218,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean IMMEDIATE_DRAWING_ENABLED = "true".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediate", "true"));
 
+
     /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
     long immediateSubmitNanos;
+
     /**
      * Baseline at the first offer inside the world pass: menu/startup batches (atlas stitch, model init)
      * hit the offer path thousands of times while the JIT is still cold, which inflates the cumulative
@@ -1860,27 +1229,37 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * subtracts the counters at the moment the world pass first activates.
      */
     long immediateSubmitBaselineNanos = -1;
+
     long immediateSubmitBaselineOffered;
+
     /** Calls whose body took over 200µs: separates steady per-call cost from spike pollution in the average. */
     int immediateSubmitTailCalls;
+
     /** Histogram-ish spread: under 5µs / 5-50 / 50-200 / tail, so the average can be read against the mass. */
     int immediateSubmitUnder5, immediateSubmit5to50, immediateSubmit50to200;
+
     /**
      * What a tail call carried: a queue flush (immediateGroupsFlushed moved), a lazy texture mirror supply
      * (lazyMirrorSupplies moved), both, or neither (GC pause, JIT deopt, shader compile - the residue).
      */
     int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
+
     private int submitFlushesAtEntry, submitSuppliesAtEntry;
+
     /** CPU time of the same three inner calls, so wall minus CPU says which one blocks in a native call. */
     long appendCpuNanos;
+
     long preflightCpuNanos;
+
     long groupCreateCpuNanos;
+
     /**
      * Set whenever a mirrored matrix call changes the matrix state, so the next batch re-reads the live
      * matrices instead of every batch doing it: two glGetFloatv calls per batch measured 28 us of the
      * submission cost, and caching the reflected members only removed 4% of it.
      */
     private boolean matricesDirty = true;
+
 
     /**
      * Whether the immediate path takes the projection and model-view matrices from the state mirror instead of reading
@@ -1892,10 +1271,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean MIRRORED_MATRICES =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirroredMatrices", "true"));
 
+
     /** Largest absolute element difference seen between the mirrored matrices and the ones read from OpenGL. */
     float mirroredModelViewDelta = -1.0f;
+
     int matrixComparisons;
+
     int matrixExactComparisons;
+
     /**
      * Multiplies that reached the mirror, from every owner: {@code GlStateManager.multMatrix} (hooked in
      * {@code GlStateManagerMixin}) and the item camera transform ({@code ForgeHooksClientMixin}). Read against the
@@ -1903,39 +1286,65 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * mirrored multiply are the signal that a raw call arrived with no owner.
      */
     int mirroredMultiplies;
+
     String matrixDump;
+
     private boolean mirrorSeeded;
+
     int cameraSetupSeeds;
+
     private int framesSeen;
+
     private long currentViewportKey = -1L;
+
     /** The last viewport's extent, for the diagnostic lines that ask where a window drew. */
     int liveViewportWidth = -1;
+
     int liveViewportHeight = -1;
+
     long currentGroupTarget = Long.MIN_VALUE;
+
     private long currentGroupViewport = Long.MIN_VALUE;
+
     int passSplits;
+
     float steadyProjectionDelta;
+
     float steadyModelViewDelta;
+
     int steadyComparisons;
+
     int translateCalls;
+
     int translateZeroCalls;
+
     final java.util.List<String> trace = new java.util.ArrayList<String>();
+
     private float traceWorstDelta;
+
     private float worstModelViewDelta;
+
     boolean worldPassActive;
+
     /**
      * True only inside {@code endWorldPass()}'s ordering flush, which runs after {@code worldPassActive} was
      * cleared: the group-decay census reads it to tell a world group closed by that flush from a GUI closure.
      */
     private boolean endWorldPassFlush;
+
     /** Matrices for the frame's world pass, captured once at the camera boundary and used for drawing. */
     final float[] worldSnapshotProjection = new float[16];
+
     private final float[] worldSnapshotModelView = new float[16];
+
     private boolean worldSnapshotValid;
+
     /** Composites offered while the default framebuffer was bound, taken into the shared image instead of refused. */
     private int defaultFramebufferCompositesTaken;
+
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
+
     /**
      * Invalidation requests that were not honoured because there is no GL texture to re-read.
      * <p>
@@ -1943,6 +1352,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * mirror was kept because there is no GL" from "the mirror was dropped and the draw had nothing".
      */
     private int textureInvalidationsKeptGlless;
+
     /**
      * Whether a GL-less invalidation keeps the mirror instead of marking it for a re-read that cannot happen.
      * <p>
@@ -1956,25 +1366,35 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean GLESS_KEEPS_INVALIDATIONS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glessKeepsInvalidations", "true"));
+
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
     private int readbackSkippedAfterAnnouncement;
+
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
     int prepareDescriptorFailures;
+
     /** Preflights refused because no pass had run yet, and the frame range they happened in. */
     private int prepareNoPassRefusals;
+
     private long prepareNoPassFirstFrame = -1L;
+
     private long prepareNoPassLastFrame = -1L;
+
     String lastPrepareFailure = "none";
+
     /** Cached highest line width the device can draw, or -1 before it has been asked. */
     private float maxLineWidth = -1.0F;
+
     /** Line batches drawn by the line pipeline, and how many were refused for their width. */
     private int lineBatchesNative;
+
     private int lineBatchesRefusedForWidth;
+
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     String lastPresentResult = "none";
-    /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
-    int framePresentedFromVulkan;
+
     int presentAttempts;
+
     /**
      * Present calls the entry point declined before reaching the swapchain, so the reason in
      * {@code presentSkipReason} can be counted instead of only recorded. The fixture's picture assertion compares the
@@ -1983,118 +1403,54 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * 268-mod E2E leg: 146 presents against 153 world frames).
      */
     int presentSkips;
+
     /** {@link #presentSkips} split by the gate that returned: no target/stalled, no swapchain, no completed frame,
      * target unavailable. Printed on the CELTIUM_PRESENT heartbeat, so a long run of skips names its gate. */
     final int[] presentSkipsByReason = new int[4];
+
     int presentFailures;
+
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
+
     int gameFramebufferAdopted;
+
     boolean gameFramebufferIsShared;
+
     /** The first GL error seen after the swap and the point that saw it, or null/0. */
     String firstGlErrorWhere;
+
     int firstGlErrorCode;
-    /** A completed frame's content is in the shared image and has not been presented yet. */
-    boolean lastFrameReachedQueue;
-    /** The frame identity whose work was last queued, so a present can say how far behind the game it is. */
-    long queuedFrameId = -1L;
+
     long presentLagMax;
+
     long presentLagOne;
+
     long presentLagMore;
+
     boolean presentedImageDumpRequested;
+
     /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
     boolean swapPendingFromVulkan;
+
     int glSwapsSkipped;
-    /** Per-frame present calls that arrived, and why the last one did not present. */
-    int presentHookCalls;
-    /**
-     * Exceptions the swap point's two catches swallowed (drawpath audit DP-14). Static, because the
-     * catches sit in the mixin and the second of them guards the lookup of the current backend itself,
-     * so no instance is known at the seat. A present that threw every frame used to be
-     * indistinguishable from a present that was never attempted - the window froze, or fell back to
-     * the GL swap, with no record anywhere - because both catches discarded the exception without a
-     * count or a line. Printed on the verification summary as {@code swapPointExceptions} and reported
-     * to stderr on the cadence {@link #celtium$swapPointExceptionReported(int)} pins.
-     */
-    public static int swapPointExceptions;
 
-    /**
-     * Counts and reports an exception the swap point swallowed (DP-14). The catches keep their
-     * behaviour - the frame is still shown and the GL swap still runs - only the silence is removed.
-     * The report goes to stderr rather than the bounded {@code [Celtium]} log, whose per-tag line
-     * limit is exactly what a per-frame failure would exhaust first.
-     */
-    public static void celtium$noteSwapPointException(String seat, Throwable error) {
-        swapPointExceptions++;
-        if (celtium$swapPointExceptionReported(swapPointExceptions)) {
-            System.err.println("[Celtium] CELTIUM_SWAPPOINT_EXCEPTION seat=" + seat
-                    + " count=" + swapPointExceptions + " error=" + error);
-        }
-    }
-
-    /**
-     * {@return whether the swap-point exception with this count is reported}: the first three, then
-     * every 300th - the CELTIUM_PRESENT heartbeat's cadence, so a failure that starts mid-run is named
-     * when it starts and its persistence stays visible without a line per frame. Pure, so the cadence
-     * the production path takes is the one a test can pin.
-     */
-    static boolean celtium$swapPointExceptionReported(int count) {
-        return count <= 3 || count % 300 == 0;
-    }
-    // The swap-point accounting (swapPoint*) lives in PresentSwapchain with the present path it
-    // measures (item 704, R3 candidate 2 carried out with the R10 extraction).
-    /**
-     * The last {@link #DISTRIBUTION_SAMPLES} durations of the two frame costs that decide the interval but are invisible
-     * in the render brackets: the swap-point image path (frame image to swapchain blit plus the wait for the frame's
-     * completion) and the time from a submission reaching the queue to its fence being confirmed. Totals cannot answer
-     * "what does a steady-state frame pay" - the load phase dominates them - so the summary reports p50/p95/worst of
-     * both.
-     */
-    static final int DISTRIBUTION_SAMPLES = 512;
-    final long[] submitToFenceRing = new long[DISTRIBUTION_SAMPLES];
-    private int submitToFenceRingAt;
-    int submitToFenceRingCount;
-    /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
-    private final long[] slotSubmitNanos = new long[FRAME_SLOTS];
-
-
-    private void celtium$noteSubmitToFence(int slot, long nanos) {
-        if (nanos <= 0L) {
-            return;
-        }
-        this.submitToFenceRing[this.submitToFenceRingAt] = nanos;
-        this.submitToFenceRingAt = (this.submitToFenceRingAt + 1) % DISTRIBUTION_SAMPLES;
-        if (this.submitToFenceRingCount < DISTRIBUTION_SAMPLES) {
-            this.submitToFenceRingCount++;
-        }
-    }
-
-    /** {@return "p50/p95/worst" in milliseconds over the ring, or "n/a" when nothing was sampled}. */
-    static String celtium$distribution(long[] ring, int count) {
-        if (count <= 0) {
-            return "n/a";
-        }
-        long[] copy = java.util.Arrays.copyOf(ring, count);
-        java.util.Arrays.sort(copy);
-        long p50 = copy[(int) (count * 0.50)] / 1000000L;
-        long p95 = copy[Math.min(count - 1, (int) (count * 0.95))] / 1000000L;
-        long worst = copy[count - 1] / 1000000L;
-        return p50 + "/" + p95 + "/" + worst + " n=" + count;
-    }
-    /** Bounded probe counter for the frame-queued setter. */
-    private int celtium$lastFrameReachedQueueLogs;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
     java.nio.file.Path presentedDumpPath;
+
     /**
      * Write serials already attributed to a presented frame, by dump file name. Compared against the swapchain's
      * per-path serials each present: a name whose serial advanced was written by the present that just ran, so the
      * presented-frame counter names the frame that file holds even when several requests are pending at once.
      */
     final java.util.Map<String, Long> seenDumpWriteSerialByName = new java.util.HashMap<>();
+
     /** The presented-frame count that wrote each dump file, by file name. */
     final java.util.Map<String, Integer> presentedDumpWrittenFrames = new java.util.HashMap<>();
+
     /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
     int presentFlushFailures;
+
     /**
      * Presents where the present-time drain opened the unified frame buffer and the buffer was
      * still open at the {@code lastFrameReachedQueue} gate - the B4 exposure census: those drained
@@ -2103,6 +1459,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * wiring regression) rather than a silent lag.
      */
     long presentDrainUnfinished;
+
     /**
      * Presented-image dumps held before swapchain creation or across a wrapper replacement.
      * <p>
@@ -2114,22 +1471,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * stays here and is named in the report rather than dropped silently.
      */
     final java.util.List<java.nio.file.Path> pendingPresentedDumps = new java.util.ArrayList<>();
+
     /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
     private int boundHandleLogs;
+
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     int chainAdoptions;
+
     /** Input images registered before the chain preflight, and preflight refusals printed, both bounded. */
     int chainAdoptionDeclarations;
+
     int preflightRefusalsReported;
+
     /** Bounded: how many chain-input state lines this run has printed. */
     int chainInputReports;
+
     /**
      * Diagnostic for the chain's input image: batches recorded before each chain read, and how many groups were still
      * queued for the input's identity at that moment. The two are what tell "the silhouette is in the image" apart
      * from "the model path drew it and the chain read an image it had not reached yet".
      */
     long lastChainInputRecordedBatches = -1L;
-    int chainInputBatchLogs;
+
     /**
      * Lab switch for the one ordering change this task makes: register the chain's reported input image before the
      * preflight that judges it. Default on; {@code -Dceltium.vulkan.chainPreflightAdoption=false} restores the old
@@ -2138,18 +1501,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static final boolean CHAIN_PREFLIGHT_ADOPTION =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.chainPreflightAdoption", "true"));
 
-    /**
-     * Token of the device-wide wait in progress, and the token whose wait has returned. Per-call rather than one
-     * shared flag: a late watchdog must be able to tell "my wait is still running" from "a later wait is running now"
-     * (audit A05).
-     */
-    private long deviceWaitFinishedToken = -1L;
-    private final Object deviceWaitLock = new Object();
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
     long currentFramebufferIdentity;
+
     int chainAdoptionsRefused;
+
     /** How many lightmap identity lines have been recorded; bounded. */
     int lightmapIdentityLogs;
+
     /**
      * The publication census, whose ownership moved to {@link PublishedFrameTextures} in refactoring plan R1b: the
      * framebuffer-identity to colour-texture map, the GL-name to published-texture map and the counters. Which image a
@@ -2158,8 +1517,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
 
+
     /** The immediate domain's counters (refactoring plan R2). */
     final ImmediateStatistics immediateStatistics = new ImmediateStatistics();
+
 
     /**
      * Why accepted batches open new groups, by cause. The frame pays per group, so "too many groups" is only
@@ -2167,10 +1528,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final ImmediateGroupSplitCensus groupSplitCensus = new ImmediateGroupSplitCensus();
 
+
     /** Live unit-0 texture affine, read without allocating: see {@code celtium$textureAffineMoved}. */
     final float[] textureAffineScratch = new float[6];
+
     /** The last array handed out by {@link #this.groupChange.celtium$textureAffine()}; read-only after capture, like the others. */
     float[] lastTextureAffine;
+
 
     /**
      * The replay's own projection cache. Distinct from {@code lastSharedProjection}, which the close path feeds with a
@@ -2178,6 +1542,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * versa.
      */
     private float[] lastReplayProjection;
+
 
     /**
      * {@return a projection array a group may keep}: the previous one while every element matches, else a copy of
@@ -2193,14 +1558,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return fresh;
     }
 
-    /** The submission domain's counters (refactoring plan R2). */
-    final SubmissionStatistics submissionStatistics = new SubmissionStatistics();
 
     /** The target domain's counters (refactoring plan R2). */
     final TargetStatistics targetStatistics = new TargetStatistics();
 
+
     /** The terrain domain's counters (refactoring plan R2). */
     final TerrainStatistics terrainStatistics = new TerrainStatistics();
+
 
     /**
      * The frame-level terrain budget (item 328, V-03): per-frame vertex/draw caps with counted drops, and the
@@ -2209,24 +1574,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private long lastTerrainBudgetLineFrame = Long.MIN_VALUE;
 
-    /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
-    final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
     /** Consecutive packets that share a pipeline and descriptor set: what a multi-draw run could cover. */
     final PacketRunCensus packetRunCensus = new PacketRunCensus();
 
+
     /** The replay transform's composition, with its matrices and its cached inverse. */
     final ModelViewRelativizer modelViewRelativizer = new ModelViewRelativizer();
 
+
     /** The previous model replay's packet identity, so a replay that repeats it can be counted as mergeable. */
     final float[] lastModelProjection = new float[16];
+
     final float[] lastModelViewMatrix = new float[16];
+
     int lastModelTexture;
+
     long lastModelStateKey;
+
     boolean lastModelSeen;
+
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
+
     /**
      * Batches that were accepted and then dropped, by format id.
      * <p>
@@ -2238,9 +1609,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Before that wiring the row had no increment site and read as an all-zero row (drawpath audit DP-10).
      */
     final int[] postAcceptDroppedByFormat = new int[VulkanImmediateFormats.COUNT];
+
     final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
+
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     final int[] acceptedByFormat = new int[8];
+
     /**
      * Non-quad groups the drain sent to the non-quad emitter, by GL primitive mode (0-7): the arrival
      * half of the strip/fan occurrence census (R-23). The count includes the groups the emitter itself
@@ -2249,8 +1623,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * increment sites guard the index so an exotic mode cannot throw inside the drain.
      */
     final long[] nonQuadOfferedByMode = new long[8];
+
     /** Non-quad groups the emitter itself drew, by GL primitive mode: the drawn half of the pair above. */
     final long[] nonQuadEmittedByMode = new long[8];
+
     /**
      * Non-quad groups the emitter delegated to the direct draw and the delegation drew, by GL
      * primitive mode: the census's third column (drawpath audit DP-12). Offered used to be
@@ -2260,6 +1636,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * structurally instead of by subtraction.
      */
     final long[] nonQuadDelegatedByMode = new long[8];
+
     /**
      * Non-quad groups that reached the emitter and were drawn by neither route - the emitter's
      * own record refusal, or a delegation the direct draw dropped - by GL primitive mode: the
@@ -2267,14 +1644,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * globally in {@code batchDroppedDraws}; this column is their per-mode attribution.
      */
     final long[] nonQuadDroppedByMode = new long[8];
+
     /**
      * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
      * sink are the backend's, because the state they read and the submission they make are its own.
      */
     private final FontBatch fontBatch = new FontBatch();
 
+
     /** The font domain's fragment of the verification line (refactoring plan R2, stage 1). */
     final FontStatistics fontStats = new FontStatistics(this.fontBatch);
+
     /**
      * Font runs the sink refused, i.e. runs FontBatch now keeps in its retention queue and offers again.
      * <p>
@@ -2284,10 +1664,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * summary ({@code CELTIUM_FONT_GLYPH_SUMMARY}) and named once in the log.
      */
     private long fontRunRefusals;
+
     /** How many refusal lines have printed; bounded so a refusal storm is one line, not a log of its own. */
     private int fontRunRefusalLogs;
+
     /** Whether the font run census has printed; a leg may tear down more than one world. */
     private boolean fontRunCensusPrinted;
+
     /**
      * Whether a font-run sink submission is in flight right now (render thread only).
      * <p>
@@ -2299,6 +1682,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * leak the mark into an unrelated group.
      */
     private boolean fontRunSubmitting;
+
 
     /**
      * {@code -Dceltium.vulkan.windowSplit=true}: the window's fixed cost, split into the parts that own it.
@@ -2312,8 +1696,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Off by default: seven clock pairs per window is 14 reads, and the shipping path pays none of them.
      */
     private static final boolean WINDOW_SPLIT = Boolean.getBoolean("celtium.vulkan.windowSplit");
+
     private long wsRouteNanos;
+
     private long wsPairNanos;
+
     /**
      * The off-target routing's own time, between the route mark and the publish mark.
      * <p>
@@ -2325,6 +1712,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * interval. Accumulated here so the next change has a number to move.
      */
     private long wsOffTargetNanos;
+
     /**
      * The off-target routing split into the five things it does.
      * <p>
@@ -2336,17 +1724,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * silent remainder.
      */
     private long wsOffPairNanos;
+
     private long wsOffSyncNanos;
+
     private long wsOffTransitionNanos;
+
     private long wsOffClearNanos;
+
     private long wsOffFramebufferNanos;
+
     private long wsPublishNanos;
+
     private long wsBeginNanos;
+
     private long wsCommandsNanos;
+
     private long wsAcquireNanos;
+
     private long wsReleaseNanos;
+
     private long wsWindows;
+
     private long wsMark;
+
 
     /**
      * The chain-pair identity whose clear the routing deferred to the pass that follows it, or 0 when none is waiting.
@@ -2358,37 +1758,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private long pendingChainPairClear;
 
+
     /** How many colour attachments the pass consuming {@link #pendingChainPairClear} attaches (1 = ordinary). */
     private int pendingChainPairClearColors = 1;
 
+
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
-    final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
+    final ModelStatistics modelStats = new ModelStatistics(this.owner.modelGeometry);
+
 
     /** The texture domain's counters (refactoring plan R2, stage 3). */
     final TextureStatistics textureStats = new TextureStatistics();
 
     {
         this.fontBatch.celtium$setFontRunState(new FontBatch.FontRunState() {
-            @Override public boolean stalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
-            @Override public boolean matricesDirty() { return VulkanTerrainGpuBackend.this.matricesDirty; }
-            @Override public boolean mainTarget() { return VulkanTerrainGpuBackend.this.targetRegistry.currentIsMain(); }
-            @Override public long targetIdentity() { return VulkanTerrainGpuBackend.this.targetRegistry.currentIdentity(); }
-            @Override public boolean texture2dEnabled() { return VulkanTerrainGpuBackend.this.immediateState.texture2dEnabled(); }
-            @Override public int boundTextureName() { return VulkanTerrainGpuBackend.this.immediateState.boundTextureName(); }
-            @Override public int whiteTextureId() { return VulkanTerrainGpuBackend.this.whiteTextureId(); }
-            @Override public float colorRed() { return VulkanTerrainGpuBackend.this.immediateState.colorRed(); }
-            @Override public float colorGreen() { return VulkanTerrainGpuBackend.this.immediateState.colorGreen(); }
-            @Override public float colorBlue() { return VulkanTerrainGpuBackend.this.immediateState.colorBlue(); }
-            @Override public float colorAlpha() { return VulkanTerrainGpuBackend.this.immediateState.colorAlpha(); }
-            @Override public boolean alphaTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.alphaTestEnabled(); }
-            @Override public float alphaFuncReference() { return VulkanTerrainGpuBackend.this.immediateState.alphaFuncReference(); }
+            @Override public boolean stalled() { return Lane2ImmediateRecorder.this.frame.gpuStalled; }
+            @Override public boolean matricesDirty() { return Lane2ImmediateRecorder.this.matricesDirty; }
+            @Override public boolean mainTarget() { return Lane2ImmediateRecorder.this.targetRegistry.currentIsMain(); }
+            @Override public long targetIdentity() { return Lane2ImmediateRecorder.this.targetRegistry.currentIdentity(); }
+            @Override public boolean texture2dEnabled() { return Lane2ImmediateRecorder.this.immediateState.texture2dEnabled(); }
+            @Override public int boundTextureName() { return Lane2ImmediateRecorder.this.immediateState.boundTextureName(); }
+            @Override public int whiteTextureId() { return Lane2ImmediateRecorder.this.whiteTextureId(); }
+            @Override public float colorRed() { return Lane2ImmediateRecorder.this.immediateState.colorRed(); }
+            @Override public float colorGreen() { return Lane2ImmediateRecorder.this.immediateState.colorGreen(); }
+            @Override public float colorBlue() { return Lane2ImmediateRecorder.this.immediateState.colorBlue(); }
+            @Override public float colorAlpha() { return Lane2ImmediateRecorder.this.immediateState.colorAlpha(); }
+            @Override public boolean alphaTestEnabled() { return Lane2ImmediateRecorder.this.immediateState.alphaTestEnabled(); }
+            @Override public float alphaFuncReference() { return Lane2ImmediateRecorder.this.immediateState.alphaFuncReference(); }
             // The comparison function travels with the reference: the group captures both (state[14] and state[6]) and
             // the push block carries both (offset 100 and 112), so a run held across a change of the function would be
             // drawn with the function of its submission for every quad - the same hole the reference closed.
-            @Override public int alphaFuncSelector() { return VulkanTerrainGpuBackend.this.immediateState.alphaFunc(); }
-            @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
+            @Override public int alphaFuncSelector() { return Lane2ImmediateRecorder.this.immediateState.alphaFunc(); }
+            @Override public float[] projection() { return Lane2ImmediateRecorder.this.glProjection; }
             @Override public float[] modelView() {
-                return VulkanTerrainGpuBackend.this.glModelView;
+                return Lane2ImmediateRecorder.this.glModelView;
             }
             // The draw state the batch path reads at *submit* time and the coalesced run key has to see at *append*
             // time (task-66): a run held across a state change is submitted under the state the second pass has, not
@@ -2396,20 +1799,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // with disableDepth()/enableDepth(), the shadow pass is inside that bracket and the main pass outside it -
             // so a run that spanned it drew one of the two passes with the wrong depth state and 585 of 797 shadow
             // pixels lost their main stroke (73.4 % against the reference's 0). The font run key asks these instead.
-            @Override public boolean depthTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthTestEnabled(); }
-            @Override public boolean depthWriteEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthMask(); }
-            @Override public boolean blendEnabled() { return VulkanTerrainGpuBackend.this.immediateState.blendEnabled(); }
-            @Override public int cullState() { return VulkanTerrainGpuBackend.this.immediateState.cullState(); }
-            @Override public int colorMask() { return VulkanTerrainGpuBackend.this.immediateState.colorMask(); }
+            @Override public boolean depthTestEnabled() { return Lane2ImmediateRecorder.this.immediateState.depthTestEnabled(); }
+            @Override public boolean depthWriteEnabled() { return Lane2ImmediateRecorder.this.immediateState.depthMask(); }
+            @Override public boolean blendEnabled() { return Lane2ImmediateRecorder.this.immediateState.blendEnabled(); }
+            @Override public int cullState() { return Lane2ImmediateRecorder.this.immediateState.cullState(); }
+            @Override public int colorMask() { return Lane2ImmediateRecorder.this.immediateState.colorMask(); }
             @Override public long scissorKey() {
-                if (!VulkanTerrainGpuBackend.this.rasterState.scissorTest()
-                        || !VulkanTerrainGpuBackend.this.rasterState.scissorCalled()) {
+                if (!Lane2ImmediateRecorder.this.rasterState.scissorTest()
+                        || !Lane2ImmediateRecorder.this.rasterState.scissorCalled()) {
                     return 0L;
                 }
-                return ((long) VulkanTerrainGpuBackend.this.rasterState.scissorX() << 48)
-                        | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorY() & 0xFFFF) << 32)
-                        | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorWidth() & 0xFFFF) << 16)
-                        | (VulkanTerrainGpuBackend.this.rasterState.scissorHeight() & 0xFFFF);
+                return ((long) Lane2ImmediateRecorder.this.rasterState.scissorX() << 48)
+                        | ((long) (Lane2ImmediateRecorder.this.rasterState.scissorY() & 0xFFFF) << 32)
+                        | ((long) (Lane2ImmediateRecorder.this.rasterState.scissorWidth() & 0xFFFF) << 16)
+                        | (Lane2ImmediateRecorder.this.rasterState.scissorHeight() & 0xFFFF);
             }
             // QUEUE 631: the game side registers each font page's atlas rectangle in FontAtlasRegistry when it
             // builds the atlas; the batch asks here so a page-bound segment can be keyed into the atlas instead
@@ -2420,7 +1823,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         });
         this.fontBatch.celtium$setFontRunSink(new FontBatch.RunSink() {
             @Override public boolean submit(FontBatch.Run run) {
-                return VulkanTerrainGpuBackend.this.celtium$submitFontRun(run);
+                return Lane2ImmediateRecorder.this.celtium$submitFontRun(run);
             }
         });
         // Both native API setters and raw-GL adapter writes flush deferred glyphs before changing shared state.
@@ -2428,12 +1831,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
 
-    /** The frame slots, their completion epochs and the retirement rules (refactoring plan R6). */
-    final FrameSubmissionScheduler scheduler = new FrameSubmissionScheduler();
-
     // The colour-texture census lives in publishedTextures (refactoring plan R1b).
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
     private int framebufferColorTextureLogs;
+
     /**
      * Whether an identity has been bound as the game's main framebuffer. A primitive map, because this is written on
      * every framebuffer bind - hundreds to thousands a frame while block entities draw - and java.util's Map boxes the
@@ -2441,6 +1842,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap framebufferIdentityIsMain =
             new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+
     /**
      * The colour texture names the game's own framebuffer reports, which is what identifies main-ness by attachment.
      * <p>
@@ -2453,12 +1855,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet mainFramebufferColorNames =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     private int framebufferCensusLogs;
+
     /** Bounded CELTIUM_FBO_PUBLISH_REFUSED lines: which exit a framebuffer colour-texture publication took, and why. */
     private int fboPublishRefusalLogs;
+
     /** Bounded CELTIUM_FBO_DEPTH_PUBLISHED lines: which depth names the sampling publication reached. */
     private int fboDepthPublishLogs;
+
     private int fboTargetEnsureLogs;
+
     /**
      * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
      * <p>
@@ -2469,18 +1876,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * through the adopt path, which is why this is a fact the census records rather than a second flag beside it.
      */
     private long gameFramebufferIdentity = Long.MIN_VALUE;
+
     private int framebufferColorTextureReports;
+
     private int framebufferColorTextureLog;
+
     /** Distinct framebuffer identities the game has bound, for the bounded census the routing rule is read against. */
     private final java.util.Set<Long> framebufferBindCensus =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** How many orthographic projections the mirror has been given; the GUI's own, if it arrives at all. */
     private int orthoCalls;
+
     /** How many frame images the periodic dump has written; capped so a long run cannot fill the disk. */
     int frameDumpsWritten;
+
     String presentSkipReason = "never called";
+
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     int lazyMirrorSupplies;
+
     /**
      * Mirrors with full content refreshed because the game wrote the texture through raw GL since - a write no upload
      * hook announces. JourneyMap allocates each 512x512 map tile with one glTexImage2D and then fills it with 16x16
@@ -2488,6 +1903,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * every minimap tile was drawn transparent.
      */
     int rawWriteRefreshes;
+
     /**
      * Raw writes whose mirror already held the level's current serial, so no upload was asked for.
      * <p>
@@ -2496,11 +1912,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * serial check answered every one of them. The name of the counter is now what it counts.
      */
     int rawWriteAlreadyCurrent;
+
     /** Per GL id: the stub's write epoch when the texture's write serial was last compared, so a quiet frame costs one read. */
     private long[] rawWriteEpochChecked = new long[4096];
+
     /** Per GL id: the write serial the mirror was last refreshed for. */
     private long[] rawWriteSerialApplied = new long[4096];
+
     int lazyMirrorFailures;
+
     /**
      * The same total split by the site that raised it: the lazy supply, a raw write applied in place, and a coalesced
      * raw write applied at the next window. One number could not say which of the three was failing, and the three
@@ -2508,14 +1928,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * stub never captured. Measured on leg {@code r33a-accept}: 28,272 failures, all of them one site.
      */
     int lazyMirrorSupplyFailures;
+
     int rawWriteFailures;
+
     int coalescedRawWriteFailures;
+
     /**
      * Lazy supplies that did not build a mirror because the name stands for a framebuffer's colour attachment and the
      * stub holds no pixels for it. Counted apart from {@link #lazyMirrorFailures}: nothing failed to upload, the
      * content is the framebuffer's and arrives when its owner publishes the image.
      */
     int lazyMirrorDeferrals;
+
     /**
      * Uploads skipped because the level has provably nothing to read ({@code celtium$levelHasNothingToRead}): no
      * captured record and no patch backlog. The upload would have thrown the capture-miss, so this is the same
@@ -2523,6 +1947,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * depends on and must not be silent.
      */
     int lazyMirrorEmptyDeferrals;
+
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
@@ -2530,21 +1955,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * signal, so the attempt is worth repeating only when a write actually arrived.
      */
     int lazyMirrorRetrySkips;
+
     /**
      * Last upload serial a lazy supply was attempted for, indexed by GL texture id. It was a
      * {@code HashMap<Integer, Long>}, which boxes two objects and hashes on every entity or TESR batch; the ids are small
      * and dense, so an array answers the same question without allocating on the accept path.
      */
     private long[] lazySupplySerialByTexture = new long[4096];
+
     /** {@code true} where {@link #lazySupplySerialByTexture} holds a recorded attempt (serial 0 is a valid serial). */
     private boolean[] lazySupplySerialRecorded = new boolean[4096];
+
     String lastLazyMirrorFailure = "none";
+
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
     int glTextureDeletions;
+
     int atlasReestablished;
+
     int lightmapReestablished;
+
     /** The GL texture unit the light map is bound on, passed in from the mod side; -1 until it is known. */
     int lightmapUnit = -1;
+
     /**
      * The light-map coordinate pair the game last set, captured per draw from
      * {@code OpenGlHelper.setLightmapTextureCoords} (see {@code LightmapCoordsMixin}). It is per draw and not per
@@ -2552,7 +1985,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * belongs to that draw.
      */
     float lightmapCoordX;
+
     float lightmapCoordY;
+
     /**
      * Whether the light-map texture unit is enabled right now, from {@code EntityRenderer.enableLightmap()} /
      * {@code disableLightmap()} (SRG {@code func_180436_i} / {@code func_175072_h}). Defaults to <em>enabled</em> so a
@@ -2560,9 +1995,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * entity full-bright. The two counters below are what say the hook ran.
      */
     boolean lightmapUnitEnabled = true;
+
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
+
     private String lastLightmapSupplyFailure = "none";
+
     /**
      * Extents the light map's own pixel array answered because the stub had recorded none, and supply attempts skipped
      * because the level's content had not changed since the last one.
@@ -2572,7 +2010,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * can fill is not re-read on every pass.
      */
     private int lightmapExtentFromOwner;
+
     private int lightmapSupplyRetrySkips;
+
     /**
      * The light map supply's last answer per content serial - the same rule the registry's lookups and the lazy supply
      * follow. A refused readback is not free and the light map is asked for on every pass, so "nothing can fill this
@@ -2580,23 +2020,32 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private final MirrorDeferralGate lightmapSupplyAttempts = new MirrorDeferralGate();
 
+
     /** Bounded report counter for the light map mirror's decision. */
     private int celtium$lightmapReports;
+
     private int animatedAnnounceDiagnostics;
+
     private String lastInvalidationOrigin = "unknown";
+
     /** The texture ids whose invalidation origin has been printed. */
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet invalidationOrigins =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
+
     private int immediateOpaqueAccepted;
+
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
 
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetBatchesByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
     boolean colorMirrorHasValue;
+
     /** Which source the format-7 colour came from, reported so a run says whether the mirror is really in use. */
 
     /**
@@ -2622,28 +2071,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (live != mirrored) {
             this.textureStats.noteBoundTextureMismatch();
             if (this.textureStats.boundTextureMismatches() <= 3) {
-                record("bound texture mirror mismatch: mirror=" + mirrored + " gl=" + live);
+                this.reports.record("bound texture mirror mismatch: mirror=" + mirrored + " gl=" + live);
             }
         }
     }
 
+
     /** Whether the entity layout's first refusal has been reported. */
     private boolean entityProgramLogged;
+
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
     final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
+
     /** (program, format) pairs already reported as drawn by the built-in pipeline under a bound program. */
     /** The same refusals grouped by program alone. */
     private final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap shaderProgramRefusedPrograms =
             new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
+
     /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap unflushedTargetDroppedByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
 
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
 
     /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap unflushedTargetDroppedBatchesByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
 
     /** {@return one line per target whose groups were dropped at a frame boundary}, or "none". */
     String unflushedTargetDropSummary() {
@@ -2660,6 +2115,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return text.toString().trim();
     }
+
 
     /**
      * Drops the groups queued for targets that never got a pass this frame, counts them once per identity, and names
@@ -2700,7 +2156,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         if (this.unflushedTargetGroupsDroppedLogged < UNFLUSHED_TARGET_LOG_LIMIT) {
             this.unflushedTargetGroupsDroppedLogged++;
-            record(site + " dropped " + dropped + " accepted immediate batches whose target never got a pass"
+            this.reports.record(site + " dropped " + dropped + " accepted immediate batches whose target never got a pass"
                     + " (targets=" + targets + ", total "
                     + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
         }
@@ -2709,11 +2165,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
 
+
     /** Groups dropped because no pass could draw their target, and passes that failed (BH-15). */
     private int unflushedTargetGroupsDroppedLogged;
+
     /** How many of the boundary drops reach the record; the rest are in the counters. */
     private static final int UNFLUSHED_TARGET_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.unflushedTargetLog", 8).intValue();
+
 
 
     /**
@@ -2726,7 +2185,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * draws actually wrote, and this is that fact.
      */
     long lastDrawnOffTargetIdentity;
+
     long lastDrawnOffTargetFrame = -1L;
+
     /**
      * The present that last accepted a batch for {@link #lastDrawnOffTargetIdentity}, which is what "this frame" means
      * for a read that resolves through the last drawn target: {@code frameId} does not advance while a screen is up,
@@ -2734,8 +2195,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     long lastDrawnOffTargetPresent = -1L;
 
-    /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
-    boolean gpuStalled;
     /**
      * OPT-09/BH-36: the terrain indirect path, on unless asked off with {@code -Dceltium.vulkan.indirectTerrain=false}.
      * <p>
@@ -2748,6 +2207,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean TERRAIN_INDIRECT_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectTerrain", "true"));
+
     /**
      * E10-a's shadow-generation census (item 723, {@link VulkanGpuTerrainCensus}): created
      * lazily on the first terrain pass under {@code celtium.vulkan.gpuTerrainCulling.census},
@@ -2755,11 +2215,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     /** The last frame the census rollover ran for; the rollover is once per frame, not per pass. */
     private long gpuTerrainCensusFrame = -1L;
+
     /** Set when census creation failed once: the census stays off rather than retrying per frame. */
     private boolean gpuTerrainCensusFailed;
+
     /** The frame's view-projection matrix for the census, computed once per frame on first use. */
     private float[] gpuTerrainCensusVp;
+
     private long gpuTerrainCensusVpFrame = -1L;
+
     /**
      * The shadow stage's own view-projection slot (R-17 increment (iv)): the shadow stage
      * runs before the frame's terrain passes under the same frame id, with the light's
@@ -2768,7 +2232,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * main stage's pass heads as the camera VP for the rest of the frame.
      */
     private float[] gpuTerrainCensusVpShadow;
+
     private long gpuTerrainCensusVpShadowFrame = -1L;
+
     /**
      * E10-b's drawing executor (item 723, {@link VulkanGpuTerrainDraw}): created lazily on
      * the first SOLID pass under {@code celtium.vulkan.gpuTerrainCulling}, never when the
@@ -2776,15 +2242,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     /** Set when executor creation or its pass head failed once: it stays off rather than retrying per frame. */
     private boolean gpuTerrainDrawFailed;
+
     /** The last frame the executor's pass head ran for; the pass head is once per frame, not per pass. */
     private long gpuTerrainDrawFrame = -1L;
+
 
     // Tier-A terrain (new architecture, wave-2 cutover): the per-pass engines the
     // pass head armed for the current frame, keyed by pass identity. The map is
     // rebuilt when the frame id moves, so prepareFrame runs once per pass per frame.
     private long terrainAArmedFrame = -1L;
+
     private long terrainAArmedSlot = -1L;
+
     private long terrainAArmedEpoch = -1L;
+
     /**
      * The recording epoch (T3 condition (2), INV-2c): how many times the
      * unified command buffer's current recording has been (re)started or
@@ -2798,6 +2269,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is unrelated to the context's completed-submission epoch.
      */
     private long recordingEpoch;
+
     /**
      * The shadow stage's own E10 census stream (E10 shadow preparation): a second
      * {@link VulkanGpuTerrainCensus} fed from the pack route's shadow stage. The shadow
@@ -2808,8 +2280,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     /** The last frame the shadow census rollover ran for; once per frame, not per stage. */
     private long shadowGpuTerrainCensusFrame = -1L;
+
     /** Set when shadow census creation failed once: the stream stays off rather than retrying. */
     private boolean shadowGpuTerrainCensusFailed;
+
     /**
      * The shadow stage's own E10 executor arm (E10 shadow arm + issuance): a second
      * {@link VulkanGpuTerrainDraw} (pass ordinal 3, name {@code shadow}) fed from the pack
@@ -2821,12 +2295,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     /** The last frame the shadow arm's stage head ran for; once per frame, not per stage. */
     private long shadowGpuTerrainDrawFrame = -1L;
+
     /** Set when shadow arm creation failed once: the arm stays off rather than retrying. */
     private boolean shadowGpuTerrainDrawFailed;
+
     /** Whether this frame's shadow stage head recorded a generation dispatch (its arm is pending a route decision). */
     private boolean shadowGpuTerrainDrawGenerated;
+
     /** This frame's pre-enumerated shadow visit count, as the stage head resolved it. */
     private int shadowGpuTerrainDrawVisits;
+
     /**
      * The search context most recently noted through {@link #noteSearchContext} (E10-b
      * preparation): held here so a census created later in the frame still receives the
@@ -2859,6 +2337,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is about never ran". Complete rather than bounded: 16 slots, no eviction.
      */
     private final long[] colorMaskHistogram = new long[16];
+
     /**
      * Per-alpha-selector group counts, keyed primitively.
      * <p>
@@ -2868,10 +2347,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap alphaSelectorCounts =
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
     private int lastAlphaSelector = -1;
+
     /** Distinct references written to the push block, bounded: the game uses a handful (0.1, 0.5, 1/255, 0). */
     private final it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet alphaReferenceValues =
             new it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet();
+
     /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
@@ -2884,57 +2366,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * (drawpath audit DP-09).
      */
     String lastWindowFlushFailure = "none";
+
     /**
      * Ordering flushes that threw ({@code flushPendingBeforeGlDraw}'s catch), with their text and the batches they had
      * to drop. Bounded to the frame they happened in, for the same reason as the window-flush counters: this catch used
      * to latch the renderer for the whole session, and the user's loading screen was where it did.
      */
     String lastOrderingFlushFailure = "none";
+
     /** Ordering flushes skipped at a framebuffer replacement, and the batches the first of them had to drop. */
     private int replaceBoundaryDropBatches;
 
-    /**
-     * Marks the device stalled and says where from, once.
-     * <p>
-     * The stall is permanent - nothing clears it, by design, because the resources it protects may still be owned by a
-     * command buffer that never completed. It happened on a mid-run resize and left the present path declining with
-     * "no frame target, or stalled" for the rest of the session (presentedFromVulkan frozen at 355), so which of the four
-     * places set it is the fact the fix needs.
-     */
-    private void noteStalled() {
-        if (!this.gpuStalled) {
-            this.gpuStalled = true;
-            StackTraceElement[] stack = new Throwable().getStackTrace();
-            String where = "unknown";
-            // The first frame outside this class says which caller's path reached the latch; the first frame inside
-            // it says which of the ten noteStalled() sites did. Recording only the outer one hid the site - measured
-            // on the loading screen's font path, where the outer frame was the font submit and the site was not the
-            // window-flush catch it was first read as.
-            String site = "unknown";
-            for (StackTraceElement frame : stack) {
-                if (frame.getClassName().startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")) {
-                    if (site.equals("unknown") && !"noteStalled".equals(frame.getMethodName())) {
-                        site = frame.getMethodName() + ':' + frame.getLineNumber();
-                    }
-                    continue;
-                }
-                where = frame.getClassName() + '.' + frame.getMethodName() + ':' + frame.getLineNumber();
-                break;
-            }
-            this.submissionStatistics.setStallOrigin(where + " via " + site);
-            // The last submissions ride along (item 414, hole 3): the counters alone print at teardown, and the
-            // teardown that detects a loss throws before its own print - the stall line is the record that
-            // survives, so it carries the trail and both sequence watermarks with it.
-            System.out.println("[Celtium] CELTIUM_STALL site=" + where + " latchSite=" + site
-                    + " target=" + this.targetWidth + "x"
-                    + this.targetHeight + " frameId=" + this.frameId + " frameTargetNull=" + (this.frameTarget == null)
-                    + " presentSkipReason=[" + this.presentSkipReason + "]"
-                    + " submitSequence=" + this.scheduler.submitSequence()
-                    + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
-                    + " " + SubmitTrail.describe());
-        }
-        this.submissionStatistics.noteStalledStops();
-    }
 
     /**
      * Latches the stall from the context's device-loss fact (drawpath audit DP-17). The present path
@@ -2947,37 +2389,52 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * no-op while the context reports no loss, and after the latch has already fired.
      */
     void celtium$noteStalledOnDeviceLoss() {
-        if (!this.gpuStalled && this.context != null && this.context.celtium$isDeviceLost()) {
-            this.noteStalled();
+        if (!this.frame.gpuStalled && this.context != null && this.context.celtium$isDeviceLost()) {
+            this.frame.noteStalled();
         }
     }
+
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
-    /** One-shot count for the injected device-lost fence result. */
-    private int injectedDeviceLosses;
+
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
     float[] currentGroupTexMatrix;
+
     /** The open texgen group's eye rows (NativeTexGen.eyeRows), or null for every other group. */
     float[] currentGroupTexGen;
+
     final float[] texGenScratch = new float[12];
+
     private final float[] texGenPushScratch = new float[12];
+
     /** Groups drawn under a non-identity texture matrix - the glint and the renderer's own transforms. */
     int observedBlendSrc = -1;
+
     int observedBlendDst = -1;
+
     private int currentGroupBlendSrc = -1;
+
     private int currentGroupBlendDst = -1;
+
     private static final boolean LIGHT_BIND_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
+
     private int lightBindPrints;
+
     /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
     private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
+
     static final boolean TEXTURE_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
+
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet diagnosedTextures =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     String blendOutlier;
+
     /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
     private VulkanImmediateParticleRecordsPipeline descriptorProbe;
+
     /**
      * Flushes made by the world-to-GUI ordering rule in {@link #endWorldPass()} - the counter that names the rule.
      * <p>
@@ -3016,15 +2473,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private Runnable fontPreFlush;
 
+
     /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
     public void celtium$setFontPreFlush(Runnable hook) {
         this.fontPreFlush = hook;
     }
 
+
     /** Wires the capture's "holding glyphs" probe so the state-change boundary can skip a flush that cannot matter. */
     public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
         this.fontBatch.celtium$setFontCaptureWork(probe);
     }
+
 
     /**
      * The glyph capture's own counter summary, wired by the capture so a leg can read it.
@@ -3037,13 +2497,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private java.util.function.Supplier<String> fontCaptureSummary;
 
+
     /** Registers the capture's summary supplier; invoked with {@code null} to clear it. */
     public void celtium$setFontCaptureSummary(java.util.function.Supplier<String> supplier) {
         this.fontCaptureSummary = supplier;
     }
+
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
+
     /**
      * Diagnostic only: the per-group projected NDC bounds that {@link #reportGroupBounds} computes.
      * <p>
@@ -3058,8 +2521,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static final boolean GROUP_BOUNDS_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.groupBounds");
+
     private static final int GROUP_BOUNDS_FORMAT =
             Integer.getInteger("celtium.vulkan.groupBoundsFormat", -1).intValue();
+
     /**
      * The layouts {@link #reportGroupBounds} reports, from {@code groupBoundsFormat} as a comma-separated list.
      * <p>
@@ -3096,8 +2561,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return GROUP_BOUNDS_FORMATS == null
                 || (formatId >= 0 && formatId < GROUP_BOUNDS_FORMATS.length && GROUP_BOUNDS_FORMATS[formatId]);
     }
+
     static final int GROUP_BOUNDS_LIMIT =
             Integer.getInteger("celtium.vulkan.groupBoundsCount", 200).intValue();
+
     /**
      * First frame {@code CELTIUM_GROUP_BOUNDS} reports, so the bounded line budget reaches the frame under test.
      * <p>
@@ -3108,12 +2575,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static final long GROUP_BOUNDS_MIN_FRAME =
             Long.getLong("celtium.vulkan.groupBoundsMinFrame", 0L).longValue();
+
     /**
      * Whether {@code CELTIUM_GROUP_BOUNDS} reports only the groups created inside the HUD's drawing function.
      * {@code -Dceltium.vulkan.groupBoundsGuiOnly=true}; see its filter in {@code reportGroupBounds}.
      */
     static final boolean GROUP_BOUNDS_GUI_ONLY =
             Boolean.getBoolean("celtium.vulkan.groupBoundsGuiOnly");
+
     /**
      * How many frames report the groups created inside the HUD's own drawing function.
      * <p>
@@ -3131,6 +2600,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int HUD_CAPTURE_FRAMES =
             Integer.getInteger("celtium.vulkan.hudCaptureFrames", 0).intValue();
+
     /**
      * First frame {@code CELTIUM_HUD_GROUP} reports, so the bounded budget reaches the world.
      * <p>
@@ -3141,9 +2611,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final long HUD_CAPTURE_MIN_FRAME =
             Long.getLong("celtium.vulkan.hudCaptureMinFrame", 0L).longValue();
+
     /** Frames {@link #HUD_CAPTURE_FRAMES} has already reported, and the last frame it reported. */
     private int hudCaptureFramesReported;
+
     private long hudCaptureLastFrame = -1L;
+
     /**
      * Item 312's P0 measurement: how many frames report the HUD group census and run partition.
      * <p>
@@ -3157,24 +2630,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int HUD_P0_FRAMES =
             Integer.getInteger("celtium.vulkan.hudP0Frames", 0).intValue();
+
     /** First frame {@code CELTIUM_HUD_P0} reports; same loading-phase reason as {@link #HUD_CAPTURE_MIN_FRAME}. */
     private static final long HUD_P0_MIN_FRAME =
             Long.getLong("celtium.vulkan.hudP0MinFrame", 0L).longValue();
+
     /** The frame the P0 census is accumulating, its accumulator, and how many frames it has reported. */
     private long hudP0FrameId = -1L;
+
     private HudP0Census.Frame hudP0Frame;
+
     private int hudP0FramesReported;
+
     private boolean hudP0SummaryPrinted;
+
     /** Flush-window (groups, nanos) pairs for the G1 fit, accumulated across the whole census. */
     private final HudP0Census.FlushRegression hudP0FlushFit = new HudP0Census.FlushRegression();
+
     /** Running totals across reported frames, so the summary line states the G3/G4 inputs directly. */
     private long hudP0TotalGroups;
+
     private long hudP0TotalCacheable;
+
     private long hudP0TotalCacheableStrict;
+
     private long hudP0TotalRuns;
+
     private long hudP0TotalRunsStrict;
+
     private long hudP0TotalVertices;
+
     private long hudP0TotalVertexBytes;
+
     /**
      * Diagnostic only: the rotations the mirror applied since this frame's camera boundary, oldest first.
      * <p>
@@ -3186,9 +2673,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Bounded, so a frame that rotates a thousand models cannot grow it.
      */
     private static final int ROTATION_LOG_LIMIT = 12;
+
     private final java.util.ArrayDeque<String> rotationLog = new java.util.ArrayDeque<String>();
+
     /** The rotations in {@link #rotationLog} at the moment the current group's matrices were captured. */
     String currentGroupRotations = "";
+
     /**
      * Diagnostic only: {@code CELTIUM_IMMEDIATE_ENQ} for every group instead of the first eight.
      * <p>
@@ -3197,14 +2687,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean ENQ_ALL_GROUPS =
             Boolean.getBoolean("celtium.vulkan.enqAll");
+
     private static final int ENQ_FORMAT =
             Integer.getInteger("celtium.vulkan.enqFormat", -1).intValue();
+
     /** Lines of {@code CELTIUM_DRAW_SITE}, the draw-moment companion of {@code CELTIUM_IMMEDIATE_ENQ}. */
     private static final int DRAW_SITE_LIMIT =
             Integer.getInteger("celtium.vulkan.drawSiteLines", 16).intValue();
+
     /** First frame {@code CELTIUM_DRAW_SITE} reports, so a world-frame draw site is reachable with a bounded line count. */
     private static final long DRAW_SITE_MIN_FRAME =
             Long.getLong("celtium.vulkan.drawSiteMinFrame", 0L).longValue();
+
     /**
      * Whether {@code CELTIUM_DRAW_SITE} is on, from {@code -Dceltium.vulkan.drawSite=true}.
      *
@@ -3216,37 +2710,58 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean DRAW_SITE_ENABLED =
             Boolean.getBoolean("celtium.vulkan.drawSite");
+
     /** One layout's draws, from {@code -Dceltium.vulkan.drawSiteFormat=<id>}; negative means every layout. */
     private static final int DRAW_SITE_FORMAT =
             Integer.getInteger("celtium.vulkan.drawSiteFormat", -1).intValue();
+
     /** Lines of {@code CELTIUM_WINDOW_DRAW}, the identity -> image line. */
     private static final int WINDOW_DRAW_LIMIT =
             Integer.getInteger("celtium.vulkan.windowDrawLines", 6).intValue();
+
     /** First frame {@code CELTIUM_WINDOW_DRAW} reports, for the same reason as {@link #DRAW_SITE_MIN_FRAME}. */
     private static final long WINDOW_DRAW_MIN_FRAME =
             Long.getLong("celtium.vulkan.windowDrawMinFrame", 0L).longValue();
+
     int crossPassComparisonsSkipped;
+
     private boolean mirrorMidSetup;
+
     int midSetupComparisonsSkipped;
+
     String worstModelViewSample;
 
     private static String fmt3(double value) {
         return String.format(java.util.Locale.ROOT, "%.2f", value);
     }
+
     int derivedProjections;
+
     int derivedProjectionRefusals;
+
     private boolean derivedProjectionPending;
+
     int derivedProjectionComparisons;
+
     float derivedProjectionDelta = -1.0f;
+
     String derivedProjectionWorst;
+
     int derivedWriteIdentity;
+
     int derivedCompareIdentity;
+
     private int lastMatrixMode = -1;
+
     final int[] loadIdentityByMode = new int[3];
+
     final int[] matrixModeCallsByMode = new int[3];
+
     int loadIdentityWhilePending;
+
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     int frustumCalls;
+
     /**
      * The GLU channel: calls that reached the mirror, calls that could not, and the distinct shapes they installed.
      * <p>
@@ -3256,11 +2771,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the census line to one line per distinct projection rather than one per frame.
      */
     int mirroredGluPerspectives;
+
     int skippedGluPerspectives;
+
     final java.util.Set<String> gluPerspectiveShapes = new java.util.LinkedHashSet<String>();
+
     final java.util.Set<String> gluPerspectiveSkips = new java.util.LinkedHashSet<String>();
+
     int matrixModeCalls;
+
     int loadIdentityCalls;
+
     /**
      * Binds the hook skipped because the mirror already held the name. Counted here rather than in the mixin so it
      * prints in the same summary as {@code bindTextureCalls} (the forwards) and {@code immediateStateCalls} (every
@@ -3268,6 +2789,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code CELTIUM_UNIT_BIND} lines, which is the reading that hid the per-glyph arrivals once already.
      */
     VulkanTextureRegistry textureRegistry;
+
     /**
      * The direct-GL converter's Vulkan sink and its attachment slab (S4): created once, with
      * the one texture registry, at {@code CopyReadSide.celtium$registry()} and installed into
@@ -3275,8 +2797,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * four-stage core lands (S3-b integration).
      */
     VulkanDirectGlSink directGlSink;
+
     org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab directGlAttachmentSlab;
+
     int pendingImmediateIndices;
+
     /**
      * Immediate geometry grouped by the projection/model-view pair it was built with.
      * <p>
@@ -3286,36 +2811,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * pair is a correctness requirement, not an optimisation.
      */
     final java.util.List<ImmediateGroup> immediateGroups = new java.util.ArrayList<ImmediateGroup>();
+
     VulkanDynamicMesh currentImmediateMesh;
+
     RetainedGeometryCache retainedGeometry;
+
     private LeasedResource.Lease<VulkanDynamicMesh> currentGeometryLease;
-    /**
-     * The immediate path's vertex and index memory for the frame being recorded (OPT-05).
-     * <p>
-     * One arena, suballocated per group, instead of two {@code VkBuffer}/{@code VkDeviceMemory}/{@code map} pairs per
-     * group (BH-28). Created on the first group of the first frame that needs it, so a run that never draws an
-     * immediate batch pays nothing. A group that does not fit even at the arena's cap promotes itself to buffers it
-     * owns rather than being dropped, and the arena's own counters say how often that happened.
-     */
-    VulkanFrameArena frameArena;
+
     /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
     private final float[] currentGroupProjection = new float[16];
+
     private final float[] currentGroupModelView = new float[16];
+
     /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
-    /** Reusable 1-element structs for {@link #celtium$setGroupViewport}, avoiding per-change MemoryStack+wrapper alloc. */
-    private org.lwjgl.vulkan.VkViewport.Buffer groupViewportScratch;
-    private org.lwjgl.vulkan.VkRect2D.Buffer groupScissorScratch;
+
     /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
     final float[] lightInverseScratch = new float[9];
+
     /**
      * The nine rotation floats {@link #celtium$lightParams} reads, copied out of the modelview by
      * {@link ModelReplayInputCache#copyRotation}: the payload's only geometric input, named in one place rather than
      * read out of a sixteen-float matrix in two of them.
      */
     final float[] lightRotationScratch = new float[9];
+
     /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
     private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
+
     /**
      * True when this group's vertices are baked with each batch's own modelView on append and the recorded modelView
      * is identity (OPT-18b). Only normal-free, unlit, unfogged formats under an axis-aligned matrix qualify: for them
@@ -3323,14 +2846,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * would have split on a different GUI matrix can still join this group.
      */
     private boolean currentGroupPreTransformed;
+
     boolean currentGroupUsed;
+
     /**
      * The open group's flush-accounting stamp (flight A1): decided where the group is created, read by the
      * accept path's counter addition in the same call, and copied onto the group at close. A separate scratch
      * rather than a read of the group-to-be because the addition runs before the group object exists.
      */
     private boolean currentGroupIndexFlushExempt;
+
     private int currentGroupFormatId;
+
     /**
      * The open group's GL draw mode, stamped onto the group at close ({@link ImmediateGroup#drawMode}).
      * Part of the group's identity since Stage 5 stage 6: the split predicate compares it, so a group
@@ -3340,7 +2867,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * into one group whose mesh held both expansions concatenated).
      */
     private int currentGroupDrawMode;
+
     private int[] currentGroupState = new int[7];
+
     /**
      * The registry records the open group was built against. A texture re-created under the same GL name is a
      * different object - and a different descriptor - which is what the slow path's prepared-object comparison
@@ -3348,6 +2877,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * is the same for the lightmap the lightmap-bearing formats' descriptors name.
      */
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupTextureImage;
+
 
     /**
      * The stub's upload serial for the open group's texture, captured where the group's mirror was resolved.
@@ -3364,6 +2894,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private long currentGroupTextureSerial = Long.MIN_VALUE;
 
+
     /**
      * The draw records an indirect immediate run reads (architecture 11.13), held since Stage 5
      * stage 3 by the unified {@link InstanceDataStore}: one descriptor set per frame slot over
@@ -3373,8 +2904,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     InstanceDataStore drawRecords;
 
+
     /** Lock for the record store's first creation: the creation path runs on the prewarm thread too. */
     private final Object drawRecordsLock = new Object();
+
 
     /**
      * {@return whether the draw-record store exists, creating it on first use}.
@@ -3397,6 +2930,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.drawRecords != null;
     }
 
+
     /**
      * {@code -Dceltium.vulkan.indirectImmediate=true}: record opaque textured and lit item groups as records plus
      * indirect commands, one command per group and one call per material run.
@@ -3417,16 +2951,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the RGB-only write mask (the highlight's) and the full mask (its neighbours', which are visible).
      */
     private static final boolean DRAW_STATE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawStateCensus");
+
     private static final long DRAW_STATE_MIN_FRAME =
             Long.getLong("celtium.vulkan.drawStateMinFrame", 8L).longValue();
+
     private int drawStateCensusRgbOnly;
+
     private int drawStateCensusFull;
+
     /**
      * The immediate families' record-reading pipelines and their creation dispatch (Stage 5
      * stage 6); see {@link ImmediateRecordsPipelines}. The prepare branches resolve a group's
      * twin here, and the prewarm's creation actions build through the same dispatch.
      */
     final ImmediateRecordsPipelines recordsPipelines = new ImmediateRecordsPipelines(this);
+
 
     /**
      * The batch wiring of Stage 5 stage 4 (S5-2): eligible UI-bracket and font-run groups are captured at drain
@@ -3437,24 +2976,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * when the ring could not be created, which keeps the per-group path entire.
      */
     private org.soutalab.celtium.vulkan.batch.ImmediateBatcher batchBatcher;
+
     private org.soutalab.celtium.vulkan.batch.FrameLinearStagingRingAdapter batchRing;
+
     /** The non-quad emitter, built over the batch ring and rebuilt when the ring is recreated. */
     private org.soutalab.celtium.vulkan.batch.NonQuadImmediateEmitter nonQuadEmitter;
+
     private org.soutalab.celtium.vulkan.batch.FrameLinearStagingRingAdapter nonQuadEmitterRing;
+
     private final org.soutalab.celtium.vulkan.batch.BatchPlanExecutor batchExecutor =
             new org.soutalab.celtium.vulkan.batch.BatchPlanExecutor();
+
     /** Whether a capture segment is open (a beginFrame whose endFrame has not run yet). */
     private boolean batchSegmentOpen;
+
     private int batchSegmentCaptures;
+
     /** Pipeline keys for the batcher, interned per record-reading twin object. */
     private final java.util.IdentityHashMap<Object, Integer> batchPipelineKeys = new java.util.IdentityHashMap<>();
+
     private int batchNextPipelineKey = 1;
+
     /** What each interned pipeline key binds: the twin's handles and family. */
     private final java.util.HashMap<Integer, BatchTwinBinding> batchTwinBindings = new java.util.HashMap<>();
+
     /** The state tuples interned in the open segment; the list index is the state key (DrawSortKey packs 8 bits). */
     private final java.util.ArrayList<ImmediateGroup> batchStateDonors = new java.util.ArrayList<>();
+
     /** The per-texture bindings captured in the open segment, by GL texture name. */
     private final java.util.HashMap<Integer, BatchTextureBinding> batchTextureBindings = new java.util.HashMap<>();
+
     /**
      * Groups captured into batch segments; of those, the ones captured in the bindless array
      * form (their texture rides in the record); groups that fell back after a capture was
@@ -3467,10 +3018,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the same arrangement as the non-quad census arrays.
      */
     private long batchCapturedGroups;
+
     private long batchArrayCapturedGroups;
+
     private long batchFallbackGroups;
+
     long batchDroppedDraws;
+
     long batchDiscardedSegments;
+
 
     /** What a batch pipeline key binds: one record-reading twin's handles, and its family shape. */
     private static final class BatchTwinBinding {
@@ -3514,6 +3070,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.arraySet = arraySet;
         }
     }
+
 
     /**
      * A per-texture descriptor captured with a group: the set, the cache key it was prepared
@@ -3570,17 +3127,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     .descriptorSetFor(current, lightmap);
         }
     }
+
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
     static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
-    /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
-    static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
+
     /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
     long frameTargetRecreationDeferred;
+
     /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
     static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
+
     int debugFramesPresented;
+
     boolean debugFullscreenAsked;
+
     /**
      * {@code -Dceltium.vulkan.debugResizeAfterFrames=N} with {@code -Dceltium.vulkan.debugResizeTo=WxH}: ask SDL to
      * resize the window once, which is the surface-extent change that rebuilds the swapchain. The launcher's own death
@@ -3589,8 +3150,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int DEBUG_RESIZE_AFTER_FRAMES =
             Integer.getInteger("celtium.vulkan.debugResizeAfterFrames", -1);
+
     private static final String DEBUG_RESIZE_TO = System.getProperty("celtium.vulkan.debugResizeTo", "");
+
     private int debugFramesSeen;
+
     private boolean debugResizeAsked;
 
     void celtium$debugMaybeResize() {
@@ -3616,6 +3180,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + height + " ok=" + ok + " (the surface-extent change that rebuilds the swapchain)");
     }
 
+
     /**
      * The frame-stats report's switch, resolved through {@link HarnessConfig} like every other repeating
      * instrument's: {@code frameStats=true} in the harness file, or the legacy
@@ -3627,9 +3192,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
      */
     static final boolean FRAME_STATS = HarnessConfig.bool("frameStats", false);
+
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
+
     static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
+
     /**
      * On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather
      * than per frame. The mirror-dump family's one switch is {@code -Dceltium.vulkan.mirrorDump=<dir>}
@@ -3641,38 +3209,47 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code celtium$mirrorProbe} dumps.
      */
     private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
+
     static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
+
     static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
-    private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
+
     int frameIntervalCount;
 
     void celtium$noteFrameBoundary(String where) {
         if (!FRAME_STATS) {
             return;
         }
-        this.frameStats.celtium$frameStatsReport(where);
+        this.owner.frameStats.celtium$frameStatsReport(where);
     }
 
-    /** The frameStats report; split out of this class (2026-11-06), see FrameStatsReport. */
-    final FrameStatsReport frameStats = new FrameStatsReport(this);
 
     /** {@code -Dceltium.vulkan.windowDiag=true}: report what SDL and the Display shim say the window is, once a second. */
     static final boolean WINDOW_DIAG = Boolean.getBoolean("celtium.vulkan.windowDiag");
+
     int windowDiagFrames;
+
 
 
     /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     private int currentGroupTextureIndex = -1;
+
     long textureIndexHits;
+
     long textureIndexMisses;
+
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
+
 
     /** Scratch for the font run's save of the two matrices: the save is method-local, so two arrays serve every flush. */
     private final float[] fontRunProjectionScratch = new float[16];
+
     private final float[] fontRunModelViewScratch = new float[16];
+
 
     /** The last colour array handed to a group; read-only after capture, so equal colours may share it. */
     private float[] lastGroupColorArray;
+
 
     /** {@return the captured colour, reusing the previous array while every component matches}. */
     float[] groupColor(float red, float green, float blue, float alpha) {
@@ -3684,6 +3261,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.lastGroupColorArray = fresh;
         return fresh;
     }
+
     /**
      * The fog state at the moment the group was opened, beside {@code currentGroupState} and
      * {@code currentGroupModelView} and for the same reason.
@@ -3696,18 +3274,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * to the fog colour (179,207,255) - i.e. the flag made no difference to the picture at all.
      */
     float[] currentGroupFog;
+
     /** The clip rectangle captured with the open group, or null when glScissor had not been called. */
     int[] currentGroupScissor;
+
     /** The previous group's clip rectangle; equal rectangles share it, as the colour and matrix captures do. */
     private int[] lastGroupScissorBox;
+
     /** Whether the clip was enabled when the open group was created. */
     boolean currentGroupScissorEnabled;
+
     /** GL's polygon offset captured with the open group (BH-11: the live state is disabled around the overlay). */
     private boolean currentGroupPolygonOffsetEnabled;
+
     private float currentGroupPolygonOffsetFactor;
+
     private float currentGroupPolygonOffsetUnits;
+
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
     float[] currentGroupColor;
+
     /**
      * The fixed-function lighting payload of the batch that opened this group, captured at acceptance (BH-05).
      * <p>
@@ -3718,6 +3304,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * model-mesh path already used.
      */
     private float[] currentGroupLightParams;
+
     /**
      * The light-map coordinate the group being built was offered with, decided at acceptance rather than at close.
      * <p>
@@ -3728,15 +3315,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * payload and the fog already follow.
      */
     private float[] currentGroupLightmapCoords;
+
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
     private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.alphaTest", "true"));
+
     /**
      * {@code -Dceltium.vulkan.positionNormalDepthTest=false} builds the POSITION_NORMAL pipeline with its depth test
      * off, for the one measurement that separates a depth rejection from a lost draw.
      */
     static final boolean POSITION_NORMAL_DEPTH_TEST =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.positionNormalDepthTest", "true"));
+
     /**
      * The one-flag controls for BH-07 and BH-10. Each substitutes the value the pipeline baked before the finding was
      * fixed while leaving everything else - the capture, the key, the group - untouched, so the same build can be run
@@ -3746,10 +3336,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean IMMEDIATE_BLEND_ALPHA = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediateBlendAlpha", "true"));
+
     private static final boolean IMMEDIATE_BLEND_EQUATION = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediateBlendEquation", "true"));
+
     private static final boolean IMMEDIATE_COLOR_MASK = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediateColorMask", "true"));
+
     /**
      * {@code -Dceltium.vulkan.groupScissor=false} restores the pre-fix shape of the clip rule for a measurement leg:
      * the rectangle is read from the live stub record when the group is flushed, and a change of it does not close the
@@ -3757,6 +3350,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean GROUP_SCISSOR = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.groupScissor", "true"));
+
     /**
      * BH-04's colour half as a measurement control: {@code -Dceltium.vulkan.groupColour=false} stops the current colour
      * from closing a group, which is the pre-fix shape. The fixture's own probe (two POSITION batches, one red and one
@@ -3765,6 +3359,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean GROUP_COLOUR = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.groupColour", "true"));
+
     /**
      * How the game's {@code glScissor} box becomes the image's rows.
      * <p>
@@ -3785,8 +3380,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int ALPHA_FUNC_OVERRIDE =
             Integer.getInteger("celtium.vulkan.alphaFuncOverride", 0).intValue();
+
     private int currentGroupTexture;
+
     private long currentGroupStateKey;
+
     /**
      * {@code -Dceltium.vulkan.terrainToBoundTarget=false} opts out of drawing a terrain pass into the bound mod
      * framebuffer's chain pair instead of the game's framebuffer when a non-main framebuffer is bound (GTCEu's Bloom
@@ -3800,6 +3398,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean TERRAIN_TO_BOUND_TARGET =
             celtium$terrainToBoundTargetEnabled(System.getProperty("celtium.vulkan.terrainToBoundTarget", "true"));
 
+
     /**
      * {@return whether the bound-target terrain route is on for the property's value}: on unless the value reads
      * "false". Package-private and static so the default is pinned without a device.
@@ -3807,12 +3406,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static boolean celtium$terrainToBoundTargetEnabled(String property) {
         return !"false".equalsIgnoreCase(property);
     }
+
     long terrainPassesToBoundTarget;
+
 
     /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
     long terrainPassesToBoundTarget() {
         return this.terrainPassesToBoundTarget;
     }
+
 
     // Item 644 follow-up (bloom-boundtarget-leg): the bound-target route's refusal census. The route's
     // success line and counter existed, but every refusal path was silent, so a leg whose counter read 0
@@ -3821,7 +3423,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     // prints are bounded, the depth route's census shape. Reason indexes:
     // 0=pair-owner-null 1=pair-mismatch 2=no-framebuffer 3=depth-route-preempted 4=pack-route-preempted.
     private long boundTargetAttempts;
+
     private final long[] boundTargetRefusals = new long[5];
+
     private int boundTargetRefusalLogs;
 
     private void celtium$noteBoundTargetRefusal(int reason, String passName, long identity, String detail) {
@@ -3830,7 +3434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.boundTargetRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_BOUND_TARGET_CENSUS refusal=" + reason + " pass=" + passName
                     + " identity=0x" + Long.toHexString(identity) + " " + detail
-                    + " frame=" + this.frameId);
+                    + " frame=" + this.frame.frameId);
         }
     }
 
@@ -3843,14 +3447,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " packPreempt=" + this.boundTargetRefusals[4] + "]";
     }
 
+
     // Item 644 next discrimination (bdisc2 §7): bdisc2 proved the route succeeds and the pair identity
     // the chain samples matches the routed identity, yet the halo patch stays (0,0,0). The remaining
     // split is (i) coverage, (ii) in-frame order, (iii) real image identity - none of which the
     // identity values alone can decide. These fields carry the draw-side half of that split; the
     // chain-input patch line carries the sample-side half through the same helper.
     private int boundTargetCoverageLogs;
+
     /** Frame of the most recent successful bound-target route, -1 before the first. */
     long boundTargetLastRoutedFrame = -1L;
+
 
     /** The pair's live generation / colour view / last cleared frame, read at the caller's moment. */
     String celtium$boundPairProbe(long identity) {
@@ -3860,6 +3467,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " pairClearedFrame=" + this.targetRegistry.chainPairClearedFrame(identity)
                 + " boundTargetLastRoutedFrame=" + this.boundTargetLastRoutedFrame;
     }
+
     /**
      * {@code -Dceltium.vulkan.terrainToDepthTarget=true}: draw a terrain pass into the bound framebuffer's chain pair
      * when that pair renders into the <em>shared depth image</em> the framebuffer's depth texture owns (item 332).
@@ -3878,6 +3486,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean TERRAIN_TO_DEPTH_TARGET =
             Boolean.getBoolean("celtium.vulkan.terrainToDepthTarget");
+
     /**
      * Item 537, the terrain shadow lookup: {@code -Dceltium.vulkan.terrainShadow} (default true, and inert unless
      * {@link #TERRAIN_TO_DEPTH_TARGET} routes a shadow pass). A shader pack's sun shadow is computed by its gbuffers
@@ -3891,15 +3500,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean TERRAIN_SHADOW_LOOKUP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.terrainShadow", "true"));
+
     /** Fraction of the sky light a shadowed fragment loses, {@code -Dceltium.vulkan.terrainShadowDarkness}. */
     private static final float TERRAIN_SHADOW_DARKNESS = celtium$shadowDarkness(
             System.getProperty("celtium.vulkan.terrainShadowDarkness"));
+
     private final Matrix4f terrainShadowMatrix = new Matrix4f();
+
     private long terrainShadowFrame = Long.MIN_VALUE;
+
     private int terrainShadowDepthTexture;
+
     private int terrainShadowLogs;
+
     private long terrainShadowPassesApplied;
+
     private long terrainShadowPassesRefused;
+
 
     /** {@return the darkness property parsed and clamped to [0, 1]}, 0.45 when absent or malformed. Pure. */
     static float celtium$shadowDarkness(String property) {
@@ -3913,6 +3530,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return 0.45f;
         }
     }
+
 
     /**
      * {@return why a non-routed terrain pass does not sample the frame's shadow capture}, or null when it does.
@@ -3940,16 +3558,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return null;
     }
 
+
     /** Bounded census counters for the route and its refusals (see {@link #celtium$routeTerrainToDepthTarget}). */
     private int terrainDepthTargetLogs;
+
     private int terrainDepthTargetDrawLogs;
+
     private int terrainDepthTargetRefusalLogs;
+
     /** Bounded counters for the item 419 defect-1 pair census: the noted game depth and the judgment that reads it. */
     private int depthNoteLogs;
+
     private int depthJudgeLogs;
+
     private int depthJudgeLastNoted = Integer.MIN_VALUE;
+
     private int pairWindowPreserveDepthLogs;
+
     private int sharedDepthClearRefusalLogs;
+
     /**
      * The render area of the pass currently open, in the images it attaches.
      * <p>
@@ -3960,11 +3587,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * draw, and {@link #beginCommands} resets both to the window's extent for the same reason.
      */
     int passAreaWidth;
+
     int passAreaHeight;
+
     /** Core-owned native fullscreen pass registry and frame executor (Phase 0); no-op when no passes are registered. */
     final NativePassRegistry nativePassRegistry = new NativePassRegistry(this.targetRegistry);
-    final PassExecutor nativePassExecutor;
+
     private long nativeSolidStageFrame = -1L;
+
     private long nativeTranslucentStageFrame = -1L;
 
     public NativePassRegistry nativePassRegistry() {
@@ -3976,39 +3606,45 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     void celtium$executeNativePasses(NativePassRegistry.PassStage stage) {
-        if (!this.nativePassRegistry.hasPassesFor(stage) || this.gpuStalled
+        if (!this.nativePassRegistry.hasPassesFor(stage) || this.frame.gpuStalled
                 || this.targetWidth <= 0 || this.targetHeight <= 0) {
             return;
         }
         long[] bindCache = new long[6];
         try {
-            if (this.frameBufferOpen && this.commandState.recording()) {
-                this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
+            if (this.frame.frameBufferOpen && this.frame.commandState.recording()) {
+                this.owner.nativePassExecutor.executeStage(stage, this.frame.commandBuffer, this.targetWidth, this.targetHeight,
                         celtium$frameSerial(), bindCache);
-            } else if (ensureFrameTarget()) {
+            } else if (this.owner.ensureFrameTarget()) {
                 this.frameTarget.beginFrame();
-                beginCommands();
-                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
-                this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
+                this.frame.beginCommands();
+                this.frameTarget.recordAcquireBarriers(this.frame.commandBuffer);
+                this.owner.nativePassExecutor.executeStage(stage, this.frame.commandBuffer, this.targetWidth, this.targetHeight,
                         celtium$frameSerial(), bindCache);
-                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
+                this.frameTarget.recordReleaseBarriers(this.frame.commandBuffer);
+                FrameCoordinator.Submission progress = this.frame.submitCommands();
                 if (progress.canCloseTarget()) {
                     this.frameTarget.endFrame();
                 }
             }
         } catch (RuntimeException | LinkageError error) {
-            record("native pass stage " + stage + " failed: " + describe(error));
+            this.reports.record("native pass stage " + stage + " failed: " + describe(error));
         }
     }
 
+
     /** The key of the group before the current one, kept only for the merge census's A-B-A count. */
     private int censusPrevGroupFormatId = -1;
+
     private int censusPrevGroupTexture = -1;
+
     private long censusPrevGroupStateKey;
+
     /** Census-only NDC rectangles (minX, minY, maxX, maxY): the batch being offered and the open group's union. */
     private final float[] censusBatchRect = new float[4];
+
     private final float[] censusCurrentGroupRect = {Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+
 
     /**
      * The batch's rectangle in normalised device coordinates, from its positions (three floats at offset 0 in every
@@ -4059,10 +3695,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (add[3] > into[3]) into[3] = add[3];
     }
 
+
     /** Closed rectangles: touching edges count as overlap, because a shared edge pixel can be covered by both. */
     static boolean celtium$rectsOverlap(float[] a, float[] b) {
         return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
     }
+
     /**
      * The immediate families' pipelines live in {@link ImmediateRecordsPipelines} since Stage 5
      * stage 6: one branch-keyed cache per family there, concurrent because the pipeline
@@ -4076,29 +3714,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static final boolean MODEL_INSTANCES =
             !"false".equalsIgnoreCase(System.getProperty("celtium.native.modelInstances"));
+
     VulkanModelInstances modelInstances;
+
     boolean modelInstancesFailed;
+
     /** The queued group that holds the open instance run, so a following replay can join it. */
     ImmediateGroup openModelRunGroup;
+
     final float[] modelInstanceAffine = new float[6];
+
     // Per-replay scratch: the instance path copies these into the mapped record buffer at once, and the group path
     // clones what it keeps. Each was a fresh array per model replay (~350 MB a warm minute in the Xaero scene's JFR).
     final float[] modelInstanceColour = new float[4];
+
     final float[] modelInstanceLight = new float[20];
+
     final float[] modelReplayView = new float[16];
+
     final float[] modelReplayProjection = new float[16];
+
     /**
      * The two per-replay values that depend on inputs a scene repeats: the lit payload (rotation + light generation)
      * and the depth-remapped projection (per pass). A miss rebuilds exactly the bytes a hit reuses; the counters say
      * how often the scene's own repetitions let the work be skipped. See {@link ModelReplayInputCache}.
      */
     final ModelReplayInputCache modelReplayInputCache = new ModelReplayInputCache();
+
     /**
      * The last model replay's whole resolved tuple, so the next replay that repeats it writes its record without
      * resolving anything but its own matrix. Its census is on the verification line as {@code modelFastPath}.
      * See {@link ModelReplayFastPath}.
      */
     final ModelReplayFastPath modelReplayFastPath = new ModelReplayFastPath();
+
     /**
      * The pipeline prewarm pair (Stage 5 slice S5-0): the compiler the creation actions are
      * registered with, and the scheduler that warms the startup set and compiles unknown keys
@@ -4108,14 +3757,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@link #celtium$ensurePipelinePrewarm} builds a fresh pair for the next world.
      */
     private PipelinePrewarm pipelinePrewarm;
+
     private PipelinePrewarmCompiler pipelinePrewarmCompiler;
+
     /** Whether the startup warm set has been registered and warmed for the current world. */
     private boolean pipelinePrewarmWarmed;
+
     /**
      * Bumped every time the prewarm pair is closed, so a creation action captured for an older
      * world can tell that the render pass it would build against is gone and refuse to run.
      */
     private long pipelinePrewarmGeneration;
+
     /**
      * Set by the pipeline resolution when the material being prepared was drawn with the
      * family's standard pipeline because the exact one was still compiling: such a material is
@@ -4124,8 +3777,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * store; the resolution runs on the same thread inside the same call.
      */
     private boolean celtium$lastPrepareWasFallback;
+
     int immediateDiagnostics;
+
     private VulkanDynamicMesh isolationMesh;
+
     /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
 
     /**
@@ -4141,6 +3797,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
+
 
     /**
      * {@return one counter array as {@code [1:n,2:n,...]}, for every id the array covers}.
@@ -4160,6 +3817,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return text.toString();
     }
+
 
     /**
      * The accepted immediate format ids, parsed once.
@@ -4195,6 +3853,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return formatId >= 0 && formatId < table.length && table[formatId];
     }
 
+
     /**
      * {@return whether the layout's pipeline declares no texture coordinate at all}, so a batch that cannot sample is
      * not refused for a texture it does not read.
@@ -4212,6 +3871,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 || formatId == VulkanImmediateFormats.POSITION_NORMAL;
     }
 
+
     /**
      * On by default: the window draws each batch in the frame that produced it, so the immediate path does not lag a
      * frame, and one window per frame is what keeps the frame intact - unlimited windows were measured as a black
@@ -4219,6 +3879,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean IMMEDIATE_WINDOWS_ENABLED =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.immediateWindows", "true"));
+
     /**
      * Lab switch: let the frame's own GL composite be skipped once Vulkan has put the frame on the swapchain.
      * <p>
@@ -4229,6 +3890,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean SKIP_GL_COMPOSITE =
             Boolean.getBoolean("celtium.vulkan.skipGlComposite");
+
     /**
      * Whether the frame's final composite is the present path's job rather than an immediate batch.
      * <p>
@@ -4246,6 +3908,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+
     /**
      * How many indices a window may hold before the accept path flushes it. 32768 since 2026-11-06: two same-jar A/Bs
      * against 8192 (l10flush 4 pairs: p50 0.941, p95 0.937; l26flush 5 pairs: p50 0.988, p95 0.995, p99 0.995, tick
@@ -4253,6 +3916,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * times a frame and each fill opened a window.
      */
     private static final int IMMEDIATE_FLUSH_INDICES = 32768;
+
     /**
      * Flight A1, off by default: a retained acceptance's indices stay out of {@code pendingImmediateIndices}.
      * <p>
@@ -4269,6 +3933,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean RETAINED_INDEX_FLUSH_EXEMPT =
             Boolean.getBoolean("celtium.vulkan.retainedIndexFlushExempt");
+
     /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
@@ -4276,19 +3941,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int REFUSE_IMMEDIATE_FORMAT =
             Integer.getInteger("celtium.vulkan.refuseImmediateFormat", -1).intValue();
+
     private static final boolean REFUSE_TERRAIN_PASS = Boolean.getBoolean("celtium.vulkan.refuseTerrainPass");
+
     private static final boolean GAME_CLEAR_LATCH =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
+
     static final int PRESENTED_DUMP_EVERY =
             HarnessConfig.integer("presentedDumpEvery", 40);
+
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
+
     /**
      * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla
      * framebuffer's own image) at its own extent into the game directory, to see where a framebuffer chain loses
      * its picture. Off (0) by default.
      */
     static final int DUMP_PAIRS_AT_PRESENT = Integer.getInteger("celtium.debug.dumpPairsAtPresent", 0).intValue();
+
     static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
+
 
     /** {@return a few numbers that tell a perspective projection from an orthographic one}. */
     static String projectionSummary(float[] projection) {
@@ -4300,17 +3972,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 Float.valueOf(projection[14]));
     }
 
+
     /** {@code -Dceltium.debug.sampleWindowImages=true}: read back the mean of each large window's textures. */
     static final boolean SAMPLE_WINDOW_IMAGES = Boolean.getBoolean("celtium.debug.sampleWindowImages");
+
     int textureVertexDumps;
+
     int groupDetailDumps;
+
 
     /** {@code -Dceltium.debug.vertexDumpTexture=23}: dump the vertices of a group sampling that texture. */
     static final int VERTEX_DUMP_TEXTURE = Integer.getInteger("celtium.debug.vertexDumpTexture", -1).intValue();
 
+
     /** {@code -Dceltium.debug.dumpTextureIds=23}: write those textures' images to the temp directory once. */
     static final it.unimi.dsi.fastutil.ints.IntOpenHashSet DUMP_TEXTURE_IDS = dumpTextureIds();
+
     int dumpedTextureImages;
+
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet dumpedTextureIds = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
     private static it.unimi.dsi.fastutil.ints.IntOpenHashSet dumpTextureIds() {
@@ -4328,6 +4007,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return ids.isEmpty() ? null : ids;
     }
+
 
     /**
      * {@code -Dceltium.debug.replaceTextures=23:10}: draw groups that sample the first id with the second id's
@@ -4359,9 +4039,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return pairs.isEmpty() ? null : pairs;
     }
 
+
     /** {@code -Dceltium.debug.windowCensus=true}: name every window a menu frame draws. */
     static final boolean WINDOW_CENSUS = Boolean.getBoolean("celtium.debug.windowCensus");
+
     int windowCensusLines;
+
 
     /** {@code -Dceltium.debug.skipTextures=3,4}: drop the draws that sample these GL texture names, for a probe. */
     private static final it.unimi.dsi.fastutil.ints.IntOpenHashSet SKIP_TEXTURE_IDS = skipTextureIds();
@@ -4382,31 +4065,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return ids.isEmpty() ? null : ids;
     }
 
+
     /** Every window that carried a hundred groups or more, and the groups they carried. */
     long largeWindows;
+
     long largeWindowGroups;
+
 
     /** How many large windows have had their routing logged. */
     int windowRouteLogs;
+
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
     long framesWithNoClearAtAll;
+
     private int frameClearsAtLastBoundary = -1;
+
     /** Reused by the window flush for its recording snapshot; see GllessFrameTarget.snapshotRecording(reuse). */
     private org.soutalab.celtium.vulkan.GllessFrameTarget.RecordingSnapshot windowRecordingSnapshot;
+
     boolean immediateWindowBusy;
-    /**
-     * A real frame identity (audit S11).
-     * <p>
-     * The per-frame window budget used to be reset by {@code updateTimings}, which is called on every fence wait - so a
-     * frame with three flushes had its budget reset three times and "sixteen windows per frame" could not be demonstrated
-     * at all. The identity is incremented at the camera boundary, which fires exactly once per frame, and the counters are
-     * reconciled there rather than on a flush.
-     */
-    long frameId;
+
     private long countersFrameId = -1;
+
     private int lastReportedOutOfDate = -1;
+
     private int lastReportedAcquireOutOfDate = -1;
+
     private int lastReportedDirectRefreshes = -1;
+
     /**
      * Wall time of the game's batch call, measured by the caller (the mixin) around {@code submitImmediateBatch}.
      * <p>
@@ -4415,8 +4101,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * that path the game calls.
      */
     public static long batchCallNanos;
+
     /** Long because one measured session uploaded 1.35e8 batches: an int overflows inside a day of play. */
     public static long batchCallCount;
+
     /**
      * The single most expensive batch call, and the total of the first 200.
      * <p>
@@ -4426,6 +4114,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * that from a real per-call difference.
      */
     public static long batchCallWorstNanos;
+
     /**
      * The batch call measured as CPU time instead of wall time.
      * <p>
@@ -4435,6 +4124,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * does itself.
      */
     public static long batchCallCpuNanos;
+
     /**
      * The thread MXBean, looked up once.
      * <p>
@@ -4446,8 +4136,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final java.lang.management.ThreadMXBean THREAD_MX_BEAN =
             java.lang.management.ManagementFactory.getThreadMXBean();
 
+
     /** Whether the JVM exposes per-thread CPU time here (it decides whether the split above means anything). */
     public static final boolean THREAD_CPU_SUPPORTED = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
+
     /**
      * How the render thread spent its non-running time, split by kind.
      * <p>
@@ -4471,6 +4163,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return info == null ? -1L : info.getBlockedTime();
     }
 
+
     /**
      * Whether the per-batch CPU split is measured at all.
      * <p>
@@ -4483,6 +4176,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public static final boolean CPU_SPLIT = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.cpuSplit", "false"));
 
+
     /**
      * Whether the per-batch/per-group {@code System.nanoTime()} deltas the immediateStatistics *Nanos counters take
      * are read at all. The investigation added one nanoTime pair per stage of the batch-accept path - matrix copy,
@@ -4494,6 +4188,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
             || VulkanDiagnostics.enabled();
 
+
     /** The thread's CPU time right now, or -1 when unsupported. */
     public static long threadCpuNanos() {
         if (!CPU_SPLIT) {
@@ -4501,45 +4196,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return THREAD_CPU_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : -1L;
     }
+
     public static long batchCallOpeningNanos;
+
     public static int batchCallOpeningCount;
+
 
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
     int frameDrawn;
+
     private int whiteTextureGlId;
+
     /** Opt-in: the per-target flush-entry census, whose lines only the end-of-run diagnostics read. */
     private static final boolean FLUSH_ENTRY_CENSUS = Boolean.getBoolean("celtium.vulkan.flushEntryCensus");
+
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryGroupsByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryPassesByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     private int blackTextureGlId;
+
     private int blackTextureSubstitutions;
+
     private int immediateTextureInvalidations;
+
     private int directMirrorRefreshes;
+
     int atlasSourceGlId = -1;
+
     int lightmapSourceGlId = -1;
+
     private int immediatePresentFailures;
-    /**
-     * How often every mirror is marked stale, in frames. Zero means never.
-     * <p>
-     * Now zero. The periodic invalidation existed because some textures - the light map above all - were updated through
-     * paths the upload hooks could not reach, so the mirror had to be re-read from OpenGL to stay current. Those paths
-     * are announced now (the DynamicTexture hook and the int[] TextureLoader hook both hand the pixels over), so the
-     * only thing the periodic refresh still did was force a GL readback of the 16x16 light map on the frames where it
-     * had not changed: measured 2.30 ms/frame on Intel and 0.31 on AMD, all of it native blocking, because
-     * glGetTexImage waits for the GPU rather than for the bytes.
-     * <p>
-     * Measured with it off: Intel p50 31.18 -> 28.66/28.89 ms, AMD 16.05 -> 16.12 ms, stale 0.00 ms/frame on both, and
-     * the image is identical to the default (mean absolute difference 0.0000, 5-7 pixels above one step on both GPUs).
-     * The 0.0169 seen between two runs of this setting is the path-dependent batch variation measured separately, not a
-     * staleness error.
-     */
-    private static final int MIRROR_REFRESH_FRAMES =
-            Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 0).intValue();
-    private int mirrorRefreshCounter;
-    private int mirrorRefreshes;
+
     /**
      * Offered and accepted batch counts per format id.
      * <p>
@@ -4552,17 +4243,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     // id9=228 in one run) never appeared in the table the evidence is read from - the histogram and the accepted
     // counters disagreed with each other and neither was wrong about what it had seen.
     private final int[] immediateOfferedByFormat = new int[VulkanImmediateFormats.COUNT];
+
     private final int[] immediateAcceptedByFormat = new int[VulkanImmediateFormats.COUNT];
-    /**
-     * Whether this frame's submission actually reached the queue.
-     * <p>
-     * Set by {@code submitCommands} on a successful {@code vkQueueSubmit} and cleared when a frame opens, so reading it
-     * before {@code endFrame} answers "did this frame hand the images over" - which is the question the audit's item E
-     * needs answered. It is deliberately not {@code submissionPending}: that flag belongs to GPU-idle bookkeeping and is
-     * cleared by the idle wait before {@code endFrame} runs, which is why using it there refused to end every healthy
-     * frame.
-     */
-    boolean frameSubmitReachedQueue;
+
 
     /**
      * Batches drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
@@ -4585,6 +4268,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return text.append(']').toString();
     }
 
+
     /**
      * Sets the offer stage and counts how many offers reached it (BH-15's open question).
      * <p>
@@ -4604,6 +4288,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /**
      * Prints where the chain pair is cleared in the frame, with the image and the identity that triggered it.
      * <p>
@@ -4618,7 +4303,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         this.chainPairClearLogs++;
         GllessFrameTarget glless = offTargetTarget();
-        System.out.println("[Celtium] CELTIUM_CHAIN_CLEAR frame=" + this.frameId + " site=" + site
+        System.out.println("[Celtium] CELTIUM_CHAIN_CLEAR frame=" + this.frame.frameId + " site=" + site
                 + " image=0x" + Long.toHexString(glless == null ? 0L
                         : glless.chainPairColorImage(this.targetRegistry.currentIdentity()))
                 + " target=" + this.targetRegistry.currentIdentity() + " onMain=" + this.targetRegistry.currentIsMain()
@@ -4632,8 +4317,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " offersLastFrame=" + this.immediateOffersLastFrame
                 + " windowsTotal=" + this.immediateStatistics.immediateWindows()
                 + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame()
-                + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId));
+                + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frame.frameId));
     }
+
 
     /**
      * Reads the first vertex's colour word out of the group's own vertex memory, for the bounds line.
@@ -4652,19 +4338,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return "0x" + Integer.toHexString(packed);
     }
 
+
     /** The image/frame/completion-epoch of the last recorded group, for the copy's completion fact. */
     long lastDrawnImage;
+
     long lastDrawnFrame = -1L;
+
     long lastDrawnEpoch = -1L;
+
 
     /** Ids a delete has forgotten, so a stale upload cannot silently recreate their mirror. */
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet forgottenByDelete =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     /** Ids whose mirror was filled by the splash's own upload path, dropped when the splash stops uploading. */
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet splashCanvasIds =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+
     /** Whether the splash uploaded anything in the current frame; the first frame without one ends the splash. */
     private boolean splashUploadsThisFrame;
+
     /** Splash canvases whose mirrors were dropped at the end of the splash. */
 
     /** Format-2 groups sampling a mirror filled by the int[] announcement path (the splash's own canvas). */
@@ -4672,15 +4365,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Bounded lines of {@code CELTIUM_MIRROR_DRAW} (the panorama's descriptor/mirror line). */
     private static final int MIRROR_DRAW_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.mirrorDrawLog", 8).intValue();
+
     private int mirrorDrawLogs;
+
 
     /** Bounded lines of {@code CELTIUM_CHAIN_CLEAR}. */
     private static final int CHAIN_CLEAR_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.chainClearLog", 12).intValue();
+
     private int chainPairClearLogs;
+
 
     /** Offers that reached each stage index; printed as {@code offerStages=[1:..,2:..]}. */
     final int[] offerStageReached = new int[16];
+
 
 
     /**
@@ -4692,6 +4390,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the difference that decides whether a group drawn "successfully" can still leave no pixels.
      */
     private String immediateDrawSite = "none";
+
 
     /**
      * How many immediate groups each draw site recorded, and how many batches they carried.
@@ -4711,40 +4410,43 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * prints the frame-normalised millisecond figure beside the raw counters.
      */
     long windowRecordNanos;
+
     /** How many immediate windows recorded, over the whole run. */
     long windowRecords;
 
     private final java.util.Map<String, Integer> groupsDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
+
     /** The batch count per draw site, in the same order as {@link #groupsDrawnBySite}. */
     private final java.util.Map<String, Integer> batchesDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
+
     /** Groups enqueued with a target other than the main one (audit A10). */
     int groupsEnqueuedForOtherTargets;
+
     /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
     int acceptedForOtherTargets;
+
     /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
     final java.util.Map<String, Integer> offTargetRefusalsByReason =
             new java.util.LinkedHashMap<String, Integer>();
-    /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
-    int otherTargetGroupsDiscarded;
+
     int otherTargetGroupsFlushedByWindow;
+
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetPassGroupsByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetDrawnByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     private int immediateFlushNoPipeline;
+
     private String immediateLastFlushError = "none";
-    /**
-     * Groups whose draws are already recorded but whose command buffer may still be in flight.
-     * <p>
-     * Destroying the mesh buffers immediately after recording them is a use-after-free as far as the GPU is
-     * concerned: the handoff submits later in the same pass, so the buffers must outlive it. Keeping one frame's
-     * worth and releasing it at the next flush is enough, because a pass only starts after the previous one signalled.
-     */
-    final java.util.List<ImmediateGroup> retiredImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
+
     /** Scratch for the flush pass's kept groups; compacted back into {@link #immediateGroups} once per pass. */
     private final java.util.List<ImmediateGroup> keptImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
+
     private VulkanImmediateColourRecordsPipeline immediatePipeline;
+
     /**
      * The scratch the per-call matrix builders fill in place of a fresh {@code new float[16]}: {@code ortho},
      * {@code frustum} and the perspective helper each built a throwaway array per call on a path the matrix census
@@ -4763,8 +4465,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private final float[] matrixScratch = new float[16];
 
+
     /** The builders whose scratch matrix is zeroed before the write, resolved once from the property. */
     private static final java.util.Set<String> SCRATCH_ZERO_BUILDERS = scratchZeroBuilders();
+
 
     /**
      * Which builders clear the shared scratch before writing it, from {@code -Dceltium.vulkan.scratchZero} as a comma
@@ -4813,11 +4517,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     final float[] glProjection = new float[16];
+
     final float[] glModelView = new float[16];
+
 
     /** A/B-only switch for proving the exact same JAR fixes deferred font-state ordering. Default on. */
     private static final boolean FONT_DRAW_STATE_BOUNDARY_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.fontDrawStateBoundary", "true"));
+
 
     /**
      * A draw-state change is a boundary for the coalesced font run, exactly like a matrix change is: the run's quads
@@ -4865,6 +4572,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
+
     /** BH-07: the blend equation, on the mirror the capture reads when the stub is not installed (the bridge). */
     @Override
     public void blendEquation(int rgbEquation, int alphaEquation) {
@@ -4872,6 +4580,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateState.blendEquation(rgbEquation, alphaEquation);
         this.immediateStatistics.noteImmediateStateCalls();
     }
+
 
     /** BH-10: the colour write mask, on the same mirror and for the same reason as the equation above. */
     @Override
@@ -4883,40 +4592,48 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
+
     /** {@return whether the depth test is enabled in the state mirror}. */
     public boolean celtium$depthTestEnabled() {
         return this.immediateState.depthTestEnabled();
     }
+
 
     /** {@return whether alpha testing is enabled in the state mirror}. */
     public boolean celtium$alphaTestEnabled() {
         return this.immediateState.alphaTestEnabled();
     }
 
+
     /** {@return the two light directions as the fixed pipeline keeps them}. */
     public float[] celtium$lightDirections() {
         return this.immediateState.lightDirections();
     }
+
 
     /** {@return the two lights' diffuse colours}. */
     public float[] celtium$lightDiffuse() {
         return this.immediateState.lightDiffuse();
     }
 
+
     /** {@return the light-model ambient the shader lighting uses}. */
     public float[] celtium$lightAmbient() {
         return this.immediateState.lightAmbient();
     }
+
 
     /** {@return whether fixed-function lighting is enabled in the state mirror}. */
     public boolean celtium$lightingEnabled() {
         return this.immediateState.lightingEnabled();
     }
 
+
     /** {@return the shade model the mirror holds}, for the attribute stack's {@code GL_LIGHTING_BIT} snapshot. */
     public int celtium$shadeModel() {
         return this.immediateState.shadeModel();
     }
+
 
     /**
      * Puts the lighting payload back to an attribute-stack snapshot; see
@@ -4931,10 +4648,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return changed;
     }
 
+
     /** {@return the device's 2D texture size limit}, which glGetIntegerv(GL_MAX_TEXTURE_SIZE) answers. */
     public int celtium$maxTextureSize() {
         return this.context.maxImageDimension2D();
     }
+
 
     /**
      * {@return the highest line width the device can draw}, which the stub's line-width range answers
@@ -4948,20 +4667,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return celtium$maxLineWidth();
     }
 
+
     /** {@return the alpha comparison the game last set}, as a GL enum. */
     public int celtium$alphaTestFuncGl() {
         return this.immediateState.alphaFunc();
     }
+
 
     /** {@return the alpha comparison's reference value}. */
     public float celtium$alphaTestReference() {
         return this.immediateState.alphaFuncReference();
     }
 
+
     /** {@return the depth comparison the game last set}, as a GL enum; the stub answers its query from here. */
     public int celtium$depthFuncGl() {
         return this.immediateState.depthFunc();
     }
+
 
     /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
     public boolean celtium$depthWritesLive() {
@@ -4985,6 +4708,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
+
 
     /**
      * The alpha test, which had no implementation at all.
@@ -5021,6 +4745,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateState.lightingEnabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
     }
+
 
     /**
      * {@code EntityRenderer.enableLightmap()} / {@code disableLightmap()}: the light-map texture unit was enabled or
@@ -5069,6 +4794,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
+
     // ----------------------------------------------------------------------------------------------
     // Fixed-function fog, mirrored from GlStateManager by GlStateManagerFogMixin.
     //
@@ -5091,6 +4817,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The immediate path's fixed-function fog, mirrored from GlStateManager (see ImmediateFogState). */
     final ImmediateFogState fog = ImmediateFogState.current();
 
+
     /**
      * The lit ITEM family's fog: the block at 224..255 and the eye-space reconstruction in
      * {@code immediate_tex_color_lit.vert}. Always on, pinned: the fogged side was adopted after the within-run
@@ -5101,28 +4828,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the unfogged arm's fog.
      */
     static final boolean LIT_FOG = true;
+
     /** Lit groups whose fog block was written: the number that says the fix is on the path, not merely compiled. */
     private long litFogGroups;
+
     /**
      * Lit groups that carried fog but were drawn unfogged because their projection is not the perspective one the
      * eye-space reconstruction reads. Counted rather than silent: an orthographic lit draw with fog on is the only
      * shape that can land here, and the GUI (where it happens) has fog off.
      */
     private long litFogSkippedNonPerspective;
+
     private int litFogSkipLogs;
 
     @Override
     public void setFogEnabled(boolean enabled) {
         this.fog.enabled(enabled);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("enable=" + enabled, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("enable=" + enabled, this.frame.frameId);
     }
 
     @Override
     public void setFogMode(int glMode) {
         this.fog.parameter(0x0B65, glMode);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("mode=" + glMode, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("mode=" + glMode, this.frame.frameId);
     }
 
     @Override
@@ -5135,29 +4865,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public void setFogStart(float start) {
         this.fog.parameter(0x0B63, start);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("start=" + start, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("start=" + start, this.frame.frameId);
     }
 
     @Override
     public void setFogEnd(float end) {
         this.fog.parameter(0x0B64, end);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("end=" + end, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("end=" + end, this.frame.frameId);
     }
 
     @Override
     public void setFogColor(float red, float green, float blue) {
         this.fog.color(red, green, blue);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("colour=" + red + "," + green + "," + blue, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("colour=" + red + "," + green + "," + blue, this.frame.frameId);
     }
 
     @Override
     public void setFogRadial(boolean radial) {
         this.fog.parameter(0x855A, radial ? 0x855B : 0x855C);
         this.immediateStatistics.noteImmediateStateCalls();
-        if (this.fog.logOpen()) this.fog.log("radial=" + radial, this.frameId);
+        if (this.fog.logOpen()) this.fog.log("radial=" + radial, this.frame.frameId);
     }
+
 
     /**
      * {@inheritDoc}
@@ -5173,6 +4904,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.fog.available();
     }
 
+
     /**
      * Records that a group's fog was captured at offer time while the live state at close time says something else.
      * <p>
@@ -5183,6 +4915,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final int FOG_CAPTURE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.fogCaptureLog", 4).intValue();
+
     private int fogCaptureDriftLogged;
 
     private void celtium$noteFogCaptureDrift(ImmediateGroup group) {
@@ -5196,7 +4929,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return;
         }
         this.fogCaptureDriftLogged++;
-        System.out.println("[Celtium] CELTIUM_FOG_CAPTURE frame=" + this.frameId + " fmt=" + group.formatId
+        System.out.println("[Celtium] CELTIUM_FOG_CAPTURE frame=" + this.frame.frameId + " fmt=" + group.formatId
                 + " batches=" + group.batches + " capturedSelector=" + captured + " liveSelector=" + live
                 + " lightParams=" + (group.lightParams != null)
                 + " fogEnabledNow=" + this.fog.enabled + " fogMirrored=" + this.fog.mirrored
@@ -5206,6 +4939,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         : "the group was offered under one fog state and closed under another; the offered one is what"
                         + " the batch was drawn with") + "]");
     }
+
 
     /**
      * OPT-09/BH-36: records one batch's commands as indirect packets and issues them as few calls as the device's
@@ -5281,6 +5015,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.fog.groups++;
     }
 
+
     /**
      * The lit ITEM family's fog block (224..255) and the two projection scales its vertex stage needs.
      * <p>
@@ -5302,6 +5037,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     long litFogGroupCount() {
         return this.litFogGroups;
     }
+
 
     /** {@return the lit groups drawn unfogged because their projection is not perspective}. */
     long litFogSkipCount() {
@@ -5326,7 +5062,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.litFogSkippedNonPerspective++;
                 if (this.litFogSkipLogs < 4) {
                     this.litFogSkipLogs++;
-                    System.out.println("[Celtium] CELTIUM_LIT_FOG_SKIPPED frame=" + this.frameId
+                    System.out.println("[Celtium] CELTIUM_LIT_FOG_SKIPPED frame=" + this.frame.frameId
                             + " format=" + group.formatId + " batches=" + group.batches
                             + " reason=the projection is not the perspective one the eye-space reconstruction reads"
                             + " proj00=" + (projection == null ? Float.NaN : projection[0])
@@ -5351,6 +5087,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.litFogGroups++;
     }
 
+
     /**
      * Announces a whole-texture {@code int[]} upload, the {@code TextureUtil.uploadTexture} / DynamicTexture path.
      * <p>
@@ -5367,6 +5104,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
          */
         announceDynamicTexture(glTextureId, pixels, width, height, false);
     }
+
 
     /**
      * As the four-argument form, with the caller's own verdict on whether this upload came from the splash.
@@ -5401,7 +5139,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.forgottenByDelete.remove(glTextureId);
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
+            this.textureRegistry = this.owner.celtium$registry();
         }
         // Timed as passes: the light map's upload is the largest single tick-frame item (l1split-amd: 74-308 us inside
         // "lightmap"); dynFlush and dynMirror say whether it is the ordering flush or the mirror update.
@@ -5433,6 +5171,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
 
+
     /** {@return whether a queued batch for this target samples the published outline image}. */
     private boolean celtium$queuedForTargetUsesPublished(long target) {
         if (this.presentSwapchain.publishedChainOutput == null || this.presentSwapchain.publishedChainTexture == 0) {
@@ -5445,6 +5184,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return false;
     }
+
 
     /**
      * {@return whether a queued group still has to draw a batch that samples this GL texture}.
@@ -5465,6 +5205,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+
     /**
      * {@return whether a queued group this point's window would draw - one offered for the target now
      * bound - samples this GL texture}. The target-filtered twin of {@link #queuedGroupUsesTexture}:
@@ -5483,6 +5224,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
         // A queued group sampling this texture is drawn before its mirror changes: an ordering
@@ -5492,18 +5234,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushPendingForTextureAnnounce(glTextureId);
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
+            this.textureRegistry = this.owner.celtium$registry();
         }
         this.textureRegistry.announceImage(glTextureId, image);
         this.textureStats.noteAnnouncedUpload();
     }
 
+
     /** How many animated sprite uploads flushed the queued immediate groups because one samples the atlas. */
     long animatedUploadFlushes;
+
     /** In-world animated sprite mirror updates: count, total and worst nanoseconds (see announceAnimatedUpload). */
     long inWorldAnimMirrorCalls;
+
     long inWorldAnimMirrorNanos;
+
     long inWorldAnimMirrorWorstNanos;
+
 
     /**
      * Diagnostic only: {@code -Dceltium.vulkan.skipAnimatedUploads=true} drops every animated sprite frame, so the
@@ -5511,30 +5258,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * r69prof put it at 85 samples against Celeritas's 31); never an acceptance configuration.
      */
     private static final String SKIP_ANIMATED = System.getProperty("celtium.vulkan.skipAnimatedUploads", "");
+
     /** {@code true} or {@code all}: return before anything. */
     private static final boolean SKIP_ANIMATED_UPLOADS = "true".equals(SKIP_ANIMATED) || "all".equals(SKIP_ANIMATED);
+
     /** {@code flush}: everything but the flush of a queued group that samples the atlas. */
     private static final boolean SKIP_ANIMATED_FLUSH = "flush".equals(SKIP_ANIMATED);
+
     /** {@code upload}: the checks and the flush, but not the mirror update (conversion, staging, copies). */
     private static final boolean SKIP_ANIMATED_MIRROR = "upload".equals(SKIP_ANIMATED);
+
     /**
      * {@code load} / {@code world}: the whole path, but only before / only after the first world pass. Splits the
      * ~17,000 resource-loading uploads from the few hundred in-world ones (r79-source, r79-time).
      */
     private static final boolean SKIP_ANIMATED_BEFORE_WORLD = "load".equals(SKIP_ANIMATED);
+
     private static final boolean SKIP_ANIMATED_IN_WORLD = "world".equals(SKIP_ANIMATED);
+
     /** Set by the first world pass and never cleared: the boundary the load/world split asks about. */
     private boolean worldPassSeen;
 
+
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
+
     @Override
     public void beginAnimationUploads(int glTextureId) {
         if (this.animationBatchTexture != null || glTextureId <= 0) {
             return;
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
+            this.textureRegistry = this.owner.celtium$registry();
         }
         VulkanGlTexture texture = this.textureRegistry.existing(glTextureId);
         if (texture != null && texture.beginPatchBatch()) {
@@ -5557,6 +5312,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
     }
+
 
     /**
      * Announces a whole-texture write made through the animation path, which writes into whatever texture is bound.
@@ -5584,7 +5340,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return;
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
+            this.textureRegistry = this.owner.celtium$registry();
         }
         // Which id the animation announces, and which id the light map has: if those differ, the light map's writes are being
         // announced against something else and its refreshes will keep reading back.
@@ -5669,7 +5425,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // The terrain atlas and the light map are held directly rather than through the registry, so an animation that
         // re-uploads one of them would leave this renderer drawing the old content forever (audit S16). They are refreshed
         // here, in place, which keeps their view and generation - and therefore every descriptor key - unchanged.
-        if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
+        if (this.owner.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
             try {
                 // The announcement first: if the write that triggered this invalidation handed its pixels over, the mirror can
                 // be filled from them and the readback is unnecessary - which is the whole stream this path was. The backlog
@@ -5684,17 +5440,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.readbackSkippedAfterAnnouncement++;
                 } else if (this.textureRegistry != null
                         && !VulkanTextureRegistry.captureStore().textureHasPendingPatches(glTextureId, 0)
-                        && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
+                        && this.textureRegistry.applyAnnouncedTo(this.owner.atlasTexture, glTextureId)) {
                     this.textureStats.noteDirectMirrorFromAnnouncement();
                 } else {
-                    this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    this.owner.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                     if (this.textureRegistry != null) {
                         this.textureRegistry.markFullyInitialized(glTextureId);
                     }
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
-                record("atlas re-upload failed: " + describe(error));
+                this.reports.record("atlas re-upload failed: " + describe(error));
             }
         }
         if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
@@ -5714,7 +5470,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
-                record("light map re-upload failed: " + describe(error));
+                this.reports.record("light map re-upload failed: " + describe(error));
             }
         }
         if (this.textureRegistry != null) {
@@ -5722,6 +5478,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         this.immediateTextureInvalidations++;
     }
+
 
     /**
      * Establishes the whole image for a directly sampled texture - the atlas or the light map - exactly once per generation.
@@ -5774,6 +5531,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         celtium$noteDirectSupply(what, glTextureId, image, "readback");
     }
 
+
     /** Names a directly sampled texture's supply arm and the mirror's state afterwards, bounded to a few lines each. */
     private void celtium$noteDirectSupply(String what, int glTextureId, VulkanGlTexture image, String arm) {
         if (this.directSupplyLogs >= 8) {
@@ -5786,8 +5544,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " readbackSkips=" + this.readbackSkippedAfterAnnouncement);
     }
 
+
     /** Bounded count for {@link #celtium$noteDirectSupply}. */
     private int directSupplyLogs;
+
 
     /**
      * Handles a GL texture id being fully (re)allocated: a resource reload, a re-stitch, or an id that came back for
@@ -5803,6 +5563,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.publishedTextures.forgetColorTexture(glTextureId);
         onGlTextureReallocated(glTextureId, -1, -1);
     }
+
 
     /**
      * As {@link #onGlTextureReallocated(int)}, with the incoming content's size so a same-size write keeps its mirror.
@@ -5840,8 +5601,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         // Remembered so a later upload for a deleted id can be told from a re-creation (see announceDynamicTexture).
         this.forgottenByDelete.add(glTextureId);
-        if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
-            this.atlasTexture = null;
+        if (this.owner.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
+            this.owner.atlasTexture = null;
             this.atlasSourceGlId = 0;
             this.atlasGlId = 0;
             this.atlasRefreshCountdown = 0;
@@ -5856,11 +5617,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** Split out of this class (2026-11-06); see GroupChange. */
     final GroupChange groupChange = new GroupChange(this);
 
+
     /** The lit group's light payload and replay variants; split out of this class (2026-11-06), see GroupLighting. */
     final GroupLighting lighting = new GroupLighting(this);
+
 
 
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
@@ -5868,8 +5632,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
             this.lastReportedDirectRefreshes = this.directMirrorRefreshes;
             System.out.println("[Celtium] CELTIUM_GROUPS queued=" + this.immediateGroups.size()
-                    + " recorded=" + this.recordedImmediateGroups.size()
-                    + " retired=" + this.retiredImmediateGroups.size()
+                    + " recorded=" + this.frame.recordedImmediateGroups.size()
+                    + " retired=" + this.frame.retiredImmediateGroups.size()
                     + " staleTargetGeneration=" + this.immediateStatistics.groupsStaleTargetGeneration()
                     + " targetGeneration=" + this.targetRegistry.generation()
                     + " staleWorldEpoch=" + this.immediateStatistics.groupsStaleWorldEpoch()
@@ -5887,9 +5651,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " lineBatchesNative=" + this.lineBatchesNative
                     + " lineBatchesRefusedForWidth=" + this.lineBatchesRefusedForWidth
                     + " maxLineWidth=" + this.maxLineWidth
-                    + " presentHookCalls=" + this.presentHookCalls
+                    + " presentHookCalls=" + this.frame.presentHookCalls
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
-                    + " presentedFromVulkan=" + this.framePresentedFromVulkan
+                    + " presentedFromVulkan=" + this.owner.framePresentedFromVulkan
                     + " glCompositesSkipped=" + this.glCompositesSkipped
                     + " defaultFramebufferCompositesTaken=" + this.defaultFramebufferCompositesTaken
                     + " gameFramebufferIsShared=" + this.gameFramebufferIsShared
@@ -5944,6 +5708,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             FramePassTimings.end("animInvalidate");
         }
     }
+
 
     /**
      * Names what the GL-less invalidation did, on a gate that can actually fire there.
@@ -6003,6 +5768,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteImmediateStateCalls();
         this.textureStats.noteBindTextureCall();
     }
+
 
     /**
      * The skip the {@code GlStateManager.bindTexture} hook asks for before it forwards: the game calls that method for
@@ -6214,6 +5980,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
+
     /**
      * The GLU helper's whole call, mirrored as the load it is.
      * <p>
@@ -6268,6 +6035,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return true;
     }
 
+
     /**
      * One line per distinct projection the GLU channel installs, named with the game-side call site that installed it.
      * <p>
@@ -6302,6 +6070,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " site=[" + site + "]");
     }
 
+
     /**
      * One line per distinct call site whose projection could not be mirrored, with the reason.
      * <p>
@@ -6325,6 +6094,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + round3(aspect) + " near=" + round3(near) + " far=" + round3(far) + " reason=[" + reason
                 + "] site=[" + gluPerspectiveSite() + "]");
     }
+
 
     /** The game-side frames of the current call stack, innermost first: which call site this projection came from. */
     private static String gluPerspectiveSite() {
@@ -6376,8 +6146,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.frustumCalls++;
     }
 
+
     /** Opt-in trace of the matrix multiplies the mirror receives; see {@link #multiplyMatrix}. */
     private static final boolean MATRIX_TRACE = Boolean.getBoolean("celtium.vulkan.matrixTrace");
+
     private static int matrixTraceDumps;
 
     @Override
@@ -6453,6 +6225,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // applyDerivedProjection, so the honest answer is to leave it alone.
     }
 
+
     /** {@return one line per off-target render target that received batches}, for the per-target work's sizing. */
     public String offTargetSummary() {
         StringBuilder text = new StringBuilder();
@@ -6463,6 +6236,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return text.length() == 0 ? "none" : text.toString().trim();
     }
 
+
     /**
      * Which of the two owned pairs an off-target identity's draws render into. The rule itself is stated once, in
      * {@link GllessFrameTarget#pairLabelForIdentity(long)}, which owns the pairs; this is the name the backend's
@@ -6472,11 +6246,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return GllessFrameTarget.pairLabelForIdentity(identity);
     }
 
+
     /** {@return the owned pairs' own creation/clear/self-test counters, or "none" for the GL bridge}. */
     String frameTargetPairSummary() {
         GllessFrameTarget glless = offTargetTarget();
         return glless == null ? "none" : glless.pairSummary();
     }
+
 
     /**
      * {@return the last refusal reason}, with the "unrecorded" marker expanded into the shape the offer stored -
@@ -6491,16 +6267,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return reason;
     }
 
-    /**
-     * Whether the stall latch has closed this backend (item 416): once it has, no draw can be recorded, and
-     * the native draw entry in the Forge layer reads this to skip a draw instead of failing the frame over a
-     * refusal the latch already explains. The latch never clears, by design - the resources it protects may
-     * still be owned by a command buffer that never completed.
-     */
-    public boolean celtium$isGpuStalled() {
-        return this.gpuStalled;
-    }
-
     @Override
     public String lastRefusal() {
         if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
@@ -6511,12 +6277,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return celtium$refusalText();
     }
 
+
     /** Clear-mask-0 ordering flushes: {@code glClear(0)} clears nothing, so ordering it is not GL's contract. */
     long clearOrderFlushesZeroMask;
+
     /** {@return calls to {@link #flushBeforeClear} whose mask was 0}, so the share can be priced. */
     public long clearOrderZeroMaskFlushes() {
         return this.clearOrderFlushesZeroMask;
     }
+
 
     /**
      * Whether the ordering flush a {@code glClear} asks for can be skipped because the clear's own image has no
@@ -6543,15 +6312,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean CLEAR_SKIP_FLUSH =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.clearSkipFlush", "true"));
 
+
     /** Clear-order flushes skipped because the clear's own image had no pending draws. */
     long clearOrderSkipped;
+
     /** {@return clear-order flushes skipped by {@link #CLEAR_SKIP_FLUSH}}, so the window saving can be priced. */
     public long clearOrderSkippedFlushes() {
         return this.clearOrderSkipped;
     }
 
+
     /** The GL clear bits this renderer owns: colour (0x4000) and depth (0x0100). Stencil is not implemented. */
     private static final int CLEAR_ORDER_MASK = 0x4100;
+
 
     /**
      * {@return whether a GL clear mask names an attachment this renderer owns}, the mask half of the clear-order rule.
@@ -6565,8 +6338,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return (mask & CLEAR_ORDER_MASK) != 0;
     }
 
+
     /** Clear-order flushes skipped because the clear named neither colour nor depth. */
     long clearOrderNoTargetMask;
+
     /** {@return clear-order flushes skipped for a mask this renderer does not own}, so the share can be priced. */
     public long clearOrderNoTargetMaskFlushes() {
         return this.clearOrderNoTargetMask;
@@ -6604,6 +6379,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.immediateStatistics.noteClearOrderFlushes();
     }
 
+
     /**
      * {@code -Dceltium.vulkan.mainClearInQueue}: carry the main framebuffer's {@code glClear} in the draw queue.
      * <p>
@@ -6640,19 +6416,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean MAIN_CLEAR_IN_QUEUE =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.mainClearInQueue", "true"));
 
+
     /** Main-framebuffer clears carried by the queue instead of by a window of their own. */
     long mainClearsQueued;
+
     /** {@return main-framebuffer clears carried by the queue}, so the window saving can be priced. */
     public long mainClearsQueuedCount() {
         return this.mainClearsQueued;
     }
 
+
     /** Carried main clears handed back to the frame machinery because their group was discarded undrawn. */
     long mainClearsRescued;
+
     /** {@return carried main clears rescued at a queue discard}, so a leg can price the drop edge. */
     public long mainClearsRescuedCount() {
         return this.mainClearsRescued;
     }
+
 
     /**
      * Scratch for the colour the carried clear was issued with, read out of the stub's own
@@ -6661,6 +6442,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * scratch when the queue takes the clear.
      */
     private final float[] mainClearCarriedRgba = new float[4];
+
 
     /**
      * {@return whether the main framebuffer's clear can ride the queue}, the predicate behind
@@ -6725,14 +6507,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+
     /** Why {@link #celtium$queueCanCarryMainClear} refused, one counter per reason, so a leg names the blocker. */
     long mainClearRefusedNoMask;
+
     long mainClearRefusedBusy;
+
     long mainClearRefusedForeign;
+
     long mainClearRefusedScissor;
+
     long mainClearRefusedNoTarget;
+
     long mainClearRefusedRawWrites;
+
     long mainClearRefusedNoGroup;
+
 
     /** {@return the refusal census, so a leg that carries nothing says which guard stopped it}. */
     String mainClearRefusalSummary() {
@@ -6742,6 +6532,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " rawWrites=" + this.mainClearRefusedRawWrites + " noGroup=" + this.mainClearRefusedNoGroup;
     }
 
+
     /**
      * GLSM stage 2 (S2-2): the carried main clear's reservation mask, read from the
      * ClearState, the reservation's only owner since stage 5 stage 7.
@@ -6750,10 +6541,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.glsmFrameState.clearState().carriedMask();
     }
 
+
     /** Drops the carried reservation in its only owner, the ClearState. */
     private void celtium$dropCarriedReservation() {
         this.glsmFrameState.clearState().clearCarried();
     }
+
 
     /**
      * Attaches the main framebuffer's clear to the last queued group of the main image, so the window that records
@@ -6816,6 +6609,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+
     /**
      * Consumes the stub's pending clear mask when the queue carried this clear, so the latch and the window acquire do
      * not apply it a second time.
@@ -6836,6 +6630,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return true;
     }
 
+
     /**
      * Whether the pending mask is exactly the clear the queue carried.
      * <p>
@@ -6849,10 +6644,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return carriedMask != 0 && (carriedMask & clearMask) == clearMask;
     }
 
+
     /** Drops a reservation that no clear consumed, so a later clear cannot be carried with an earlier one's values. */
     void celtium$forgetCarriedMainClear() {
         celtium$dropCarriedReservation();
     }
+
 
     /**
      * Hands the main clears riding the queue back to the frame machinery, before the queue is discarded.
@@ -6885,6 +6682,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
     }
+
 
     /**
      * {@return whether the clear about to be issued needs the ordering flush}, the predicate behind
@@ -6920,6 +6718,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 identity != Long.MIN_VALUE, celtium$queueHoldsImageOf(identity));
     }
 
+
     /**
      * The decision table behind {@link #celtium$clearNeedsOrderingFlush}, as a pure function so the rule can be pinned
      * without a device.
@@ -6938,6 +6737,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                                                            boolean identityResolved, boolean imageHasPendingDraws) {
         return !pairQueueAvailable || rawWritesPending || !identityResolved || imageHasPendingDraws;
     }
+
 
     /**
      * {@return whether the queue holds a draw into the image {@code identity} renders into}, the carrier scan the clear
@@ -6963,7 +6763,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return false;
     }
-
 
     public void blendFunc(int sourceFactor, int destinationFactor) {
         // Only the factors Vulkan and OpenGL actually define: one run showed every particle group capturing
@@ -6998,10 +6797,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** The blend factors the GL and Vulkan enums define: zero, one, and the 0x0300..0x0307 range. */
     private static boolean isBlendFactor(int factor) {
         return factor == 0 || factor == 1 || (factor >= 0x0300 && factor <= 0x0307);
     }
+
 
     /**
      * Tells the next {@link #bindFramebuffer} that the framebuffer being bound has a different size from the shared images.
@@ -7032,6 +6833,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
     }
+
 
     /**
      * Records which identity the game's own framebuffer field names, and its colour and depth attachments.
@@ -7068,18 +6870,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + Integer.toHexString(System.identityHashCode(this))
                     + " game=0x" + Long.toHexString(identity)
                     + " color=" + colorTexture + " depth=" + depthTexture + " prevDepth=" + previousDepth
-                    + " frame=" + this.frameId);
+                    + " frame=" + this.frame.frameId);
         }
     }
+
 
     /** The game framebuffer's colour texture as of its latest bind; 0 until one is reported. */
     private int gameFramebufferColorTexture;
 
+
     /** The game framebuffer's depth texture as of its latest bind; 0 until one is reported. */
     private int gameFramebufferDepthTexture;
 
+
     /** The game framebuffer's GL name as last reported for its identity; 0 until one is reported. */
     private int gameFramebufferObjectName;
+
 
     /**
      * {@return the game framebuffer's identity when a raw framebuffer's colour attachment is that framebuffer's current
@@ -7102,6 +6908,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.gameFramebufferIdentity;
     }
 
+
     /**
      * {@return whether a draw framebuffer is the window's own image}.
      * <p>
@@ -7118,23 +6925,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity;
     }
 
+
     /** {@return whether GL's 2D texturing is enabled in the mirror}, for the legacy immediate-mode capture. */
     public boolean celtium$texture2dEnabled() {
         return this.immediateState.texture2dEnabled();
     }
+
 
     /** {@return the identity the game's own framebuffer field names}, or {@code MIN_VALUE} when none was reported. */
     public long celtium$gameFramebufferIdentity() {
         return this.gameFramebufferIdentity;
     }
 
+
     /** The vanilla framebuffer deletes its colour texture with the framebuffer, including on resize. */
     public void celtium$forgetDeletedFramebuffer(long identity) {
-        if (identity == 0L || identity == this.gameFramebufferIdentity || this.gpuStalled
+        if (identity == 0L || identity == this.gameFramebufferIdentity || this.frame.gpuStalled
                 || this.context.celtium$isDeviceLost()) return;
         GllessFrameTarget target = offTargetTarget();
         if (target == null) return;
-        this.celtium$forgetPublishedTarget(identity);
+        this.owner.celtium$forgetPublishedTarget(identity);
         this.publishedTextures.bindColorTexture(identity, 0, 0, 0);
         this.publishedTextures.bindDepthTexture(identity, 0);
         if (this.framebufferCache != null) this.framebufferCache.retireChainPair(identity);
@@ -7144,9 +6954,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.rawDeletedAttachmentTargets.remove(Long.valueOf(identity));
     }
 
+
     /** Raw FBO deletion does not delete its colour texture: keep its image until the texture is also deleted. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.util.Set<Long>> rawOrphanedTargets =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<java.util.Set<Long>>();
+
     private final java.util.Set<Long> rawDeletedAttachmentTargets = new java.util.HashSet<>();
 
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
@@ -7166,6 +6978,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // needs its identity recorded and its pair borrowing the shared depth before the pass that draws into it.
         celtium$registerRawFramebuffer(framebuffer, false);
     }
+
 
     /**
      * Registers a raw (non-vanilla-object) framebuffer with the renderer: identity + colour/depth records, and the
@@ -7187,7 +7000,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the next window.
      */
     public void celtium$registerRawFramebuffer(int framebuffer, boolean selectTarget) {
-        if (framebuffer < 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
+        if (framebuffer < 0 || this.frame.gpuStalled || this.context.celtium$isDeviceLost()) return;
         if (framebuffer == 0) {
             if (selectTarget) celtium$bindFromRawRegister(0L, false);
             return;
@@ -7301,9 +7114,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** Last registered (colour, depth, colour extent, depth extent, shared?, format class) per raw name. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> rawRegisteredTargets =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
+
 
     /**
      * {@return the format-class resolution for a raw framebuffer's chain pair} (QUEUE 404, S3): the class
@@ -7373,6 +7188,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 anyUnmapped, anyWidenable, pinned, false, chosen != widest);
     }
 
+
     /**
      * {@return the class the off-target window path ensures the identity's chain pair in}. A raw pair's
      * class was resolved at the registration junction ({@link #celtium$resolvePairFormat}) and is followed
@@ -7393,6 +7209,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 celtium$frameFormatClass());
     }
 
+
     /**
      * The pure half of {@link #celtium$pairClassForWindow} (the device check stays with the caller, as in
      * the rest of QUEUE 404's decisions): no forcing follows the pair, a pinned identity never leaves the
@@ -7403,6 +7220,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return celtium$windowPairClass(forcedClass, pinned, pairClass, deviceCheckedForcedClass,
                 TargetFormatClass.RGBA8_UNORM);
     }
+
 
     /**
      * {@link #celtium$windowPairClass(TargetFormatClass, boolean, TargetFormatClass, TargetFormatClass)}
@@ -7421,6 +7239,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return deviceCheckedForcedClass;
     }
 
+
     /**
      * Counts one pair-class decision in the format census (QUEUE 405, S5), at the point where the
      * resolution takes effect: a re-registration whose tuple did not change never reaches here, so it
@@ -7438,6 +7257,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /**
      * {@return {@code wanted} when this device can use it as a pair colour image, else the default class}.
      * The frame's own class is returned unchecked, as the classic default always was: on an RGBA frame it
@@ -7451,15 +7271,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return VulkanColorFormat.usable(this.context.physicalDevice(), wanted)
                 ? wanted : TargetFormatClass.RGBA8_UNORM;
     }
+
     /** Bounded CELTIUM_RAW_DEPTH_REGISTER lines. */
     private int rawDepthRegisterLogs;
+
     /** Bounded CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines (relocated from the hint's report). */
     private int rawBindGameLogs;
+
     /** Bounded CELTIUM_RAW_BIND_REGISTER lines: proof a raw bind latched its identity as the current target. */
     private int rawBindRegisterLogs;
 
     public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
-        if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
+        if (framebuffer == 0 || this.frame.gpuStalled || this.context.celtium$isDeviceLost()) return;
         // Deleting a framebuffer leaves its texture alive in GL; under the texture identity the image stays with it.
         if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY) return;
         long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
@@ -7481,7 +7304,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     public void celtium$rawTextureDeleted(int texture) {
-        if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY && texture != 0 && !this.gpuStalled
+        if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY && texture != 0 && !this.frame.gpuStalled
                 && !this.context.celtium$isDeviceLost()) {
             long identity = RenderTargetRegistry.rawColorTextureIdentity(texture);
             GllessFrameTarget target = offTargetTarget();
@@ -7503,12 +7326,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // recycled depth name silently inherited the previous texture's shared depth image.
         this.publishedTextures.forgetDepthTexture(texture);
         this.mainFramebufferColorNames.remove(texture);
-        if (texture != 0 && !this.gpuStalled && this.context != null && !this.context.celtium$isDeviceLost()) {
+        if (texture != 0 && !this.frame.gpuStalled && this.context != null && !this.context.celtium$isDeviceLost()) {
             if (this.presentSwapchain.publishedFrameDepthKeys.containsKey(texture)) {
                 // The depth publication over the store entry forgotten below dies with it: the wrapper would
                 // otherwise keep naming an image the store no longer holds, under a name a recycled depth
                 // texture could inherit - the same inheritance the record forget above exists to prevent.
-                this.celtium$registry().unpublishExternalImage(texture);
+                this.owner.celtium$registry().unpublishExternalImage(texture);
                 this.publishedTextures.removePublished(texture);
                 this.presentSwapchain.publishedFrameImages.remove(texture);
                 this.presentSwapchain.publishedFrameDepthKeys.remove(texture);
@@ -7524,6 +7347,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         onGlTextureReallocated(texture);
     }
+
 
     /**
      * The colour texture behind a bound framebuffer, and its size.
@@ -7554,10 +7378,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.framebufferColorTextureReports++;
         if (this.framebufferColorTextureLog < 6) {
             this.framebufferColorTextureLog++;
-            record("framebuffer colour texture: identity=" + framebufferIdentity + " texture=" + colorTexture
+            this.reports.record("framebuffer colour texture: identity=" + framebufferIdentity + " texture=" + colorTexture
                     + " " + width + "x" + height);
         }
     }
+
 
     /**
      * The full colour attachment tuple behind a bound raw framebuffer (index = slot), as the GL stub recorded it.
@@ -7569,6 +7394,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.publishedTextures.bindColorAttachments(framebufferIdentity, colorTextures);
     }
 
+
     /**
      * The depth texture behind a bound raw framebuffer, as the GL stub recorded it. The window head reads the
      * record back ({@code publishedTextures.depthTexture}) to point the identity's chain pair at the shared
@@ -7578,6 +7404,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public void bindFramebufferDepthTexture(long framebufferIdentity, int depthTexture) {
         this.publishedTextures.bindDepthTexture(framebufferIdentity, depthTexture);
     }
+
 
     /**
      * Notes a render-target identity the first time a group is offered under it, so the line can be printed with the
@@ -7603,6 +7430,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return true;
     }
 
+
     /**
      * Reports one group created inside the HUD's own drawing function; see {@link #HUD_CAPTURE_FRAMES}.
      * <p>
@@ -7615,14 +7443,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (HUD_CAPTURE_FRAMES <= 0 || !FramePassTimings.guiSectionActive()) {
             return;
         }
-        if (this.frameId < HUD_CAPTURE_MIN_FRAME) {
+        if (this.frame.frameId < HUD_CAPTURE_MIN_FRAME) {
             return;
         }
-        if (this.hudCaptureLastFrame != this.frameId) {
+        if (this.hudCaptureLastFrame != this.frame.frameId) {
             if (this.hudCaptureFramesReported >= HUD_CAPTURE_FRAMES) {
                 return;
             }
-            this.hudCaptureLastFrame = this.frameId;
+            this.hudCaptureLastFrame = this.frame.frameId;
             this.hudCaptureFramesReported++;
         }
         long identity = this.currentGroupTarget;
@@ -7634,7 +7462,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         long routed = "frame-image".equals(route) ? (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
                 : "chain-pair".equals(route) ? (target == null ? 0L : target.chainPairColorImage(identity))
                 : "default-pair".equals(route) ? (target == null ? 0L : target.offTargetColorImage()) : 0L;
-        System.out.println("[Celtium] CELTIUM_HUD_GROUP frame=" + this.frameId
+        System.out.println("[Celtium] CELTIUM_HUD_GROUP frame=" + this.frame.frameId
                 + " group=" + this.immediateStatistics.immediateGroupsClosed()
                 + " identity=0x" + Long.toHexString(identity)
                 + " isMain=" + isMain + " route=" + route
@@ -7649,6 +7477,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " worldPass=" + this.worldPassActive);
     }
 
+
     /**
      * Counts one group closed inside the HUD's bracket into the item-312 P0 census; see {@link #HUD_P0_FRAMES}.
      * <p>
@@ -7661,12 +7490,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (HUD_P0_FRAMES <= 0 || !FramePassTimings.guiSectionActive()) {
             return;
         }
-        if (this.frameId < HUD_P0_MIN_FRAME || this.hudP0FramesReported >= HUD_P0_FRAMES) {
+        if (this.frame.frameId < HUD_P0_MIN_FRAME || this.hudP0FramesReported >= HUD_P0_FRAMES) {
             return;
         }
-        if (this.hudP0FrameId != this.frameId) {
+        if (this.hudP0FrameId != this.frame.frameId) {
             celtium$flushHudP0Frame();
-            this.hudP0FrameId = this.frameId;
+            this.hudP0FrameId = this.frame.frameId;
             this.hudP0Frame = new HudP0Census.Frame();
         }
         long identity = this.currentGroupTarget;
@@ -7681,6 +7510,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.hudP0Frame.note(this.currentGroupState, isMain, samplesTarget,
                 this.currentGroupBatches, vertices, vertexBytes);
     }
+
 
     /** Prints the accumulated frame's census line and folds it into the running totals. */
     private void celtium$flushHudP0Frame() {
@@ -7713,6 +7543,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** Prints the census summary once, at the budget's end or at world teardown, whichever comes first. */
     private void celtium$printHudP0Summary() {
         if (this.hudP0SummaryPrinted || this.hudP0FramesReported == 0) {
@@ -7732,6 +7563,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " flushSlopeNsPerGroup=" + (Double.isNaN(slope) ? "nan" : Long.toString(Math.round(slope)))
                 + " flushInterceptNs=" + (Double.isNaN(intercept) ? "nan" : Long.toString(Math.round(intercept))));
     }
+
 
     /** Prints the line {@link #celtium$noteTargetIdentity} collected, with the group's texture and format. */
     private void celtium$printTargetImage(long identity, int texture, int formatId) {
@@ -7761,6 +7593,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " chainPair=0x" + Long.toHexString(chainPair)
                 + " defaultPair=0x" + Long.toHexString(defaultPair));
     }
+
 
     /**
      * Records one group's identity, texture and format for the {@code targetStages} census.
@@ -7797,6 +7630,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** The refused-program counts, formatted like the LinkedHashMap text they used to be printed as. */
     String programRefusalsText() {
         if (this.shaderProgramRefusedPrograms.isEmpty()) {
@@ -7811,6 +7645,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return text.append('}').toString();
     }
+
 
     /** An int set formatted like the boxed set it replaced: {@code [3, 4]}. */
     private static String formatIntSet(it.unimi.dsi.fastutil.ints.IntSet values) {
@@ -7827,6 +7662,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return text.append(']').toString();
     }
+
 
     /** {@return each identity seen, its route, and the textures and formats its groups carried}. */
     String celtium$targetStagesSummary() {
@@ -7846,9 +7682,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return text.toString();
     }
 
+
     /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$noteTargetIdentity}. */
     private static final int TARGET_IMAGE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.targetImageLines", 12).intValue();
+
     /**
      * Whether the per-group target-identity census runs at all: {@code targetStageTextures}/{@code targetStageFormats}
      * and {@link #tracedTargetIdentities} are read only by the {@code targetStages} verification line and the bounded
@@ -7858,17 +7696,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     static final boolean TARGET_CENSUS_ENABLED =
             Boolean.getBoolean("celtium.vulkan.targetCensus") || VulkanDiagnostics.enabled();
+
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
+
     private int targetImageLogs;
+
     /** Textures and formats seen per render-target identity, for {@code targetStages} in the verification line. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet>
             targetStageTextures = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet>
             targetStageFormats = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+
     /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
     long[] framebufferColorTexture(long identity) {
         return this.publishedTextures.colorTexture(identity);
     }
+
 
     /**
      * Turns the stub's raw-framebuffer attachment record into the publication the vanilla path makes.
@@ -7933,10 +7777,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return true;
     }
 
+
     /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
     private int rawFramebufferAdoptions;
+
     /** Bounded CELTIUM_SHARED_DEPTH window lines. */
     private int sharedDepthWindowLogs;
+
     /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
     long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
@@ -7948,6 +7795,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return celtium$validateColorTextureIdentity(glTextureName, identity);
     }
+
 
     /**
      * The size check half of {@link #celtium$framebufferIdentityForColorTexture}, for a caller that already resolved
@@ -7981,6 +7829,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     private int staleColorTextureLogs;
 
+
     /**
      * Links a framebuffer's GL object name to its identity, from the mixin that sees both at bind time.
      * <p>
@@ -7998,10 +7847,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /** {@return the identity a GL framebuffer name was reported under}, or {@link Long#MIN_VALUE} when unknown. */
     long celtium$identityForFramebufferName(int framebufferObject) {
         return this.targetRegistry.identityForFramebufferName(framebufferObject);
     }
+
 
     /**
      * Gives a bound texture name the image its own framebuffer draws into, when the registry holds no mirror for it.
@@ -8042,6 +7893,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return false;
     }
+
 
     /**
      * The same publication for a caller that already resolved the identity and its recorded attachment.
@@ -8098,7 +7950,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             int[] window = cachedWindowFramebufferSize();
             if ((window[0] > 0 && window[1] > 0)
                     || (this.mainFramebufferWidth > 0 && this.mainFramebufferHeight > 0)) {
-                ensureFrameTarget();
+                this.owner.ensureFrameTarget();
                 if (this.frameTarget != null && this.fboTargetEnsureLogs < 8) {
                     this.fboTargetEnsureLogs++;
                     System.out.println("[Celtium] CELTIUM_FBO_TARGET_ENSURED name=" + glTextureName
@@ -8125,7 +7977,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.mainColorSampled = true;
             if (this.frameTarget instanceof GllessFrameTarget gllessTarget
                     && gllessTarget.hasLivePresentBorrow()) {
-                this.mainColorSampledBorrowClosedFrame = this.frameId;
+                this.mainColorSampledBorrowClosedFrame = this.frame.frameId;
                 if (this.fboPublishRefusalLogs < 16) {
                     this.fboPublishRefusalLogs++;
                     System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
@@ -8191,7 +8043,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             return false;
         }
-        this.celtium$publishFrameTexture(glTextureName, image, view, width, height);
+        this.owner.celtium$publishFrameTexture(glTextureName, image, view, width, height);
         this.publishedTextures.noteColorTexturePublished();
         if (this.framebufferColorTextureLogs < 8) {
             this.framebufferColorTextureLogs++;
@@ -8207,6 +8059,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // answer nobody read. The window head is 2.8 us and this was a third of it.
         return true;
     }
+
 
     /**
      * {@return the refusal reason for a depth publication whose shared depth store entry is incomplete}:
@@ -8227,6 +8080,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 && layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
         return layoutOnly ? "depth-layout-unrecorded" : "depth-not-in-store";
     }
+
 
     /**
      * Publishes a framebuffer's depth texture name over the shared depth image that stands for it - the depth
@@ -8253,6 +8107,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return celtium$publishDepthFromSharedStore(glTextureName, identity);
     }
 
+
     /**
      * Publishes a standalone depth texture (no framebuffer currently attaches it, e.g. a copied {@code altDepth} /
      * {@code depthtex1} texture written via the native depth copy) when the shared depth store already holds an image
@@ -8270,6 +8125,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return celtium$publishDepthFromSharedStore(glTextureName, depthKey);
     }
 
+
     /**
      * {@return whether a name no supply route could fill may be materialized as a standalone texture}:
      * it has recorded storage and no usable mirror yet, it is no framebuffer's colour or depth
@@ -8285,6 +8141,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 && width > 0 && height > 0;
     }
 
+
     /**
      * Materializes the mirror of a standalone texture the game allocated storage for but nothing
      * supplies - the colour twin of {@link #celtium$publishStandaloneDepthTexture}'s case, for a name
@@ -8299,7 +8156,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * @return whether the name resolves to a mirror with an image now
      */
     boolean celtium$materializeStandaloneTexture(int glTextureName) {
-        VulkanTextureRegistry registry = celtium$registry();
+        VulkanTextureRegistry registry = this.owner.celtium$registry();
         VulkanGlTexture existing = registry.existing(glTextureName);
         boolean hasUsableMirror = existing != null && existing.view() != 0L;
         boolean colourAttachment = FramebufferAttachmentTable.current().framebufferForColorTexture(glTextureName) != 0
@@ -8371,7 +8228,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             return false;
         }
-        this.celtium$publishFrameDepthTexture(glTextureName, image, view, extent[0], extent[1],
+        this.owner.celtium$publishFrameDepthTexture(glTextureName, image, view, extent[0], extent[1],
                 layout, depthKey);
         if (this.publishedTextures.published(glTextureName) == null) {
             return false;
@@ -8385,6 +8242,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         return true;
     }
+
 
     /**
      * Publishes one extra colour slot of a multi-target framebuffer: the slot's GL texture name over the chain
@@ -8403,17 +8261,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         long image = offTarget.chainPairColorImageAt(identity, slot);
         long view = offTarget.chainPairColorViewAt(identity, slot);
-        if (image != 0L && view != 0L && this.commandBuffer != null && !this.commandState.inRenderPass()) {
+        if (image != 0L && view != 0L && this.frame.commandBuffer != null && !this.frame.commandState.inRenderPass()) {
             // Registered (allocated) but possibly never written: the pair declares GENERAL, so an UNDEFINED slot
             // sampled by a later pass (shadowcolor1) trips VUID-vkCmdDraw-None-09600.
-            offTarget.initializeExtraColorIfUndefined(identity, slot, this.commandBuffer);
+            offTarget.initializeExtraColorIfUndefined(identity, slot, this.frame.commandBuffer);
         }
-        if ((image == 0L || view == 0L) && this.commandBuffer != null && !this.commandState.inRenderPass()) {
+        if ((image == 0L || view == 0L) && this.frame.commandBuffer != null && !this.frame.commandState.inRenderPass()) {
             int allocWidth = width > 0 ? width
                     : VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1000);
             int allocHeight = height > 0 ? height
                     : VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureName, 0, 0x1001);
-            if (offTarget.ensureAndInitializeExtraColor(identity, slot, allocWidth, allocHeight, this.commandBuffer)) {
+            if (offTarget.ensureAndInitializeExtraColor(identity, slot, allocWidth, allocHeight, this.frame.commandBuffer)) {
                 image = offTarget.chainPairColorImageAt(identity, slot);
                 view = offTarget.chainPairColorViewAt(identity, slot);
             }
@@ -8429,7 +8287,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         int publishWidth = width > 0 ? width : this.targetWidth;
         int publishHeight = height > 0 ? height : this.targetHeight;
-        this.celtium$publishFrameTexture(glTextureName, image, view, publishWidth, publishHeight);
+        this.owner.celtium$publishFrameTexture(glTextureName, image, view, publishWidth, publishHeight);
         this.publishedTextures.noteColorTexturePublished();
         if (this.framebufferColorTextureLogs < 8) {
             this.framebufferColorTextureLogs++;
@@ -8440,11 +8298,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return true;
     }
 
+
     /** The colour texture name standing for a framebuffer identity, or 0 when none was reported. */
     int framebufferColorTextureName(long identity) {
         long[] entry = framebufferColorTexture(identity);
         return entry == null ? 0 : (int) entry[0];
     }
+
 
     /**
      * {@return the GL texture name an off-target window just rendered into, or 0 when none is known}.
@@ -8482,8 +8342,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " currentUsed=" + this.currentGroupUsed
                     + " currentTarget=0x" + Long.toHexString(this.currentGroupTarget)
                     + " queued=" + this.immediateGroups.size()
-                    + " recorded=" + this.recordedImmediateGroups.size()
-                    + " retired=" + this.retiredImmediateGroups.size()
+                    + " recorded=" + this.frame.recordedImmediateGroups.size()
+                    + " retired=" + this.frame.retiredImmediateGroups.size()
                     + callers(Thread.currentThread().getStackTrace()));
         }
         celtium$latchGameClearAtTargetChange();
@@ -8547,7 +8407,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (TARGET_CENSUS_ENABLED) {
             org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
             if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
-                record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
+                this.reports.record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
                         + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
                         + " pair=" + pairOfOffTargetIdentity(targetIdentity)
                         + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
@@ -8566,6 +8426,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.liveViewportWidth = width;
         this.liveViewportHeight = height;
     }
+
 
     /**
      * The frame boundary, called before this frame's render pass starts. A world pass that was cancelled or threw
@@ -8599,15 +8460,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // OPT-05's arena frame: one slot per frame, reclaimed only where GPU completion allows. It has to advance here,
         // because a menu-only frame never reaches captureWorldSnapshot - the main menu kept one slot in use forever and
         // appended every frame's menu geometry to it.
-        this.arenaFrameId++;
-        if (this.frameArena != null) {
-            this.frameArena.beginFrame(this.arenaFrameId, VulkanContext.completedEpoch());
+        this.frame.arenaFrameId++;
+        if (this.frame.frameArena != null) {
+            this.frame.frameArena.beginFrame(this.frame.arenaFrameId, VulkanContext.completedEpoch());
         }
         // Only a frame without a world snapshot needs these reset here: with one, captureWorldSnapshot performs the
         // exact swap a few milliseconds later, and doing it twice would clear the previous frame's hashes before the
         // census compares against them.
-        boolean snapshotSinceBoundary = this.frameSnapshotSinceBoundary;
-        this.frameSnapshotSinceBoundary = false;
+        boolean snapshotSinceBoundary = this.frame.frameSnapshotSinceBoundary;
+        this.frame.frameSnapshotSinceBoundary = false;
         if (!snapshotSinceBoundary) {
             this.immediateOffersLastFrame = this.immediateOffersThisFrame;
             this.immediateOffersThisFrame = 0;
@@ -8658,15 +8519,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.terrainStatistics.noteWorldPassBoundaryFlushes();
             }
         }
-        if (this.nativeSolidStageFrame != this.frameId) {
-            this.nativeSolidStageFrame = this.frameId;
+        if (this.nativeSolidStageFrame != this.frame.frameId) {
+            this.nativeSolidStageFrame = this.frame.frameId;
             celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_SOLID);
         }
-        if (this.nativeTranslucentStageFrame != this.frameId) {
-            this.nativeTranslucentStageFrame = this.frameId;
+        if (this.nativeTranslucentStageFrame != this.frame.frameId) {
+            this.nativeTranslucentStageFrame = this.frame.frameId;
             celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_TRANSLUCENT);
         }
     }
+
 
     /** Reports the swapchain's out-of-date state on stdout whenever it changes: the debug list is capped. */
     private void reportOutOfDateState() {
@@ -8679,6 +8541,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " presentFailures=" + this.immediatePresentFailures);
         }
     }
+
 
     /**
      * Captures the projection and camera transform for this frame, once, at the camera boundary.
@@ -8731,17 +8594,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             gllessFrame.setFramesWithNoClear(this.framesWithNoClearAtAll);
             gllessFrame.setPresentLag(this.presentLagMax, this.presentLagOne, this.presentLagMore);
         }
-        this.frameSnapshotSinceBoundary = true;
+        this.frame.frameSnapshotSinceBoundary = true;
         // The frame image as the frame that just ended left it, before the next frame's clear can touch it. Read here
         // rather than at the present because the present reads the swapchain image: the two together are what says
         // whether a flat picture was already flat in the image the blit copies from.
-        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
+        if (SKY_FRAME_PROBE >= 0L && this.frame.frameId >= SKY_FRAME_PROBE
                 && this.skyFrameProbeLines < SKY_FRAME_PROBE_LIMIT
                 && this.frameTarget != null && this.frameTarget.colorImage() != 0L) {
             this.skyFrameProbeLines++;
-            int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+            int[] framePixels = this.owner.celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
                     this.targetWidth, this.targetHeight);
-            System.out.println("[Celtium] CELTIUM_SKY_FRAME_PROBE frame=" + this.frameId
+            System.out.println("[Celtium] CELTIUM_SKY_FRAME_PROBE frame=" + this.frame.frameId
                     + " skyDraws=" + this.skyDrawsThisFrame
                     + " windows=" + this.immediateStatistics.immediateWindowsThisFrame()
                     + " colourClears=" + (offTargetTarget() == null ? -1 : offTargetTarget().colourClearsApplied())
@@ -8759,7 +8622,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         rgba.put(index * 4 + 2, (byte) (value & 0xFF));
                         rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
                     }
-                    VulkanGlTexture.dumpStageImageAsPicture("skyprobe-frame-" + this.frameId, rgba,
+                    VulkanGlTexture.dumpStageImageAsPicture("skyprobe-frame-" + this.frame.frameId, rgba,
                             this.targetWidth, this.targetHeight);
                 } finally {
                     org.lwjgl.system.MemoryUtil.memFree(rgba);
@@ -8767,13 +8630,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
         this.skyDrawsThisFrame = 0;
-        this.frameId++;
+        this.frame.frameId++;
         // A main-clear reservation that no clear consumed must not survive into the next frame: the clear it named was
         // attached to a group of the frame that just ended, and carrying a later clear with its values would erase the
         // wrong colour. Before stage 5 stage 7 this reset the legacy reservation fields directly; the drop now goes
         // through the same helper every other drop uses, so the ClearState reservation obeys the same frame rule.
         celtium$dropCarriedReservation();
-        lastFinishedFrameId = this.frameId;
+        FrameCoordinator.lastFinishedFrameId = this.frame.frameId;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
         FrameBudgetTimings.frameBoundary();
@@ -8786,7 +8649,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     || !this.skyCensusFirst.equals(this.skyCensusLastState))
                     && this.skyCensusLines < SKY_CENSUS_LIMIT) {
                 this.skyCensusLines++;
-                System.out.println("[Celtium] CELTIUM_SKY_FRAME frame=" + this.frameId
+                System.out.println("[Celtium] CELTIUM_SKY_FRAME frame=" + this.frame.frameId
                         + " skySizedPositionBatches=" + this.skyCensusBatches
                         + " first=[" + this.skyCensusFirst + "]");
                 this.skyCensusLastCount = this.skyCensusBatches;
@@ -8799,7 +8662,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             String fanState = "count=" + this.skyFanBatches + " first=[" + this.skyFanFirst + "]";
             if (!fanState.equals(this.skyFanLastState) && this.skyCensusLines < SKY_CENSUS_LIMIT) {
                 this.skyCensusLines++;
-                System.out.println("[Celtium] CELTIUM_SKY_FAN frame=" + this.frameId + " " + fanState);
+                System.out.println("[Celtium] CELTIUM_SKY_FAN frame=" + this.frame.frameId + " " + fanState);
                 this.skyFanLastState = fanState;
             }
             this.skyFanBatches = 0;
@@ -8810,7 +8673,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 if (!this.skyGroupStateThisFrame.equals(this.skyGroupStateLast)
                         && this.skyGroupLines < SKY_GROUP_LIMIT) {
                     this.skyGroupLines++;
-                    System.out.println("[Celtium] CELTIUM_SKY_GROUP frame=" + this.frameId + " "
+                    System.out.println("[Celtium] CELTIUM_SKY_GROUP frame=" + this.frame.frameId + " "
                             + this.skyGroupStateThisFrame);
                     this.skyGroupStateLast = this.skyGroupStateThisFrame;
                 }
@@ -8820,31 +8683,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (GroupDecayCensus.ENABLED) {
             // Before the offers reset below, and after frameId advanced: the frame that just ended is frameId - 1,
             // the number GROUP_BOUNDS printed for its closures while it ran.
-            GroupDecayCensus.frameEnd(this.frameId - 1, this.immediateOffersThisFrame,
+            GroupDecayCensus.frameEnd(this.frame.frameId - 1, this.immediateOffersThisFrame,
                     this.immediateGroups.size(), this.prepareDescriptorFailures,
                     this.targetStatistics.unflushedTargetGroupsDropped(),
-                    this.submissionStatistics.frameArenaFallbackGroups(),
+                    this.frame.submissionStatistics.frameArenaFallbackGroups(),
                     this.immediateLastRefusal, this.immediateStatistics);
         }
         if (UpstreamArrivalCensus.ENABLED) {
             // The upstream stages of the same ended frame (item 727), printed from this same point with the
             // same frame number so the CELTIUM_UPSTREAM and CELTIUM_GROUP_DECAY lines align frame for frame.
-            UpstreamArrivalCensus.frameEnd(this.frameId - 1);
+            UpstreamArrivalCensus.frameEnd(this.frame.frameId - 1);
         }
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
         // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the
         // teardown print, and the overlay trigger needs the Celeritas F3 section to be drawn. One bounded print at a
         // frame every leg reaches makes the counters visible in any leg that runs at all.
-        if (this.frameId == 120) {
+        if (this.frame.frameId == 120) {
             celtium$printVerificationSummary("frame 120", true);
         }
-        this.countersFrameId = this.frameId;
+        this.countersFrameId = this.frame.frameId;
         // OPT-05's arena frame is opened at the true frame boundary (celtium$frameBoundary): a menu-only frame never
         // reaches this method, and the arena slot then stayed in use for the whole session. modelInstances still keys
         // off the diagnostic frameId below.
         if (this.modelInstances != null) {
-            this.modelInstances.beginFrame(this.frameId);
+            this.modelInstances.beginFrame(this.frame.frameId);
         }
         celtium$swapBatchReuseFrames();
         celtium$swapPushComponentFrame();
@@ -8867,7 +8730,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.abLastFrameBoundaryNanos = boundary;
             this.abPreviousFrameBaseline = this.abBaselineArm;
         }
-        this.abBaselineArm = !AB_PARITY_LABEL.isEmpty() && (this.frameId & 1L) == 1L;
+        this.abBaselineArm = !AB_PARITY_LABEL.isEmpty() && (this.frame.frameId & 1L) == 1L;
         if (!AB_PARITY_LABEL.isEmpty()) {
             // The label selects what the non-baseline (even-frame) arm changes. Every arm keeps the picture wrong by
             // construction only where the property says so, and no leg with one of these on is evidence of anything
@@ -8911,12 +8774,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             int cleared = this.rotationLog.size();
             this.rotationLog.clear();
             this.currentGroupRotations = "";
-            System.out.println("[Celtium] CELTIUM_FRAME_BASE frame=" + this.frameId
+            System.out.println("[Celtium] CELTIUM_FRAME_BASE frame=" + this.frame.frameId
                     + " mv=" + matrixText(this.worldSnapshotModelView)
                     + " proj=" + matrixText(this.worldSnapshotProjection)
                     + " rotationsCleared=" + cleared);
         }
     }
+
 
     /**
      * Whether a particle-family batch with this texture can have its descriptor built at all.
@@ -8931,7 +8795,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // refused the batch with "copy failed: NullPointerException". The composite's layout arrives exactly then, which
             // is how twelve batches per run came to be mapped, in range, in the mask, with the right stride, and still
             // declined.
-            this.textureRegistry = celtium$registry();
+            this.textureRegistry = this.owner.celtium$registry();
         }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
         if (texture == null && boundTexture != 0) {
@@ -9000,6 +8864,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /**
      * How many immediate batches this backend has been offered, as a monotonic ordering witness.
      * <p>
@@ -9012,6 +8877,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public int celtium$immediateSequence() {
         return this.immediateStatistics.immediateBatchesOffered();
     }
+
 
     /**
      * Appends one font glyph quad to the backend-owned pending run (task-59), instead of submitting it on its own.
@@ -9033,6 +8899,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 drawMode);
     }
 
+
     /**
      * {@return the retired bake census}. The font-run matrix bake was removed (rejected: leg r53b-bakeon coalesced
      * only 8 of 94 runs), so the counts are permanently zero; the line's shape is kept because the capture's
@@ -9041,6 +8908,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public String celtium$fontBakeSummary() {
         return "fontBakedSegments=0 fontBakedVertices=0 fontBake=off";
     }
+
 
     /**
      * A matrix change is a boundary for the coalesced font run (task-59). The run's quads were appended while these
@@ -9138,6 +9006,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
 
 
+
     /**
      * Sends the pending run out through the normal submission path, and counts how it went: an intervening submission,
      * a group/pass/frame boundary, or a state change. The run is marked inactive <em>before</em> the submission so the
@@ -9146,9 +9015,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private void celtium$flushPendingFontBatch(String how) {
         this.fontBatch.celtium$flushPendingFontBatch(how);
     }
+
     public String celtium$fontBatchSummary() {
         return this.fontBatch.celtium$fontBatchSummary();
     }
+
 
     /**
      * The font run's refusal and retention census, for a leg to read.
@@ -9163,10 +9034,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " fontRunRefusals=" + this.fontRunRefusals;
     }
 
+
     /** The font run's draw-state witness, for a leg to read; see {@link #celtium$fontRetentionSummary()}. */
     public String celtium$fontStateSummary() {
         return this.fontBatch.celtium$fontStateSummary();
     }
+
 
     /**
      * Prints the font run's refusal, retention and draw-state census once.
@@ -9188,6 +9061,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " " + this.fontBatch.celtium$fontAggregationSummary();
     }
 
+
     /**
      * {@return the {@code CELTIUM_FONT_WITNESS_CENSUS} line}. Which witness closed each run: the world frame starts
      * one run per string segment, and folding two segments needs the name of the value that differs between them;
@@ -9196,6 +9070,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private String celtium$fontWitnessCensusLine() {
         return "[Celtium] CELTIUM_FONT_WITNESS_CENSUS " + this.fontBatch.celtium$fontWitnessSummary();
     }
+
 
     /**
      * {@return the {@code CELTIUM_FONT_GLYPH_CENSUS} line, or {@code null} when no capture registered a summary}.
@@ -9227,6 +9102,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             System.out.println(glyph);
         }
     }
+
 
     /**
      * Prints the font census at process exit, through the descriptor the process was started with.
@@ -9273,6 +9149,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     private boolean fontCensusExitHookInstalled;
 
+
     /**
      * Prints the window's fixed cost in microseconds per window, split into the parts that own it.
      * <p>
@@ -9289,6 +9166,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             System.out.println(line);
         }
     }
+
 
     /**
      * Prints the window split from the frame boundary, every {@link #WINDOW_SPLIT_REPORT_FRAMES} frames.
@@ -9309,9 +9187,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         celtium$printWindowSplit();
     }
 
+
     /** How often the window split is printed from the frame boundary; see {@link #celtium$reportWindowSplitIfDue()}. */
     private static final long WINDOW_SPLIT_REPORT_FRAMES = 600L;
+
     private long windowSplitReportFrames;
+
 
     /**
      * {@return the {@code CELTIUM_WINDOW_SPLIT} line, or {@code null} when the instrument is off or no window ran}.
@@ -9347,6 +9228,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " off[...] splits offTarget into ensureChainPair, the stale-name scan, the published-name"
                 + " transition walk, the pair clear and the framebuffer/extent resolution)";
     }
+
 
     /**
      * Prints the window split at process exit, through the descriptor the process was started with.
@@ -9384,6 +9266,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     private boolean windowSplitExitHookInstalled;
 
+
     /**
      * The mirrored matrices, for the GL reads the stub has to answer: vanilla reads the terrain's projection and
      * model-view through {@code glGetFloatv} ({@code ActiveRenderInfo.updateRenderInfo}), and it builds the frustum
@@ -9394,6 +9277,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
     }
 
+
     /**
      * The mirrored matrix of a GL matrix mode without copying, for a reader that copies it out at once (glGetFloatv).
      * The array is the mirror stack's own - do not write into it.
@@ -9402,20 +9286,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.immediateState.peekMatrix(mode);
     }
 
+
     /** The mirrored projection; see {@link #celtium$mirroredModelView()}. */
     public float[] celtium$mirroredProjection() {
         return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
     }
+
 
     /** The mirrored texture matrix of the active unit, which is what the mirror's texture mode addresses. */
     public float[] celtium$mirroredTexture() {
         return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_TEXTURE);
     }
 
+
     /** Whether the mirrored colour's red and green are both zero - the per-draw probe, without an array per call. */
     public boolean celtium$mirroredColorRedGreenZero() {
         return this.immediateState.colorRed() == 0.0F && this.immediateState.colorGreen() == 0.0F;
     }
+
 
     /**
      * The colour the immediate path's mirror currently holds, as {r,g,b,a}.
@@ -9429,6 +9317,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
                 this.immediateState.colorBlue(), this.immediateState.colorAlpha()};
     }
+
 
     /**
      * Writes the world projection the way {@code Project.gluPerspective} would, from the values Minecraft used.
@@ -9490,6 +9379,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return accepted;
     }
 
+
     /**
      * Whether fixed-function lighting is on in the mirror right now: a Mod's client-array geometry carries normals in
      * a layout only the lit ITEM pipeline shades, so the GL stub picks that layout for a lit draw and keeps its own for
@@ -9500,11 +9390,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.immediateState.lightingEnabled();
     }
 
+
     /** {@inheritDoc} This backend's retained geometry is its {@link NativeGeometryBuffer}. */
     @Override
     public boolean acceptsRetainedGeometry() {
         return true;
     }
+
 
     /**
      * {@inheritDoc} The cast lives here, with the type: the interface carries the geometry as {@code Object}
@@ -9515,11 +9407,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return geometry instanceof NativeGeometryBuffer retained && submitRetainedGeometry(retained, drawMode);
     }
 
+
     /** {@inheritDoc} The mirror read the frontend's replay used to reach through a concrete-type test. */
     @Override
     public boolean texture2dEnabled() {
         return celtium$texture2dEnabled();
     }
+
 
     /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
     public boolean submitRetainedGeometry(NativeGeometryBuffer geometry, int drawMode) {
@@ -9626,7 +9520,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.immediateSubmitBaselineNanos = this.immediateSubmitNanos;
             this.immediateSubmitBaselineOffered = this.immediateStatistics.immediateBatchesOffered();
         }
-        if (this.gpuStalled) {
+        if (this.frame.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
             celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
             return false;
@@ -9658,7 +9552,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         boolean screenBatch = org.soutalab.celtium.vulkan.FramePassTimings.screenSectionActive();
         if (screenBatch) org.soutalab.celtium.vulkan.FramePassTimings.begin("screenBatch");
         if (HudCensus.enabled() && (guiBatch || screenBatch)) {
-            HudCensus.noteOffer(this.frameId);
+            HudCensus.noteOffer(this.frame.frameId);
         }
         long submitStart = timeBatch ? System.nanoTime() : 0L;
         this.submitFlushesAtEntry = this.immediateStatistics.immediateGroupsFlushed();
@@ -9700,6 +9594,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
     }
 
+
     /**
      * Appends one accepted batch to the open group's mesh, dispatching on the topology: a quad batch takes the
      * mesh's quad form (which addresses the shared pattern instead of writing indices, when the mesh's scheme
@@ -9717,6 +9612,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 ? mesh.copyVerticesExpanded(vertexAddress, vertexStride, vertexCount, drawMode)
                 : mesh.copyVerticesTransformedExpanded(vertexAddress, vertexStride, vertexCount, drawMode, modelView);
     }
+
 
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
@@ -9775,7 +9671,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
         long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
-        if (this.gpuStalled) {
+        if (this.frame.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
             // still referenced it, both from paths that assumed the frame had been recorded.
@@ -9803,7 +9699,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // reads: the hash feeds one diagnostic counter (identicalFrameSignatures) and costs two memGetInt calls
             // plus six multiplies on every one of the ~220 offers a frame. The question it was written to answer -
             // "could a frame's recording be reused" - was answered by the census, and the reuse itself was never built.
-            long hash = this.frameBatchSignature;
+            long hash = this.frame.frameBatchSignature;
             hash = (hash ^ formatId) * 1099511628211L;
             hash = (hash ^ (this.immediateState.boundTextureName())) * 1099511628211L;
             hash = (hash ^ vertexCount) * 1099511628211L;
@@ -9813,9 +9709,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + (long) vertexStride
                         * (vertexCount - 1))) * 1099511628211L;
             }
-            this.frameBatchSignature = hash;
+            this.frame.frameBatchSignature = hash;
         }
-        if ((formatId == 1 || formatId == 2) && this.frameId > 300 && this.batchSiteSamples[formatId] < 3) {
+        if ((formatId == 1 || formatId == 2) && this.frame.frameId > 300 && this.batchSiteSamples[formatId] < 3) {
             // Which caller produces the HUD/text batches, once per format: the counters say how many there are and the
             // formats say they are POSITION_COLOR and POSITION_TEX_COLOR, but not who draws them - and that decides whether
             // the cost belongs to the font path, the GUI or the world.
@@ -9924,7 +9820,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.batchCheckNanos = System.nanoTime() - afterBatchStartNanos;
         }
         celtium$offerStage(2);
-        if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
+        if (formatId == 2 && SKIP_GL_COMPOSITE && this.owner.framePresentedFromVulkan > 0
                 && this.targetRegistry.currentIsMain()) {
             // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
             // copy the same picture into the default framebuffer a second time. Taken and drawn as nothing: this is the
@@ -10230,7 +10126,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
                 // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
                 // showed by reporting the identical reason after the first fix.
-                this.textureRegistry = celtium$registry();
+                this.textureRegistry = this.owner.celtium$registry();
             }
             // OPT-18b's other half: a batch whose whole material already matches the open group's is deterministic in
             // everything the preflight computes - the pipeline and descriptor lookups are input-keyed - so the mirror
@@ -10244,7 +10140,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // lookup through.
             long registryStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
-                    boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+                    boundTexture == 0 ? null : this.owner.celtium$registry().get(boundTexture);
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_REGISTRY, System.nanoTime() - registryStart);
             // Mark here unconditionally: the existing stage-9 mark sits inside a refusal-only branch, so the
             // interval that follows it averaged across whichever batches happened to mark both ends and read as an
@@ -10700,7 +10596,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The light-map coordinate belongs to the batch as well, and it is decided here rather than at close
                 // for the same reason and one more: this is the only moment at which `worldPassActive` still describes
                 // the pass the batch was offered in (see currentGroupLightmapCoords).
-                this.currentGroupLightmapCoords = celtium$lightmapForGroup();
+                this.currentGroupLightmapCoords = this.owner.celtium$lightmapForGroup();
                 // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
                 // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
                 // belongs to the group being flushed and blending is on for the whole family, which made the first version of
@@ -10797,7 +10693,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // could have replaced it: the supply (only when the mirror was incomplete) and the publish above (a
                 // table write). Both are named rather than assumed, so the reuse cannot outlive its reason.
                 this.currentGroupTextureImage = (wrapperMayHaveMoved || publishedHere)
-                        ? celtium$registry().get(boundTexture)
+                        ? this.owner.celtium$registry().get(boundTexture)
                         : liveTextureImage;
                 // The group's own freshness stamp, taken at the same point as its mirror: the fast merge compares this
                 // against the live serial instead of refusing on any write anywhere (see the field's javadoc).
@@ -10916,7 +10812,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.acceptedForOtherTargets++;
                 if (this.targetRegistry.currentIdentity() != 0L) {
                     this.lastDrawnOffTargetIdentity = this.targetRegistry.currentIdentity();
-                    this.lastDrawnOffTargetFrame = this.frameId;
+                    this.lastDrawnOffTargetFrame = this.frame.frameId;
                     this.lastDrawnOffTargetPresent = celtium$frameSerial();
                 }
             }
@@ -10970,14 +10866,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // counted, the frame is abandoned, and the next frame tries again.
                     this.targetStatistics.noteWindowFlushFailures();
                     this.lastWindowFlushFailure = describeWithOrigin(error);
-                    this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
+                    this.targetStatistics.setWindowFlushFailureFrame(this.frame.frameId);
                     // Retained, not dropped. The frame is abandoned, so a group whose recording already sits in the
                     // abandoned command buffer has to be recorded again - and the abort branch's own contract is the
                     // pattern: take the recording's counters back off, add its indices back, and put it at the front of
                     // the queue. The unrecorded remainder never left the queue and stays where it is. Clearing the
                     // whole queue here is what erased the window's entity and held-item batches; the drop was counted,
                     // but the per-format histogram has no loss column, so it read as "accepted and never drawn".
-                    for (ImmediateGroup group : this.recordedImmediateGroups) {
+                    for (ImmediateGroup group : this.frame.recordedImmediateGroups) {
                         int batches = group.batches;
                         // An exempt group (flight A1) was never counted at accept, so putting it back must not
                         // put its indices in either - the re-add restores the pre-record count, nothing more.
@@ -10988,8 +10884,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
                     this.groupQueueMutation++;
-                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
-                    this.recordedImmediateGroups.clear();
+                    this.immediateGroups.addAll(0, this.frame.recordedImmediateGroups);
+                    this.frame.recordedImmediateGroups.clear();
                     int retainedBatches = 0;
                     for (ImmediateGroup group : this.immediateGroups) {
                         retainedBatches += group.batches;
@@ -10999,12 +10895,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
 // An abandoned frame is not "the frame is still recording": the flag must not route the
 // next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
+this.frame.frameBufferOpen = false;
                     this.frameTarget.abandonFrame("immediate window submit failure");
                     // The abandoned frame's pack seat closes with it (D7 seat ruling:
                     // endNativeFrame on every exit path, abandon included).
                     org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
-                    record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
+                    this.reports.record("window flush failed at frame " + this.frame.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
                 }
@@ -11029,13 +10925,13 @@ this.frameBufferOpen = false;
                                 .append(this.immediateAcceptedByFormat[id]);
                     }
                 }
-                record(histogram.toString());
+                this.reports.record(histogram.toString());
                 System.out.println("celtium " + histogram);
             }
             if (this.immediateStatistics.immediateTaken() == 500) {
                 // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
                 // draw was cancelled, so anything accepted and not drawn is lost geometry.
-                record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateStatistics.immediateGroupsFlushed()
+                this.reports.record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateStatistics.immediateGroupsFlushed()
                         + " drawn=" + this.immediateStatistics.immediateGroupsDrawn() + " discarded=" + this.immediateStatistics.immediateGroupsDiscarded()
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
@@ -11070,7 +10966,7 @@ this.frameBufferOpen = false;
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.immediateLastRefusal = "copy failed: " + describe(error);
-            record("immediate batch refused: " + describe(error));
+            this.reports.record("immediate batch refused: " + describe(error));
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             celtium$noteFlushSite(1);
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
@@ -11078,7 +10974,6 @@ this.frameBufferOpen = false;
             return false;
         }
     }
-
 
     private void celtium$recordCustomProgramRefusal(int boundProgram, int formatId, int boundTexture) {
         if (formatId == 8 && !this.entityProgramLogged) {
@@ -11116,6 +11011,7 @@ this.frameBufferOpen = false;
         this.immediateStatistics.noteRefusedBeforeAppend();
     }
 
+
     /**
      * Discards every queued group and returns its instance to the pool.
      * <p>
@@ -11147,6 +11043,7 @@ this.frameBufferOpen = false;
             this.immediateGroups.clear();
     }
 
+
     /**
      * Frees the meshes of retired groups whose submissions the sequence watermark has covered.
      * <p>
@@ -11156,15 +11053,15 @@ this.frameBufferOpen = false;
      * still in flight without freeing the later one's geometry out from under it.
      */
     private void releaseRetiredImmediateGroups() {
-        if (this.retiredImmediateGroups.isEmpty()) {
+        if (this.frame.retiredImmediateGroups.isEmpty()) {
             return;
         }
         // Swap-remove rather than the iterator's remove(): iterator.remove() on an ArrayList shifts the whole tail
         // one slot per call, so draining N retired groups was O(N^2) element moves. A retire's place in this list is
         // positional noise - the watermark, not the order, decides who is released - so moving the tail into the hole
         // and re-reading the same index is correct and O(1) a removal.
-        java.util.List<ImmediateGroup> retired = this.retiredImmediateGroups;
-        long completed = this.scheduler.completedSubmitSequence();
+        java.util.List<ImmediateGroup> retired = this.frame.retiredImmediateGroups;
+        long completed = this.frame.scheduler.completedSubmitSequence();
         // Called once per confirmed submission, and the list holds every group still in flight: a scan that found
         // nothing releasable finds nothing again until the watermark moves or a group is added (a group's sequence is
         // set before it enters the list and never changes while it is there).
@@ -11196,8 +11093,11 @@ this.frameBufferOpen = false;
     }
 
     private int lastAlphaReferenceBits = Integer.MIN_VALUE;
+
     private long retiredScanCompleted = Long.MIN_VALUE;
+
     private int retiredScanSize = -1;
+
 
     /**
      * The captured drawing state of a group as one bracketed field, for {@code CELTIUM_GROUP_BOUNDS}.
@@ -11237,6 +11137,7 @@ this.frameBufferOpen = false;
                 + " (gl* read at close, the state fields at the offer)" + "]";
     }
 
+
     /** The GL enable record's answer for one capability, or {@code ?} when the query itself is unavailable. */
     private static String glEnabled(int capability) {
         try {
@@ -11245,6 +11146,7 @@ this.frameBufferOpen = false;
             return "?";
         }
     }
+
 
 
     /**
@@ -11261,6 +11163,7 @@ this.frameBufferOpen = false;
                 && m[8] == 0.0f && m[9] == 0.0f && m[11] == 0.0f
                 && m[15] == 1.0f;
     }
+
 
     /**
      * {@return whether this batch may join or open a pre-transformed group} - the OPT-18b half of the matrix question.
@@ -11320,6 +11223,7 @@ this.frameBufferOpen = false;
         return affine && (formatId == 1 || formatId == 2 || formatId == 6);
     }
 
+
     /**
      * Whether the open group's texture has been written since its mirror was taken - the fast merge's freshness term.
      * <p>
@@ -11342,6 +11246,7 @@ this.frameBufferOpen = false;
                         : VulkanTextureRegistry.captureStore().textureUploadSerial(boundTexture, 0));
     }
 
+
     /**
      * The freshness decision itself, without the stub: {@code true} when the group's mirror is still the one the live
      * texture would supply.
@@ -11357,6 +11262,7 @@ this.frameBufferOpen = false;
         }
         return boundTexture != 0 && groupSerial == liveSerial;
     }
+
 
     /**
      * {@return the pending-index count after one group is drawn}, the accept path's flush bound.
@@ -11378,6 +11284,7 @@ this.frameBufferOpen = false;
         return neverCounted ? pending : pending - indexCount;
     }
 
+
     /**
      * {@return whether a still-queued group counts toward the pending-index counter} at the flush-end recompute.
      * The recompute is the counter's ground truth - it replaces the per-group decrements wholesale - so it must
@@ -11389,6 +11296,7 @@ this.frameBufferOpen = false;
     static boolean celtium$countsTowardPendingIndices(ImmediateGroup group) {
         return group.modelRun == null && !group.indexFlushExempt && group.mesh != null;
     }
+
 
     /**
      * Whether the offered batch's state matches the open group term for term - the fast path's half of the group
@@ -11435,8 +11343,10 @@ this.frameBufferOpen = false;
                 : java.util.Arrays.equals(this.currentGroupModelView, this.glModelView);
     }
 
+
     /** {@code -Dceltium.debug.noAffineBake}, read once: the pre-transform check asks it per offer. */
     private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
+
 
     /**
      * The sixteen integers a batch's pipeline is keyed by, plus the raw inputs a replay can compare instead.
@@ -11447,24 +11357,43 @@ this.frameBufferOpen = false;
      * signature can never disagree about what the state would be - which is what lets a hit reuse the array.
      */
     static final int SIGNATURE_BLEND = 0;
+
     static final int SIGNATURE_SRC_RGB = 1;
+
     static final int SIGNATURE_DST_RGB = 2;
+
     static final int SIGNATURE_SRC_ALPHA = 3;
+
     static final int SIGNATURE_DST_ALPHA = 4;
+
     static final int SIGNATURE_EQ_RGB = 5;
+
     static final int SIGNATURE_EQ_ALPHA = 6;
+
     static final int SIGNATURE_COLOR_MASK = 7;
+
     static final int SIGNATURE_ALPHA_TEST = 8;
+
     static final int SIGNATURE_ALPHA_REF = 9;
+
     static final int SIGNATURE_ALPHA_FUNC = 10;
+
     static final int SIGNATURE_CULL = 11;
+
     static final int SIGNATURE_DEPTH_TEST = 12;
+
     static final int SIGNATURE_DEPTH_WRITE = 13;
+
     static final int SIGNATURE_DEPTH_FUNC = 14;
+
     static final int SIGNATURE_LIGHTING = 15;
+
     static final int SIGNATURE_ENV_MODE = 16;
+
     static final int SIGNATURE_ENV_RGB = 17;
+
     static final int SIGNATURE_WINDOW_TARGET = 18;
+
     /**
      * The culled face and the front-face winding, appended so the state's cull slot can carry all three parts.
      * <p>
@@ -11473,7 +11402,9 @@ this.frameBufferOpen = false;
      * read would be a comparison the replay guard pays for and a change it cannot see.
      */
     static final int SIGNATURE_CULL_FACE = 19;
+
     static final int SIGNATURE_FRONT_FACE = 20;
+
 
     /**
      * The last signature captured, and the three versions that decide whether it can be reused.
@@ -11494,16 +11425,23 @@ this.frameBufferOpen = false;
      * replay's own arrays ({@code ModelReplay}), and a hit has to fill those too.
      */
     private final int[] celtium$signatureCache = new int[ModelReplayFastPath.SIGNATURE];
+
     private long celtium$signatureCacheState = -1L;
+
     private long celtium$signatureCacheEnvironment = -1L;
+
     private int celtium$signatureCacheWindowTarget = -1;
+
     private long celtium$signatureCacheHits;
+
     private long celtium$signatureCacheMisses;
+
 
     /** {@return the signature-cache hits and misses, for the verification summary}. */
     String celtium$signatureCacheSummary() {
         return this.celtium$signatureCacheHits + "/" + this.celtium$signatureCacheMisses;
     }
+
 
     /**
      * Whether the cached signature was taken under exactly these three keys.
@@ -11519,6 +11457,7 @@ this.frameBufferOpen = false;
                 && environmentVersion == cachedEnvironmentVersion
                 && windowTarget == cachedWindowTarget;
     }
+
 
     /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
     void celtium$stateSignature(int[] out) {
@@ -11573,6 +11512,7 @@ this.frameBufferOpen = false;
         this.celtium$signatureCacheEnvironment = environmentVersion;
         this.celtium$signatureCacheWindowTarget = windowTarget;
     }
+
 
     /**
      * The sixteen-int state a signature maps to, with the lab switches applied.
@@ -11649,6 +11589,7 @@ this.frameBufferOpen = false;
                 && signature[SIGNATURE_ENV_RGB] == 0x84E7 ? 1 : 0;
     }
 
+
     /**
      * The per-batch census a state capture performs, taken from a captured state rather than from the live mirror.
      * <p>
@@ -11691,14 +11632,17 @@ this.frameBufferOpen = false;
     }
 
     private int[] celtium$stateSignature = new int[ModelReplayFastPath.SIGNATURE];
+
     /** The captured state's scratch: shared, so anything that keeps the values past the next offer must clone it. */
     private final int[] celtium$stateScratch = new int[16];
+
     /**
      * The bound texture's recorded extent, {width, height}, filled by one stub lookup per offer.
      * <p>
      * Shared scratch like the state array: the accept path reads it immediately and keeps nothing.
      */
     private final int[] textureExtentScratch = new int[2];
+
 
     /**
      * Snapshots the drawing state that bakes into a pipeline.
@@ -11722,6 +11666,7 @@ this.frameBufferOpen = false;
         celtium$noteStateStatistics(state, signature[SIGNATURE_COLOR_MASK]);
         return state;
     }
+
 
     /**
      * The offer path's state key, cached on the three versions the signature is cached on plus the layout id.
@@ -11815,6 +11760,7 @@ this.frameBufferOpen = false;
         return key;
     }
 
+
     /**
      * The offer state-key cache slot a layout id uses.
      * <p>
@@ -11830,6 +11776,7 @@ this.frameBufferOpen = false;
     static int celtium$offerKeyCacheSlot(int formatId) {
         return formatId & (OFFER_KEY_CACHE_SLOTS - 1);
     }
+
 
     /**
      * Whether the cached key was taken under exactly these four keys.
@@ -11848,6 +11795,7 @@ this.frameBufferOpen = false;
                 && windowTarget == cachedWindowTarget
                 && formatId == cachedFormat;
     }
+
 
     /**
      * Fills {@link #celtium$stateScratch} with the state the cached key names, and counts it.
@@ -11873,6 +11821,7 @@ this.frameBufferOpen = false;
         if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
     }
 
+
     /**
      * The offer state-key cache, one slot per layout id; see {@link #celtium$offerStateKey}.
      * <p>
@@ -11881,25 +11830,42 @@ this.frameBufferOpen = false;
      * compared, so a slot never answers for a layout it was not filled with.
      */
     private static final int OFFER_KEY_CACHE_SLOTS = 16;
+
     private final long[] celtium$keyCacheKeys = new long[OFFER_KEY_CACHE_SLOTS];
+
     private final long[] celtium$keyCacheStates = new long[OFFER_KEY_CACHE_SLOTS];
+
     private final long[] celtium$keyCacheEnvironments = new long[OFFER_KEY_CACHE_SLOTS];
+
     private final int[] celtium$keyCacheWindowTargets = new int[OFFER_KEY_CACHE_SLOTS];
+
     private final int[] celtium$keyCacheFormats = new int[OFFER_KEY_CACHE_SLOTS];
+
     private final boolean[] celtium$keyCacheValids = new boolean[OFFER_KEY_CACHE_SLOTS];
+
     private long celtium$keyCacheHits;
+
     private long celtium$keyCacheMisses;
+
     /** Offer-key misses by first differing input, and misses whose recomputed key equalled the slot's previous key. */
     private long celtium$keyMissInvalid;
+
     private long celtium$keyMissState;
+
     private long celtium$keyMissEnvironment;
+
     private long celtium$keyMissWindow;
+
     private long celtium$keyMissSameKey;
+
     /** Hits answered by an equal signature after the version moved, and the per-slot signatures they compare. */
     private long celtium$keyValueHits;
+
     private final int[][] celtium$keyCacheSignatures = new int[OFFER_KEY_CACHE_SLOTS][ModelReplayFastPath.SIGNATURE];
+
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
     private boolean celtium$offerStateFresh;
+
 
     /** {@return the offer state-key cache's hits and misses, for the verification summary}. */
     String celtium$stateKeyCacheSummary() {
@@ -11908,6 +11874,7 @@ this.frameBufferOpen = false;
                 + " env=" + this.celtium$keyMissEnvironment + " window=" + this.celtium$keyMissWindow
                 + " sameKey=" + this.celtium$keyMissSameKey + " valueHits=" + this.celtium$keyValueHits + "]";
     }
+
 
     /**
      * The vertex width a layout id must have, in one place.
@@ -11935,6 +11902,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /**
      * The Vulkan blend state a captured group asks for, rebuilt from its own array.
      * <p>
@@ -11953,6 +11921,7 @@ this.frameBufferOpen = false;
                 state.length > 11 ? state[11] : VulkanColorBlendState.allChannels());
     }
 
+
     /**
      * The Vulkan blend op for one OpenGL blend equation. GL's constants are not Vulkan's and not ordinals of each
      * other, so this is a translation and not a cast; an equation this renderer does not know falls back to ADD, which
@@ -11969,6 +11938,7 @@ this.frameBufferOpen = false;
             default: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
         }
     }
+
 
     /**
      * The Vulkan compare op for one OpenGL depth function. {@code GlStateManager.depthFunc} passes the GL constant
@@ -11988,6 +11958,7 @@ this.frameBufferOpen = false;
             default: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
         }
     }
+
 
     /**
      * The highest line width the device can draw, or 0 when it cannot draw wide lines at all.
@@ -12016,6 +11987,7 @@ this.frameBufferOpen = false;
 
     private final java.nio.FloatBuffer lineWidthScratch = org.lwjgl.BufferUtils.createFloatBuffer(1);
 
+
     /** {@return the line width OpenGL currently has set}, or 1.0 when it cannot be read. */
     private float celtium$requestedLineWidth() {
         try {
@@ -12031,6 +12003,7 @@ this.frameBufferOpen = false;
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
+
     /** A column-major matrix or vector as one bracketed, comma-separated line, for the diagnostic prints. */
     static String matrixText(float[] values) {
         StringBuilder text = new StringBuilder("[");
@@ -12042,6 +12015,7 @@ this.frameBufferOpen = false;
         }
         return text.append(']').toString();
     }
+
 
     /**
      * {@return whether the accept path's supply branch can replace the texture wrapper the offer already resolved}.
@@ -12059,6 +12033,7 @@ this.frameBufferOpen = false;
         return boundTexture != 0 && !mirrorComplete;
     }
 
+
     /**
      * {@return whether a failed lazy supply must drop the mirror it just created}.
      * <p>
@@ -12073,6 +12048,7 @@ this.frameBufferOpen = false;
     static boolean celtium$supplyFailureDropsMirror(boolean entryPreExisted, boolean mirrorHasFullContent) {
         return !entryPreExisted && !mirrorHasFullContent;
     }
+
 
     /**
      * {@return a viewport or clip rectangle as {@code x,y wxh}, or {@code none}}.
@@ -12090,6 +12066,7 @@ this.frameBufferOpen = false;
         }
         return box[0] + "," + box[1] + " " + box[2] + "x" + box[3];
     }
+
 
     /**
      * Brings a full mirror up to date with writes the game made through raw GL (see {@link #rawWriteRefreshes}).
@@ -12139,10 +12116,14 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Opt-in: which call site opens each window flush, so the count can be attacked at its cause. */
     private static final boolean FLUSH_REASON_CENSUS = Boolean.getBoolean("celtium.vulkan.flushReasonCensus");
+
     private final java.util.Map<String, Integer> flushReasons = new java.util.HashMap<String, Integer>();
+
     private static final int FLUSH_REASON_FRAMES = 600;
+
 
     /** Records the call site of one flush, by the first stack frame outside this renderer. */
     private void celtium$noteFlushReason() {
@@ -12166,6 +12147,7 @@ this.frameBufferOpen = false;
     }
 
     private long flushReasonCount;
+
 
     /**
      * {@return the flush-reason census, largest first}, for the diagnostics line.
@@ -12199,12 +12181,13 @@ this.frameBufferOpen = false;
         return base;
     }
 
+
     /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
     private void celtium$reportFlushReasons(boolean force) {
         if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
             return;
         }
-        if (!force && this.frameId % FLUSH_REASON_FRAMES != 0L) {
+        if (!force && this.frame.frameId % FLUSH_REASON_FRAMES != 0L) {
             return;
         }
         java.util.List<java.util.Map.Entry<String, Integer>> rows =
@@ -12214,13 +12197,15 @@ this.frameBufferOpen = false;
         for (int i = 0; i < rows.size() && i < 10; i++) {
             line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
         }
-        System.out.println("[Celtium] CELTIUM_FLUSH_REASONS frame=" + this.frameId
+        System.out.println("[Celtium] CELTIUM_FLUSH_REASONS frame=" + this.frame.frameId
                 + " windows=" + this.immediateStatistics.immediateWindows() + " [" + line + "]");
-        record("flush reasons frame=" + this.frameId + " [" + line + "]");
+        this.reports.record("flush reasons frame=" + this.frame.frameId + " [" + line + "]");
     }
+
 
     /** GL names up to this bound are tracked in the per-name arrays above. */
     private static final int RAW_WRITE_TRACKED_IDS = 1 << 16;
+
     /**
      * Lab switch: {@code -Dceltium.vulkan.coalesceRawWrites=true} records a raw write ordered against queued work as a
      * pending copy instead of flushing a window for it. The copies are recorded after the queued groups they must
@@ -12230,6 +12215,7 @@ this.frameBufferOpen = false;
      */
     private static final boolean COALESCE_RAW_WRITES =
             !"false".equals(System.getProperty("celtium.vulkan.coalesceRawWrites", "true"));
+
     /**
      * On by default: a pending coalesced copy is applied before a batch only when that batch samples the copy's
      * texture. {@code -Dceltium.vulkan.rawWriteSampleGate=false} restores the unconditional flush, which is the
@@ -12243,9 +12229,12 @@ this.frameBufferOpen = false;
      */
     private static final boolean RAW_WRITE_SAMPLE_GATE =
             !"false".equals(System.getProperty("celtium.vulkan.rawWriteSampleGate", "true"));
+
     /** How many offers the gate let through without a flush, and how many it still flushed for. */
     long rawWriteGateSkips;
+
     long rawWriteGateFlushes;
+
     private final it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite> pendingRawWrites =
             new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<PendingRawWrite>();
 
@@ -12256,6 +12245,7 @@ this.frameBufferOpen = false;
             this.mirror = mirror;
         }
     }
+
 
     /**
      * {@return whether a pending coalesced copy targets a texture the batch about to be accepted samples}.
@@ -12275,6 +12265,7 @@ this.frameBufferOpen = false;
                 && this.pendingRawWrites.containsKey(this.lightmapGlId);
     }
 
+
     /** Records every pending raw write after the queued groups already recorded; called once those are in the buffer. */
     private void celtium$applyPendingRawWrites() {
         if (!COALESCE_RAW_WRITES || this.pendingRawWrites.isEmpty()) {
@@ -12282,7 +12273,7 @@ this.frameBufferOpen = false;
         }
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.COALESCED_COPY,
-                    this.pendingRawWrites.size(), this.frameId);
+                    this.pendingRawWrites.size(), this.frame.frameId);
         }
         int[] textures = this.pendingRawWrites.keySet().toIntArray();
         for (int i = 0; i < textures.length; i++) {
@@ -12309,8 +12300,10 @@ this.frameBufferOpen = false;
         }
         this.pendingRawWrites.clear();
     }
+
     /** The stub's write epoch when a batch last took the slow path; the fast merge requires it unchanged. */
     private long slowPathWriteEpoch = Long.MIN_VALUE;
+
 
     /**
      * {@return whether queued work samples a texture}: the open group's batches or a group already in the queue.
@@ -12324,12 +12317,13 @@ this.frameBufferOpen = false;
             return true;
         }
         if (celtium$listSamplesTexture(this.immediateGroups, texture)
-                || celtium$listSamplesTexture(this.retiredImmediateGroups, texture)
+                || celtium$listSamplesTexture(this.frame.retiredImmediateGroups, texture)
                 || celtium$listSamplesTexture(this.keptImmediateGroups, texture)) {
             return true;
         }
         return false;
     }
+
 
     /** {@return whether any group of a queue samples the texture}; the queues are short and this runs only on a write. */
     private static boolean celtium$listSamplesTexture(java.util.List<ImmediateGroup> groups, int texture) {
@@ -12342,11 +12336,12 @@ this.frameBufferOpen = false;
         return false;
     }
 
+
     /** {@return whether the mirror took the texture's current captured content}. */
     private boolean celtium$applyRawWrites(int texture, org.soutalab.celtium.vulkan.VulkanGlTexture mirror) {
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_WRITE,
-                    texture, this.frameId);
+                    texture, this.frame.frameId);
         }
         // The mirror already holds this level's current content, so the upload would return at its own serial check -
         // and that check is not free. Measured on leg r34b-census (`celtium-world-accept`, 188 mods, AMD RX 6400):
@@ -12398,6 +12393,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Records that the mirror already holds every write up to now - after a supply, or an announced upload. */
     private void celtium$noteMirrorCurrent(int texture) {
         if (texture <= 0) {
@@ -12414,6 +12410,7 @@ this.frameBufferOpen = false;
         this.rawWriteSerialApplied[texture] = VulkanTextureRegistry.captureStore().textureUploadSerial(texture, 0);
     }
 
+
     /** {@return whether a 4x4 float matrix is the identity}, within a float's rounding of one. */
     static boolean celtium$isAffineIdentity(float[] matrix) {
         if (matrix == null || matrix.length < 16) {
@@ -12428,6 +12425,7 @@ this.frameBufferOpen = false;
         return true;
     }
 
+
     /**
      * The bit of a group's state key that marks a line batch ({@code GL_LINES} / {@code GL_LINE_STRIP}).
      * <p>
@@ -12435,6 +12433,7 @@ this.frameBufferOpen = false;
      * It is therefore <em>not</em> part of {@link #celtium$stateKey}'s hash: see that method.
      */
     static final long LINE_KEY_BIT = 1L << 61;
+
 
     /**
      * {@return the identity of one drawing state: a 64-bit hash of the format and the captured state array}.
@@ -12458,6 +12457,7 @@ this.frameBufferOpen = false;
         }
         return key & ~LINE_KEY_BIT;
     }
+
 
     /**
      * Compares the mirrored matrix state with the matrices OpenGL reports, recording the largest difference seen.
@@ -12540,6 +12540,7 @@ this.frameBufferOpen = false;
         return worst;
     }
 
+
     /**
      * Opens a window for the pending immediate groups at the point that produced them.
      * <p>
@@ -12571,6 +12572,7 @@ this.frameBufferOpen = false;
                 + ",total=" + (texture + item + block + particle) + "]";
     }
 
+
     /** Releases a mesh if it exists; returns 1 when something was released, so the teardown can count. */
     private int releaseImmediateMesh(VulkanDynamicMesh mesh) {
         if (mesh == null) {
@@ -12580,10 +12582,11 @@ this.frameBufferOpen = false;
             mesh.delete();
             return 1;
         } catch (RuntimeException | LinkageError error) {
-            record("teardown: mesh could not be released: " + describe(error));
+            this.reports.record("teardown: mesh could not be released: " + describe(error));
             return 0;
         }
     }
+
 
     /** Runs a teardown step and counts it; a failure is reported rather than fatal (audit S15). */
     private int releaseDirect(Runnable teardown) {
@@ -12594,10 +12597,11 @@ this.frameBufferOpen = false;
             teardown.run();
             return 1;
         } catch (RuntimeException | LinkageError error) {
-            record("teardown step failed: " + describe(error));
+            this.reports.record("teardown step failed: " + describe(error));
             return 0;
         }
     }
+
 
     /**
      * Stops the pipeline prewarm pair and drops it, at the head of the pipeline release: its
@@ -12618,13 +12622,14 @@ this.frameBufferOpen = false;
         prewarm.close();
         try {
             if (!prewarm.awaitCompilesIdle(5000L)) {
-                record("pipeline prewarm did not go idle within 5 s at pipeline release;"
+                this.reports.record("pipeline prewarm did not go idle within 5 s at pipeline release;"
                         + " a compile may still be in flight against the released pass");
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
     }
+
 
     /** {@return the pipeline prewarm census, for the diagnostic summaries}. */
     String celtium$prewarmSummary() {
@@ -12633,6 +12638,7 @@ this.frameBufferOpen = false;
                 ? "prewarmFallbackDraws=0 prewarmReady=0 prewarmFailed=0"
                 : prewarm.summary();
     }
+
 
     /**
      * {@return the key a prepare branch's cache is read under}. Every branch but the particle
@@ -12666,6 +12672,7 @@ this.frameBufferOpen = false;
         return mixed | flag;
     }
 
+
     /**
      * {@return the render pass handle mixed for the branch key's fold}: a murmur3 finalizer
      * over the handle, so every bit of the handle reaches the fold. The xor fold the mod
@@ -12685,15 +12692,18 @@ this.frameBufferOpen = false;
         return mix;
     }
 
+
     /** {@return the cached pipeline for a branch, or null when the branch has not built it}. */
     private Object celtium$cachedImmediatePipeline(int format, long branchKey) {
         return this.recordsPipelines.celtium$cachedPipeline(format, branchKey);
     }
 
+
     /** Stores a pipeline in its branch's cache. */
     private void celtium$cacheImmediatePipeline(int format, long branchKey, Object pipeline) {
         this.recordsPipelines.celtium$cachePipeline(format, branchKey, pipeline);
     }
+
 
     /**
      * Builds the pipeline for one prepared state through the family's record-reading
@@ -12708,6 +12718,7 @@ this.frameBufferOpen = false;
     private Object celtium$createImmediatePipeline(int format, long key, int[] state, long pass, int targetColors) {
         return this.recordsPipelines.celtium$createPipeline(format, key, state, pass, targetColors);
     }
+
 
     /**
      * {@return the branch's pipeline for this state, building and caching it on a miss} - the
@@ -12725,6 +12736,7 @@ this.frameBufferOpen = false;
         }
         return pipeline;
     }
+
 
     /**
      * {@return the pipeline a prepare branch draws this state with}. A cache hit is the exact
@@ -12766,6 +12778,7 @@ this.frameBufferOpen = false;
         return celtium$getOrCreateImmediatePipeline(format, key, state, pass, targetColors);
     }
 
+
     /**
      * Registers the creation action for one not-yet-known key and asks the prewarm to compile
      * it in the background. The state array is the caller's shared scratch, so it is cloned;
@@ -12785,6 +12798,7 @@ this.frameBufferOpen = false;
         prewarm.request(key);
     }
 
+
     /**
      * {@return the prepared key of the family's standard state} - the legacy alpha blend with
      * depth testing on and depth writes off that the family's own default factory builds, and
@@ -12796,6 +12810,7 @@ this.frameBufferOpen = false;
         long standard = celtium$stateKey(format, celtium$immediateStandardState(1, true, false, false, lit));
         return (key & LINE_KEY_BIT) != 0 ? standard | LINE_KEY_BIT : standard;
     }
+
 
     /**
      * {@return one standard drawing state}, built by feeding a standard signature through the
@@ -12833,6 +12848,7 @@ this.frameBufferOpen = false;
         celtium$stateFromSignature(signature, state);
         return state;
     }
+
 
     /**
      * Registers the M08 families' startup standard set with the prewarm and warms it, once per
@@ -12900,6 +12916,7 @@ this.frameBufferOpen = false;
         this.pipelinePrewarmWarmed = true;
     }
 
+
     /**
      * Releases every immediate pipeline the backend built against a render pass, and empties the caches.
      * <p>
@@ -12917,7 +12934,7 @@ this.frameBufferOpen = false;
         // The prewarm stops first: its background compiler creates pipelines into the caches
         // this method is about to empty, against the render pass this world is giving up.
         celtium$closePipelinePrewarm();
-        this.framebufferCompositor.release();
+        this.owner.framebufferCompositor.release();
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
         java.util.Arrays.fill(this.prepareCache, null);
@@ -12938,162 +12955,10 @@ this.frameBufferOpen = false;
         return released;
     }
 
-    /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
-
-
-    /**
-     * Ends and defers the frame's unified command buffer - the frame's single submission, carrying every recording
-     * the frame made. The coordinator clears {@link #frameBufferOpen} itself; the boundary then flushes the batch,
-     * which is the ONE vkQueueSubmit the frame pays.
-     */
-    public void celtium$finishFrameBuffer() {
-        if (!this.frameBufferOpen) {
-            return;
-        }
-        // The recording ends here: whatever records next is a new recording,
-        // so Tier-A streams armed into this one stop being issuable (INV-2c).
-        this.recordingEpoch++;
-        GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.packPassTimings,
-                this.immediatePassGpuNanos, this.frameGpuNanos,
-                this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
-                this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
-        celtium$reportFlushReasons(false);
-        celtium$reportWindowSplitIfDue();
-        DrawCounters.reportIfDue(this.frameId);
-        BackendCallCounters.reportIfDue(this.frameId);
-        // The native pack frame seat closes with the frame buffer it was opened on -
-        // in a finally, so an exception escaping the coordinator's finish cannot leave
-        // the seat holding this frame's command buffer into the next frame (D7 seat
-        // ruling: endNativeFrame on every exit path, exception escape included).
-        try {
-            this.frameCoordinator.celtium$finishFrameBuffer();
-        } finally {
-            org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
-        }
-    }
-
-    /**
-     * Flushes the frame's pending work at the frame boundary, which the pure-native path never reaches otherwise.
-     * <p>
-     * Measured 2026-10-15 (legs {@code gv-cohort-fix154} and {@code gv-cohort-fix155}): the client loads a world and
-     * runs frames - {@code CELTIUM_SWAPPOINT calls=159900} at the game's own swap point - yet
-     * {@code FrameCoordinator.submitCommands} is never entered (its bounded entry probe printed nothing) and
-     * {@code setLastFrameReachedQueue(true)} is never called, so every present skips with "no completed frame
-     * waiting" and nothing is ever shown.
-     * <p>
-     * The reason is the trigger: the pending work is flushed by {@code flushPendingBeforeGlDraw}, which fires at GL
-     * draw and bind boundaries ({@code bindTexture} and friends) and from {@code applyDerivedProjection}. A GL-less
-     * frame crosses none of those, so its immediate work stays pending forever and no submission is ever made. The
-     * swap point is the boundary that <em>does</em> fire once per frame in both paths, so the flush is offered here
-     * for that caller.
-     */
-    public void celtium$flushPendingAtFrameBoundary() {
-        // M-6 wired (FL-1 F-5): the frame-boundary drain records into the single flush census.
-        // The body's drain goes through flushPendingBeforeGlDraw directly (not the stamped
-        // funnel), so this entry note is the drain's only census record - no double count.
-        long flushStartedNanos = System.nanoTime();
-        try {
-            celtium$flushPendingAtFrameBoundaryBody(flushStartedNanos);
-        } finally {
-            long boundaryNanos = System.nanoTime() - flushStartedNanos;
-            if (boundaryNanos > 50_000_000L) {
-                System.out.println("[Celtium] CELTIUM_BOUNDARY_SLOW millis=" + (boundaryNanos / 1_000_000L)
-                        + " frame=" + this.frameId);
-            }
-        }
-    }
-
-    private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
-        this.fog.tracePeriodically(this.frameId);
-        try {
-            // The boundary's own flush is the frame-end trigger for the window census.
-            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
-            flushPendingBeforeGlDraw();
-            celtium$applyPendingRawWrites();
-            // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
-            // which is the only way to price the command itself without the rest of the frame in the way.
-            celtium$runDrawBench();
-            celtium$debugMirrorRequest();
-            // The last window's records just landed in the frame buffer; end and queue it before the batch flush
-            // sends the frame's work to the driver in logical order.
-            // The frame's wall clock split. A sampling profiler cannot see a thread that is waiting, and the gap to the
-            // reference is larger than the CPU the samples account for, so the boundary reports the three parts it can
-            // name: the recording (already bracketed), this submit, and the slot wait at the next frame's start.
-            if (FRAME_SIGNATURE) {
-                // Close off the frame's signature: a frame that hashes the same as the previous one repeated its batch
-                // traffic exactly, which is the condition a cached recording would have to detect. Gated with the hash
-                // itself: with the hash off both values stay zero, and counting "0 == 0" as a repeat would report every
-                // frame as identical.
-                this.comparedFrameSignatures++;
-                if (this.frameBatchSignature == this.previousFrameBatchSignature && this.frameBatchSignature != 0L) {
-                    this.identicalFrameSignatures++;
-                }
-                this.previousFrameBatchSignature = this.frameBatchSignature;
-                this.frameBatchSignature = 0L;
-            }
-            celtium$executeNativePasses(NativePassRegistry.PassStage.BEFORE_PRESENT);
-            long finishStart = System.nanoTime();
-            celtium$finishFrameBuffer();
-            long finishNanos = System.nanoTime() - finishStart;
-            this.boundarySubmitNanos += finishNanos;
-            FrameBudgetTimings.addSubmit(finishNanos);
-            this.boundaryFrames++;
-            if (this.boundaryFrames % 600 == 0) {
-                System.out.println("[Celtium] CELTIUM_BOUNDARY_SPLIT frames=" + this.boundaryFrames
-                        + " submitMillisPerFrame=" + (this.boundarySubmitNanos / 1_000_000L / 600L)
-                        + " slotWaitMillisPerFrame=" + (this.slotWaitNanos / 1_000_000L / 600L));
-                this.boundarySubmitNanos = 0L;
-                this.slotWaitNanos = 0L;
-                this.boundaryFrames = 0;
-            }
-            // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
-            // order, and the boundary is the last ordering point before the present's own submit (which also
-            // flushes). A no-op when nothing is batched.
-            // S5-D1 (change B): while the frame target holds a live present borrow and the present is not
-            // skipped, this flush is held instead - the batch stays pending and the direct present's own
-            // flush submits the frame's entries and the final transition as one vkQueueSubmit. The two
-            // calls are consecutive in the same mixin hook, so nothing observes the batch in between; a
-            // present that is then gated off leaves the batch for the next natural flush point, and every
-            // observer of a submission flushes first. Swapchain destruction flushes before it drains
-            // (VulkanSwapchain.delete), so a held batch never outlives the images it names. The retired
-            // cleanups below keep their order: their firing is sequence-gated, not flush-gated.
-            boolean holdBatchForPresent = !SKIP_PRESENT
-                    && this.frameTarget instanceof GllessFrameTarget gllessTarget
-                    && gllessTarget.hasLivePresentBorrow();
-            if (!holdBatchForPresent) {
-                this.context.celtium$flushBatchedSubmits();
-            }
-            // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
-            // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
-            // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
-            // destroyed while a recording lived), which is why the drain moved to this boundary.
-            if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
-                // The pending-retirement checkpoint's fallback seat (T3 design section 2.3): a frame
-                // whose batch was empty never passes through the post-flush hook, so the ledger would
-                // stall on menu screens. When the boundary flush did run, the hook already drained
-                // and this is a no-op on an empty ledger; while S5-D1 holds the batch for the direct
-                // present the pending batch is observable here and the checkpoint must not fire -
-                // the stamp would name a submission the queue has not accepted (INV-1b).
-                // The Lane 1 store's deferred frees are collected by the terrain frontend at its
-                // own frame seat; nothing else has pending retirements at this boundary.
-                this.context.celtium$runRetiredCleanups();
-                // The slab retire list's per-frame drain sits at the same seat, under the same guard: its
-                // only other exit hangs off waitForIdle, which no frame boundary calls, so a burst's worth
-                // of retired slab buffers starved there while steady rendering ran (the drain inside the
-                // context gates each entry on the submission sequence, because this boundary is not a
-                // queue-idle point).
-                this.context.celtium$drainRetiredSlabBuffers();
-            }
-        } catch (RuntimeException | LinkageError error) {
-            // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
-            record("frame-boundary flush failed: " + error);
-        } finally {
-            this.presentSwapchain.swapPointFlushNanos += System.nanoTime() - flushStartedNanos;
-        }
-    }
-
     long flushBeforeGlDrawCalls;
+
     long flushBeforeGlDrawWithGroups;
+
 
     /**
      * The entrance the next flush arrives through, for the {@code FLUSH_ENTRY} breadcrumb (hs_err triage).
@@ -13104,7 +12969,9 @@ this.frameBufferOpen = false;
      * by the first flush that follows its bind and cannot leak onto a later, unrelated flush.
      */
     private int flushEntryHint = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+
     private int pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+
 
     /**
      * The flight-c4 window trigger stamp, kept on the entry kind's discipline directly above: an
@@ -13118,6 +12985,7 @@ this.frameBufferOpen = false;
      */
     int pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_GL_DRAW;
 
+
     /**
      * The E2 census' pending cause (item 695): which call point's ordering flush is in flight, stamped by
      * {@link #celtium$flushPendingForGlDrawCause} around an entrance's flush call and read where
@@ -13129,12 +12997,14 @@ this.frameBufferOpen = false;
      */
     private int pendingGlDrawCause = GlDrawWindowCensus.CAUSE_OTHER;
 
+
     /**
      * The GL texture a texture announce's flush is ordered against, stamped beside
      * {@link #pendingGlDrawCause} by {@link #celtium$flushPendingForTextureAnnounce}; 0 outside an
      * announce, where the exemption reads "texture unknown" and does not fire.
      */
     private int pendingGlDrawTexture;
+
 
     /**
      * The E2 exemption (alpha): an ordering flush whose boundary the GL-less stub does not need opens no
@@ -13145,6 +13015,7 @@ this.frameBufferOpen = false;
      */
     private static final boolean GL_DRAW_EXEMPT =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glDrawExempt", "true"));
+
 
     /**
      * Guard for the E2 {@link #GL_DRAW_EXEMPT} unbind edge, default ON since the probe proof
@@ -13158,6 +13029,7 @@ this.frameBufferOpen = false;
      */
     private static final boolean PRESENT_UNBIND_FLUSH_GUARD =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "true"));
+
 
     /**
      * Guard for {@link PresentSwapchain}'s present-time drain ordering, default ON since the B4
@@ -13176,12 +13048,16 @@ this.frameBufferOpen = false;
     static final boolean PRESENT_DRAIN_FINISH_GUARD =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "true"));
 
+
     /** Set across {@code bindFramebuffer(0L, false)} while leaving the main framebuffer. */
     private boolean pendingGlDrawLeavingMainToDefault;
 
+
     /** Ordering flushes the exemption let pass without a window, by cause. */
     private long glDrawExemptedBindFlushes;
+
     private long glDrawExemptedAnnounceFlushes;
+
 
     /** Runs the ordering flush under the E2 census' {@code cause} stamp for the window it may open. */
     void celtium$flushPendingForGlDrawCause(int cause) {
@@ -13199,6 +13075,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Runs a texture announce's ordering flush under its cause stamp and its texture stamp. */
     void celtium$flushPendingForTextureAnnounce(int glTextureId) {
         int previous = this.pendingGlDrawTexture;
@@ -13209,6 +13086,7 @@ this.frameBufferOpen = false;
             this.pendingGlDrawTexture = previous;
         }
     }
+
 
     /** Opens the window under the E2 census' {@code cause} stamp (the size trigger's direct call). */
     private void celtium$flushImmediateWindowForCause(int cause) {
@@ -13224,6 +13102,7 @@ this.frameBufferOpen = false;
             this.pendingGlDrawCause = previous;
         }
     }
+
 
     /**
      * {@return whether the ordering flush in flight may skip its window under the E2 exemption},
@@ -13273,6 +13152,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Binds a target on behalf of {@code celtium$registerRawFramebuffer}, marking the flush it may open. */
     private void celtium$bindFromRawRegister(long identity, boolean isMain) {
         int previous = this.flushEntryHint;
@@ -13284,8 +13164,10 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Per-site flush counts: which refusal/order path opened the windows, by id. */
     private final long[] flushSiteCounts = new long[16];
+
     private static final String[] FLUSH_SITE_NAMES = {
         "other", "copy-catch", "unsupported-mode", "drawing-disabled", "format-2-run", "raw-write",
         "bind-framebuffer", "clear", "boundary", "present", "terrain-pass", "geometry"};
@@ -13295,6 +13177,7 @@ this.frameBufferOpen = false;
             this.flushSiteCounts[site]++;
         }
     }
+
 
     /** {@return the per-site flush counts, named and non-zero only}, for the diagnostics line. */
     String flushSiteSummary() {
@@ -13308,6 +13191,7 @@ this.frameBufferOpen = false;
         }
         return line.length() == 0 ? "none" : line.toString();
     }
+
 
     /**
      * The ordering flush a refusal site runs before it declines a batch.
@@ -13333,6 +13217,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /**
      * The pre-terrain flush, with the bracket and the counters that say what it drained.
      * <p>
@@ -13354,6 +13239,7 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");
         }
     }
+
 
     /**
      * The deferred pre-terrain flush, for the pass' early returns.
@@ -13384,7 +13270,7 @@ this.frameBufferOpen = false;
         // The HUD census' call count: every entry, with the UI bracket state at the entry. The
         // facade is one static-final read while the census is off, the rule this hook's own
         // early-out below already follows.
-        HudCensus.noteFlushCall(this.frameId, FramePassTimings.uiSectionActive());
+        HudCensus.noteFlushCall(this.frame.frameId, FramePassTimings.uiSectionActive());
         if (this.immediateWindowBusy) return;
         // This hook runs on every GL draw call (1.35e8 in one measured session). With no group open, no geometry lease,
         // no held glyph run and no pre-closed groups queued, closing has nothing to do but take two timing brackets and
@@ -13435,11 +13321,11 @@ this.frameBufferOpen = false;
             if (this.replaceBoundaryDropBatches == 0) {
                 this.replaceBoundaryDropBatches = dropped;
                 System.out.println("[Celtium] CELTIUM_REPLACE_DROP batches=" + dropped + " target=" + this.targetWidth
-                        + "x" + this.targetHeight + " frameId=" + this.frameId);
+                        + "x" + this.targetHeight + " frameId=" + this.frame.frameId);
             }
             return;
         }
-        if (GL_DRAW_EXEMPT && !(this.commandState != null && this.commandState.inRenderPass())
+        if (GL_DRAW_EXEMPT && !(this.frame.commandState != null && this.frame.commandState.inRenderPass())
                 && celtium$glDrawExemptApplies()) {
             // The E2 exemption: this boundary does not need the ordering, so no window opens and the
             // groups stay queued for the next window of their own target. The open group was already
@@ -13480,7 +13366,7 @@ this.frameBufferOpen = false;
             if (guiFlush) FramePassTimings.begin("guiFlush");
             if (screenFlush) FramePassTimings.begin("screenFlush");
             try {
-                if (this.commandState != null && this.commandState.inRenderPass()) {
+                if (this.frame.commandState != null && this.frame.commandState.inRenderPass()) {
                     // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
                     // accepted has to reach the image first, inside the pass that is already open.
                     this.immediateDrawSite = "order-flush-in-pass";
@@ -13501,7 +13387,7 @@ this.frameBufferOpen = false;
                     this.hudP0FlushFit.note(hudP0FlushGroups, System.nanoTime() - hudP0FlushStartedNanos);
                 }
                 if (hudCensusFlushStartedNanos != 0L) {
-                    HudCensus.noteActualFlush(this.frameId, hudCensusUiWindow, hudCensusUiGroups,
+                    HudCensus.noteActualFlush(this.frame.frameId, hudCensusUiWindow, hudCensusUiGroups,
                             System.nanoTime() - hudCensusFlushStartedNanos);
                 }
             }
@@ -13533,11 +13419,12 @@ this.frameBufferOpen = false;
             this.immediateStatistics.addOrderingFlushDroppedBatches(dropped);
             celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
-            record("ordering flush failed at frame " + this.frameId + ", its " + dropped
+            this.reports.record("ordering flush failed at frame " + this.frame.frameId + ", its " + dropped
                     + " accepted batches were dropped and the next frame retries (orderingFlushFailures="
                     + this.immediateStatistics.orderingFlushFailures() + "): " + describe(error));
         }
     }
+
 
     /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
     private void flushImmediateWindow() {
@@ -13568,7 +13455,7 @@ this.frameBufferOpen = false;
         }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
-        if (this.gpuStalled) {
+        if (this.frame.gpuStalled) {
             // A stalled device cannot draw this window, and the batches it holds were already cancelled in OpenGL when
             // they were accepted, so they cannot be handed back. Throwing here reached Minecraft's render loop and the
             // client died on the crash screen - which the idle-failure injection measured as exit 124 with no report.
@@ -13578,11 +13465,11 @@ this.frameBufferOpen = false;
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
             }
-            this.submissionStatistics.noteStalledGeometryDrops();
-            this.submissionStatistics.addStalledGeometryDroppedBatches(dropped);
-            if (this.submissionStatistics.stalledGeometryDrops() <= 3) {
-                record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
-                        + this.submissionStatistics.stalledGeometryDroppedBatches() + ")");
+            this.frame.submissionStatistics.noteStalledGeometryDrops();
+            this.frame.submissionStatistics.addStalledGeometryDroppedBatches(dropped);
+            if (this.frame.submissionStatistics.stalledGeometryDrops() <= 3) {
+                this.reports.record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
+                        + this.frame.submissionStatistics.stalledGeometryDroppedBatches() + ")");
             }
             celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
@@ -13591,7 +13478,7 @@ this.frameBufferOpen = false;
         // "Nested" means a window opened over a recording nobody can see end. The unified frame buffer is that
         // recording by design - it stays open across the frame's segments - so the flag, not the state, is what
         // tells "another window is mid-flush" from "the frame buffer is simply recording".
-        if (this.commandState.recording() && !this.frameBufferOpen) {
+        if (this.frame.commandState.recording() && !this.frame.frameBufferOpen) {
             throw new IllegalStateException("nested immediate command recording");
         }
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
@@ -13604,8 +13491,8 @@ this.frameBufferOpen = false;
             // already run in this frame, the depth buffer is populated and the fault is the depth values; if not, the window
             // draws into an empty one and the fault is the order.
             this.windowOrderLogged = true;
-            System.out.println("[Celtium] CELTIUM_WINDOW_ORDER frame=" + this.frameId + " lastTerrainPassFrame="
-                    + this.terrainStatistics.lastTerrainPassFrame() + " terrainRanFirst=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId)
+            System.out.println("[Celtium] CELTIUM_WINDOW_ORDER frame=" + this.frame.frameId + " lastTerrainPassFrame="
+                    + this.terrainStatistics.lastTerrainPassFrame() + " terrainRanFirst=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frame.frameId)
                     + " lastUiPass=none groups=" + this.immediateGroups.size());
         }
         if (countGroupsForTarget(this.targetRegistry.currentIdentity()) == 0) return; // others remain owned in the queue
@@ -13627,7 +13514,7 @@ this.frameBufferOpen = false;
         boolean offTargetPass = offTarget && identity != 0L && offTargetTarget() != null;
         boolean frameImageAttached = gllessTarget == null || !offTargetPass
                 || gllessTarget.frameImageAcquireNeeded();
-        this.windowFrameImageAttached = frameImageAttached;
+        this.frame.windowFrameImageAttached = frameImageAttached;
         this.immediateWindowBusy = true;
         // The window is committed: count it under the trigger that opened it (flight-c4 census).
         FramePassTimings.noteWindowTrigger(windowTrigger);
@@ -13650,7 +13537,7 @@ this.frameBufferOpen = false;
             for (int attempt = 0; attempt < 2; attempt++) {
                 boolean opened = false;
                 try {
-                    this.frameSubmitReachedQueue = false;
+                    this.frame.frameSubmitReachedQueue = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("wfpBegin");
                     this.frameTarget.beginFrame();
                     org.soutalab.celtium.vulkan.FramePassTimings.end("wfpBegin");
@@ -13664,28 +13551,28 @@ this.frameBufferOpen = false;
                     // The frame image at each of the first windows of frame 0, beside the marker clear at the head of
                     // its pass in the same run: "the composite wrote the white it sampled" and "a later window painted
                     // white over it" are the same final picture, and only the per-window state tells them apart.
-                    if (((FRAME_CLEAR_MARK && this.frameId == 0L)
-                            || (FRAME_AT_WINDOW_FRAME >= 0L && this.frameId == FRAME_AT_WINDOW_FRAME))
+                    if (((FRAME_CLEAR_MARK && this.frame.frameId == 0L)
+                            || (FRAME_AT_WINDOW_FRAME >= 0L && this.frame.frameId == FRAME_AT_WINDOW_FRAME))
                             && this.frameBoundaryProbes < FRAME_AT_WINDOW_LINES
                             && this.frameTarget.colorImage() != 0L) {
                         this.frameBoundaryProbes++;
-                        int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                        int[] framePixels = this.owner.celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
                                 this.targetWidth, this.targetHeight);
                         if (framePixels != null) {
-                            String frameLine = "CELTIUM_FRAME_AT_WINDOW frame=" + this.frameId
+                            String frameLine = "CELTIUM_FRAME_AT_WINDOW frame=" + this.frame.frameId
                                     + " afterWindows=" + this.immediateStatistics.immediateWindowsThisFrame()
                                     + " windows=" + this.immediateStatistics.immediateWindows()
                                     + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
                                     + " " + PixelSignatures.celtium$regionSignature(framePixels, this.targetWidth, this.targetHeight);
                             System.out.println("[Celtium] " + frameLine);
-                            record(frameLine);
+                            this.reports.record(frameLine);
                         }
                     }
                     // Every window of frame 0, the centre of the frame image and of the pair, but only the changes are
                     // printed: the splash redraws its framebuffer many times in one presented frame, and the presented
                     // picture is whatever the last of those left. A state trace says which window whitened a frame
                     // image that already held the game's picture, which no single end-of-frame dump can.
-                    if (FRAME_CLEAR_MARK && this.frameId == 0L && this.targetWidth > 1024 && this.targetHeight > 1024
+                    if (FRAME_CLEAR_MARK && this.frame.frameId == 0L && this.targetWidth > 1024 && this.targetHeight > 1024
                             && this.splashFlipLogs < 240) {
                         long pairImage = this.celtium$livePairImage();
                         String frameCentre = this.celtium$patchMean(this.frameTarget.colorImage(), 928, 516, 64);
@@ -13694,13 +13581,13 @@ this.frameBufferOpen = false;
                             this.lastFrameCentre = frameCentre;
                             this.lastPairCentre = pairCentre;
                             this.splashFlipLogs++;
-                            String flipLine = "CELTIUM_SPLASH_FLIP frame=" + this.frameId
+                            String flipLine = "CELTIUM_SPLASH_FLIP frame=" + this.frame.frameId
                                     + " afterWindows=" + this.immediateStatistics.immediateWindowsThisFrame()
                                     + " windows=" + this.immediateStatistics.immediateWindows()
                                     + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
                                     + " frameCentre=" + frameCentre + " pairCentre=" + pairCentre;
                             System.out.println("[Celtium] " + flipLine);
-                            record(flipLine);
+                            this.reports.record(flipLine);
                         }
                     }
                     if (this.splashPairAfterCompositeArmed && !this.splashPairAfterCompositeDone) {
@@ -13715,7 +13602,7 @@ this.frameBufferOpen = false;
                             if (compositeImage == 0L) {
                                 continue;
                             }
-                            int[] compositePairPixels = celtium$readImageRectangle(compositeImage,
+                            int[] compositePairPixels = this.owner.celtium$readImageRectangle(compositeImage,
                                     0, 0, this.targetWidth, this.targetHeight);
                             if (compositePairPixels != null) {
                                 String signature = PixelSignatures.celtium$regionSignature(compositePairPixels, this.targetWidth,
@@ -13728,7 +13615,7 @@ this.frameBufferOpen = false;
                                         + " identity=0x" + Long.toHexString(chainId.longValue())
                                         + " " + signature;
                                 System.out.println("[Celtium] " + line);
-                                record(line);
+                                this.reports.record(line);
                                 java.nio.ByteBuffer pairPostRgba = org.lwjgl.system.MemoryUtil.memAlloc(
                                         this.targetWidth * this.targetHeight * 4);
                                 try {
@@ -13759,7 +13646,7 @@ this.frameBufferOpen = false;
                             && this.frameTarget.colorImage() != 0L
                             && MIRROR_DUMP_ON) {
                         this.splashProbeCount++;
-                        int[] whole = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                        int[] whole = this.owner.celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
                                 this.targetWidth, this.targetHeight);
                         if (whole != null) {
                             java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(
@@ -13812,7 +13699,7 @@ this.frameBufferOpen = false;
                                                 : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
                                         + " publishedIsLivePair=" + publishedIsLivePair);
-                                record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
+                                this.reports.record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == 0L ? "none"
                                                 : "0x" + Long.toHexString(publishedSix))
                                         + " chainPairs=[" + chainHandles + "]"
@@ -13824,7 +13711,7 @@ this.frameBufferOpen = false;
                                 long defaultPairImage = defaultPairTarget == null ? 0L
                                         : defaultPairTarget.offTargetColorImage();
                                 if (defaultPairImage != 0L) {
-                                    int[] defaultPair = celtium$readImageRectangle(defaultPairImage, 0, 0,
+                                    int[] defaultPair = this.owner.celtium$readImageRectangle(defaultPairImage, 0, 0,
                                             this.targetWidth, this.targetHeight);
                                     if (defaultPair != null) {
                                         java.nio.ByteBuffer defaultRgba = org.lwjgl.system.MemoryUtil.memAlloc(
@@ -13853,7 +13740,7 @@ this.frameBufferOpen = false;
                                     if (splashPairImage == 0L) {
                                         continue;
                                     }
-                                    int[] pair = celtium$readImageRectangle(splashPairImage, 0, 0,
+                                    int[] pair = this.owner.celtium$readImageRectangle(splashPairImage, 0, 0,
                                             this.targetWidth, this.targetHeight);
                                     if (pair != null) {
                                         java.nio.ByteBuffer pairRgba = org.lwjgl.system.MemoryUtil.memAlloc(
@@ -13873,14 +13760,14 @@ this.frameBufferOpen = false;
                                         }
                                     }
                                 }
-                                record("splash-time frame image dumped at present " + this.celtium$presentCount
+                                this.reports.record("splash-time frame image dumped at present " + this.celtium$presentCount
                                         + " (CELTIUM_SPLASH_PROBE)");
                             } finally {
                                 org.lwjgl.system.MemoryUtil.memFree(rgba);
                             }
                         }
                     }
-                    if (!this.boxPreProbeDone && this.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
+                    if (!this.boxPreProbeDone && this.frame.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
                             && this.frameTarget.colorImage() != 0L
                             && MIRROR_DUMP_ON
                             && this.celtium$presentCount >= 100) {
@@ -13891,7 +13778,7 @@ this.frameBufferOpen = false;
                         // other half, the box the copy reads is never repainted by it - which is what the 0.9%
                         // measurement says - and the two dumps are what tells those two apart.
                         for (int band : new int[] {0, this.targetHeight - 256}) {
-                        int[] box = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, band, 256, 256);
+                        int[] box = this.owner.celtium$readImageRectangle(this.frameTarget.colorImage(), 0, band, 256, 256);
                         if (box != null) {
                             java.nio.ByteBuffer rgba =
                                     org.lwjgl.system.MemoryUtil.memAlloc(256 * 256 * 4);
@@ -13905,7 +13792,7 @@ this.frameBufferOpen = false;
                                 }
                                 VulkanGlTexture.dumpStageImage("boxpre-" + band + "-p" + this.celtium$presentCount,
                                         rgba, 256, 256);
-                                record("box-before-the-cube dumped at present " + this.celtium$presentCount
+                                this.reports.record("box-before-the-cube dumped at present " + this.celtium$presentCount
                                         + " band=" + band + " (CELTIUM_BOX_PRE)");
                             } finally {
                                 org.lwjgl.system.MemoryUtil.memFree(rgba);
@@ -13915,7 +13802,7 @@ this.frameBufferOpen = false;
                     }
                     this.windowOpen = true;
                     long wsCommandsMark = WINDOW_SPLIT ? System.nanoTime() : 0L;
-                    beginCommands();
+                    this.frame.beginCommands();
                     try (MemoryStack stack = MemoryStack.stackPush()) {
                         if (WINDOW_SPLIT) {
                             long now = System.nanoTime();
@@ -13929,13 +13816,13 @@ this.frameBufferOpen = false;
                         try {
                             org.soutalab.celtium.vulkan.FramePassTimings.end("wfpMiddle");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
-                            gpuMark("pre-acq2");
+                            this.frame.gpuMark("pre-acq2");
                             if (gllessTarget != null) {
-                                gllessTarget.recordAcquireBarriers(this.commandBuffer, frameImageAttached);
+                                gllessTarget.recordAcquireBarriers(this.frame.commandBuffer, frameImageAttached);
                             } else {
-                                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                                this.frameTarget.recordAcquireBarriers(this.frame.commandBuffer);
                             }
-                            gpuMark("acq2");
+                            this.frame.gpuMark("acq2");
                             if (WINDOW_SPLIT) {
                                 long now = System.nanoTime();
                                 this.wsAcquireNanos += now - this.wsMark;
@@ -13945,7 +13832,7 @@ this.frameBufferOpen = false;
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
                             // S2 of the fixed template: the window's immediate groups
                             // record into the frame's main stage.
-                            this.frameCoordinator.markStage(FrameCoordinator.Stage.MAIN_RENDER);
+                            this.frame.markStage(FrameCoordinator.Stage.MAIN_RENDER);
                             long windowRecordStarted = System.nanoTime();
                             recordImmediateOnlyPass(stack, terrain);
                             long windowRecordTook = System.nanoTime() - windowRecordStarted;
@@ -13961,10 +13848,10 @@ this.frameBufferOpen = false;
                                 this.wsMark = System.nanoTime();
                             }
                             if (gllessTarget != null) {
-                                gllessTarget.recordReleaseBarriers(this.commandBuffer,
-                                        this.windowFrameImageAttached);
+                                gllessTarget.recordReleaseBarriers(this.frame.commandBuffer,
+                                        this.frame.windowFrameImageAttached);
                             } else {
-                                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                                this.frameTarget.recordReleaseBarriers(this.frame.commandBuffer);
                             }
                             if (WINDOW_SPLIT) {
                                 long now = System.nanoTime();
@@ -13980,7 +13867,7 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winSubmit");
                     org.soutalab.celtium.vulkan.FrameCoordinator.Submission submission =
-                            this.frameCoordinator.submitCommands();
+                            this.frame.submitCommands();
                     org.soutalab.celtium.vulkan.FramePassTimings.end("winSubmit");
                     // No drain here: the submission is queued and its semaphore contract is complete, so endFrame
                     // does not need the GPU to have finished - the wait used to be bookkeeping, and the poll keeps
@@ -13996,7 +13883,7 @@ this.frameBufferOpen = false;
                     // for a queue that had not been given anything since the frame opened.
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winEnd");
                     if (celtium$windowPollNeeded(submission)) {
-                        celtium$pollCompletedSlots();
+                        this.frame.celtium$pollCompletedSlots();
                     }
                     this.frameTarget.endFrame();
                     org.soutalab.celtium.vulkan.FramePassTimings.end("winEnd");
@@ -14012,7 +13899,7 @@ this.frameBufferOpen = false;
                     // time). The frame submit path stays the owner for real frames: this fires only for identity 0
                     // (the window) and only before a main framebuffer is adopted.
                     if (identity == 0L && this.targetRegistry.mainIdentity() == Long.MIN_VALUE) {
-                        this.lastFrameReachedQueue = true;
+                        this.frame.lastFrameReachedQueue = true;
                         this.targetStatistics.noteWindowFramesMarkedPresentable();
                     }
                     if (offTarget) {
@@ -14025,21 +13912,21 @@ this.frameBufferOpen = false;
                     }
                     return;
                 } catch (RuntimeException | LinkageError error) {
-                    if (this.frameSubmitReachedQueue || this.scheduler.isPending(this.frameSlot) || this.gpuStalled) {
-                        this.noteStalled(); // no reset/retire/GL fallback while the GPU may own these resources
+                    if (this.frame.frameSubmitReachedQueue || this.frame.scheduler.isPending(this.frame.frameSlot) || this.frame.gpuStalled) {
+                        this.frame.noteStalled(); // no reset/retire/GL fallback while the GPU may own these resources
                         throw error;
                     }
                     // No queue submission: reset the failed attempt and restore recorded groups before releasing GL's semaphore.
-                    check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
+                    FrameCoordinator.check(vkResetCommandBuffer(this.frame.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(abort)");
                     // The reset discards the push constants the cache believes are still in this buffer.
                     VulkanPushCache.SHARED.invalidate();
-                    this.commandState.reset();
+                    this.frame.commandState.reset();
                     // The reset discards the recording: a new recording epoch (INV-2c).
                     this.recordingEpoch++;
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
-                this.frameBufferOpen = false;
+                this.frame.frameBufferOpen = false;
                     // BH-26: this recording is discarded before the queue ever saw it, and the recovery below
                     // re-records the acquire and release barriers on a fresh command buffer. Put the owner state back
                     // first, or the second recording sees the first one's consumption - the first transition, the
@@ -14047,7 +13934,7 @@ this.frameBufferOpen = false;
                     if (gllessTarget != null) {
                         gllessTarget.rollbackRecording(recordingSnapshot);
                     }
-                    for (ImmediateGroup group : this.recordedImmediateGroups) {
+                    for (ImmediateGroup group : this.frame.recordedImmediateGroups) {
                         int batches = group.batches;
                         // An exempt group (flight A1) was never counted at accept, so putting it back must not
                         // put its indices in either - the re-add restores the pre-record count, nothing more.
@@ -14058,18 +13945,18 @@ this.frameBufferOpen = false;
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
                     this.groupQueueMutation++;
-                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
-                    this.recordedImmediateGroups.clear();
+                    this.immediateGroups.addAll(0, this.frame.recordedImmediateGroups);
+                    this.frame.recordedImmediateGroups.clear();
                     if (opened) {
-                        beginCommands();
-                        gpuMark("pre-acq3");
-                        this.frameTarget.recordAcquireBarriers(this.commandBuffer);
-                        gpuMark("acq3");
-                        this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                        this.frameCoordinator.submitCommands();
+                        this.frame.beginCommands();
+                        this.frame.gpuMark("pre-acq3");
+                        this.frameTarget.recordAcquireBarriers(this.frame.commandBuffer);
+                        this.frame.gpuMark("acq3");
+                        this.frameTarget.recordReleaseBarriers(this.frame.commandBuffer);
+                        this.frame.submitCommands();
                         // The recovery submission is waited on its own slot - bounded, and the only completion the
                         // endFrame below needs confirmed before the frame may close.
-                        if (!waitForSlot(this.frameSlot)) {
+                        if (!this.frame.waitForSlot(this.frame.frameSlot)) {
                             throw new IllegalStateException("bridge recovery did not complete", error);
                         }
                         this.frameTarget.endFrame();
@@ -14083,7 +13970,7 @@ this.frameBufferOpen = false;
                         // device that has genuinely stopped is detected, and stallOrigin names that origin separately.
                         this.targetStatistics.noteWindowFlushFailures();
                         this.lastWindowFlushFailure = describeWithOrigin(error);
-                        this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
+                        this.targetStatistics.setWindowFlushFailureFrame(this.frame.frameId);
                         // Retained, not dropped, and this is the site the measurement actually reaches: the abort
                         // branch above has already taken the recording's counters off and re-queued it, so everything
                         // still queued here is a group that has not been drawn. Clearing it is what erased every
@@ -14096,7 +13983,7 @@ this.frameBufferOpen = false;
                         }
 // An abandoned frame is not "the frame is still recording": the flag must not route the
 // next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
+this.frame.frameBufferOpen = false;
                         // The abandoned frame's pack seat closes with it (D7 seat ruling:
                         // endNativeFrame on every exit path, abandon included).
                         org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
@@ -14108,20 +13995,20 @@ this.frameBufferOpen = false;
                         // immediate command recording", dropping every batch it held: measured on RLCraft (leg
                         // w-rlcraft-amd, r126) as one double window-flush failure at frame 2 followed by four
                         // nested ordering flushes at frames 3-4 that dropped 2,050 accepted batches.
-                        if (this.commandBuffer != null && this.commandState.recording()) {
-                            check(vkResetCommandBuffer(this.commandBuffer,
+                        if (this.frame.commandBuffer != null && this.frame.commandState.recording()) {
+                            FrameCoordinator.check(vkResetCommandBuffer(this.frame.commandBuffer,
                                     VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                                     "vkResetCommandBuffer(abandoned window)");
                             // The reset discards the push constants the cache believes are still in this buffer.
                             VulkanPushCache.SHARED.invalidate();
-                            this.commandState.reset();
+                            this.frame.commandState.reset();
                             // The reset discards the recording: a new recording epoch (INV-2c).
                             this.recordingEpoch++;
                             this.abandonedWindowRecordings++;
                         }
                         this.targetStatistics.addWindowFlushRetainedBatches(retained);
                         this.frameTarget.abandonFrame("accepted geometry retained");
-                        record("window flush failed twice at frame " + this.frameId + " ("
+                        this.reports.record("window flush failed twice at frame " + this.frame.frameId + " ("
                                 + this.lastWindowFlushFailure + "); retained " + retained
                                 + " accepted batches, none dropped, the next frame retries (windowFlushFailures="
                                 + this.targetStatistics.windowFlushFailures()
@@ -14129,11 +14016,12 @@ this.frameBufferOpen = false;
                         return;
                     }
                     this.immediateStatistics.noteImmediateRetryCount();
-                    record("retrying unsubmitted immediate window: " + describe(error));
+                    this.reports.record("retrying unsubmitted immediate window: " + describe(error));
                 } finally { this.windowOpen = false; }
             }
         } finally { this.immediateWindowBusy = false; }
     }
+
 
     /**
      * {@return whether a light map mirror holding whole content is held}, re-taking it when it is not.
@@ -14149,6 +14037,7 @@ this.frameBufferOpen = false;
         }
         return this.lightmapTexture != null && this.lightmapTexture.hasFullContent();
     }
+
 
     /**
      * Takes the light map mirror again when its GL id is known but the mirror is missing.
@@ -14179,7 +14068,7 @@ this.frameBufferOpen = false;
         // uses, and it is the only source left when the owner's pixel supplier is not installed. It is checked before
         // the content gate below, because an announcement is a registry write that moves no stub serial - a gate
         // recorded against "nothing can fill this" would otherwise hide the very pixels it is waiting for.
-        org.soutalab.celtium.vulkan.VulkanGlTexture announced = celtium$registry().get(this.lightmapGlId);
+        org.soutalab.celtium.vulkan.VulkanGlTexture announced = this.owner.celtium$registry().get(this.lightmapGlId);
         if (announced != null && announced.hasFullContent()) {
             this.lightmapTexture = announced;
             this.lightmapSourceGlId = this.lightmapGlId;
@@ -14251,7 +14140,7 @@ this.frameBufferOpen = false;
             // the report's counters are a single early heartbeat and cannot say.
             celtium$lightmapStage("imageFor");
             org.soutalab.celtium.vulkan.VulkanGlTexture established =
-                    celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
+                    this.owner.celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
             boolean supplied = false;
             if (captureHasPixels) {
                 celtium$lightmapStage("upload");
@@ -14278,7 +14167,7 @@ this.frameBufferOpen = false;
                 return;
             }
             celtium$lightmapStage("markInitialized");
-            celtium$registry().markFullyInitialized(this.lightmapGlId);
+            this.owner.celtium$registry().markFullyInitialized(this.lightmapGlId);
             celtium$lightmapStage("assigned");
             this.lightmapTexture = established;
             // The id the mirror was taken for, so the per-write refresh path recognises it. It used to be set only by
@@ -14300,6 +14189,7 @@ this.frameBufferOpen = false;
             }
         }
     }
+
 
     /**
      * Uploads the owner's whole-level pixels into the light map mirror.
@@ -14336,6 +14226,7 @@ this.frameBufferOpen = false;
 
 
 
+
     /**
      * {@return the game's ARGB light map pixels as the RGBA bytes the mirror's upload takes}.
      * <p>
@@ -14354,6 +14245,7 @@ this.frameBufferOpen = false;
         buffer.flip();
         return buffer;
     }
+
     /** Bounded stage marker for the light map mirror's establishment. */
     private void celtium$lightmapStage(String stage) {
         if (celtium$lightmapStages++ < 12) {
@@ -14362,17 +14254,23 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Bounded stage counter for the light map mirror. */
     private int celtium$lightmapStages;
+
 
     /** Bounded failure counter for the light map mirror. */
     private int celtium$lightmapFailures;
 
+
     /** Bounded fallback counter for the light map mirror. */
     private int celtium$lightmapFallbacks;
+
     /** The last answer to the draw-framebuffer query, and the bind serial it was taken at. */
     private int cachedDrawFramebuffer;
+
     private long cachedDrawFramebufferSerial = Long.MIN_VALUE;
+
 
     /**
      * {@return the bound draw framebuffer}, asked of GL only when a bind has happened since the last answer.
@@ -14446,7 +14344,7 @@ this.frameBufferOpen = false;
         // decided. The framebuffer violation below is equally about the bound object, so it is skipped the same way.
         boolean targetReady = sharedComposite
                 ? this.frameTarget != null && this.frameTarget.matches(this.targetWidth, this.targetHeight)
-                : ensureFrameTarget();
+                : this.owner.ensureFrameTarget();
         if (!targetReady) {
             this.immediateLastRefusal = "target: no frame target for " + this.targetWidth + "x" + this.targetHeight;
             return false;
@@ -14480,6 +14378,7 @@ this.frameBufferOpen = false;
         return true;
     }
 
+
     /**
      * A prepared material, memoised by the three things that decide it.
      * <p>
@@ -14496,6 +14395,7 @@ this.frameBufferOpen = false;
         return prepareImmediate(format, textureId, key, state, null, false);
     }
 
+
     /**
      * {@return how many colour targets the framebuffer a prepare is being made for attaches}: the main
      * framebuffer's one, and for a mod's own framebuffer the publication record's count - the same record
@@ -14510,6 +14410,7 @@ this.frameBufferOpen = false;
         }
         return Math.max(1, this.publishedTextures.colorAttachmentCount(identity));
     }
+
 
     /**
      * {@return whether a published colour name's image is stale}: the name was published over the frame
@@ -14527,6 +14428,7 @@ this.frameBufferOpen = false;
         return publishedImage != 0L && publishedDepthKey == 0L && publishedIdentity == Long.MIN_VALUE
                 && publishedImage != frameColorImage && publishedImage != offTargetColorImage;
     }
+
 
     /**
      * {@link #prepareImmediate(int, int, long, int[])} with the texture's wrapper already resolved by the caller.
@@ -14576,7 +14478,7 @@ this.frameBufferOpen = false;
         boolean resolvedKnown = textureId > 0 && this.textureRegistry != null;
         org.soutalab.celtium.vulkan.VulkanGlTexture live = liveKnown
                 ? knownLive
-                : (resolvedKnown ? celtium$registry().get(textureId) : null);
+                : (resolvedKnown ? this.owner.celtium$registry().get(textureId) : null);
         if (textureId > 0 && (live == null || !live.hasFullContent())) {
             return prepareImmediateUncached(format, textureId, effectiveKey, state, live, resolvedKnown,
                     pairClass, targetColors);
@@ -14623,6 +14525,7 @@ this.frameBufferOpen = false;
         return prepared;
     }
 
+
     /**
      * One prepared-material cache slot: the six inputs the answer depends on, plus the answer.
      * <p>
@@ -14639,6 +14542,7 @@ this.frameBufferOpen = false;
         long lightKey;
         PreparedImmediate value;
     }
+
 
     /**
      * Whether a slot answers exactly this question - all six inputs equal, and a value to return.
@@ -14662,6 +14566,7 @@ this.frameBufferOpen = false;
                 && entry.lightKey == lightKey;
     }
 
+
     /**
      * 1024 entries, direct-mapped: a world frame asks for about 194 distinct materials, and 256 slots put that
      * population at a 76% load factor - two materials that hash to one slot evict each other on every frame, so the
@@ -14676,7 +14581,9 @@ this.frameBufferOpen = false;
      */
     private static final int PREPARE_CACHE_BITS =
             Math.max(6, Math.min(12, Integer.getInteger("celtium.vulkan.prepareCacheBits", 10).intValue()));
+
     private static final int PREPARE_CACHE_SIZE = 1 << PREPARE_CACHE_BITS;
+
     /**
      * The table itself: one entry per slot, holding the six key fields and the prepared material together.
      * <p>
@@ -14685,8 +14592,11 @@ this.frameBufferOpen = false;
      * the steady state allocates nothing.
      */
     private final PrepareCacheEntry[] prepareCache = new PrepareCacheEntry[PREPARE_CACHE_SIZE];
+
     private long prepareCacheHits;
+
     private long prepareCacheCalls;
+
 
     /**
      * {@return the prepare cache census, as {@code hits/calls}}, with the table's size beside it.
@@ -14697,6 +14607,7 @@ this.frameBufferOpen = false;
     String prepareCacheSummary() {
         return this.prepareCacheHits + "/" + this.prepareCacheCalls + "@" + PREPARE_CACHE_SIZE;
     }
+
 
     /**
      * Resolves a batch's pipeline and descriptor set, sharing the caller's registry answer.
@@ -14724,7 +14635,7 @@ this.frameBufferOpen = false;
         if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
         // A registry created here was absent when the caller asked, so the caller's value is "no registry" rather
         // than an answer about this name and is not used below.
-        if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
+        if (this.textureRegistry == null) this.textureRegistry = this.owner.celtium$registry();
         long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = resolvedKnown ? resolved : this.textureRegistry.get(textureId);
         // A framebuffer's colour attachment stands for the image that framebuffer draws into even when the stub keeps
@@ -14889,6 +14800,7 @@ this.frameBufferOpen = false;
     }
 
 
+
     /**
      * {@return the GL state a window could leave behind}, as a short string for comparison.
      * <p>
@@ -14922,6 +14834,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /**
      * {@return the GL name of a 1x1 white texture}, created once.
      * <p>
@@ -14930,7 +14843,7 @@ this.frameBufferOpen = false;
      */
     int whiteTextureId() {
         if (this.whiteTextureGlId == 0) {
-            if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
+            if (this.textureRegistry == null) this.textureRegistry = this.owner.celtium$registry();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ByteBuffer pixel = stack.malloc(4);
                 pixel.putInt(0, -1);
@@ -14939,6 +14852,7 @@ this.frameBufferOpen = false;
         }
         return this.whiteTextureGlId;
     }
+
 
     /**
      * {@return the GL name of a 1x1 black texture}, created once.
@@ -14950,7 +14864,7 @@ this.frameBufferOpen = false;
      */
     int blackTextureId() {
         if (this.blackTextureGlId == 0) {
-            if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
+            if (this.textureRegistry == null) this.textureRegistry = this.owner.celtium$registry();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ByteBuffer pixel = stack.malloc(4);
                 pixel.putInt(0, 0xFF000000);
@@ -14959,6 +14873,7 @@ this.frameBufferOpen = false;
         }
         return this.blackTextureGlId;
     }
+
 
     /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */
 
@@ -14975,6 +14890,7 @@ this.frameBufferOpen = false;
     public static int retireGroupsForTarget(java.util.List<ImmediateGroup> groups, long targetIdentity) {
         return ImmediateGroupQueue.retireGroupsForTarget(groups, targetIdentity);
     }
+
 
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
 
@@ -15002,11 +14918,15 @@ this.frameBufferOpen = false;
         this.pairNameSamplingDraws++;
     }
 
+
     /** Groups that sampled a published chain-pair name, and the frame the last one was seen in. */
     long pairNameSamplingDraws;
+
     long pairNameSamplingDrawsFrame = -1L;
+
     /** Lines {@code CELTIUM_PAIR_SKIP} has printed. */
     int pairSkipLogs;
+
 
     /**
      * Whether this group is the chain pair's own composite: it samples a published name standing for the pair image,
@@ -15057,6 +14977,7 @@ this.frameBufferOpen = false;
                 && offTarget.chainPairColorImage(owner) == targetPair;
     }
 
+
     /**
      * Whether the in-process per-frame A/B runs: {@code -Dceltium.debug.abParity=<label>}, off by default.
      * <p>
@@ -15067,8 +14988,10 @@ this.frameBufferOpen = false;
      */
     private static final String AB_PARITY_LABEL = System.getProperty("celtium.debug.abParity", "");
 
+
     /** Whether the current frame is the baseline arm of the parity A/B. */
     private boolean abBaselineArm;
+
     /**
      * The frame interval, measured at the frame boundary and accumulated per arm.
      * <p>
@@ -15077,9 +15000,13 @@ this.frameBufferOpen = false;
      * comparable - the baseline arm is a built-in control for whatever the other arm changes.
      */
     private long abLastFrameBoundaryNanos;
+
     private boolean abPreviousFrameBaseline;
+
     private final long[] abFrameIntervalNanos = new long[2];
+
     private final long[] abFrameIntervals = new long[2];
+
     /**
      * A per-arm histogram of frame intervals in whole milliseconds, 0..127, plus a tail bucket.
      * <p>
@@ -15088,12 +15015,17 @@ this.frameBufferOpen = false;
      * *unmodified* arm, which is physically backwards). A median from a millisecond histogram is immune to that.
      */
     private static final int AB_INTERVAL_BUCKETS = 128;
+
     private final int[][] abIntervalHistogram = new int[2][AB_INTERVAL_BUCKETS];
+
     /** Intervals at or past the last bucket, counted separately so the median cannot be dragged. */
     private final int[] abIntervalOverflow = new int[2];
+
     /** Window-recording nanoseconds per arm, and the recordings each covers. */
     private final long[] windowRecordNanosByArm = new long[2];
+
     private final long[] windowRecordsByArm = new long[2];
+
 
     /**
      * Whether this group is the game's finished-frame composite drawn into the image it samples.
@@ -15126,6 +15058,7 @@ this.frameBufferOpen = false;
         return group.texture == framebufferColorTextureName(mainIdentity);
     }
 
+
     /** {@return how many pending non-empty groups belong to a target other than the main one}. */
     private int pendingGroupsForOtherTargets() {
         int count = 0;
@@ -15137,6 +15070,7 @@ this.frameBufferOpen = false;
         }
         return count;
     }
+
 
     /**
      * The number of queued groups that would draw into {@code targetIdentity}.
@@ -15157,9 +15091,13 @@ this.frameBufferOpen = false;
      * separately.
      */
     private long groupQueueMutation;
+
     private long cachedCountTarget = Long.MIN_VALUE;
+
     private long cachedCountMutation = -1L;
+
     private int cachedCountValue;
+
 
     /**
      * Queues one group and advances the mutation stamp with the add.
@@ -15184,6 +15122,7 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /**
      * Rebuilds the queue as the kept groups of a finished window and advances the mutation stamp with the removal.
      * <p>
@@ -15195,6 +15134,7 @@ this.frameBufferOpen = false;
         this.immediateGroups.addAll(kept);
         this.groupQueueMutation++;
     }
+
 
     /**
      * True while a command buffer this renderer is still recording can hold recorded work.
@@ -15209,8 +15149,9 @@ this.frameBufferOpen = false;
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.retireRecordingGuard", "true"));
 
     boolean celtium$recordingOpen() {
-        return RETIRE_RECORDING_GUARD && (this.frameBufferOpen || this.immediateWindowBusy);
+        return RETIRE_RECORDING_GUARD && (this.frame.frameBufferOpen || this.immediateWindowBusy);
     }
+
 
     /**
      * {@return whether the queue holds any group for {@code targetIdentity}, of any kind} - mesh,
@@ -15248,6 +15189,7 @@ this.frameBufferOpen = false;
         return count;
     }
 
+
     /** {@return a per-target line}: offers (the map the offer branch keeps), groups at pass time, drawing passes. */
     String offTargetPerTarget() {
         if (this.offTargetBatchesByTarget.isEmpty() && this.offTargetPassGroupsByTarget.isEmpty()) {
@@ -15274,6 +15216,7 @@ this.frameBufferOpen = false;
         return summary.toString().trim();
     }
 
+
     /**
      * {@return whether the end of a window has to poll the frame slots}.
      * <p>
@@ -15292,6 +15235,7 @@ this.frameBufferOpen = false;
         return submission == org.soutalab.celtium.vulkan.FrameCoordinator.Submission.QUEUED;
     }
 
+
     /** Records a render pass containing nothing but the pending immediate groups. */
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         // Everything this method does before the window's prefix: the target routing, the pair clear, the begin-info.
@@ -15306,7 +15250,7 @@ this.frameBufferOpen = false;
         // terrain pass has run (the GL-less menu is all UI batches), the standalone frame-compatible pass stands in.
         this.terrainPipelineForFrame = terrain;
         this.targetRegistry.noteTargetKnown();
-        if (this.gpuStalled) {
+        if (this.frame.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
             org.soutalab.celtium.vulkan.FramePassTimings.end("winHead");
@@ -15452,7 +15396,7 @@ this.frameBufferOpen = false;
                     // hand-back is recorded before both. A pair recreated at a new size is unpublished here instead:
                     // its wrapper names a destroyed image, and a barrier on that is a validation error rather than a
                     // missing glow.
-                    this.celtium$syncPublishedChainOutput(chainIdentityValue,
+                    this.owner.celtium$syncPublishedChainOutput(chainIdentityValue,
                             offTarget.chainPairColorImage(chainIdentityValue));
                     if (WINDOW_SPLIT) {
                         long now = System.nanoTime();
@@ -15470,10 +15414,10 @@ this.frameBufferOpen = false;
                         // next pass attaching shadowtex0 transitions it from SHADER_READ_ONLY_OPTIMAL back to
                         // DEPTH_STENCIL_ATTACHMENT_OPTIMAL before clearing or attaching it.
                         if (windowAttachedImages != null) {
-                            this.celtium$transitionPublishedFrameTextures(true,
+                            this.owner.celtium$transitionPublishedFrameTextures(true,
                                     0L, windowAttachedDepthImage, windowAttachedImages);
                         } else {
-                            this.celtium$transitionPublishedFrameTextures(true,
+                            this.owner.celtium$transitionPublishedFrameTextures(true,
                                     offTarget.chainPairColorImage(chainIdentityValue), windowAttachedDepthImage);
                         }
                     } finally {
@@ -15523,7 +15467,7 @@ this.frameBufferOpen = false;
                                             offTarget.sharedDepthClearedFrameSerial(windowDepthKey),
                                             celtium$frameSerial())) {
                                 double depthVal = FramebufferClearState.current().depth();
-                                if (offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
+                                if (offTarget.applyGameClearToChainPair(chainIdentityValue, this.frame.commandBuffer,
                                         0x0100, new float[4], depthVal)) {
                                     offTarget.noteSharedDepthCleared(windowDepthKey, celtium$frameSerial());
                                 }
@@ -15532,7 +15476,7 @@ this.frameBufferOpen = false;
                                     celtium$frameSerial(), chainIdentityValue);
                             if (windowSharedDepthUsed && windowDepthKey != 0L) {
                                 offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
-                                        this.commandBuffer);
+                                        this.frame.commandBuffer);
                             }
                         }
                     }
@@ -15545,7 +15489,7 @@ this.frameBufferOpen = false;
                             // member sharing depthtex0/shadowtex0 cannot wipe depth written earlier in the frame.
                             celtium$consumeRoutedTargetClear(offTarget, chainIdentityValue, windowDepthKey);
                             offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
-                                    this.commandBuffer);
+                                    this.frame.commandBuffer);
                         } else {
                             // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                             // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
@@ -15557,7 +15501,7 @@ this.frameBufferOpen = false;
                                 // The one legal-use sequence of the images this pair now holds, recorded through the
                                 // validation layer and reported once per creation: it is the same clear the ordinary path
                                 // records, so it is the pair's first clear rather than an extra one.
-                                record(offTarget.chainPairSelfTest(chainIdentityValue, this.commandBuffer));
+                                this.reports.record(offTarget.chainPairSelfTest(chainIdentityValue, this.frame.commandBuffer));
                             } else if (celtium$pendingClear(chainIdentityValue) != null) {
                                 // A glClear the game issued for this framebuffer before it ever queued a draw - the
                                 // queue-marker route found no group to carry it, so it latched here instead. It clears
@@ -15571,9 +15515,9 @@ this.frameBufferOpen = false;
                                 celtium$noteClearApplied(chainIdentityValue,
                                         RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                                         (latchedMask & 0x4000) != 0, true);
-                                offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
+                                offTarget.applyGameClearToChainPair(chainIdentityValue, this.frame.commandBuffer,
                                         latchedMask, latchedColour, latchedDepth);
-                            } else if (offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
+                            } else if (offTarget.deferChainPairClear(chainIdentityValue, this.frame.commandBuffer)) {
                                 // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
                                 // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
                                 // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
@@ -15583,7 +15527,7 @@ this.frameBufferOpen = false;
                                 this.pendingChainPairClear = chainIdentityValue;
                                 this.pendingChainPairClearColors = windowColorCount;
                             } else {
-                                offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
+                                offTarget.clearChainPair(chainIdentityValue, this.frame.commandBuffer);
                             }
                             this.targetRegistry.noteChainPairCleared(chainIdentityValue,
                                     celtium$frameSerial(), chainIdentityValue);
@@ -15592,7 +15536,7 @@ this.frameBufferOpen = false;
                             // a clear that lands after their DRAW_SITE is what leaves the copy white.
                             if (this.chainPairClearLogs < 6) {
                                 this.chainPairClearLogs++;
-                                System.out.println("[Celtium] CELTIUM_CHAIN_PAIR_CLEAR frame=" + this.frameId
+                                System.out.println("[Celtium] CELTIUM_CHAIN_PAIR_CLEAR frame=" + this.frame.frameId
                                         + " site=" + this.immediateDrawSite
                                         + " drawsSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
                                         + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame());
@@ -15601,7 +15545,7 @@ this.frameBufferOpen = false;
                         }
                     } else if (!windowHandoffApplied && windowSharedDepthUsed && windowDepthKey != 0L) {
                         offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
-                                this.commandBuffer);
+                                this.frame.commandBuffer);
                     }
                     if (WINDOW_SPLIT) {
                         long now = System.nanoTime();
@@ -15628,7 +15572,7 @@ this.frameBufferOpen = false;
                         passRenderPass = celtium$preserveWindowDepth(TERRAIN_TO_DEPTH_TARGET, windowDepthRecord != null)
                                 ? frameVariantRenderPass(windowColorCount, pairClass)
                                 : chainPairRenderPass(windowColorCount, pairClass);
-                        offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
+                        offTarget.recordChainPairColorAcquire(chainIdentityValue, this.frame.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
                     } else if (TERRAIN_TO_DEPTH_TARGET && windowDepthRecord != null) {
@@ -15649,7 +15593,7 @@ this.frameBufferOpen = false;
                             System.out.println("[Celtium] CELTIUM_PAIR_WINDOW_PRESERVE_DEPTH identity=0x"
                                     + Long.toHexString(chainIdentityValue) + " extent="
                                     + (keptExtent == null ? "none" : keptExtent[0] + "x" + keptExtent[1])
-                                    + " colors=" + windowColorCount + " frame=" + this.frameId
+                                    + " colors=" + windowColorCount + " frame=" + this.frame.frameId
                                     + " site=" + this.immediateDrawSite);
                         }
                     } else {
@@ -15725,7 +15669,7 @@ this.frameBufferOpen = false;
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
                             offTarget.offTargetAcquired(),
                             this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR))) {
-                        offTarget.clearOffTarget(this.commandBuffer);
+                        offTarget.clearOffTarget(this.frame.commandBuffer);
                         this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
                                 celtium$frameSerial(), this.targetRegistry.currentIdentity());
                         this.defaultPairClears++;
@@ -15739,22 +15683,22 @@ this.frameBufferOpen = false;
                     }
                 }
             } catch (RuntimeException | LinkageError error) {
-                if (this.gpuStalled) {
+                if (this.frame.gpuStalled) {
                     // Failed completion is not a target-routing failure. No pass may be
                     // recorded against either the retained pair or the main frame image.
                     throw error;
                 }
                 this.lastOffTargetFailure = describe(error);
                 this.offTargetRedirects++;
-                record("off-target pass refused, drawing into the frame image instead: " + describe(error));
+                this.reports.record("off-target pass refused, drawing into the frame image instead: " + describe(error));
                 // The acquire this window skipped has to be recorded here, before the pass that now attaches the
                 // frame image: the image is in GENERAL and the pass declares the attachment layout, which is
                 // VUID-vkCmdBeginRenderPass-initialLayout-00900 without it. The release reads the same field, so the
                 // pair stays matched. Rare by construction (the off-target path is the one that just failed), so the
                 // barrier it costs is not on the measured path.
-                if (!this.windowFrameImageAttached && this.frameTarget instanceof GllessFrameTarget gllessFallback) {
-                    gllessFallback.recordAcquireBarriers(this.commandBuffer, true);
-                    this.windowFrameImageAttached = true;
+                if (!this.frame.windowFrameImageAttached && this.frameTarget instanceof GllessFrameTarget gllessFallback) {
+                    gllessFallback.recordAcquireBarriers(this.frame.commandBuffer, true);
+                    this.frame.windowFrameImageAttached = true;
                 }
                 if (this.pendingChainPairClear != 0L) {
                     // The pass below attaches the frame image, not the pair the routing deferred a clear for, so the
@@ -15762,7 +15706,7 @@ this.frameBufferOpen = false;
                     // deferral. The pair is cleared either way; only the command that performs it differs.
                     GllessFrameTarget deferredOwner = offTargetTarget();
                     if (deferredOwner != null) {
-                        deferredOwner.clearChainPair(this.pendingChainPairClear, this.commandBuffer);
+                        deferredOwner.clearChainPair(this.pendingChainPairClear, this.frame.commandBuffer);
                     }
                     this.pendingChainPairClear = 0L;
                     this.pendingChainPairClearColors = 1;
@@ -15813,7 +15757,7 @@ this.frameBufferOpen = false;
                     celtium$framebufferGeneration(framebuffer));
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
-                celtium$windowBeginInfo(passRenderPass, framebuffer, passWidth, passHeight);
+                this.owner.celtium$windowBeginInfo(passRenderPass, framebuffer, passWidth, passHeight);
         if (WINDOW_SPLIT) {
             long now = System.nanoTime();
             this.wsBeginNanos += now - this.wsMark;
@@ -15835,7 +15779,7 @@ this.frameBufferOpen = false;
             // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
             // in which the chain did not run never moves it forward. The transition belongs to the submission that
             // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
-            this.presentSwapchain.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
+            this.presentSwapchain.publishedChainOutput.ensureSampledLayout(this.frame.commandBuffer);
         }
         // Every other name published over the pair's image gets the same transition at the same site. A name published
         // for a game framebuffer whose draws land in the pair (the vanilla loading screen's, measured) is sampled from a
@@ -15846,7 +15790,7 @@ this.frameBufferOpen = false;
         // hash lookups under VulkanGlTexture's monitor, so this is the candidate for the window's unnamed remainder.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPublish");
         try {
-            this.celtium$transitionPublishedFrameTextures(false);
+            this.owner.celtium$transitionPublishedFrameTextures(false);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("winPublish");
         }
@@ -15858,7 +15802,7 @@ this.frameBufferOpen = false;
         // on frame 0, so a question about a world frame (`which image does the HUD stage's identity attach?`) could not
         // be asked with the instrument that answers it. Same shape as CELTIUM_GROUP_BOUNDS's groupBoundsMinFrame, which
         // was added for exactly this reason.
-        if (windowIdentity && this.windowDrawLogs < WINDOW_DRAW_LIMIT && this.frameId >= WINDOW_DRAW_MIN_FRAME) {
+        if (windowIdentity && this.windowDrawLogs < WINDOW_DRAW_LIMIT && this.frame.frameId >= WINDOW_DRAW_MIN_FRAME) {
             this.windowDrawLogs++;
             System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 image=frame"
                     + " phase=" + (this.targetRegistry.mainIdentity() == Long.MIN_VALUE ? "before-adoption" : "adopted")
@@ -15875,10 +15819,10 @@ this.frameBufferOpen = false;
         // current wrapper at the draw and the geometry's texture coordinates span 0..1 - so what is left to separate is
         // "the draw reads the pair and its sample is white" from "the draw reads some other image". Magenta in the
         // frame image says the pair is the source. Recorded outside the pass, with the barrier the sampling draw needs.
-        if (windowIdentity && PAIR_PROBE_CLEAR && this.pairProbeClearFrame != this.frameId) {
+        if (windowIdentity && PAIR_PROBE_CLEAR && this.pairProbeClearFrame != this.frame.frameId) {
             long probePair = this.celtium$livePairImage();
             if (probePair != 0L) {
-                this.pairProbeClearFrame = this.frameId;
+                this.pairProbeClearFrame = this.frame.frameId;
                 org.lwjgl.vulkan.VkClearColorValue probeColour =
                         org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
                 probeColour.float32(0, 1.0f);
@@ -15888,7 +15832,7 @@ this.frameBufferOpen = false;
                 org.lwjgl.vulkan.VkImageSubresourceRange probeRange =
                         org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack)
                                 .aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
-                vkCmdClearColorImage(this.commandBuffer, probePair, VK_IMAGE_LAYOUT_GENERAL, probeColour, probeRange);
+                vkCmdClearColorImage(this.frame.commandBuffer, probePair, VK_IMAGE_LAYOUT_GENERAL, probeColour, probeRange);
                 org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer probeBarrier =
                         org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
                 probeBarrier.get(0).sType$Default()
@@ -15898,12 +15842,12 @@ this.frameBufferOpen = false;
                         .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                         .image(probePair).subresourceRange(probeRange);
                 BackendCallCounters.noteBarrier();
-                vkCmdPipelineBarrier(this.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                vkCmdPipelineBarrier(this.frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, probeBarrier);
-                String probeLine = "CELTIUM_PAIR_PROBE_CLEAR frame=" + this.frameId
+                String probeLine = "CELTIUM_PAIR_PROBE_CLEAR frame=" + this.frame.frameId
                         + " pairImage=0x" + Long.toHexString(probePair) + " colour=magenta";
                 System.out.println("[Celtium] " + probeLine);
-                record(probeLine);
+                this.reports.record(probeLine);
             }
         }
         } finally {
@@ -15912,20 +15856,20 @@ this.frameBufferOpen = false;
         // The window timestamps feed the GPU pass report and, through windowGpuMainNanos, the frame budget's gpu
         // column: -Dceltium.vulkan.frameBudget=true asks for that column, so it opens this path too. The cost (two
         // timestamp writes per window and one readback per frame) is paid only by a run that asked for a measurement.
-        boolean timeImmediatePass = this.timestampsUsable && this.timestampPool != 0L
-                && celtium$windowTimestampsActive();
-        int windowSlot = timeImmediatePass && this.windowTimestampCount < WINDOW_SLOTS
-                ? WINDOW_SLOT_BASE + this.windowTimestampCount : -1;
+        boolean timeImmediatePass = this.frame.timestampsUsable && this.frame.timestampPool != 0L
+                && FrameCoordinator.celtium$windowTimestampsActive();
+        int windowSlot = timeImmediatePass && this.frame.windowTimestampCount < WINDOW_SLOTS
+                ? WINDOW_SLOT_BASE + this.frame.windowTimestampCount : -1;
         if (windowSlot >= 0) {
-            this.windowTimestampTargets[this.windowTimestampCount] = this.targetRegistry.currentIdentity();
-            this.windowTimestampCount++;
-            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                    celtium$timestampPoolBase() + (windowSlot * 2));
+            this.windowTimestampTargets[this.frame.windowTimestampCount] = this.targetRegistry.currentIdentity();
+            this.frame.windowTimestampCount++;
+            vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.frame.timestampPool,
+                    this.frame.celtium$timestampPoolBase() + (windowSlot * 2));
         }
-        gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
+        this.frame.gpuMark(this.targetRegistry.currentIsMain() ? "win-begin" : "offwin-begin");
         FramePassTimings.begin("winBeginPass");
         BackendCallCounters.noteFboSwitch();
-        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(this.frame.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         FramePassTimings.end("winBeginPass");
         if (this.pendingChainPairClear != 0L) {
             // The pair clear the routing deferred (GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS): one
@@ -15938,7 +15882,7 @@ this.frameBufferOpen = false;
             this.pendingChainPairClearColors = 1;
             GllessFrameTarget deferredOwner = offTargetTarget();
             if (deferredOwner != null) {
-                deferredOwner.recordChainPairDeferredClear(deferredClearIdentity, this.commandBuffer,
+                deferredOwner.recordChainPairDeferredClear(deferredClearIdentity, this.frame.commandBuffer,
                         passWidth, passHeight, deferredClearColors);
             }
         }
@@ -15949,7 +15893,7 @@ this.frameBufferOpen = false;
         // pass states a different area, and it states its own.
         this.passAreaWidth = this.targetWidth;
         this.passAreaHeight = this.targetHeight;
-        this.commandState.beginPass(this.activeImmediateTarget);
+        this.frame.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
         setViewportAndScissor(stack, this.passAreaWidth, this.passAreaHeight);
         // A measured marker, not a mode. The loading screen's frame image is uniform white, and on an image that is
@@ -15957,8 +15901,8 @@ this.frameBufferOpen = false;
         // the same picture. Clearing the frame image to a colour no game draw uses, at the head of the frame's own
         // pass, separates them: the marker still there at the end of the frame means every draw of that pass was lost,
         // and a white field means the composite's own sample was white. Once per frame, gated like the other probes.
-        if (windowIdentity && FRAME_CLEAR_MARK && this.frameClearMarkFrame != this.frameId) {
-            this.frameClearMarkFrame = this.frameId;
+        if (windowIdentity && FRAME_CLEAR_MARK && this.frameClearMarkFrame != this.frame.frameId) {
+            this.frameClearMarkFrame = this.frame.frameId;
             org.lwjgl.vulkan.VkClearAttachment.Buffer markAttachment =
                     org.lwjgl.vulkan.VkClearAttachment.calloc(1, stack);
             markAttachment.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).colorAttachment(0);
@@ -15970,7 +15914,7 @@ this.frameBufferOpen = false;
             markRect.get(0).rect().offset().set(0, 0);
             markRect.get(0).rect().extent().set(this.targetWidth, this.targetHeight);
             markRect.get(0).baseArrayLayer(0).layerCount(1);
-            vkCmdClearAttachments(this.commandBuffer, markAttachment, markRect);
+            vkCmdClearAttachments(this.frame.commandBuffer, markAttachment, markRect);
         }
         if (!this.targetRegistry.currentIsMain()) {
             long passIdentity = this.targetRegistry.currentIdentity();
@@ -15985,48 +15929,25 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // The pass close on its own (see winPrefix): the unnamed remainder of a window is either its prefix or this.
         FramePassTimings.begin("winPassEnd");
-        vkCmdEndRenderPass(this.commandBuffer);
-        this.commandState.endPass();
+        vkCmdEndRenderPass(this.frame.commandBuffer);
+        this.frame.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
         if (offTarget != null && windowSharedDepthUsed && windowDepthKey != 0L) {
             offTarget.recordChainPairAttachRelease(windowChainIdentity, windowDepthKey);
         }
         FramePassTimings.end("winPassEnd");
-        gpuMark("win-end");
+        this.frame.gpuMark("win-end");
         if (windowSlot >= 0) {
-            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                    celtium$timestampPoolBase() + (windowSlot * 2) + 1);
-            this.immediatePassTimed = true;
+            vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.frame.timestampPool,
+                    this.frame.celtium$timestampPoolBase() + (windowSlot * 2) + 1);
+            this.frame.immediatePassTimed = true;
         }
     }
 
-    /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
-    private void celtium$recordFrameWait(long startedNanos) {
-        long waitedNanos = System.nanoTime() - startedNanos;
-        long millis = waitedNanos / 1_000_000L;
-        FrameBudgetTimings.addFenceWait(waitedNanos);
-        this.submissionStatistics.addFrameFenceWaitMillis(millis);
-        this.submissionStatistics.noteFrameFenceWaitCount();
-        if (millis > this.submissionStatistics.frameFenceWaitWorstMillis()) {
-            this.submissionStatistics.setFrameFenceWaitWorstMillis(millis);
-        }
-    }
-
-    /**
-     * Whether the window timestamp queries are being written this run.
-     * <p>
-     * Two instruments read the same measurement: the GPU pass report ({@code -Dceltium.gpuPassTimings=true}) and the
-     * frame budget's {@code gpu} column ({@code -Dceltium.vulkan.frameBudget=true}). The write side and the query reset
-     * must ask the same question - the reset range only covers those slots while this is true - because a window write
-     * without its reset is VUID-vkCmdWriteTimestamp-00830, which the frame budget's first positive-control leg did
-     * reproduce (twenty errors, and a validation verdict of dirty).
-     */
-    private static boolean celtium$windowTimestampsActive() {
-        return org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled() || FrameBudgetTimings.enabled();
-    }
 
     /** Whether the ring's creation already failed once on this backend, so the fallback is recorded once. */
     private boolean frameRingMeshFailed;
+
 
     /**
      * {@return the mesh a new immediate group writes into}: a slice of the per-frame linear ring when the ring
@@ -16051,13 +15972,13 @@ this.frameBufferOpen = false;
      * never disagree about which target a group belongs to.
      */
     private VulkanDynamicMesh celtium$newImmediateMesh() {
-        if (this.frameArena == null) {
-            this.frameArena = new VulkanFrameArena(this.context);
+        if (this.frame.frameArena == null) {
+            this.frame.frameArena = new VulkanFrameArena(this.context);
         }
         if (this.targetRegistry.currentIsMain()) {
             try {
-                VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
-                        this.context.celtium$frameLinearRing(), this.frameSlot);
+                VulkanDynamicMesh ringMesh = this.frame.frameArena.openRingMesh(
+                        this.context.celtium$frameLinearRing(), this.frame.frameSlot);
                 if (ringMesh != null) {
                     return ringMesh;
                 }
@@ -16066,18 +15987,19 @@ this.frameBufferOpen = false;
                 // record it once and fall through, rather than refusing every group on the ring's account.
                 if (!this.frameRingMeshFailed) {
                     this.frameRingMeshFailed = true;
-                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                    this.reports.record("frame linear ring unavailable for immediate meshes: " + describe(failure)
                             + "; groups fall back to the frame arena");
                 }
             }
         }
-        VulkanDynamicMesh borrowed = this.frameArena.openMesh();
+        VulkanDynamicMesh borrowed = this.frame.frameArena.openMesh();
         if (borrowed != null) {
             return borrowed;
         }
-        this.submissionStatistics.noteFrameArenaFallbackGroups();
+        this.frame.submissionStatistics.noteFrameArenaFallbackGroups();
         return new VulkanDynamicMesh(this.context);
     }
+
 
     /**
      * Supplies a full mirror for a texture no upload hook announced, at most once per content change.
@@ -16094,6 +16016,7 @@ this.frameBufferOpen = false;
         }
         return celtium$supplyMirror(glTextureId, this.textureRegistry.get(glTextureId));
     }
+
 
     /**
      * The supply itself, for callers that already resolved {@code existing}. {@return whether a mirror exists for the
@@ -16181,6 +16104,7 @@ this.frameBufferOpen = false;
         return existing != null;
     }
 
+
     /**
      * The bounded deferred-mirror notice, with the extent read only when the line will print.
      * <p>
@@ -16195,6 +16119,7 @@ this.frameBufferOpen = false;
         int[] size = textureSize(glTextureId);
         this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1], why);
     }
+
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
 
@@ -16217,8 +16142,11 @@ this.frameBufferOpen = false;
     }
 
     private final float[] closeProjectionScratch = new float[16];
+
     private float[] lastSharedProjection;
+
     private float[] lastSharedModelView;
+
 
     /** {@return the previous clip rectangle when {@code values} equals it, else a new copy that becomes the previous}. */
     private int[] celtium$shareScissor(int[] values) {
@@ -16230,6 +16158,7 @@ this.frameBufferOpen = false;
         this.lastGroupScissorBox = copy;
         return copy;
     }
+
 
     /** {@return the last queued group's array when {@code values} equals it, else a new copy that becomes the last}. */
     private float[] celtium$shareMatrix(float[] values, boolean projection) {
@@ -16289,7 +16218,7 @@ this.frameBufferOpen = false;
                         + "," + round3(this.currentGroupModelView[14]) + ")"
                         // The mirror's own account of its contents: a texture that only ever received patches would be sampled
                         // in the parts that never arrived, which is what a black particle sprite would look like.
-                        + " atlasFull=" + (this.atlasTexture != null && this.atlasTexture.hasFullContent())
+                        + " atlasFull=" + (this.owner.atlasTexture != null && this.owner.atlasTexture.hasFullContent())
                         + " lightmapFull=" + (this.lightmapTexture != null && this.lightmapTexture.hasFullContent())
                         + " groupTexFull=" + this.groupTextureFull());
             }
@@ -16335,7 +16264,7 @@ this.frameBufferOpen = false;
                 // -Dceltium.vulkan.enqAll the print covers every group (optionally one format), because the first eight
                 // belong to the loading screen and cannot say which matrices the frame an artefact is in was drawn with.
                 this.immediateMatrixLogged++;
-                System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ frame=" + this.frameId
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ frame=" + this.frame.frameId
                         + " group=" + this.immediateStatistics.immediateGroupsClosed() + " proj=" + round3(projection[2]) + ","
                         + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
                         + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
@@ -16374,7 +16303,7 @@ this.frameBufferOpen = false;
             // bracket alone and must not widen under it; stamped only while the census runs.
             group.closedInUiSection = HudCensus.enabled() && FramePassTimings.uiSectionActive();
             if (group.closedInUiSection) {
-                HudCensus.noteGroupClosed(this.frameId);
+                HudCensus.noteGroupClosed(this.frame.frameId);
             }
             // The S5-2 routing stamps: the same bracket read, unconditional (the census
             // stamps above are gated by their censuses and so cannot route on), and the
@@ -16434,7 +16363,7 @@ this.frameBufferOpen = false;
             group.geometryLease = this.currentGeometryLease;
             this.currentGeometryLease = null;
             group.indexFlushExempt = this.currentGroupIndexFlushExempt;
-            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(),
+            group.stamp = GroupStamp.obtain(this.frame.frameId, (int) this.targetRegistry.generation(),
                     group.geometryLease != null, this.worldEpoch);
             this.groupQueueMutation++;
                     this.immediateGroups.add(group);
@@ -16468,6 +16397,7 @@ this.frameBufferOpen = false;
     }
 
 
+
     /**
      * Ends the backend's use of the queue: the idle wait makes the recorded groups unreachable, and then everything the
      * queue still holds is retired.
@@ -16482,7 +16412,7 @@ this.frameBufferOpen = false;
         releaseRetiredImmediateGroups();
         int held = this.immediateGroups.size();
         for (ImmediateGroup group : this.immediateGroups) {
-            this.retiredImmediateGroups.add(group);
+            this.frame.retiredImmediateGroups.add(group);
         }
         this.groupQueueMutation++;
             this.immediateGroups.clear();
@@ -16499,6 +16429,7 @@ this.frameBufferOpen = false;
         this.immediateStatistics.addGroupsDiscardedAtFullTeardown(held);
         releaseRetiredImmediateGroups();
     }
+
 
     /**
      * BH-10's capture histogram as one bracketed field, non-zero slots only.
@@ -16523,6 +16454,7 @@ this.frameBufferOpen = false;
         return text.append(']').toString();
     }
 
+
     /** {@return the selectors the push block carried, with their counts} - BH-03's written-value census. */
     String alphaSelectorSummary() {
         if (this.alphaSelectorCounts.isEmpty()) {
@@ -16540,6 +16472,7 @@ this.frameBufferOpen = false;
         }
         return text.append(']').toString();
     }
+
 
     /** {@return the distinct references the push block carried}, decoded, so a leg reads thresholds not bit patterns. */
     String alphaReferenceValueSummary() {
@@ -16559,346 +16492,17 @@ this.frameBufferOpen = false;
     }
 
 
-    void recordFrameEndTimestamp() {
-        if (this.timestampPool == 0L || !this.timestampsUsable
-                || !org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
-            return;
-        }
-        // One write per frame: the batched path ends the buffer in the coordinator's finish, the direct path ends it in
-        // submit(), and a frame that took both - which is what a validation leg reported as ten
-        // VUID-vkCmdWriteTimestamp-00830 errors on the discrete card - would write the same query twice.
-        if (this.frameEndTimestampWritten) {
-            return;
-        }
-        this.frameEndTimestampWritten = true;
-        gpuMark("end");
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + (FRAME_TIMESTAMP_SLOT * 2) + 1);
-        this.frameGpuTimed = true;
-    }
-
-    /** The original timing update, called once per frame from the wrapper above. */
-    private void updateTimingsBody() {
-        if (this.timestampPool == 0 || !this.timestampsUsable) {
-            return;
-        }
-        // The state a readback may consume is a confirmed submission's snapshot, never the live
-        // accumulators: at this point in the frame those describe the newest recorded frame, whose
-        // submission has usually not completed - which is why this method used to file zero for
-        // every frame (see TerrainTimingReadback). Nothing confirmed yet, nothing to read; the
-        // snapshot waits, and the terrain column keeps its filed zero for the frame rather than a
-        // sum measured against a submission that has not run.
-        TerrainTimingReadback.Snapshot snapshot =
-                this.timingReadback.peekReadable(this.scheduler.completedSubmitSequence());
-        if (snapshot == null) {
-            return;
-        }
-        boolean consumed = false;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            int queries = (snapshot.immediateTimed || snapshot.frameTimed)
-                    ? TIMESTAMP_SLOTS : snapshot.passSlots * 2;
-            LongBuffer data = stack.mallocLong(queries * 2);
-            int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, snapshot.poolBase,
-                    queries, data, Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-            if (result != VK_SUCCESS && result != VK_NOT_READY) {
-                // The snapshot stays queued, as the live state used to stay uncleared: the next
-                // begin retries the read, unless a newer confirmation drops it as overwritten.
-                FrameBudgetTimings.setTerrainTimingCensus(this.timingSnapshotsRead,
-                        this.timingReadback.droppedOverwritten(), this.timingSlotsUnavailable);
-                return;
-            }
-            consumed = true;
-            long terrainGpuNanos = 0L;
-            java.util.Map<String, Long> framePackNanos = new java.util.LinkedHashMap<>();
-            java.util.Map<String, Long> frameNativeNanos = new java.util.LinkedHashMap<>();
-            for (int slot = 0; slot < snapshot.passSlots; slot++) {
-                long startAvailable = data.get((slot * 2 * 2) + 1);
-                long endAvailable = data.get((slot * 2 * 2) + 3);
-                if (startAvailable == 0 || endAvailable == 0) {
-                    // Counted rather than silent: the submission was confirmed, so its writes should
-                    // be in the pool. An unavailable slot here is the signature of a read that lost
-                    // its generation, and the census line is where that loss shows.
-                    this.timingSlotsUnavailable++;
-                    // Keep whatever was measured for this pass last time instead of reporting "?? ms".
-                    continue;
-                }
-                long start = data.get(slot * 2 * 2);
-                long end = data.get((slot * 2 * 2) + 2);
-                if (end >= start) {
-                    long passNanos = (long) ((end - start) * this.timestampPeriod);
-                    String packName = snapshot.packPassNames.get(Integer.valueOf(slot));
-                    if (packName != null) {
-                        // A pack stage's subpasses share one name: the stage's frame total is their sum,
-                        // filed under the name once, beside the native passes' own entries.
-                        framePackNanos.merge(packName, Long.valueOf(passNanos), Long::sum);
-                    } else if (snapshot.passes.get(slot) != null) {
-                        // A native stage can record several slots under one name in a frame
-                        // (segmented recording revisits a layer): the name's frame total is
-                        // their sum, filed into the persistent map once, like the pack branch.
-                        frameNativeNanos.merge(snapshot.passes.get(slot), Long.valueOf(passNanos), Long::sum);
-                    }
-                    // The frame budget's terrain column is this frame's passes summed fresh from the readback:
-                    // the maps above keep a pass's last measured value across frames, so summing them would file
-                    // stale durations for passes whose readback has not landed yet.
-                    terrainGpuNanos += passNanos;
-                }
-            }
-            if (!framePackNanos.isEmpty()) {
-                this.packPassTimings.putAll(framePackNanos);
-            }
-            if (!frameNativeNanos.isEmpty()) {
-                this.passTimings.putAll(frameNativeNanos);
-            }
-            FrameBudgetTimings.setTerrainGpuPass(terrainGpuNanos);
-            if (snapshot.frameTimed) {
-                long startAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 1);
-                long endAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 3);
-                if (startAvailable != 0 && endAvailable != 0) {
-                    long start = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2);
-                    long end = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 2);
-                    if (end >= start) {
-                        this.frameGpuNanos = (long) ((end - start) * this.timestampPeriod);
-                    }
-                }
-            }
-            if (this.frameGpuNanos > 0L && (!snapshot.passes.isEmpty() || !snapshot.packPassNames.isEmpty())) {
-                // The first and last pass of this frame, by the slot they were recorded in: slot order is recording order.
-                int firstSlot = Integer.MAX_VALUE;
-                int lastSlot = -1;
-                for (Integer slot : snapshot.passes.keySet()) {
-                    firstSlot = Math.min(firstSlot, slot.intValue());
-                    lastSlot = Math.max(lastSlot, slot.intValue());
-                }
-                for (Integer slot : snapshot.packPassNames.keySet()) {
-                    firstSlot = Math.min(firstSlot, slot.intValue());
-                    lastSlot = Math.max(lastSlot, slot.intValue());
-                }
-                if (lastSlot >= 0) {
-                    long frameStart = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2);
-                    long frameEnd = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 2);
-                    long firstPassStart = data.get(firstSlot * 2 * 2);
-                    long lastPassEnd = data.get(lastSlot * 2 * 2 + 2);
-                    if (frameEnd >= frameStart && firstPassStart >= frameStart && frameEnd >= lastPassEnd) {
-                        this.frameHeadNanos = (long) ((firstPassStart - frameStart) * this.timestampPeriod);
-                        this.frameTailNanos = (long) ((frameEnd - lastPassEnd) * this.timestampPeriod);
-                    }
-                }
-            }
-            if (snapshot.immediateTimed) {
-                // Every window of the frame, summed and split by target: main-target windows against the off-target
-                // (mod and post-chain framebuffer) ones, plus the largest single window.
-                long main = 0L;
-                long off = 0L;
-                long max = 0L;
-                int counted = 0;
-                long mainIdentity = this.targetRegistry.mainIdentity();
-                for (int w = 0; w < snapshot.windowCount; w++) {
-                    int slot = WINDOW_SLOT_BASE + w;
-                    if (data.get(slot * 2 * 2 + 1) == 0 || data.get(slot * 2 * 2 + 3) == 0) {
-                        continue;
-                    }
-                    long start = data.get(slot * 2 * 2);
-                    long end = data.get(slot * 2 * 2 + 2);
-                    if (end < start) {
-                        continue;
-                    }
-                    long nanos = (long) ((end - start) * this.timestampPeriod);
-                    long target = snapshot.windowTargets[w];
-                    if (target == mainIdentity || target == 0L) {
-                        main += nanos;
-                    } else {
-                        off += nanos;
-                    }
-                    max = Math.max(max, nanos);
-                    counted++;
-                }
-                this.immediatePassGpuNanos = main + off;
-                this.windowGpuMainNanos = main;
-                FrameBudgetTimings.setGpuPass(main + off);
-                this.windowGpuOffNanos = off;
-                this.windowGpuMaxNanos = max;
-                this.windowGpuCount = counted;
-            }
-        }
-        if (consumed && snapshot.markCount > 1) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                LongBuffer marks = stack.mallocLong(snapshot.markCount * 2);
-                int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool,
-                        snapshot.poolBase + MARK_BASE, snapshot.markCount, marks, Long.BYTES * 2,
-                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-                if (result == VK_SUCCESS || result == VK_NOT_READY) {
-                    // Summed per label: the delta before each mark is charged to that mark's label (the commands
-                    // recorded since the previous mark), so "g2=310us/48" reads as 48 format-2 groups costing 310 us.
-                    java.util.Map<String, long[]> byLabel = new java.util.LinkedHashMap<String, long[]>();
-                    long previous = -1L;
-                    for (int m = 0; m < snapshot.markCount; m++) {
-                        if (marks.get(m * 2 + 1) == 0) {
-                            continue;
-                        }
-                        long at = marks.get(m * 2);
-                        if (previous >= 0L && at >= previous) {
-                            long[] sum = byLabel.computeIfAbsent(snapshot.markLabels[m], k -> new long[2]);
-                            sum[0] += (long) ((at - previous) * this.timestampPeriod);
-                            sum[1]++;
-                        }
-                        previous = at;
-                    }
-                    StringBuilder timeline = new StringBuilder();
-                    for (java.util.Map.Entry<String, long[]> entry : byLabel.entrySet()) {
-                        timeline.append(' ').append(entry.getKey()).append('=')
-                                .append(entry.getValue()[0] / 1000L).append("us/").append(entry.getValue()[1]);
-                    }
-                    this.gpuMarkTimeline = timeline.toString();
-                }
-            }
-        }
-        if (consumed) {
-            this.timingReadback.consume(snapshot);
-            this.timingSnapshotsRead++;
-        }
-        FrameBudgetTimings.setTerrainTimingCensus(this.timingSnapshotsRead,
-                this.timingReadback.droppedOverwritten(), this.timingSlotsUnavailable);
-        if (consumed) {
-            // The pass report belongs to the frame its timings describe. The boundary call site
-            // (celtium$finishFrameBuffer) keys on the live frame id and only runs while the frame
-            // buffer is still open, which the swap-point and present paths mostly leave already
-            // closed - so the line stayed silent even with the timings in hand (proof leg PTF1:
-            // the terrain column filed real values, CELTIUM_PASS_GPU never printed). Printing here,
-            // keyed on the snapshot's own frame id, pairs each report with the frame it measures.
-            // The marks timeline is not the snapshot's own string, so it is left to the boundary site.
-            GpuPassTimingReport.printIfDue(snapshot.frameId, this.passTimings, this.packPassTimings,
-                    this.immediatePassGpuNanos,
-                    this.frameGpuNanos, this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount,
-                    this.windowGpuMainNanos, this.windowGpuOffNanos, this.windowGpuMaxNanos, null);
-        }
-    }
-
-    /**
-     * Opens the statistics query that brackets one pass's section draw loop (item 359).
-     *
-     * @return the query's index within the frame slot, or -1 when the instrument is not collecting - the
-     *         pool is absent or the report switch is off - or when the slot's queries are exhausted, which
-     *         is counted rather than silent
-     */
-    private int beginTerrainStatistics(String pass) {
-        if (this.statisticsPool == 0L || !TerrainStatisticsReport.enabled() || this.commandBuffer == null) {
-            return -1;
-        }
-        int index = this.statisticsSlotCounts[this.frameSlot];
-        if (index >= STATS_PER_SLOT) {
-            this.statisticsDroppedPasses++;
-            return -1;
-        }
-        vkCmdBeginQuery(this.commandBuffer, this.statisticsPool, (this.frameSlot * STATS_PER_SLOT) + index, 0);
-        this.statisticsSlotPasses[this.frameSlot][index] = pass;
-        this.statisticsChargeAccum = 0L;
-        return index;
-    }
-
-    /** Adds one charged batch to the open query's unsorted charge - the V4 identity's CPU side. */
-    private void noteTerrainStatisticsCharge(int query, long chargeVertices, boolean sortedPass) {
-        if (query >= 0 && !sortedPass) {
-            this.statisticsChargeAccum += chargeVertices;
-        }
-    }
-
-    /**
-     * Closes the pass's statistics query and snapshots the CPU-side counts the report reads beside the GPU
-     * counters: the pass's logical draws and sections (the existing per-pass counters, reset at the head of
-     * every pass) and its accumulated unsorted budget charge.
-     */
-    private void endTerrainStatistics(int query, String pass) {
-        if (query < 0) {
-            return;
-        }
-        vkCmdEndQuery(this.commandBuffer, this.statisticsPool, (this.frameSlot * STATS_PER_SLOT) + query);
-        this.statisticsSlotDraws[this.frameSlot][query] = this.terrainStatistics.lastDrawCommands();
-        this.statisticsSlotSections[this.frameSlot][query] = this.terrainStatistics.lastSectionsDrawn();
-        this.statisticsSlotCharges[this.frameSlot][query] = pass != null && pass.contains("translucent") ? 0L : this.statisticsChargeAccum;
-        this.statisticsSlotCounts[this.frameSlot] = query + 1;
-    }
-
-    /**
-     * Reads back whatever statistics samples have landed, at the frame boundary. Non-blocking like the
-     * timestamp read: a query whose availability long is still 0 stays unread for a later frame, and a slot
-     * that is reset while some of its queries were never read counts them as dropped samples - the three
-     * counters the summary prints exist so a silent instrument is never read as an empty scene.
-     */
-    private void readPipelineStatistics() {
-        if (this.statisticsPool == 0L) {
-            return;
-        }
-        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            int count = this.statisticsSlotCounts[slot];
-            if (count == 0) {
-                continue;
-            }
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                LongBuffer data = stack.mallocLong(count * TerrainStatisticsReport.RESULT_LONGS_PER_QUERY);
-                int result = vkGetQueryPoolResults(this.context.device(), this.statisticsPool,
-                        slot * STATS_PER_SLOT, count, data, TerrainStatisticsReport.RESULT_STRIDE_BYTES,
-                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-                if (result != VK_SUCCESS && result != VK_NOT_READY) {
-                    this.statisticsReadFailures++;
-                    continue;
-                }
-                for (int q = 0; q < count; q++) {
-                    if ((this.statisticsSlotConsumed[slot] & (1 << q)) != 0) {
-                        continue;
-                    }
-                    long[] values = TerrainStatisticsReport.decode(data, q);
-                    if (values == null) {
-                        continue;
-                    }
-                    this.statisticsSlotConsumed[slot] |= (1 << q);
-                    accumulateStatistics(slot, q, values);
-                }
-            }
-        }
-        if (this.frameId != this.statisticsLastPrintFrame && !this.statisticsWindowTotals.isEmpty()) {
-            long frames = this.statisticsWindowStartFrame < 0L ? 0L : this.frameId - this.statisticsWindowStartFrame;
-            if (TerrainStatisticsReport.printWindowIfDue(this.frameId, frames, this.statisticsWindowTotals)) {
-                this.statisticsWindowTotals.clear();
-                this.statisticsWindowStartFrame = -1L;
-                this.statisticsLastPrintFrame = this.frameId;
-            }
-        }
-    }
-
-    /** Folds one landed sample into the window and cumulative totals, beside its record-time snapshots. */
-    private void accumulateStatistics(int slot, int query, long[] values) {
-        String pass = this.statisticsSlotPasses[slot][query];
-        if (pass == null) {
-            return;
-        }
-        long[] window = this.statisticsWindowTotals.computeIfAbsent(pass, k -> new long[TerrainStatisticsReport.VALUES]);
-        long[] totals = this.statisticsTotals.computeIfAbsent(pass, k -> new long[TerrainStatisticsReport.VALUES]);
-        for (int i = 0; i < TerrainStatisticsReport.COUNTERS; i++) {
-            window[i] += values[i];
-            totals[i] += values[i];
-        }
-        window[TerrainStatisticsReport.DRAWS] += this.statisticsSlotDraws[slot][query];
-        totals[TerrainStatisticsReport.DRAWS] += this.statisticsSlotDraws[slot][query];
-        window[TerrainStatisticsReport.SECTIONS] += this.statisticsSlotSections[slot][query];
-        totals[TerrainStatisticsReport.SECTIONS] += this.statisticsSlotSections[slot][query];
-        window[TerrainStatisticsReport.BUDGET_CHARGE] += this.statisticsSlotCharges[slot][query];
-        totals[TerrainStatisticsReport.BUDGET_CHARGE] += this.statisticsSlotCharges[slot][query];
-        this.statisticsSamples++;
-        if (this.statisticsWindowStartFrame < 0L) {
-            this.statisticsWindowStartFrame = this.frameId;
-        }
-    }
-
     /** The summary's statistics block; printed even when the instrument cannot run, with the reason. */
     String terrainStatisticsSummary() {
-        if (this.statisticsPool == 0L) {
+        if (this.frame.statisticsPool == 0L) {
             String reason = !this.context.pipelineStatisticsQuerySupported() ? "device"
                     : TerrainStatisticsReport.forceDisabled() ? "disabled" : "unavailable";
             return TerrainStatisticsReport.formatSummary(false, reason, 0L, 0L, 0L, 0L, this.statisticsTotals);
         }
-        return TerrainStatisticsReport.formatSummary(true, "", this.statisticsSamples, this.statisticsDroppedPasses,
-                this.statisticsDroppedSamples, this.statisticsReadFailures, this.statisticsTotals);
+        return TerrainStatisticsReport.formatSummary(true, "", this.frame.statisticsSamples, this.frame.statisticsDroppedPasses,
+                this.frame.statisticsDroppedSamples, this.frame.statisticsReadFailures, this.statisticsTotals);
     }
+
 
 
 
@@ -16909,7 +16513,9 @@ this.frameBufferOpen = false;
      * removal of the UI test quad it originally also gated.)
      */
     private static final boolean UI_TEST = Boolean.getBoolean("celtium.vulkan.uiTest");
+
     private final boolean uiTestEnabled = UI_TEST;
+
 
     /**
      * Whether the frame image is marked with a green field at the head of the frame's own pass, so "a draw that wrote
@@ -16917,10 +16523,13 @@ this.frameBufferOpen = false;
      * {@code -Dceltium.vulkan.frameClearMark=true}; a measurement switch, never a mode.
      */
     private static final boolean FRAME_CLEAR_MARK = Boolean.getBoolean("celtium.vulkan.frameClearMark");
+
     /** The frame whose marker clear has been recorded, so the mark is once per frame. */
     private long frameClearMarkFrame = -1L;
+
     /** Frame-image readbacks taken at window boundaries in the marked run; bounded to the frame's first windows. */
     private int frameBoundaryProbes;
+
     /**
      * A frame whose window boundaries read the frame image back, without the marker clear frame 0 carries.
      * <p>
@@ -16935,9 +16544,11 @@ this.frameBufferOpen = false;
      */
     private static final long FRAME_AT_WINDOW_FRAME =
             Long.getLong("celtium.vulkan.frameAtWindowFrame", -1L).longValue();
+
     /** How many window boundaries that frame reports; {@code -Dceltium.vulkan.frameAtWindowLines}, default 8. */
     private static final int FRAME_AT_WINDOW_LINES =
             Integer.getInteger("celtium.vulkan.frameAtWindowLines", 8).intValue();
+
     /**
      * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
      * <p>
@@ -16965,12 +16576,14 @@ this.frameBufferOpen = false;
      */
     private static final boolean SELF_COMPOSITE_SKIP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
+
     /**
      * Whether every textured group's descriptor is rebuilt at the draw from the registry's current wrapper.
      * {@code -Dceltium.vulkan.rebuildDescriptors=true}; separates the set the prepare wrote from the set the draw binds.
      */
     private static final boolean REBUILD_DESCRIPTORS_AT_DRAW =
             Boolean.getBoolean("celtium.vulkan.rebuildDescriptors");
+
     /**
      * Whether the first presents report the frame image's and the pair's centre patch.
      * {@code -Dceltium.vulkan.presentPatch=true}; the present is the only point that says what the frame serves.
@@ -16982,6 +16595,7 @@ this.frameBufferOpen = false;
      * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
      */
     static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+
     /**
      * Whether the present drains the bound target's pending immediate work before it blits, matching GL's
      * swap-point ordering. {@code -Dceltium.vulkan.presentFlushPending=false} keeps the old defer-to-the-next-
@@ -16989,47 +16603,57 @@ this.frameBufferOpen = false;
      */
     static final boolean PRESENT_FLUSH_PENDING =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFlushPending", "true"));
+
     /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
     static final int PRESENT_PATCH_LINES =
             Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
+
     /** The first present (1-based) that reports it; {@code -Dceltium.vulkan.presentPatchMinPresent}. */
     static final int PRESENT_PATCH_MIN_PRESENT =
             Integer.getInteger("celtium.vulkan.presentPatchMinPresent", 1).intValue();
+
     int presentPatchLogs;
+
     /**
      * Whether the chain pair is cleared to magenta at the head of the frame's own window, once per frame.
      * {@code -Dceltium.vulkan.pairProbeClear=true}; a measurement switch that makes the pair unmistakable to the draw
      * that samples it, never a mode.
      */
     private static final boolean PAIR_PROBE_CLEAR = Boolean.getBoolean("celtium.vulkan.pairProbeClear");
+
     private long pairProbeClearFrame = -1L;
+
     /** The last traced centre colours, so the per-window trace prints changes rather than every window. */
     private String lastFrameCentre = "";
+
     private String lastPairCentre = "";
+
     /** Lines the flip trace has written; bounded so a scene that never settles cannot fill the log. */
     private int splashFlipLogs;
+
     private void recordHandoff(long nanos) {
-        this.handoffNanos += nanos;
-        this.handoffSamples++;
-        if (nanos > this.handoffWorstNanos) {
-            this.handoffWorstNanos = nanos;
+        this.frame.handoffNanos += nanos;
+        this.frame.handoffSamples++;
+        if (nanos > this.frame.handoffWorstNanos) {
+            this.frame.handoffWorstNanos = nanos;
         }
     }
 
+
     /** {@return the average and worst CPU time of the GL/Vulkan handoff since the last call, or null} */
     private String takeHandoffSummary() {
-        if (this.handoffSamples == 0) {
+        if (this.frame.handoffSamples == 0) {
             return null;
         }
-        String summary = "handoff: avg " + (this.handoffNanos / this.handoffSamples / 1000L) + " us over "
-                + this.handoffSamples + " calls (" + this.frameOpens + " opens, " + this.frameCloses + " closes, "
-                + this.renderCalls + " pass calls), worst " + (this.handoffWorstNanos / 1000L) + " us";
-        this.frameOpens = 0;
-        this.frameCloses = 0;
+        String summary = "handoff: avg " + (this.frame.handoffNanos / this.frame.handoffSamples / 1000L) + " us over "
+                + this.frame.handoffSamples + " calls (" + this.frame.frameOpens + " opens, " + this.frame.frameCloses + " closes, "
+                + this.renderCalls + " pass calls), worst " + (this.frame.handoffWorstNanos / 1000L) + " us";
+        this.frame.frameOpens = 0;
+        this.frame.frameCloses = 0;
         this.renderCalls = 0;
-        this.handoffNanos = 0L;
-        this.handoffSamples = 0L;
-        this.handoffWorstNanos = 0L;
+        this.frame.handoffNanos = 0L;
+        this.frame.handoffSamples = 0L;
+        this.frame.handoffWorstNanos = 0L;
         return summary;
     }
 
@@ -17042,52 +16666,9 @@ this.frameBufferOpen = false;
         String base = describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
         String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
-        return withDetail + " | " + verificationSummary();
+        return withDetail + " | " + this.owner.verificationSummary();
     }
 
-    /**
-     * Prints the counter summary once per trigger class, naming what triggered it.
-     * <p>
-     * It is reachable from the F3 debug list, but that list is only built when the Celeritas section of the overlay
-     * is drawn - a leg with the overlay requested printed every counter as absent rather than zero, which is the
-     * confusion this whole summary exists to prevent. World teardown is the second trigger, and the frame counter is
-     * the third because a fixture that exits without tearing the world down never reaches the second.
-     * <p>
-     * The bounded triggers ({@code frame 120}, {@code present 120}) are <em>snapshots</em> so a leg that dies early
-     * still leaves a counter set to read, and they do not suppress the teardown print: the two are different readings
-     * and an acceptance reads the <em>last</em> {@code CELTIUM_VERIFY} line in the log. Measured (round 166): reading
-     * the {@code present 120} snapshot as the verdict is how {@code scissorCalls=0} was read as "the GUI never
-     * clipped" for three rounds, while in the same run the video options screen opened its list ~90 presents after
-     * that snapshot and did clip - the picture shows the rows cut at the forced viewport and the scrollbar drawn.
-     */
-    /**
-     * Prints the counter summary now, for a fixture that is about to end the run.
-     * <p>
-     * The other triggers cannot be relied on for the final reading: {@code frame 120} and {@code present 120} are
-     * bounded snapshots a slow leg never reaches (a 640x480 video-settings leg of round 166 reached 86 presents and
-     * printed nothing at all), world teardown is skipped by a fixture that exits with its world still loaded, and a
-     * JVM shutdown hook's output lands after the log has been closed - measured, the hook printed into nothing.
-     * The fixture is the one component that knows the run is ending while the log is still alive, so it asks for the
-     * line through the backend call it already uses for reflection. An acceptance reads the LAST line.
-     *
-     * @return always {@code true}, so a reflective caller can tell "printed" from "no backend"
-     */
-    public boolean printCounterSummaryNow(String trigger) {
-        celtium$printVerificationSummary(trigger, false);
-        // The per-frame split's session summary, for the same reason the counter summary is printed here: world
-        // teardown is skipped by a fixture that exits with its world still loaded, and the teardowns that do run
-        // happen before the measured world has drawn a frame - measured on leg r50c, where both teardown summaries
-        // read frames=0 while the periodic lines in the same log reached frames=960. The fixture is the component
-        // that knows the run is ending while the log is alive, so the last summary is the one it asks for.
-        FrameBudgetTimings.printSummary();
-        // The HUD census' final line, printed with the other summaries for the same reason: its
-        // periodic lines stop at the frame bound, and a leg that ends before the bound still has a
-        // census to read.
-        if (HudCensus.enabled()) {
-            System.out.println("[Celtium] " + HudCensus.summary());
-        }
-        return true;
-    }
 
     /**
      * Prints the flush-reason census with the verification summary, which is known to reach the log.
@@ -17122,7 +16703,7 @@ this.frameBufferOpen = false;
             line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
         }
         System.out.println("[Celtium] CELTIUM_FLUSH_SOURCES total=" + this.flushReasonCount + " [" + line + "]");
-        record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
+        this.reports.record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
     }
 
     void celtium$printVerificationSummary(String trigger, boolean snapshot) {
@@ -17143,8 +16724,9 @@ this.frameBufferOpen = false;
             celtium$printFontRunCensus();
         }
         // The guard and the line's shape live in BackendReport now; the counter text is still this class's.
-        this.report.printSummary(trigger, this.verificationSummary(), snapshot);
+        this.report.printSummary(trigger, this.owner.verificationSummary(), snapshot);
     }
+
 
     /**
      * Prints the native pass registry's census line, naming the trigger. The old entrance no-op
@@ -17156,420 +16738,6 @@ this.frameBufferOpen = false;
         System.out.println(this.nativePassRegistry.censusLine(trigger));
     }
 
-    /**
-     * Releases the resources that belong to the world renderer and leaves the device alive.
-     * <p>
-     * Every resource here is created from the world's render pass configuration or from its regions - the region
-     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer, and the
-     * immediate pipelines whose caches are keyed by draw state rather than by the pass they were built for. The
-     * ones the window keeps are the device and its command resources, the standalone UI render pass, the frame target
-     * and the swapchain, the texture registry and its mirrors, and the readback image: those are what a menu frame
-     * draws into and presents from. The uniforms and the pipelines are rebuilt on demand by the terrain path, so the
-     * next world recreates them from the configuration the adoption hands over.
-     * <p>
-     * The world's lifetime also ends for the queue: a group accepted under this world is retired here rather than left
-     * for the next draw, and the world epoch it carries is bumped so that nothing accepted before the next adoption can
-     * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
-     * about a world, because the frame target survives one.
-     */
-    /**
-     * The quiescence half of the terrain teardown gate (T3 design section
-     * 5.2): nothing is being recorded, nothing recorded is still queued
-     * unsubmitted, and every submission is confirmed complete. Destruction
-     * below - the terrain host's paired reset above all - is sound only
-     * under all three.
-     */
-    private boolean celtium$terrainQuiescent() {
-        return !this.context.celtium$recordingOpen()
-                && !this.context.celtium$hasPendingBatchedSubmits()
-                && this.context.celtium$isSubmissionCompleted();
-    }
-
-    @Override
-    public void celtium$releaseWorldResources() {
-        // The gate at the door (T3 design section 5.2, review M4): this
-        // teardown destroys what in-flight work may still name, so it first
-        // composes quiescence + completion from the context. The caller's own
-        // settle normally leaves the stream closed already; when it does not,
-        // one settle is attempted here - settleGpu finishes any open frame
-        // buffer and flushes the queued batches before it waits (M4), and
-        // settleDeferredSubmits then observes the fences the wait confirmed,
-        // which is what the completion half reads on a fence-path device.
-        // Still not quiescent after that, nothing destructive runs: the
-        // per-world arming state is detached and the method returns, leaving
-        // the resources for the device teardown that follows - a leak on a
-        // stalled device, never a destroy under the GPU.
-        if (!celtium$terrainQuiescent()) {
-            // Only a settle that actually confirmed the device idle earns the
-            // fence observation; on a stalled or lost device the refusal
-            // below is the whole answer, exactly as in delete()'s own head.
-            if (settleGpu("world teardown")) {
-                this.context.celtium$settleDeferredSubmits();
-            }
-        }
-        if (!celtium$terrainQuiescent()) {
-            record("world teardown refused: the submission stream is not quiescent (recordingOpen="
-                    + this.context.celtium$recordingOpen()
-                    + " pendingBatchedSubmits=" + this.context.celtium$hasPendingBatchedSubmits()
-                    + " submissionCompleted=" + this.context.celtium$isSubmissionCompleted()
-                    + "); world resources are detached, not destroyed");
-            return;
-        }
-        // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
-        // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
-        // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg
-        // (the fixture leaves the world before exiting), so this makes the summary reachable without depending on the
-        // overlay, and prints once so a leg that tears down twice does not repeat it.
-        celtium$printVerificationSummary("world teardown", false);
-        // The per-frame split's session summary: printed here rather than at device teardown because the log is
-        // already closed by then, and this is the last point a leg is guaranteed to reach while it is alive.
-        FrameBudgetTimings.printSummary();
-        // The font run's refusal/retention/draw-state census, for the same reason and at the same point. It is also
-        // appended to the glyph capture's shutdown summary, but a shutdown hook's stdout is not in the log: measured on
-        // leg r39a-gate, where CELTIUM_FONT_GLYPH_SUMMARY appears in no file of the run at all. World teardown is the
-        // last point whose output the log actually holds.
-        celtium$printFontRunCensus();
-        // The window's fixed cost, in microseconds per window, when -Dceltium.vulkan.windowSplit asked for it. Printed
-        // at the same point and for the same reason as the census above: world teardown is the last point whose output
-        // the log actually holds.
-        celtium$printWindowSplit();
-        // Item 312 P0: the last HUD frame's census and the summary, at the same last-live point.
-        celtium$flushHudP0Frame();
-        celtium$printHudP0Summary();
-        // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
-        // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
-        // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
-        // group accepted between here and the next world's adoption from being drawn under the old stamp.
-        int orphans = this.immediateGroups.size();
-        if (orphans > 0) {
-            this.retiredImmediateGroups.addAll(this.immediateGroups);
-            this.groupQueueMutation++;
-            this.immediateGroups.clear();
-            this.pendingImmediateIndices = 0;
-            this.immediateStatistics.addGroupsDiscardedAtWorldTeardown(orphans);
-            record("world teardown retired " + orphans + " queued immediate group(s) that the world owned");
-        }
-        this.worldEpoch++;
-        this.modelGeometry.releaseAfterWorldTeardown();
-        // The off-target dedupe set keys on this world's framebuffer identities, which die with the world: cleared
-        // here so the set holds one world's pairs rather than every world's (audit F2).
-        this.modelOffTargetLogged.clear();
-        int drained = VulkanRetireQueue.flushFor(this.context.device().address());
-        if (drained > 0) {
-            record("world teardown destroyed " + drained + " retired resources; the window device stays");
-        }
-        releaseRetiredImmediateGroups();
-        // The Lane 1 terrain residency is world-owned: the frontend's world release runs at this
-        // same seat (S2-b), dropping every resident section while the device and swapchain stay.
-        celtium$releaseLane1World();
-        this.recordingEpoch = 0L;
-        // The immediate caches are built against the terrain pass that was just destroyed, so they belong to this world
-        // as much as the pipelines do: a state-keyed entry kept across a world change would name a dead render pass. The
-        // queued groups that held references to them were retired above, so nothing here is still pointing at them.
-        int immediate = celtium$releaseImmediatePipelines();
-        if (immediate > 0) {
-            record("world teardown released " + immediate + " immediate pipeline(s) built for the world's render pass");
-        }
-        // Every render pass those pipelines owned is destroyed by now, and the frame framebuffers are keyed by those
-        // passes: a driver is free to hand the same handle value to the next world's pass, and the cache would then
-        // answer with a framebuffer built for a pass that no longer exists (item 372, hole 2). The UI pass survives a
-        // world change, but its entry goes with the rest - re-creating one command on the next world's first window is
-        // cheaper than a rule that has to know which keys are still live. Retired, not destroyed: a recording can still
-        // name these handles.
-        if (this.framebufferCache != null) {
-            int frameFramebuffers = this.framebufferCache.retireFrameFramebuffers();
-            if (frameFramebuffers > 0) {
-                record("world teardown retired " + frameFramebuffers
-                        + " frame-target framebuffer(s) keyed by the destroyed render passes");
-            }
-        }
-        // OPT-05: the frame arena's buffers are released here, not left for the next world. Every group that held a
-        // slice has been retired above (this path runs after a wait for device idle that succeeded), so nothing the
-        // queue may still read is inside them; keeping them would carry one world's immediate memory into the next.
-        if (this.frameArena != null) {
-            this.frameArena.delete();
-            this.frameArena = null;
-            this.submissionStatistics.setFrameArenaFallbackGroups(0L);
-        }
-        record("world teardown: terrain resources released, the window device and swapchain are kept");
-    }
-
-    /**
-     * Takes this backend out of the current-backend registration and restores the GL batch factory, each only
-     * while what is installed is still this backend's own (BH10-13): when a second backend exists (the factory's
-     * own scenario, observed with modded RenderGlobals), the newer one is registered by the time the older one is
-     * deleted, and clearing unconditionally would erase the live backend's registration and leave the mixins with
-     * no Vulkan backend at all. uninstall() applies the same identity rule to the batch factory.
-     * <p>
-     * Every delete() exit that retires this instance runs this, including the stalled / settle-failed early
-     * returns (BH10-07): those paths deliberately leave the GPU resources for process exit, but the registration
-     * is plain Java state, and leaving it pointing at a backend its owner believes deleted keeps the mixins
-     * drawing into a stopped GPU backend until the factory happens to install a successor. The windowOwned exit
-     * is the one exception: that instance stays alive as the window backend, so its registration must stay.
-     */
-    private void celtium$detachRegistration() {
-        if (org.soutalab.celtium.vulkan.CeltiumBackends.current() == this) {
-            org.soutalab.celtium.vulkan.CeltiumBackends.install(null);
-        }
-    }
-
-    public void delete() {
-        this.presentSwapchain.freeCachedWindowBegin();
-        if (this.cachedTerrainBegin != null) {
-            this.cachedTerrainBegin.free();
-            this.cachedTerrainBegin = null;
-        }
-        if (this.cachedTerrainBeginArea != null) {
-            this.cachedTerrainBeginArea.free();
-            this.cachedTerrainBeginArea = null;
-        }
-        if (this.groupViewportScratch != null) {
-            this.groupViewportScratch.free();
-            this.groupViewportScratch = null;
-        }
-        if (this.groupScissorScratch != null) {
-            this.groupScissorScratch.free();
-            this.groupScissorScratch = null;
-        }
-        if (this.fullyDeleted) {
-            // The full teardown already ran to its end once: nothing here is left to release, and running
-            // the settle again would wait on a device its owner may since have deleted. The registration
-            // detach is idempotent, so repeating it is the whole of a second delete (issue #425).
-            celtium$detachRegistration();
-            return;
-        }
-        if (this.gpuStalled) {
-            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
-            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
-            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
-            this.submissionStatistics.noteStalledTeardownSkips();
-            celtium$detachRegistration();
-            return;
-        }
-        // Nothing may be released while a submission is still reading it: the audit reproduced
-        // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
-        // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
-        // pulling it out from under the GPU.
-        if (!settleGpu("backend delete")) {
-            // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
-            celtium$detachRegistration();
-            return;
-        }
-        try {
-            celtium$deleteSettled();
-        } catch (RuntimeException | LinkageError failure) {
-            // One failing release must not strand the rest or the registration (issue #425): before this
-            // catch, a throw out of the sequence skipped every later release AND the detach, leaving the
-            // current-backend registration pointing at a half-deleted backend the mixins kept drawing
-            // into (the state BH10-07 names). The failure is recorded, the registration is detached so
-            // nothing draws into this backend again, and what the sequence did not reach is left for the
-            // process teardown - the same disposition as the stalled and settle-failed exits above. The
-            // window-owned exit inside the sequence is a return, not a throw, and is unaffected.
-            record("teardown: the release sequence stopped early (" + describe(failure)
-                    + "); the resources it did not reach are left for the process teardown");
-            celtium$detachRegistration();
-        }
-    }
-
-    /**
-     * Closes one bracketed segment of {@link #celtium$deleteSettled()} and {@return the instant the next
-     * segment starts}. A segment slower than 50 ms - the frame boundary's slow threshold, the
-     * {@code CELTIUM_BOUNDARY_SLOW} line's - prints one {@code CELTIUM_DELETE_SETTLED_SLOW} line naming it;
-     * a fast segment prints nothing and costs one {@code nanoTime} read. Item 675's desk separation placed a
-     * same-JVM re-entry stall somewhere in this sequence's head (the one thread-dump sample sat in
-     * {@code drawRecords}' {@code vkFreeMemory}), but two dumps 66 s apart cannot say whether one segment
-     * stalled or several slow frees accumulated - these brackets are what separates the two on the next leg,
-     * segment by segment, without waiting for a dump.
-     */
-    private static long celtium$deleteSegment(String segment, long segmentStartedNanos) {
-        long now = System.nanoTime();
-        long took = now - segmentStartedNanos;
-        if (took > 50_000_000L) {
-            System.out.println("[Celtium] CELTIUM_DELETE_SETTLED_SLOW segment=" + segment
-                    + " millis=" + (took / 1_000_000L));
-        }
-        return now;
-    }
-
-    /**
-     * The release sequence {@link #delete()} runs once the device has settled: every resource this backend
-     * owns, in dependency order. Split from {@code delete()} so the caller can hold the whole sequence to
-     * one contract - a failure anywhere in it is recorded and ends the teardown, it does not propagate -
-     * while the window-owned exit in the middle stays a plain return. Reaching the end of this method is
-     * what {@link #fullyDeleted} records; the window-owned return deliberately does not reach it.
-     * <p>
-     * The head of the sequence - the indirect pipelines and commands, {@code drawRecords},
-     * {@code modelInstances}, the native pass executor, the texture array, and the window-owned exit's
-     * {@code celtium$releaseWorldResources()} - is bracketed by {@link #celtium$deleteSegment}: a slow
-     * segment names itself in the log instead of hiding inside the gap before
-     * {@code CELTIUM_BACKEND_DELETE} prints.
-     */
-    private void celtium$deleteSettled() {
-        long segmentStarted = System.nanoTime();
-        this.recordsPipelines.celtium$releaseAll();
-        segmentStarted = celtium$deleteSegment("indirect", segmentStarted);
-        if (this.drawRecords != null) {
-            this.drawRecords.delete();
-            this.drawRecords = null;
-        }
-        segmentStarted = celtium$deleteSegment("drawRecords", segmentStarted);
-        if (this.modelInstances != null) {
-            this.modelInstances.delete();
-            this.modelInstances = null;
-        }
-        this.openModelRunGroup = null;
-        segmentStarted = celtium$deleteSegment("modelInstances", segmentStarted);
-        this.nativePassExecutor.delete();
-        celtium$deleteSegment("nativePass", segmentStarted);
-        this.deleteCalls++;
-        System.out.println("[Celtium] CELTIUM_BACKEND_DELETE backend@" + Integer.toHexString(System.identityHashCode(this))
-                + " " + celtium$ownershipSummary());
-        if (this.windowOwned) {
-            // The world renderer is leaving, not the window. Release what the world owns, detach the world's objects and
-            // keep the device, the frame target and the swapchain: the menu and the loading screens draw through them,
-            // and the next world adopts the same instance again (VulkanTerrainFactory.create checks
-            // celtium$isWindowBackend()). Without this branch a quit to the title screen deletes the device and the menu
-            // has nothing to draw with, which is the state task-15 exists to remove.
-            long worldStarted = System.nanoTime();
-            celtium$releaseWorldResources();
-            celtium$deleteSegment("releaseWorldResources", worldStarted);
-            this.windowBackend = true;
-            return;
-        }
-        this.loadingSurface.delete();
-        // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
-        // the last submission has completed and nothing more will be recorded: the release is immediate and counted as
-        // teardown, not as a free without a completed wait (audit N02).
-        this.modelGeometry.releaseAll();
-        // Teardown: the device has been settled above, so anything still retired can be destroyed now.
-        int drained = VulkanRetireQueue.flushFor(this.context.device().address());
-        if (drained > 0) {
-            record("teardown destroyed " + drained + " retired resources");
-        }
-        this.textureCopyService.delete();
-        releaseRetiredImmediateGroups();
-        celtium$detachRegistration();
-        if (this.lane1 != null) {
-            this.lane1.delete();
-            this.lane1 = null;
-        }
-        if (this.uiRenderPass != 0) {
-            org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
-            this.uiRenderPass = 0;
-        }
-        for (long retiredPass : this.retiredUiRenderPasses) {
-            if (retiredPass != 0) {
-                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), retiredPass, null);
-            }
-        }
-        this.retiredUiRenderPasses.clear();
-        if (this.chainPairRenderPass != 0) {
-            org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.chainPairRenderPass, null);
-            this.chainPairRenderPass = 0;
-        }
-        for (int count = 2; count < this.chainPairRenderPassesByCount.length; count++) {
-            if (this.chainPairRenderPassesByCount[count] != 0) {
-                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(),
-                        this.chainPairRenderPassesByCount[count], null);
-                this.chainPairRenderPassesByCount[count] = 0;
-            }
-        }
-        for (long variantPass : this.chainPairVariantPasses.values()) {
-            if (variantPass != 0) {
-                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), variantPass, null);
-            }
-        }
-        this.chainPairVariantPasses.clear();
-        for (long framePass : this.frameVariantPasses.values()) {
-            if (framePass != 0) {
-                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), framePass, null);
-            }
-        }
-        this.frameVariantPasses.clear();
-        this.chainPairVariantColorCounts.clear();
-        for (int slot = 0; slot < this.formatClassPipelinePasses.length; slot++) {
-            if (this.formatClassPipelinePasses[slot] != 0) {
-                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(),
-                        this.formatClassPipelinePasses[slot], null);
-                this.formatClassPipelinePasses[slot] = 0;
-            }
-        }
-        if (this.atlasTexture != null) {
-            this.atlasTexture.delete();
-            this.atlasTexture = null;
-        }
-        if (this.lightmapTexture != null) {
-            this.lightmapTexture.delete();
-            this.lightmapTexture = null;
-        }
-        if (this.readbackMapped != 0) {
-            vkUnmapMemory(this.context.device(), this.readbackMemory);
-            this.readbackMapped = 0;
-        }
-        if (this.readbackBuffer != 0) {
-            vkDestroyBuffer(this.context.device(), this.readbackBuffer, null);
-            this.readbackBuffer = 0;
-        }
-        if (this.readbackMemory != 0) {
-            VulkanContext.freeMemory(this.context.device(), this.readbackMemory);
-            this.readbackMemory = 0;
-        }
-        destroyFramebuffer();
-        if (this.frameTarget != null) {
-            this.frameTarget.delete();
-            this.frameTarget = null;
-            // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
-            // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
-            this.targetRegistry.noteFrameTargetReplaced();
-        }
-        destroyCommandResources();
-        // Everything the backend owns is released here, not just the terrain half (audit S15): the immediate mesh, the
-        // held groups, the immediate pipeline caches, the UI pipeline and mesh, the texture registry and the swapchain.
-        int released = 0;
-            this.otherTargetGroupsDiscarded += pendingGroupsForOtherTargets();
-        try {
-            discardImmediateGroups();
-            released++;
-        } catch (RuntimeException | LinkageError error) {
-            record("teardown: held groups could not be released: " + describe(error));
-        }
-        int pendingCopies = 0;
-        if (this.retainedGeometry != null) {
-            this.retainedGeometry.close();
-            this.retainedGeometry = null;
-        }
-
-        released += releaseImmediateMesh(this.currentImmediateMesh);
-        this.currentImmediateMesh = null;
-        // The immediate pipeline caches, the isolation pass's pipeline and mesh, the descriptor probe and the UI test
-        // quad's pipeline and mesh are one set: everything the immediate path built against a render pass. They are
-        // released by the same call the world-leave path makes, so the two lifetimes cannot drift apart.
-        released += celtium$releaseImmediatePipelines();
-        if (this.textureRegistry != null) {
-            this.textureRegistry.delete();
-            this.textureRegistry = null;
-            this.whiteTextureGlId = 0;
-            released++;
-        }
-        if (this.swapchain != null) {
-            this.swapchain.delete();
-            this.swapchain = null;
-            released++;
-        }
-        // The teardown above queues as it goes: the texture registry's textures, the frame target and the
-        // swapchain hand their handles to the retire queue instead of destroying them in place, and they do so
-        // after this sequence's own drain near its head. The device was settled at the head of delete() and is
-        // still alive here, so this device's share can be destroyed now. Without this last drain those entries
-        // outlive the device: nothing guarantees VulkanContext.delete() runs after this method, and a successor
-        // backend's frame-path drain would otherwise execute them against a destroyed device (L06-01/BH10-09).
-        int drainedLate = VulkanRetireQueue.flushFor(this.context.device().address());
-        if (drainedLate > 0) {
-            record("teardown destroyed " + drainedLate + " resource(s) retired during the teardown itself");
-        }
-        System.out.println("[Celtium] CELTIUM_TEARDOWN released " + released
-                + " backend resources (immediate mesh, groups, pipeline caches, UI, registry, swapchain)");
-        this.fullyDeleted = true;
-    }
 
     // ------------------------------------------------------------------ upload path
 
@@ -17582,17 +16750,15 @@ this.frameBufferOpen = false;
      */
     /** Regions whose upload was abandoned because a resource could not be built. */
     int regionUploadFailures;
+
     String lastRegionUploadFailure = "none";
+
     /**
      * Sections a failed region upload left un-built, counted for the acceptance (BH-25). Before the fix the same
      * failure left them marked built, so this number was invisible: it was zero because nothing distinguished the two.
      */
     private int sectionsLeftUnbuilt;
 
-
-    /** The vertex-level diagnostics (layout, drawn sections, GPU readback): one switch, quiet by default. */
-    private static final boolean VERTEX_DIAGNOSTICS =
-            Boolean.getBoolean("celtium.vulkan.vertexDiagnostics");
 
 
 
@@ -17622,6 +16788,7 @@ this.frameBufferOpen = false;
         return celtium$depthTargetRefusal(enabled, currentIsMain, depthIsMainDepth, identity, pairExists, pairWidth,
                 pairHeight, depthWidth, depthHeight, depthShared, pairColorCount) == null;
     }
+
 
     /**
      * {@return why {@link #celtium$routeTerrainToDepthTarget} answered false, or null when it answered true}.
@@ -17684,6 +16851,7 @@ this.frameBufferOpen = false;
         return null;
     }
 
+
     /**
      * Resolves the depth texture recorded for an identity's framebuffer, as {@code {texture, width, height, source}}.
      * <p>
@@ -17717,6 +16885,7 @@ this.frameBufferOpen = false;
         }
         return new int[] {depthTexture, size[0], size[1], source};
     }
+
 
     /**
      * Decides, records and reports the terrain pass' routed attachment (item 332).
@@ -17805,7 +16974,7 @@ this.frameBufferOpen = false;
                         + " graw=" + gameRawDepth + " gstub=" + gameStubDepth
                         + " mainDepth=" + depthIsMainDepth
                         + " refusal=" + (refusal == null ? "route" : refusal)
-                        + " frame=" + this.frameId);
+                        + " frame=" + this.frame.frameId);
             }
         }
         if (refusal != null) {
@@ -17817,7 +16986,7 @@ this.frameBufferOpen = false;
                         + " pass=" + passName + " identity=0x" + Long.toHexString(identity)
                         + " pair=" + pairWidth + "x" + pairHeight + " depth=" + depthWidth + "x" + depthHeight
                         + " depthTexture=" + (depthRecord == null ? 0 : depthRecord[0])
-                        + " colors=" + colors + " frame=" + this.frameId);
+                        + " colors=" + colors + " frame=" + this.frame.frameId);
             }
             return null;
         }
@@ -17839,7 +17008,7 @@ this.frameBufferOpen = false;
             if (this.terrainDepthTargetRefusalLogs < 12) {
                 this.terrainDepthTargetRefusalLogs++;
                 System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=no-framebuffer pass=" + passName
-                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId);
+                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frame.frameId);
             }
             return null;
         }
@@ -17849,12 +17018,13 @@ this.frameBufferOpen = false;
                     + Long.toHexString(identity) + " extent=" + pairWidth + "x" + pairHeight
                     + " depthTexture=" + depthRecord[0]
                     + " via=" + (depthRecord[3] == 0 ? "record" : "stub-bound-" + depthRecord[3])
-                    + " shared=true colors=" + colors + " frame=" + this.frameId);
+                    + " shared=true colors=" + colors + " frame=" + this.frame.frameId);
         }
         celtium$consumeRoutedTargetClear(owner, identity, depthKey);
-        owner.recordChainPairAttachAcquire(identity, depthKey, this.commandBuffer);
+        owner.recordChainPairAttachAcquire(identity, depthKey, this.frame.commandBuffer);
         return new long[] {pairFramebuffer, identity, depthKey, pairWidth, pairHeight, depthRecord[0]};
     }
+
 
     /**
      * {@return whether the depth half of a routed pass's owed clear may run in {@code frameSerial}}.
@@ -17875,6 +17045,7 @@ this.frameBufferOpen = false;
         return depthKey == 0L
                 || GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, clearedFrameSerial, frameSerial);
     }
+
 
     /**
      * Consumes the clear a routed pass owes before its pass begins, outside the pass.
@@ -17906,7 +17077,7 @@ this.frameBufferOpen = false;
                 this.sharedDepthClearRefusalLogs++;
                 System.out.println("[Celtium] CELTIUM_SHARED_DEPTH_CLEAR_REFUSED depthKey=0x"
                         + Long.toHexString(depthKey) + " identity=0x" + Long.toHexString(identity)
-                        + " frame=" + this.frameId + " site=" + this.immediateDrawSite);
+                        + " frame=" + this.frame.frameId + " site=" + this.immediateDrawSite);
             }
         }
         if (mask == 0) {
@@ -17916,7 +17087,7 @@ this.frameBufferOpen = false;
         if (!latched && owner.chainPairNeedsSelfTest(identity) && depthAllowed) {
             // The pair's one-shot first legal-use clear; it clears both images, so it may only stand in for the
             // ordinary clear where the shared depth's guard allows a depth clear at all.
-            record(owner.chainPairSelfTest(identity, this.commandBuffer));
+            this.reports.record(owner.chainPairSelfTest(identity, this.frame.commandBuffer));
             applied = true;
         } else {
             float[] colour;
@@ -17929,7 +17100,7 @@ this.frameBufferOpen = false;
                 FramebufferClearState.current().clearColor(colour);
                 depth = FramebufferClearState.current().depth();
             }
-            applied = owner.applyGameClearToChainPair(identity, this.commandBuffer, mask, colour, depth);
+            applied = owner.applyGameClearToChainPair(identity, this.frame.commandBuffer, mask, colour, depth);
         }
         if (!applied) {
             // The pair went away between the decision and the clear; nothing was recorded and nothing is recorded as
@@ -17945,6 +17116,7 @@ this.frameBufferOpen = false;
         celtium$noteChainPairClear("routed-terrain-pass");
     }
 
+
     /**
      * Opens a timed pass slot for the pack route, mirroring the native pass's arming in
      * {@code recordRenderPass}: the top-of-pipe write lands at the pass' head, and
@@ -17957,14 +17129,15 @@ this.frameBufferOpen = false;
      * @return the armed slot, or -1 when the instrument is not collecting for this frame
      */
     private int celtium$beginPackPassTimestamp() {
-        if (this.timestampPool == 0L || !this.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
+        if (this.frame.timestampPool == 0L || !this.frame.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
             return -1;
         }
         int slot = this.timestampSlots;
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + (slot * 2));
+        vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.frame.timestampPool,
+                this.frame.celtium$timestampPoolBase() + (slot * 2));
         return slot;
     }
+
 
     /**
      * Closes a pack-route timed slot opened by {@link #celtium$beginPackPassTimestamp}: the
@@ -17977,11 +17150,12 @@ this.frameBufferOpen = false;
         if (slot < 0) {
             return;
         }
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + (slot * 2) + 1);
-        this.timestampPackPassNames.put(Integer.valueOf(slot), shadowStage ? "shadow" : "gbuffers");
+        vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.frame.timestampPool,
+                this.frame.celtium$timestampPoolBase() + (slot * 2) + 1);
+        this.frame.timestampPackPassNames.put(Integer.valueOf(slot), shadowStage ? "shadow" : "gbuffers");
         this.timestampSlots++;
     }
+
 
     /**
      * Opens a named native-route timed slot (G2-30's permanent G0 instruments on the fixed
@@ -17991,27 +17165,29 @@ this.frameBufferOpen = false;
      * case the close is a no-op and nothing is registered.
      */
     private int celtium$beginNamedPassTimestamp() {
-        if (this.timestampPool == 0L || !this.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
+        if (this.frame.timestampPool == 0L || !this.frame.timestampsUsable || this.timestampSlots >= WINDOW_SLOT_BASE) {
             return -1;
         }
         int slot = this.timestampSlots;
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + (slot * 2));
+        vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.frame.timestampPool,
+                this.frame.celtium$timestampPoolBase() + (slot * 2));
         return slot;
     }
+
 
     /** Closes a slot opened by {@link #celtium$beginNamedPassTimestamp} under the given stage name. */
     private void celtium$closeNamedPassTimestamp(int slot, String name) {
         if (slot < 0) {
             return;
         }
-        vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
-                celtium$timestampPoolBase() + (slot * 2) + 1);
+        vkCmdWriteTimestamp(this.frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.frame.timestampPool,
+                this.frame.celtium$timestampPoolBase() + (slot * 2) + 1);
         if (name != null) {
-            this.timestampPasses.put(Integer.valueOf(slot), name);
+            this.frame.timestampPasses.put(Integer.valueOf(slot), name);
         }
         this.timestampSlots++;
     }
+
 
     /** The G2-30 report name of a main terrain layer pass, or null for kinds the report does not name. */
     private static String celtium$lane1PassTimingName(
@@ -18024,24 +17200,6 @@ this.frameBufferOpen = false;
         };
     }
 
-    /**
-     * The host seat for the fixed template's S3 stage (FrameCoordinator calls this at its
-     * HIZ_BUILD mark, buffer still recording, no pass open): brackets the frontend's Hi-Z
-     * pyramid build with the stage's G0 timestamp pair. A missing target or buffer leaves the
-     * stage unrecorded, the same as a frame the finish path abandons.
-     */
-    void celtium$recordHiZBuild() {
-        if (this.commandBuffer == null || this.frameTarget == null || this.gpuStalled
-                || this.lane1 == null) {
-            return;
-        }
-        int slot = celtium$beginNamedPassTimestamp();
-        try {
-            this.lane1.recordHiZBuild(this.commandBuffer, this.frameTarget, this.frameSlot);
-        } finally {
-            celtium$closeNamedPassTimestamp(slot, "S3_hiz");
-        }
-    }
 
 
 
@@ -18105,6 +17263,7 @@ this.frameBufferOpen = false;
     }
 
 
+
     /**
      * {@code M * P} where {@code M} maps clip z from [-1, 1] to [0, 1] and leaves x, y and w alone. The Y axis is
      * handled by the negative-height viewport instead, so the OpenGL matrices and culling stay untouched.
@@ -18126,6 +17285,7 @@ this.frameBufferOpen = false;
         return this.vulkanProjection;
     }
 
+
     /**
      * {@return the creation generation the framebuffer cache stamped this handle with} (0 when the cache
      * holds no stamp for it - a handle from another creator, or already destroyed). Read by the window-pass
@@ -18136,11 +17296,13 @@ this.frameBufferOpen = false;
         return this.framebufferCache == null ? 0L : this.framebufferCache.framebufferGeneration(framebuffer);
     }
 
+
     /** The frame target's framebuffer for a render pass; see {@link FramebufferCache#frame}. */
     private long ensureFramebuffer(long renderPass) {
         return framebufferCache().frame(renderPass, this.frameTarget.colorView(), this.frameTarget.depthView(),
                 this.targetWidth, this.targetHeight);
     }
+
 
     /** The default off-target pair's framebuffer, 0 without an owned pair; see {@link FramebufferCache#offTarget}. */
     private long ensureOffTargetFramebuffer(long renderPass) {
@@ -18149,6 +17311,7 @@ this.frameBufferOpen = false;
                 : framebufferCache().offTarget(renderPass, glless, this.targetWidth, this.targetHeight);
     }
 
+
     /** The current identity's chain-pair framebuffer, 0 without owned pairs; see {@link FramebufferCache#chainPair}. */
     private long ensureChainPairFramebuffer(long renderPass) {
         GllessFrameTarget glless = offTargetTarget();
@@ -18156,10 +17319,12 @@ this.frameBufferOpen = false;
                 : framebufferCache().chainPair(renderPass, glless, this.targetWidth, this.targetHeight);
     }
 
+
     /** Whether an ask for this many colour targets must be served by the multi-target cache entry. */
     static boolean celtium$chainPairMultiTarget(int colorCount) {
         return colorCount > 1;
     }
+
 
     /**
      * The current identity's chain-pair framebuffer over {@code colorCount} colour targets, 0 without owned
@@ -18193,6 +17358,7 @@ this.frameBufferOpen = false;
                 this.targetHeight);
     }
 
+
     /** Created on first use: the registry it records into is built with the backend's other render-target state. */
     private FramebufferCache framebufferCache() {
         if (this.framebufferCache == null) {
@@ -18203,10 +17369,12 @@ this.frameBufferOpen = false;
 
     private FramebufferCache framebufferCache;
 
+
     /** The owned off-target image pair, or null when this configuration has none (the GL bridge has real ones). */
     GllessFrameTarget offTargetTarget() {
         return this.frameTarget instanceof GllessFrameTarget ? (GllessFrameTarget) this.frameTarget : null;
     }
+
 
     /**
      * Lab switch for the clear-attribution latch, on by default, and the control the latch has to be measured against.
@@ -18227,8 +17395,10 @@ this.frameBufferOpen = false;
         return GAME_CLEAR_LATCH;
     }
 
+
     /** Scratch for the clear colour a latch reads; copied out before anything can reuse it. */
     private final float[] gameClearLatchRgba = new float[4];
+
 
     /**
      * GLSM stage 2 (S2-2): the pending (latched) clear for an identity, read from the
@@ -18239,6 +17409,7 @@ this.frameBufferOpen = false;
     private GlsmFrameState.PendingClear celtium$pendingClear(long identity) {
         return this.glsmFrameState.clearState().peek(identity);
     }
+
 
     /**
      * GLSM stage 2 (S2-2): records a clear's application against a slot, under the
@@ -18253,6 +17424,7 @@ this.frameBufferOpen = false;
         return this.glsmFrameState.clearState().noteClear(identity, slot, colour, latched);
     }
 
+
     /**
      * GLSM stage 2: hands the shared frame state to the frame target the backend currently
      * holds, called when a target is (re)created. The frame identity is a supplier, not a
@@ -18266,6 +17438,7 @@ this.frameBufferOpen = false;
                     () -> this.targetRegistry.mainIdentity());
         }
     }
+
 
     /**
      * Attributes the game's pending {@code glClear} request to the framebuffer that was bound when it was issued.
@@ -18327,6 +17500,7 @@ this.frameBufferOpen = false;
         celtium$reportGameClearLatch("frame", mask, rgba, depth);
     }
 
+
     /**
      * Records a non-main framebuffer's {@code glClear} into the command stream at the position it was issued.
      * <p>
@@ -18382,8 +17556,8 @@ this.frameBufferOpen = false;
                     + " currentTarget=0x" + Long.toHexString(this.currentGroupTarget)
                     + " queued=" + this.immediateGroups.size()
                     + " lastQueuedTarget=" + (lastGroup == null ? "none" : "0x" + Long.toHexString(lastGroup.target))
-                    + " recorded=" + this.recordedImmediateGroups.size()
-                    + " retired=" + this.retiredImmediateGroups.size()
+                    + " recorded=" + this.frame.recordedImmediateGroups.size()
+                    + " retired=" + this.frame.retiredImmediateGroups.size()
                     + " pendingNow=" + this.immediateExecutionCounters()[4]
                     + " mesh=" + (this.currentImmediateMesh == null ? "null" : "present")
                     + " windowBusy=" + this.immediateWindowBusy
@@ -18434,7 +17608,7 @@ this.frameBufferOpen = false;
         // one-off submission carrying vkCmdClearColorImage/vkCmdClearDepthStencilImage - GL's own ordering for a
         // clear issued after the draws it covers, which is the fixture's clear-order phase (the blue quad was
         // submitted by the flush and then survived the latched clear that only ran at the next pass-begin).
-        if (this.commandState.inRenderPass() && this.activeImmediateTarget == identity) {
+        if (this.frame.commandState.inRenderPass() && this.activeImmediateTarget == identity) {
             java.util.List<QueuedClear> single =
                     java.util.Collections.singletonList(new QueuedClear(mask, rgba, depth));
             celtium$recordQueuedClearsInPass(single, identity);
@@ -18447,38 +17621,38 @@ this.frameBufferOpen = false;
         // frame buffer may still be mid-pass for a different target: only a fresh buffer or an open frame buffer
         // between passes may carry the image-level clear. An in-pass clear for another target's pass latches as
         // before (rare: the clear-order flush draws for the pass's own target, which the in-pass arm above covers).
-        if (GAME_CLEAR_STANDALONE && !this.immediateWindowBusy && !this.commandState.inRenderPass()
-                && (!this.commandState.recording() || this.frameBufferOpen)) {
+        if (GAME_CLEAR_STANDALONE && !this.immediateWindowBusy && !this.frame.commandState.inRenderPass()
+                && (!this.frame.commandState.recording() || this.frame.frameBufferOpen)) {
             GllessFrameTarget pairOwner = offTargetTarget();
             if (pairOwner != null && pairOwner.chainPairColorImage(identity) != 0L) {
                 boolean submitted = false;
                 try {
-                    beginCommands();
+                    this.frame.beginCommands();
                     // Outside a render pass by construction: vkCmdClearColorImage/vkCmdClearDepthStencilImage plus
                     // the pair's own acquire/clear-attachment barriers.
-                    if (pairOwner.applyGameClearToChainPair(identity, this.commandBuffer, mask, rgba, depth)) {
+                    if (pairOwner.applyGameClearToChainPair(identity, this.frame.commandBuffer, mask, rgba, depth)) {
                         // A mid-frame ordering point: the recording is accepted and stays open until the
                         // frame boundary submits it, exactly as submitOpenFrameBuffer's rule says.
-                        this.frameCoordinator.submitCommands();
+                        this.frame.submitCommands();
                         this.gameClearsSubmittedStandalone++;
                         this.glsmFrameState.clearState()
                                 .noteRoute(GlsmFrameState.ClearRoute.STANDALONE);
                         submitted = true;
                         celtium$noteGameClearRoute(drawFbo, mask, "standalone", identity);
-                    } else if (!this.frameBufferOpen && this.commandState.recording()) {
+                    } else if (!this.frame.frameBufferOpen && this.frame.commandState.recording()) {
                         // The pair refused (exists() was false between the check above and the call): the buffer we
                         // opened is abandoned rather than submitted, so the recording state has to unwind here.
-                        this.commandState.reset();
+                        this.frame.commandState.reset();
                         // The unwind discards the recording: a new recording epoch (INV-2c).
                         this.recordingEpoch++;
                     }
                 } catch (RuntimeException | LinkageError error) {
-                    if (!this.frameBufferOpen && this.commandState.recording()) {
-                        this.commandState.reset();
+                    if (!this.frame.frameBufferOpen && this.frame.commandState.recording()) {
+                        this.frame.commandState.reset();
                         // The unwind discards the recording: a new recording epoch (INV-2c).
                         this.recordingEpoch++;
                     }
-                    record("standalone game clear failed for identity=0x" + Long.toHexString(identity)
+                    this.reports.record("standalone game clear failed for identity=0x" + Long.toHexString(identity)
                             + ": " + describe(error));
                 }
                 if (submitted) {
@@ -18498,6 +17672,7 @@ this.frameBufferOpen = false;
         celtium$noteGameClearRoute(drawFbo, mask, "latch", identity);
     }
 
+
     /** Bounded route log for {@link #celtium$gameClear}: which arm each non-main clear took. */
     private void celtium$noteGameClearRoute(int drawFbo, int mask, String route, long identity) {
         if (this.gameClearRouteLogs++ >= 200) {
@@ -18506,10 +17681,11 @@ this.frameBufferOpen = false;
         System.out.println("[Celtium] CELTIUM_GAME_CLEAR_ROUTE route=" + route
                 + " fbo=" + drawFbo + " mask=0x" + Integer.toHexString(mask)
                 + " identity=0x" + Long.toHexString(identity)
-                + " inPass=" + this.commandState.inRenderPass()
-                + " recording=" + this.commandState.recording()
+                + " inPass=" + this.frame.commandState.inRenderPass()
+                + " recording=" + this.frame.commandState.recording()
                 + " activeTarget=0x" + Long.toHexString(this.activeImmediateTarget));
     }
+
 
     /**
      * Replays the {@code glClear}s a group carries, inside the pass that just drew it.
@@ -18520,7 +17696,7 @@ this.frameBufferOpen = false;
      * it to apply.
      */
     void celtium$recordQueuedClearsInPass(java.util.List<QueuedClear> clears, long identity) {
-        if (clears == null || clears.isEmpty() || !this.commandState.inRenderPass()) {
+        if (clears == null || clears.isEmpty() || !this.frame.commandState.inRenderPass()) {
             return;
         }
         GllessFrameTarget glless = offTargetTarget();
@@ -18554,7 +17730,7 @@ this.frameBufferOpen = false;
                 rect.get(0).rect().offset().set(0, 0);
                 rect.get(0).rect().extent().set(w, h);
                 rect.get(0).baseArrayLayer(0).layerCount(1);
-                vkCmdClearAttachments(this.commandBuffer, attachments, rect);
+                vkCmdClearAttachments(this.frame.commandBuffer, attachments, rect);
                 this.gameClearsAppliedInPass++;
                 if (identity == this.targetRegistry.mainIdentity() || identity == 0L) {
                     // S2-2: a main group's queued clears are the carried main clears (the
@@ -18566,22 +17742,32 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** Bounded log for {@link #celtium$gameClear}: which route each non-main clear took. */
     private int gameClearApplyLogs;
+
     /** Queued-clears bookkeeping: attached to a group, latched for pass-begin, replayed inside a pass. */
     int gameClearsQueued;
+
     int gameClearsLatchedForPairs;
+
     long gameClearsAppliedInPass;
+
     /** Clears submitted as a one-off command buffer after the ordering flush already sent the draws (fixture clear-order). */
     int gameClearsSubmittedStandalone;
+
     /** Clears applied as vkCmdClearAttachments inside the target's own open pass (gameClear empty-queue, in-pass arm). */
     int gameClearsInPassArm;
+
     /** Bounded log counter for {@link #celtium$noteGameClearRoute}. */
     private int gameClearRouteLogs;
+
     /** Bounded stack trace for off-target group closes, to find who empties the queue before a clear. */
     private int groupCloseDebugLines;
+
     /** Bounded stack trace for binds that arrive with pending off-target work. */
     private int bindDebugLines;
+
 
     /** Bounded, so a run states the attribution a few times instead of once per bind. */
     private void celtium$reportGameClearLatch(String route, int mask, float[] rgba, double depth) {
@@ -18601,6 +17787,7 @@ this.frameBufferOpen = false;
                 + "]");
     }
 
+
     /** The caller chain of a {@code glClear} routing decision, as {@code class#method} pairs up the stack. */
     private static String callers(StackTraceElement[] stack) {
         StringBuilder out = new StringBuilder(200);
@@ -18610,10 +17797,12 @@ this.frameBufferOpen = false;
         return out.toString();
     }
 
+
     /** Three decimals, the precision the renderer's own state lines use. */
     static float round3(float value) {
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
+
 
     /**
      * {@return whether the old frame target may be released and replaced}, given whether its framebuffers could be
@@ -18629,6 +17818,7 @@ this.frameBufferOpen = false;
         return framebuffersReleased;
     }
 
+
     /**
      * Frees every cached framebuffer in place.
      *
@@ -18641,7 +17831,7 @@ this.frameBufferOpen = false;
         if (this.framebufferCache == null || this.framebufferCache.isEmpty()) {
             return true;
         }
-        if (!settleGpu("framebuffer release")) {
+        if (!this.frame.settleGpu("framebuffer release")) {
             // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
             // Leaking them until process exit is the safe direction.
             return false;
@@ -18649,6 +17839,7 @@ this.frameBufferOpen = false;
         this.framebufferCache.destroyAll();
         return true;
     }
+
 
 
 
@@ -18681,11 +17872,11 @@ this.frameBufferOpen = false;
         // Positive height: see vulkanProjection() for why the Vulkan convention is used unchanged.
         viewport.get(0).x(0.0f).y(0.0f).width(areaWidth).height(areaHeight)
                 .minDepth(0.0f).maxDepth(1.0f);
-        vkCmdSetViewport(this.commandBuffer, 0, viewport);
+        vkCmdSetViewport(this.frame.commandBuffer, 0, viewport);
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
         scissor.get(0).offset().set(0, 0);
         scissor.get(0).extent().set(areaWidth, areaHeight);
-        vkCmdSetScissor(this.commandBuffer, 0, scissor);
+        vkCmdSetScissor(this.frame.commandBuffer, 0, scissor);
         this.passVpX = this.passVpY = 0;
         this.passVpW = areaWidth;
         this.passVpH = areaHeight;
@@ -18693,6 +17884,7 @@ this.frameBufferOpen = false;
         this.passScW = areaWidth;
         this.passScH = areaHeight;
     }
+
 
     /** Writes one dynamic uniform block and returns its byte offset. */
 
@@ -18716,59 +17908,6 @@ this.frameBufferOpen = false;
         return override != 0 ? override : captured;
     }
 
-
-    /**
-     * The shader's fog mode selector: 0 = none, 1 = exp2, 2 = exp, 3 = smooth/linear. Derived from the GL fog
-     * state, which is what the OpenGL backend's {@code GLStateManagerFogService} reads as well.
-     */
-
-
-
-
-    // ------------------------------------------------------------------ frame target
-
-    // The present/swapchain cluster lives in PresentSwapchain (refactoring plan R10, item 704 seam 4):
-    // the swapchain life cycle and the present path. The doors below keep every name the rest of the
-    // renderer and the swap point call.
-
-    final PresentSwapchain presentSwapchain = new PresentSwapchain(this);
-
-    private boolean ensureSwapchain() {
-        return this.presentSwapchain.ensureSwapchain();
-    }
-
-    public String celtium$swapchainCreationFailure() {
-        return this.presentSwapchain.celtium$swapchainCreationFailure();
-    }
-
-    private void runSwapchainProbe() {
-        this.presentSwapchain.runSwapchainProbe();
-    }
-
-    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
-                                                                          int width, int height) {
-        return this.presentSwapchain.celtium$windowBeginInfo(renderPass, framebuffer, width, height);
-    }
-
-    public boolean celtium$presentFrame() {
-        return this.presentSwapchain.celtium$presentFrame();
-    }
-
-    public void celtium$pollEvents() {
-        this.presentSwapchain.celtium$pollEvents();
-    }
-
-    public boolean celtium$consumeSwapPendingFromVulkan() {
-        return this.presentSwapchain.celtium$consumeSwapPendingFromVulkan();
-    }
-
-    public double celtium$presentedImageMean() {
-        return this.presentSwapchain.celtium$presentedImageMean();
-    }
-
-    public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
-        return this.presentSwapchain.celtium$dumpPresentedImage(path);
-    }
 
 
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
@@ -18828,6 +17967,7 @@ this.frameBufferOpen = false;
     }
 
 
+
     /**
      * Whether the bound texture is the colour image of the framebuffer the game is currently rendering into.
      * <p>
@@ -18844,6 +17984,7 @@ this.frameBufferOpen = false;
         long[] reported = framebufferColorTexture(this.currentFramebufferIdentity);
         return reported != null && (int) reported[0] == texture;
     }
+
 
     /**
      * {@return whether the texture a batch samples is the colour attachment of the framebuffer bound right now}.
@@ -18871,6 +18012,7 @@ this.frameBufferOpen = false;
         return attached != 0 && attached == texture;
     }
 
+
     /**
      * Resolves a texture to its index in the context's bindless array (Stage 5 stage 3, section
      * 3.1) - the re-pointing of the old per-backend texture array registration. Registration itself
@@ -18896,6 +18038,7 @@ this.frameBufferOpen = false;
         return index;
     }
 
+
     /**
      * Builds a vertex mesh for every captured display list whose geometry changed, and retires the meshes whose lists
      * did (audit N02).
@@ -18920,8 +18063,9 @@ this.frameBufferOpen = false;
         // The capture version is recorded first so the model draw path can ask for one extra build per new capture
         // and no more (see celtium$drawModelList): a list compiled after this build is not in the table.
         this.modelMeshBuiltCaptureVersion = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.captureVersion();
-        this.modelGeometry.build(this.context);
+        this.owner.modelGeometry.build(this.context);
     }
+
 
     /**
      * The capture version of the last mesh-table build, so the draw path bounds its own rebuild to one per new
@@ -18931,15 +18075,19 @@ this.frameBufferOpen = false;
      */
     int modelMeshBuiltCaptureVersion = -1;
 
+
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
     // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
     // run-to-run floor (the spider scene's floor is 0 pixels and the effect 20 of 921600). -Dceltium.vulkan.modelMeshBuild=false
     // and -Dceltium.vulkan.modelDraw=false restore the previous behaviour.
     /** Long like the batch counter: one measured session draws models in the same six-figure volume. */
     static long modelDraws;
+
     int modelDrawRefusals;
+
     /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
     int modelNoListCalls;
+
     /**
      * Model replays whose list has no captured quads but does have a recorded command list, so the GL replay draws it.
      * <p>
@@ -18947,46 +18095,68 @@ this.frameBufferOpen = false;
      * lost geometry, and counting it as missing made a mod's skybox read as a renderer defect (ATM3, leg r125-atm3-amd).
      */
     int modelRecordedReplayCalls;
+
     /** Bounded lines naming the lists that take the recorded replay, so the split is visible in the log. */
     int modelRecordedReplayLogs;
+
     /** Bounded entry lines: whether the model draw path is reached at all, and with which state. */
     int modelEntryLogs;
+
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
     String modelLastRefusal = "none";
+
     /** Whether a frame target exists, so a pass can be opened. */
     // frameTargetKnown moved to RenderTargetRegistry (refactoring plan R5), as a latch.
     /** Texture uploads that were made to fail, and the last one, for the failure-path acceptance. */
     int textureUploadFailures;
+
     String lastTextureUploadFailure = "none";
+
     /** The terrain pipeline of the frame, for its render pass. */
     private VulkanTerrainPipeline terrainPipelineForFrame;
+
     /** The texture the immediate path most recently bound. */
     private int currentImmediateTexture;
+
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
     private boolean windowOrderLogged;
+
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
+
     /** How many model enqueues have printed their matrices. */
     int modelMatrixLoggedCount;
+
     /** Model replays that arrived for a target other than the main one: the outline pass's, and anything else off-target. */
     int modelOffTargetCalls;
+
     int modelOffTargetDraws;
-    final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
+
     int modelOffTargetLogs;
+
     /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
     int modelOffTargetFlushLogs;
+
     static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
+
     /** The frame and target the last coalesced off-target flush covered, and how many batches it coalesced. */
     long modelOffTargetFlushedFrame = -1L;
+
     long modelOffTargetFlushedTarget = Long.MIN_VALUE;
+
     int modelOffTargetCoalesced;
+
     /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */
     static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
+
     /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
     final java.util.Set<String> modelLayerLogged = new java.util.HashSet<String>();
+
     int modelLayerLogs;
+
     /** The bound on {@link #modelLayerLogs}: the entity scene has one layer (the spider's eyes) per texture. */
     static final int MODEL_LAYER_LOG_LIMIT = 16;
+
     /** {@return whether the texture of the group being closed reports a complete mirror}. */
     private boolean groupTextureFull() {
         try {
@@ -19001,21 +18171,28 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** How many immediate groups have printed their raw and stored projections. */
     private int formatProbeLogged;
+
     /** How many particle batches have printed their light coordinates. */
     private int lightCoordLogged;
+
     /** How many immediate groups have printed their matrices. */
     private int immediateMatrixLogged;
+
 
     /** Panorama faces whose full matrices have been printed, bounded to the six of the first jitter (round 225). */
     private int panoramaMatrixLogged;
 
+
     /** Whether the once-per-run box-before-the-cube dump has been taken (round 225's coverage mask). */
     private boolean boxPreProbeDone;
 
+
     /** Bounded count for {@code CELTIUM_MENU_GROUP}, the menu-phase group texture census. */
     private int menuGroupCensus;
+
 
     /**
      * Whether the per-group push block is memoised: {@code -Dceltium.vulkan.pushBlockCache=true}, off by default.
@@ -19027,22 +18204,21 @@ this.frameBufferOpen = false;
      * per group. Memoising it by the group's inputs replaces that with a 216-byte copy.
      */
     private static final boolean PUSH_BLOCK_CACHE = Boolean.getBoolean("celtium.vulkan.pushBlockCache");
+
     /**
      * {@code -Dceltium.vulkan.frameSignature=true}: per-frame batch-traffic hash, for the "could a recording be reused"
      * census. Off by default - see the hashing site for why the shipped path does not pay for it.
      */
     static final boolean FRAME_SIGNATURE = Boolean.getBoolean("celtium.vulkan.frameSignature");
-    /** Hash of the current frame's batch traffic, and the previous frame's, to count identical frames. */
-    private long frameBatchSignature;
-    private long previousFrameBatchSignature;
-    long identicalFrameSignatures;
-    long comparedFrameSignatures;
+
 
     /** How many call-site samples were printed per format; three are enough to name the producer. */
     private final int[] batchSiteSamples = new int[12];
 
+
     /** Time the current batch spent in the pre-draw checks, reported by the batch-timing summary. */
     private long batchCheckNanos;
+
 
     /**
      * Timestamps of the offer stages of the current batch, in nanoseconds.
@@ -19052,6 +18228,7 @@ this.frameBufferOpen = false;
      */
     private final long[] offerStageMarks = new long[16];
 
+
     /** Per-stage totals and counts: [stage][0] nanos, [stage][1] batches that reached it. */
 
     /**
@@ -19060,8 +18237,11 @@ this.frameBufferOpen = false;
      * marked both ends, which is how a HashMap lookup read as nineteen microseconds.
      */
     long acceptDecideNanos;
+
     long acceptPreflightNanos;
+
     long acceptTailNanos;
+
     /**
      * The part of the accept path's own clock that belongs to the window flush it triggered.
      * <p>
@@ -19073,6 +18253,7 @@ this.frameBufferOpen = false;
      * and the window it triggered costs the rest".
      */
     private long acceptFlushNanos;
+
 
     /**
      * The accept path's two unnamed spans, split so the next optimisation is named rather than guessed.
@@ -19086,12 +18267,19 @@ this.frameBufferOpen = false;
      * inferring it from the code. Filled only with {@code -Dceltium.vulkan.batchTimings=true}.
      */
     private final long[] acceptPartsNanos = new long[6];
+
     private final long[] acceptPartsCounts = new long[6];
+
     private static final int PART_EXPAND = 0;
+
     private static final int PART_MATRIX = 1;
+
     private static final int PART_EXTENT = 2;
+
     private static final int PART_REGISTRY = 3;
+
     private static final int PART_SUPPLY = 4;
+
     private static final int PART_PREPARE = 5;
 
     private void celtium$noteAcceptPart(int part, long nanos) {
@@ -19100,6 +18288,7 @@ this.frameBufferOpen = false;
             this.acceptPartsCounts[part]++;
         }
     }
+
 
     /**
      * The accept path's per-offer duration as a log2 histogram, beside the mean the other counters report.
@@ -19118,7 +18307,9 @@ this.frameBufferOpen = false;
      * only under {@link #BATCH_TIMINGS}.
      */
     private final long[] batchDistBuckets = new long[65];
+
     private long batchDistMax;
+
     private long batchDistCount;
 
     private void celtium$noteBatchDuration(long nanos) {
@@ -19130,6 +18321,7 @@ this.frameBufferOpen = false;
         // [2^(b-1), 2^b) and the array needs 65 slots for the 2^63 case.
         this.batchDistBuckets[nanos <= 0L ? 0 : 64 - Long.numberOfLeadingZeros(nanos)]++;
     }
+
 
     /**
      * {@return the duration at or below which {@code percent} of the samples fall}, from a log2 histogram.
@@ -19153,6 +18345,7 @@ this.frameBufferOpen = false;
         return Long.MAX_VALUE;
     }
 
+
     /** {@return the accept path's per-offer distribution, in nanoseconds, for the batch-timing line}. */
     String batchDistSummary() {
         if (this.batchDistCount == 0L) {
@@ -19163,6 +18356,7 @@ this.frameBufferOpen = false;
                 + " p99<=" + celtium$batchDistPercentile(this.batchDistBuckets, this.batchDistCount, 99)
                 + " max=" + this.batchDistMax + " n=" + this.batchDistCount + "]";
     }
+
 
     /** {@return the accept path's three spans, in milliseconds, for the frame statistics}. */
     String acceptSpanSummary() {
@@ -19188,13 +18382,16 @@ this.frameBufferOpen = false;
                 // from the accept total before calling the accept path the frame's largest item.
                 + " flushMs=" + (this.acceptFlushNanos / 1000000L) + "]" + parts.append(']') + calls.append(']');
     }
+
     private final long[][] offerStageDeltas = new long[16][2];
+
 
     /**
      * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
      * command, and how many of them draw from the frame arena. Off by default.
      */
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+
     /**
      * {@code -Dceltium.vulkan.splashCensus=true}: resolve each format-2 group's mirror source at the draw.
      * <p>
@@ -19204,48 +18401,81 @@ this.frameBufferOpen = false;
      * registry's monitor on every format-2 group of every window for them.
      */
     private static final boolean SPLASH_CENSUS = Boolean.getBoolean("celtium.vulkan.splashCensus");
+
     /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
     static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
+
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
     static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+
     /** {@code -Dceltium.debug.groupCensus=true}: the drawn groups' families and depth/blend state, for the ordering scope. */
     static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
+
     /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite (5 families x 4 states = 20 buckets; index family*4 + blend*2 + depthWrite). */
     final long[] groupCensusCounts = new long[20];
+
     long groupCensusMain;
+
     /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
     static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
+
     final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
+
     final java.util.Set<Long> bufferCensusIndexBuffers = new java.util.HashSet<Long>();
+
     long bufferCensusGroups;
+
     long bufferCensusArenaBacked;
+
     long bufferCensusOwning;
+
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap drawKeyCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     long drawKeyGroups;
+
     long drawKeySwitches;
+
     long arrayKeyGroups;
+
     long arrayKeySwitches;
+
     long arrayKeyPrevious;
+
     int arrayKeyLargest;
+
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap arrayKeyCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
     long drawKeyPrevious;
+
     int drawKeyLargest;
+
     final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
+
     long retainedCensusGroups;
+
     long retainedAccept;
+
     long preTransformEligible;
+
     long retainedCensusRetained;
+
     int retainedCensusLargest;
+
     /** {@code -Dceltium.debug.itemCensus=true}: name the groups the item pipeline draws, up to a bound. */
     private static final boolean ITEM_CENSUS = Boolean.getBoolean("celtium.debug.itemCensus");
+
     private static final int ITEM_CENSUS_LIMIT = Integer.getInteger("celtium.debug.itemCensusLimit", 40);
+
     private int itemCensus;
+
     /** Keys the census run by pipeline alone, the ceiling a shared-descriptor design would reach (section 11.5). */
     private static final boolean CENSUS_BY_PIPELINE = Boolean.getBoolean("celtium.vulkan.mergeCensusPipelines");
+
     /** Refusals by the term that actually fired, filled only when {@link #MERGE_CENSUS} is on. */
     private final java.util.Map<String, Integer> mergeRefusals = new java.util.TreeMap<>();
+
 
     /** The first Minecraft/mod class on the stack, for the census only (a stack walk per call). */
     private static String celtium$censusCaller() {
@@ -19263,12 +18493,15 @@ this.frameBufferOpen = false;
         this.mergeRefusals.merge(term, 1, Integer::sum);
     }
 
+
     /** {@return the refusal census, truthful about which term refused}, or empty when unmeasured. */
     public String mergeRefusalSummary() {
         return this.mergeRefusals.toString();
     }
+
     /** Diagnostic only: refuses every merge, so one offer is one draw - the other end of the design. */
     private static final boolean NO_MERGE = Boolean.getBoolean("celtium.vulkan.noMerge");
+
 
     /**
      * Whether the per-component push census runs: {@code -Dceltium.debug.pushComponentCensus=true}, off by default.
@@ -19281,26 +18514,40 @@ this.frameBufferOpen = false;
      */
     private static final boolean PUSH_COMPONENT_CENSUS =
             Boolean.getBoolean("celtium.debug.pushComponentCensus");
+
     /** Component slots: projection, modelView, fog, lightParams, lightmapCoords, state, colour, texMatrix. */
     private static final int PUSH_COMPONENTS = 12;
+
     /** How many groups one frame may census; the first frames are what the line reports. */
     private static final int PUSH_COMPONENT_LIMIT = 512;
+
     private final long[][] pushComponentHashes =
             new long[PUSH_COMPONENTS][PUSH_COMPONENT_LIMIT];
+
     private final long[][] previousPushComponentHashes =
             new long[PUSH_COMPONENTS][PUSH_COMPONENT_LIMIT];
+
     private final long[] pushComponentChanges = new long[PUSH_COMPONENTS];
+
     private final long[] pushComponentSamples = new long[1];
+
     private int pushComponentCount;
+
     private int pushComponentFrames;
+
     /** The cap on memoised blocks; a world scene's working set is a few hundred. */
     private static final int PUSH_BLOCK_LIMIT = 8192;
+
     /** The memoised push blocks, keyed by the group inputs that produce them. */
     final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<byte[]> pushBlocks =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<byte[]>();
+
     long pushBlockHits;
+
     long pushBlockMisses;
+
     long pushBlockClears;
+
 
     /**
      * Whether the cross-frame reuse census runs: {@code -Dceltium.vulkan.batchReuseCensus=true}, off by default.
@@ -19312,6 +18559,7 @@ this.frameBufferOpen = false;
      */
     private static final boolean BATCH_REUSE_CENSUS =
             Boolean.getBoolean("celtium.vulkan.batchReuseCensus");
+
 
     /**
      * How many offered batches are byte-identical repeats of one offered in the previous frame.
@@ -19327,9 +18575,13 @@ this.frameBufferOpen = false;
      * counters decide whether a cache is worth building.
      */
     private final java.util.HashSet<Long> batchReuseThisFrame = new java.util.HashSet<Long>();
+
     final java.util.HashSet<Long> batchReuseLastFrame = new java.util.HashSet<Long>();
+
     long batchReuseHits;
+
     long batchReuseMisses;
+
 
     /**
      * Which call site opens an immediate window, counted by the first game frame that names it.
@@ -19341,8 +18593,10 @@ this.frameBufferOpen = false;
      * first few windows name their caller and the census counts the rest by that name.
      */
     private final java.util.Map<String, Integer> windowOpenSites = new java.util.LinkedHashMap<String, Integer>();
+
     /** How many window openings carried a caller census; the rest are counted by site only. */
     private int windowOpenSiteLogs;
+
     /**
      * The site that opened the window currently being recorded.
      * <p>
@@ -19354,8 +18608,10 @@ this.frameBufferOpen = false;
      * renderLayer 237,005 groups, beforeUnbind 17,041, worldPassEnd 1,542, clear 55 over 849 openings, present 4.
      */
     private String lastWindowOpenSite = "none";
+
     /** Whether the window-open census runs, which is the same property as the draw-site census it feeds. */
     private final boolean windowSiteCensusWanted = DRAW_SITE_CENSUS;
+
 
     /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
     private static final int UPLOAD_CALLER_ID = Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
@@ -19364,8 +18620,10 @@ this.frameBufferOpen = false;
         return UPLOAD_CALLER_ID;
     }
 
+
     /** How many of the splash's first presents have had their frame image (and the pair) dumped. */
     private int splashProbeCount;
+
 
     /**
      * The pair readback at the composite: armed when a group samples a published frame texture, taken at the first
@@ -19373,16 +18631,23 @@ this.frameBufferOpen = false;
      * cannot say whether the pair already held the game's picture when the sample ran.
      */
     private boolean splashPairAfterCompositeArmed;
+
     private boolean splashPairAfterCompositeDone;
+
     private String lastGroupDepthRow = "";
+
     /** Why the last model enqueue returned false; see {@link ModelReplay#celtium$enqueueModelMesh}. Reported with the refusal. */
     String modelQueueRefusal = "none";
+
     /** One-shot: the state the model path is told about depth. */
     boolean modelStateLogged;
+
     /** Lines of {@code CELTIUM_MODEL_MATRIX} written this run; see {@link VulkanDiagnostics}. */
     int modelMatrixLines;
+
     /** The bound for that line: it is per model list per frame, so it needs a cap even in a diagnostics run. */
     static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
+
 
 
     /**
@@ -19398,6 +18663,7 @@ this.frameBufferOpen = false;
      */
     boolean mainColorSampled;
 
+
     /**
      * The frame whose {@code "frame-image"} publication was refused because the frame target held a live
      * present borrow, or {@link Long#MIN_VALUE} when no frame has been closed. The refusal keeps the
@@ -19408,6 +18674,7 @@ this.frameBufferOpen = false;
      */
     long mainColorSampledBorrowClosedFrame = Long.MIN_VALUE;
 
+
     /**
      * {@return whether a collected pass list can run natively this frame}.
      * <p>
@@ -19415,9 +18682,10 @@ this.frameBufferOpen = false;
      * device. The executor itself is not built until a chain actually arrives, which is most games' never.
      */
     public boolean celtium$postChainAvailable() {
-        return this.frameTarget != null && !this.gpuStalled && this.commandBuffer != null
+        return this.frameTarget != null && !this.frame.gpuStalled && this.frame.commandBuffer != null
                 && this.context != null;
     }
+
 
 
 
@@ -19461,12 +18729,14 @@ this.frameBufferOpen = false;
         this.batchReuseThisFrame.add(key);
     }
 
+
     /** Publishes this frame's batch hashes as the previous frame's set, at the frame boundary. */
     private void celtium$swapBatchReuseFrames() {
         this.batchReuseLastFrame.clear();
         this.batchReuseLastFrame.addAll(this.batchReuseThisFrame);
         this.batchReuseThisFrame.clear();
     }
+
 
     /**
      * Whether the draw-site census runs: {@code -Dceltium.vulkan.drawSiteCensus=true}, off by default.
@@ -19477,6 +18747,7 @@ this.frameBufferOpen = false;
      * this method's call site - and it is one property away when the question comes back.
      */
     private static final boolean DRAW_SITE_CENSUS = Boolean.getBoolean("celtium.vulkan.drawSiteCensus");
+
 
     /** Hashes each push-block component for this group, at its ordinal in the frame. */
     private void celtium$notePushComponents(ImmediateGroup group) {
@@ -19517,6 +18788,7 @@ this.frameBufferOpen = false;
         this.pushComponentCount++;
     }
 
+
     /** Compares this frame's component hashes with the previous frame's, position by position. */
     private void celtium$swapPushComponentFrame() {
         if (!PUSH_COMPONENT_CENSUS) {
@@ -19542,6 +18814,7 @@ this.frameBufferOpen = false;
                 ? Math.max(1L, this.pushComponentSamples[0]) : 0L;
     }
 
+
     /** {@return the median interval in milliseconds for one arm, from its histogram} */
     private double abMedianMillis(int arm) {
         int total = 0;
@@ -19561,6 +18834,7 @@ this.frameBufferOpen = false;
         }
         return AB_INTERVAL_BUCKETS;
     }
+
 
     /** {@return the parity A/B's two arms, as recorded milliseconds per window} */
     String abParitySummary() {
@@ -19584,6 +18858,7 @@ this.frameBufferOpen = false;
                 + baselineRecords;
     }
 
+
     /** {@return the per-component change census, one line} */
     String pushComponentSummary() {
         if (!PUSH_COMPONENT_CENSUS || this.pushComponentFrames == 0) {
@@ -19597,6 +18872,7 @@ this.frameBufferOpen = false;
         }
         return text.toString();
     }
+
 
     /** {@return a key over every group input the push block is built from}. */
     private long celtium$pushBlockKey(ImmediateGroup group) {
@@ -19641,6 +18917,7 @@ this.frameBufferOpen = false;
         return hash;
     }
 
+
     /** Copies a memoised block into the push buffer; {@return false} when there is none for this key. */
     private boolean celtium$copyPushBlock(long key, java.nio.ByteBuffer push) {
         byte[] cached = this.pushBlocks.get(key);
@@ -19654,6 +18931,7 @@ this.frameBufferOpen = false;
         this.pushBlockHits++;
         return true;
     }
+
 
     /**
      * Remembers the block just built, so the next group with the same inputs copies it instead.
@@ -19677,6 +18955,7 @@ this.frameBufferOpen = false;
         this.pushBlocks.put(key, copy);
     }
 
+
     /** Counts one drawn group against the site that recorded it, and the batches it carried. */
     private void celtium$noteGroupDrawnAtSite(int batches) {
         if (!DRAW_SITE_CENSUS) {
@@ -19688,6 +18967,7 @@ this.frameBufferOpen = false;
         Integer carried = this.batchesDrawnBySite.get(site);
         this.batchesDrawnBySite.put(site, Integer.valueOf(carried == null ? batches : carried.intValue() + batches));
     }
+
 
     /** {@return the draw-site census as {@code site=groups/batches | ...}} */
     String drawSiteSummary() {
@@ -19706,11 +18986,16 @@ this.frameBufferOpen = false;
         return text.toString();
     }
 
+
     /** {@code -Dceltium.debug.drawBench=N}: measure N bind+draw calls on the last mesh of a window. */
     private static final int DRAW_BENCH = Integer.getInteger("celtium.debug.drawBench", 0);
+
     private transient VulkanDynamicMesh lastDrawnMesh;
+
     private int drawBenchDone;
+
     private long drawBenchBestNanos = Long.MAX_VALUE;
+
 
     /**
      * Debug: mirror one GL texture exactly the way a group draw resolves it. The tester's black screen ends on the
@@ -19719,18 +19004,28 @@ this.frameBufferOpen = false;
      * the registry for that texture and uploads it, once, through the same code the group path uses.
      */
     private static volatile int DEBUG_MIRROR_GL_ID;
+
     // Read once: this hook runs on every frame boundary, and a System.getProperty per frame is a map lookup inside
     // the frame cost for a property that cannot change after startup.
     private static final String DEBUG_ANNOUNCE_REPEAT = System.getProperty("celtium.debug.announceRepeat", "");
+
     private static final String DEBUG_ANNOUNCE_GROWTH = System.getProperty("celtium.debug.announceGrowth", "");
+
     private static final String DEBUG_ANNOUNCE_LARGE = System.getProperty("celtium.debug.announceLarge", "");
+
     private static final boolean DEBUG_ANNOUNCE_ANY = !DEBUG_ANNOUNCE_REPEAT.isEmpty()
             || !DEBUG_ANNOUNCE_GROWTH.isEmpty() || !DEBUG_ANNOUNCE_LARGE.isEmpty();
+
     private static final boolean DEBUG_ATLAS_QUAD = Boolean.getBoolean("celtium.debug.drawAtlasQuad");
+
     private boolean debugAnnounceDone;
+
     private int debugGrowthStep;
+
     private int debugRepeatDone;
+
     private static java.awt.image.BufferedImage debugRepeatImage;
+
     private boolean debugAtlasQuadDone;
 
     public static void celtium$requestDebugMirror(int glTextureId) {
@@ -19762,7 +19057,7 @@ this.frameBufferOpen = false;
                     }
                     java.awt.image.BufferedImage image = debugRepeatImage;
                     System.out.println("[Celtium] CELTIUM_DEBUG_REPEAT n=" + this.debugRepeatDone);
-                    celtium$registry().announceImage(9000 + this.debugRepeatDone, image);
+                    this.owner.celtium$registry().announceImage(9000 + this.debugRepeatDone, image);
                 } catch (RuntimeException | LinkageError error) {
                     System.out.println("[Celtium] CELTIUM_DEBUG_REPEAT refused n=" + this.debugRepeatDone + ": " + error);
                 }
@@ -19785,7 +19080,7 @@ this.frameBufferOpen = false;
                             java.awt.image.BufferedImage.TYPE_INT_ARGB);
                     System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH step=" + this.debugGrowthStep + " size=" + width
                             + "x" + height);
-                    celtium$registry().announceImage(9998, image);
+                    this.owner.celtium$registry().announceImage(9998, image);
                     System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH step=" + this.debugGrowthStep + " done");
                 } catch (RuntimeException | LinkageError error) {
                     System.out.println("[Celtium] CELTIUM_DEBUG_GROWTH refused: " + error);
@@ -19805,7 +19100,7 @@ this.frameBufferOpen = false;
                 java.awt.image.BufferedImage image =
                         new java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
                 System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE id=9999 size=" + width + "x" + height);
-                celtium$registry().announceImage(9999, image);
+                this.owner.celtium$registry().announceImage(9999, image);
                 System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE done");
             } catch (RuntimeException | LinkageError error) {
                 System.out.println("[Celtium] CELTIUM_DEBUG_ANNOUNCE refused: " + error);
@@ -19839,7 +19134,7 @@ this.frameBufferOpen = false;
             }
         }
         try {
-            VulkanGlTexture texture = celtium$registry().get(id, false);
+            VulkanGlTexture texture = this.owner.celtium$registry().get(id, false);
             if (texture == null) {
                 System.out.println("[Celtium] CELTIUM_DEBUG_MIRROR id=" + id + " no wrapper");
                 return;
@@ -19854,13 +19149,13 @@ this.frameBufferOpen = false;
     }
 
     private void celtium$runDrawBench() {
-        if (DRAW_BENCH <= 0 || this.drawBenchDone >= 8 || this.lastDrawnMesh == null || this.commandBuffer == null) {
+        if (DRAW_BENCH <= 0 || this.drawBenchDone >= 8 || this.lastDrawnMesh == null || this.frame.commandBuffer == null) {
             return;
         }
         this.drawBenchDone++;
         long start = System.nanoTime();
         for (int i = 0; i < DRAW_BENCH; i++) {
-            this.lastDrawnMesh.bindAndDraw(this.commandBuffer, this.immediateBindCache);
+            this.lastDrawnMesh.bindAndDraw(this.frame.commandBuffer, this.immediateBindCache);
         }
         long total = System.nanoTime() - start;
         long perCall = total / DRAW_BENCH;
@@ -19877,14 +19172,20 @@ this.frameBufferOpen = false;
 
 
 
+
     /** The terrain begin struct reused across passes, in the window cache's shape; see below. */
     private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedTerrainBegin;
-    private org.lwjgl.vulkan.VkRect2D cachedTerrainBeginArea;
+
     private long cachedTerrainBeginPass;
+
     private long cachedTerrainBeginFramebuffer;
+
     private int cachedTerrainBeginWidth = -1;
+
     private int cachedTerrainBeginHeight = -1;
+
     private boolean cachedTerrainBeginValid;
+
 
     /**
      * {@return the terrain pass' render-pass begin info}, reusing the struct and its render area
@@ -19909,13 +19210,13 @@ this.frameBufferOpen = false;
             // for the same reason, even though both of its fields are rewritten: the cost is once per process, the
             // failure mode is not worth re-deriving if a field is ever added.
             this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc();
-            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
+            this.owner.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
             this.cachedTerrainBeginValid = false;
         }
         if (!this.cachedTerrainBeginValid || renderPass != this.cachedTerrainBeginPass
                 || framebuffer != this.cachedTerrainBeginFramebuffer
                 || width != this.cachedTerrainBeginWidth || height != this.cachedTerrainBeginHeight) {
-            org.lwjgl.vulkan.VkRect2D area = this.cachedTerrainBeginArea;
+            org.lwjgl.vulkan.VkRect2D area = this.owner.cachedTerrainBeginArea;
             area.offset().set(0, 0);
             area.extent().set(width, height);
             this.cachedTerrainBegin.sType$Default().pNext(0L).renderPass(renderPass).framebuffer(framebuffer)
@@ -19928,6 +19229,7 @@ this.frameBufferOpen = false;
         }
         return this.cachedTerrainBegin;
     }
+
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {
@@ -19961,11 +19263,12 @@ this.frameBufferOpen = false;
         this.windowOpenSites.put(site, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
         if (this.windowOpenSiteLogs < 12) {
             this.windowOpenSiteLogs++;
-            System.out.println("[Celtium] CELTIUM_WINDOW_SITE frame=" + this.frameId + " site=" + site
+            System.out.println("[Celtium] CELTIUM_WINDOW_SITE frame=" + this.frame.frameId + " site=" + site
                     + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                     + " groups=" + this.immediateGroups.size());
         }
     }
+
 
     /** {@return the window-opening census, largest first}, or {@code none} before the first window. */
     String windowOpenSiteSummary() {
@@ -19984,6 +19287,7 @@ this.frameBufferOpen = false;
         }
         return text.toString();
     }
+
 
     /**
      * Drops the splash's canvas mirrors once the splash stops uploading.
@@ -20008,7 +19312,7 @@ this.frameBufferOpen = false;
                 this.targetStatistics.noteSplashCanvasInvalidations();
             }
             if (this.targetStatistics.splashCanvasInvalidations() <= 8) {
-                record("splash ended: dropped " + this.splashCanvasIds.size() + " splash canvas mirror(s) "
+                this.reports.record("splash ended: dropped " + this.splashCanvasIds.size() + " splash canvas mirror(s) "
                         + this.splashCanvasIds + " (total " + this.targetStatistics.splashCanvasInvalidations() + ")");
             }
             this.splashCanvasIds.clear();
@@ -20016,16 +19320,22 @@ this.frameBufferOpen = false;
         this.splashUploadsThisFrame = false;
     }
 
+
     /** The delivered image's size, from the frame target; the capture's size is not assumed to be it. */
     private int immediateOffersThisFrame;
 
+
     /** Groups the pre-terrain flush handed over, and how many frames contributed. */
     long preflushGroupsDrained;
+
     long preflushFrames;
 
     private long lastTerrainIndirectCalls;
+
     private long lastDrawnGroups;
+
     private long lastImmediateWindows;
+
 
     /** {@return windows per frame times 100, over the frames this report covers}. */
     long celtium$windowsPerFrameX100() {
@@ -20034,16 +19344,27 @@ this.frameBufferOpen = false;
         this.lastImmediateWindows = windows;
         return Math.max(1, this.frameIntervalCount) == 0 ? 0 : (delta * 100L) / Math.max(1, this.frameIntervalCount);
     }
+
     long textureDrawNanos;
+
     long textureDrawCount;
+
     long itemDrawCount;
+
     long blockDrawCount;
+
     long particleDrawCount;
+
     long genericDrawCount;
+
     long itemDrawNanos;
+
     long blockDrawNanos;
+
     long particleDrawNanos;
+
     long genericDrawNanos;
+
 
     /** {@return the immediate groups drawn per frame over the report window}. */
     long celtium$drawnGroupsPerFrame() {
@@ -20052,7 +19373,9 @@ this.frameBufferOpen = false;
         this.lastDrawnGroups = drawn;
         return delta / Math.max(1, this.frameIntervalCount);
     }
+
     private long lastTerrainIndirectDraws;
+
 
     /** {@return the terrain pass's per-frame recording counts}, as a log fragment. */
     String celtium$terrainPerFrameSummary(int frames) {
@@ -20069,180 +19392,18 @@ this.frameBufferOpen = false;
                 + " drawsPerCall=" + (callDelta == 0 ? 0 : drawDelta / callDelta) + "]";
     }
 
-
     long terrainBindNanos;
+
     long terrainPassBeginNanos;
+
     long terrainUniformNanos;
 
-
-
-
-
-
-    // The shadow pass's draw tuple, captured in one place: the renderer supplies the geometry (vertex, index, indirect
-    // range) from the instant its first batch of the frame was recorded, and this side supplies the pipeline, descriptor
-    // set, dynamic offset and push block as they were for that same batch. Reading them separately mixed region A's
-    // commands with region B's buffers and state (#397).
-    /** Every terrain batch captured this frame, in recording order; the map is drawn from all of them. */
-
-
-    private long boundarySubmitNanos;
-    private long slotWaitNanos;
-    private int boundaryFrames;
     private int immediateOffersLastFrame;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    // ---- glCopyTexImage2D / glCopyTexSubImage2D: the read side of the copy --------------------------------------
-    //
-    // The read side lives in CopyReadSide (refactoring plan R11): the colour and depth copies, the readbacks,
-    // the chain-time dumps, the present counters, the light-map coordinates, the frame target's adoption and
-    // establishment, the mirror probes and refreshes. What stays here is the side's instance, the copy
-    // service's field under the name its readers have always used, and one delegating door per entry the
-    // rest of the renderer calls - so no caller of the backend changed.
-
-    /** The copy read side (R11). Declared before {@link #textureCopyService}, whose service it builds. */
-    final CopyReadSide copyReadSide = new CopyReadSide(this);
-
-    /**
-     * The texture-copy path's service, built by {@link #copyReadSide}. Kept as a field under this name
-     * because the frame summary, the diagnostics and the teardown read it here - one of them reflectively.
-     */
-    final TextureCopyService textureCopyService = this.copyReadSide.textureCopyService;
-
-    public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
-            int x, int y, int width, int height, int readFbo) {
-        return this.copyReadSide.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
-                readFbo);
-    }
-
-    public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
-            int x, int y, int width, int height, int xoffset, int yoffset) {
-        return this.copyReadSide.celtium$serveDepthCopy(sourceDepthTexture, destDepthTexture, x, y, width, height,
-                xoffset, yoffset);
-    }
 
     static String celtium$layoutName(int layout) {
         return CopyReadSide.celtium$layoutName(layout);
     }
 
-    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
-            int format, int type, long address) {
-        return this.copyReadSide.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
-    }
-
-    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
-        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address);
-    }
-
-    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address,
-            long capacity) {
-        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address, capacity);
-    }
-
-    void celtium$dumpOwnedImage(String stage, long image, String base, String identity, int width,
-            int height) {
-        this.copyReadSide.celtium$dumpOwnedImage(stage, image, base, identity, width, height);
-    }
-
-    int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
-        return this.copyReadSide.celtium$readImageRectangle(image, x, y, width, height);
-    }
-
-    public boolean celtium$presentedImageDumpWritten() {
-        return this.copyReadSide.celtium$presentedImageDumpWritten();
-    }
-
-    public int celtium$presentedFrameCount() {
-        return this.copyReadSide.celtium$presentedFrameCount();
-    }
-
-    public int celtium$presentSkips() {
-        return this.copyReadSide.celtium$presentSkips();
-    }
-
-    public int celtium$presentAttempts() {
-        return this.copyReadSide.celtium$presentAttempts();
-    }
-
-    public int celtium$presentHookCalls() {
-        return this.copyReadSide.celtium$presentHookCalls();
-    }
-
-    public int celtium$presentedDumpWrittenFrameFor(String fileName) {
-        return this.copyReadSide.celtium$presentedDumpWrittenFrameFor(fileName);
-    }
-
-    public void celtium$setLightmapUnit(int unit) {
-        this.copyReadSide.celtium$setLightmapUnit(unit);
-    }
-
-    @Override
-    public void setLightmapCoords(float x, float y) {
-        this.copyReadSide.setLightmapCoords(x, y);
-    }
-
-    private float[] lightmapCoords() {
-        return this.copyReadSide.lightmapCoords();
-    }
-
-    float[] celtium$lightmapForGroup() {
-        return this.copyReadSide.celtium$lightmapForGroup();
-    }
-
-    public boolean celtium$ensureTargetForBoundFramebuffer() {
-        return this.copyReadSide.celtium$ensureTargetForBoundFramebuffer();
-    }
-
-    public boolean celtium$ensureTargetForBoundFramebuffer(int widthHint, int heightHint) {
-        return this.copyReadSide.celtium$ensureTargetForBoundFramebuffer(widthHint, heightHint);
-    }
-
-    public int celtium$adoptableFramebuffer(int width, int height) {
-        return this.copyReadSide.celtium$adoptableFramebuffer(width, height);
-    }
-
-    public int celtium$adoptedColorTexture() {
-        return this.copyReadSide.celtium$adoptedColorTexture();
-    }
-
-    public int celtium$adoptedDepthTexture() {
-        return this.copyReadSide.celtium$adoptedDepthTexture();
-    }
-
-    public void celtium$noteFramebufferAdopted() {
-        this.copyReadSide.celtium$noteFramebufferAdopted();
-    }
-
-    public boolean celtium$isSharedFramebuffer(int framebufferObject) {
-        return this.copyReadSide.celtium$isSharedFramebuffer(framebufferObject);
-    }
-
-    public void celtium$noteGlErrorAt(String where, int error) {
-        this.copyReadSide.celtium$noteGlErrorAt(where, error);
-    }
 
 
     // The model-draw switches and the fence/descriptor fault switches stay on the backend, declared
@@ -20254,8 +19415,10 @@ this.frameBufferOpen = false;
         return MODEL_DRAW;
     }
 
+
     /** Draws only this display list, for isolating one list (0 = all). */
     static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
+
 
     /**
      * Whether captured display lists are drawn natively.
@@ -20269,18 +19432,7 @@ this.frameBufferOpen = false;
      */
     static final boolean MODEL_DRAW = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.modelDraw", "true"));
-    /**
-     * Forces the slot wait to report a timeout, so the post-submit failure path can be exercised (lab switch).
-     * The wait it falsifies is the timeline await on a timeline device and the fence wait on the fallback path
-     * (R-56: the exercise moved with the wait).
-     */
-    private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
-    /**
-     * Makes the slot wait report {@code VK_ERROR_DEVICE_LOST} instead of its real result - the case of a submission
-     * that was queued and then lost with the device, which the pre-submit fault cannot produce. Lab switch. The
-     * wait it falsifies is the timeline await on a timeline device and the fence wait on the fallback path (R-56).
-     */
-    private static final boolean DEVICE_LOST_FAULT = Boolean.getBoolean("celtium.vulkan.failDeviceLost");
+
 
     /**
      * Runs a descriptor-set request through the fault switch, so the refusal path can be exercised on a real GPU.
@@ -20303,26 +19455,6 @@ this.frameBufferOpen = false;
         return CopyReadSide.celtium$mirrorProbe(glTextureId);
     }
 
-    VulkanTextureRegistry celtium$registry() {
-        return this.copyReadSide.celtium$registry();
-    }
-
-    public String celtium$textureCensus(int glTextureId) {
-        return this.copyReadSide.celtium$textureCensus(glTextureId);
-    }
-
-    public String celtium$immediateMatrixState() {
-        return this.copyReadSide.celtium$immediateMatrixState();
-    }
-
-    boolean ensureFrameTarget() {
-        return this.copyReadSide.ensureFrameTarget();
-    }
-
-    boolean ensureFrameTarget(int width, int height) {
-        return this.copyReadSide.ensureFrameTarget(width, height);
-    }
-
     private static int[] currentViewport() {
         return CopyReadSide.currentViewport();
     }
@@ -20331,46 +19463,10 @@ this.frameBufferOpen = false;
         return CopyReadSide.cachedWindowFramebufferSize();
     }
 
-    private void refreshTextures() {
-        this.copyReadSide.refreshTextures();
-    }
-
     private static int[] textureSize(int texture) {
         return CopyReadSide.textureSize(texture);
     }
 
-    // ------------------------------------------------------------------ command resources
-
-    /** The frame slots, owned by the scheduler (refactoring plan R6). */
-    static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
-    private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
-    private final long[] slotFences = new long[FRAME_SLOTS];
-    /**
-     * When a frame recording's submission goes into the batched deferred queue instead of vkQueueSubmit, the token
-     * naming the batch stands in for the slot's own fence (vkQueueSubmit arms one fence per call - it cannot arm each
-     * entry's; and on a timeline device the batch carries no fence at all, R-56). 0 means the slot's last submission
-     * armed {@link #slotFences} the ordinary way. Cleared at {@link #celtium$noteSlotConfirmed}: the reclaim runs
-     * that confirmation, so the map's lifetime is "queued until confirmed", never reset independently.
-     */
-    private final long[] slotDeferredTokens = new long[FRAME_SLOTS];
-    /**
-     * The unified frame buffer's open state: when the target carries no frame semaphores, the first
-     * {@link #beginCommands()} of a frame begins the slot's buffer and every later recording of the same frame
-     * only re-points the aliases below - one vkReset+vkBegin, one end, one submission per frame instead of one
-     * per recording. Frame recordings are always coalesced this way (the measured A/B on AMD RX 6400: flush
-     * 3.82 -> 2.35-2.41 ms per frame at 4.55 flushes/frame, queue submissions per frame from 12.7 to 4.6).
-     * Cleared at the frame's boundary submit and at every mid-frame reset path.
-     */
-    boolean frameBufferOpen;
-    /**
-     * Whether the window being recorded moved the frame image into its attachment layout.
-     * <p>
-     * The acquire is recorded before the pass and the release after it, but only the pass knows which framebuffer it
-     * ended up attaching: an off-target window skips both barriers, and the off-target path's own fallback (a refused
-     * pair) attaches the frame image instead and records the acquire there. This field is how the release learns what
-     * the acquire actually did, so the two can never disagree about the image's layout.
-     */
-    private boolean windowFrameImageAttached = true;
     /**
      * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is
      * recorded against the pair image in its own submission (queue order puts it after those draws); off, it
@@ -20379,340 +19475,7 @@ this.frameBufferOpen = false;
      */
     private static final boolean GAME_CLEAR_STANDALONE =
             !Boolean.getBoolean("celtium.vulkan.disableGameClearStandalone");
-    /**
-     * The recording-lifecycle guard per slot. {@link #commandState} aliases the current slot's entry, so every site
-     * that guarded "the backend command buffer" now guards "the command buffer this recording owns" - the same
-     * statement now that several submissions may be in flight at once.
-     */
-    private final VulkanCommandBufferState[] slotCommandStates = new VulkanCommandBufferState[FRAME_SLOTS];
-    /** Slot this recording belongs to, and the slot the next recording will take. */
-    int frameSlot;
-    private int nextFrameSlot;
-    /** Waits spent on a slot whose previous submission had not completed when it was reused. */
 
-    private void createCommandResources() {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkCommandPoolCreateInfo poolInfo = VkCommandPoolCreateInfo.calloc(stack).sType$Default()
-                    .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
-                    .queueFamilyIndex(this.context.queueFamilyIndex());
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateCommandPool(this.context.device(), poolInfo, null, handle), "vkCreateCommandPool");
-            this.commandPool = handle.get(0);
-
-            VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                    .commandPool(this.commandPool)
-                    .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-                    .commandBufferCount(FRAME_SLOTS);
-            org.lwjgl.PointerBuffer buffers = stack.mallocPointer(FRAME_SLOTS);
-            check(vkAllocateCommandBuffers(this.context.device(), allocate, buffers), "vkAllocateCommandBuffers");
-            for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-                // One buffer, one fence and one recording-lifecycle guard per frame slot: a slot is only reset or
-                // re-recorded once its own submission has completed (see beginCommands), which is what lets several
-                // frames be in flight without either one touching a buffer the other is reading.
-                this.slotCommandBuffers[slot] = new VkCommandBuffer(buffers.get(slot), this.context.device());
-                VkFenceCreateInfo slotFenceInfo = VkFenceCreateInfo.calloc(stack).sType$Default();
-                check(vkCreateFence(this.context.device(), slotFenceInfo, null, handle), "vkCreateFence(slot " + slot + ")");
-                this.slotFences[slot] = handle.get(0);
-                this.slotCommandStates[slot] = new VulkanCommandBufferState(buffers.get(slot));
-            }
-            this.frameSlot = 0;
-            this.nextFrameSlot = 0;
-            this.commandBuffer = this.slotCommandBuffers[0];
-            this.fence = this.slotFences[0];
-
-            this.commandState = this.slotCommandStates[0];
-
-            org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
-                    org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
-            vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
-            // timestampValidBits belongs to the queue family, not to the device limits, so it is read for the
-            // family this backend submits on.
-            IntBuffer familyCount = stack.mallocInt(1);
-            vkGetPhysicalDeviceQueueFamilyProperties(
-                    this.context.physicalDevice(), familyCount, null);
-            org.lwjgl.vulkan.VkQueueFamilyProperties.Buffer families =
-                    org.lwjgl.vulkan.VkQueueFamilyProperties.calloc((int) familyCount.get(0), stack);
-            vkGetPhysicalDeviceQueueFamilyProperties(
-                    this.context.physicalDevice(), familyCount, families);
-            int family = Math.min(this.context.queueFamilyIndex(), families.capacity() - 1);
-            long timestampValidBits = Integer.toUnsignedLong(families.get(Math.max(0, family)).timestampValidBits());
-            this.timestampPeriod = properties.limits().timestampPeriod();
-            // Writing timestamps on a queue that cannot record them, or with a zero period, produces meaningless
-            // numbers; the overlay then keeps its "?? ms" instead of reporting fiction.
-            this.timestampsUsable = timestampValidBits > 0L && this.timestampPeriod > 0.0f;
-            // One query range of TIMESTAMP_SLOTS per frame slot: a frame's results then live in its own
-            // slot's range until that slot records again, which is what lets the readback consume
-            // snapshots in submit order instead of losing every confirmed snapshot but the newest
-            // (see TerrainTimingReadback).
-            org.lwjgl.vulkan.VkQueryPoolCreateInfo queryPool = org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack)
-                    .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS * FRAME_SLOTS);
-            if (this.timestampsUsable && !FORCE_NO_TIMESTAMPS) {
-                check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
-                this.timestampPool = handle.get(0);
-            } else {
-                // Pass timing is optional; the backend is not. Registering only when a queue can record timestamps
-                // meant a device without them lost the backend entirely - the audit's item H, and a direct contradiction
-                // of choosing features by capability rather than by assumption.
-                this.timestampsUsable = false;
-                record("the queue cannot record timestamps, so pass timing is disabled; the backend registers anyway");
-            }
-
-            // Item 359: the pipeline-statistics pool, judged independently of the timestamps - a queue can
-            // lack one and offer the other. Statistics are an instrument, never a precondition: a failed
-            // creation is recorded and the backend registers anyway, and the summary says supported=false.
-            if (this.context.pipelineStatisticsQuerySupported() && !TerrainStatisticsReport.forceDisabled()) {
-                org.lwjgl.vulkan.VkQueryPoolCreateInfo statisticsPoolInfo =
-                        org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack).sType$Default()
-                                .queryType(VK_QUERY_TYPE_PIPELINE_STATISTICS)
-                                .queryCount(FRAME_SLOTS * STATS_PER_SLOT)
-                                .pipelineStatistics(TerrainStatisticsReport.STATISTICS_MASK);
-                LongBuffer statisticsHandle = stack.mallocLong(1);
-                if (vkCreateQueryPool(this.context.device(), statisticsPoolInfo, null, statisticsHandle) == VK_SUCCESS) {
-                    this.statisticsPool = statisticsHandle.get(0);
-                } else {
-                    record("the pipeline statistics query pool could not be created, so terrain statistics are disabled; the backend registers anyway");
-                }
-            }
-
-            if (REFERENCE_RENDER) {
-                // A reference render: the mod loads, the bootstrap completes and the fixture can query the device, but the
-                // backend never registers - so no pass, no capture and no mixin takes anything, and OpenGL draws the whole
-                // frame. Returning here instead of skipping only the registration also skipped the command registration
-                // and made the fixture fail with "Vulkan bootstrap was expected but the command is missing".
-                record("reference render: the Vulkan backend is not installed, so the frame is OpenGL");
-            } else {
-                org.soutalab.celtium.vulkan.CeltiumBackends.install(this);
-            }
-
-            if (SWAPCHAIN_PROBE) {
-                runSwapchainProbe();
-            }
-        }
-    }
-
-    private void destroyCommandResources() {
-        if (this.timestampPool != 0) {
-            vkDestroyQueryPool(this.context.device(), this.timestampPool, null);
-            this.timestampPool = 0;
-        }
-        if (this.statisticsPool != 0) {
-            vkDestroyQueryPool(this.context.device(), this.statisticsPool, null);
-            this.statisticsPool = 0;
-        }
-        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (this.slotFences[slot] != 0) {
-                vkDestroyFence(this.context.device(), this.slotFences[slot], null);
-                this.slotFences[slot] = 0;
-                this.scheduler.releaseOnSlotReset(slot);
-            }
-            this.slotCommandBuffers[slot] = null;
-            this.slotCommandStates[slot] = null;
-        }
-        // this.fence is an alias of one of the slot fences destroyed above, not a fourth handle: clearing it here is
-        // what the separate destroy used to do by accident - vkDestroyFence on the same handle twice is invalid.
-        this.fence = 0;
-        if (this.commandPool != 0) {
-            vkDestroyCommandPool(this.context.device(), this.commandPool, null);
-            this.commandPool = 0;
-            this.commandBuffer = null;
-        }
-    }
-
-
-    void beginCommands() {
-        if (this.frameBufferOpen) {
-            // The frame's buffer is still recording: a later segment (window, terrain pass) continues into it
-            // without paying the slot wait, the reset/begin pair, the query reset or the indirect-page rebind -
-            // the ~150-250 microseconds each recording was paying in cycle overhead, ~8-9 times a frame.
-            this.commandBuffer = this.slotCommandBuffers[this.frameSlot];
-            this.fence = this.slotFences[this.frameSlot];
-            this.commandState = this.slotCommandStates[this.frameSlot];
-            return;
-        }
-        if (this.commandState.recording()) throw new IllegalStateException("nested begin on backend command buffer");
-        // OPT-08's ownership half: a recording takes the next frame slot, and only that slot's submission has to have
-        // completed - the other slots may still be executing, which is the overlap the pipelined step needs. With one
-        // buffer there was no such choice: the previous submission always had to finish first.
-        this.frameSlot = this.nextFrameSlot;
-        this.nextFrameSlot = (this.nextFrameSlot + 1) % FRAME_SLOTS;
-        this.commandBuffer = this.slotCommandBuffers[this.frameSlot];
-        this.fence = this.slotFences[this.frameSlot];
-        this.commandState = this.slotCommandStates[this.frameSlot];
-        if (this.scheduler.isPending(this.frameSlot)) {
-            long waitStart = System.nanoTime();
-            // This slot's own previous submission is still in flight: only this one blocks the reset below. Every
-            // submission older than it has completed by the queue's own ordering, which is what the sequence watermark
-            // records after a successful wait.
-            this.scheduler.noteSlotReuseWait(this.frameSlot);
-            if (!waitForSlot(this.frameSlot)) {
-                this.noteStalled();
-                this.submissionStatistics.noteStalledStops();
-                record("gpu stalled: frame slot " + this.frameSlot + " did not complete; drawing is refused from here");
-                throw new IllegalStateException("pending frame slot command buffer did not complete");
-            }
-            long waitNanos = System.nanoTime() - waitStart;
-            this.slotWaitNanos += waitNanos;
-            FrameBudgetTimings.addSlotWait(waitNanos);
-            if (waitNanos > 50_000_000L) {
-                System.out.println("[Celtium] CELTIUM_SLOT_WAIT millis=" + (waitNanos / 1_000_000L)
-                        + " slot=" + this.frameSlot + " frame=" + this.frameId);
-            }
-        }
-        if (this.submissionPending) {
-            // Confirmation, not a drain: whatever has completed frees what its sequence covers, and whatever is
-            // still in flight is paid for by the next user of ITS slot - never by this recording. The queue-wide
-            // wait that used to sit here is the stall this branch removes: it stopped the render thread on every
-            // begin until the whole device was idle again.
-            int confirmed = celtium$pollCompletedSlots();
-            if (confirmed > 0 && !celtium$recordingOpen()
-                    && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
-                this.submissionPending = false;
-                // Nothing is in flight: the same "device genuinely idle" statement the drain used to establish, so
-                // the retire queue may flush here (audit S12) and any off-target copy recorded for the previous
-                // frame has certainly completed.
-                int drained = VulkanRetireQueue.flushFor(this.context.device().address());
-                if (drained > 0) {
-                    this.submissionStatistics.addRetiredFlushes(drained);
-                }
-            }
-            // The confirmed submissions' timestamps are readable now; the availability bit keeps whatever is still
-            // in flight from reporting fiction.
-            updateTimings();
-        }
-        if (this.drawRecords != null) {
-            // The records store's frame boundary for this slot: its previous submission has
-            // completed (a pending one was waited on above), and this recording has not begun,
-            // so a lightmap write deferred while the slot's set was bound into the last frame's
-            // recording can be applied here - the one seat where it lands under neither a
-            // recording nor an executing command buffer.
-            this.drawRecords.beginFrame(this.frameSlot);
-        }
-        // FP-1 (plan 8.3 item 8; D7 seat ruling, NEON 2026-11-28): this frame's present-image
-        // borrow is decided here, at the frame head. The acquire used to sit in the present
-        // body's tail - one frame early, and outside the frame it served. The ensure is
-        // idempotent (a live borrow stands) and gated (a bypassed frame keeps its own image
-        // and takes the composed present), and it must run before the recording opens below:
-        // the ensure refuses while a recording is open. The native pack frame seat opened
-        // further down is built from the target this decision leaves active.
-        this.presentSwapchain.celtium$ensureBorrowedFrameImage();
-        // No VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT: the flag tells the driver it may free the buffer's internal
-        // allocations, and this buffer is reset and re-begun every frame - so the release is paid every frame and the
-        // allocations are re-made every frame. The spec allows either; keeping them is the reuse the frame wants. The
-        // abort paths keep the flag (they are rare and a released buffer is the honest state after a throw).
-        check(vkResetCommandBuffer(this.commandBuffer, 0), "vkResetCommandBuffer");
-        this.commandState.reset();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
-                    .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-            check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
-            // A begun command buffer starts with undefined push constants, and the cache is keyed by the buffer's
-            // handle - which a reused buffer keeps across the reset. Without this the first draw of a re-recorded
-            // buffer could elide its push and be drawn with whatever the previous recording left, which is the shape
-            // of a draw that is issued, counted and leaves no pixels. The sky plane is exactly that first draw.
-            VulkanPushCache.SHARED.invalidate();
-            this.commandState.begin();
-            // A fresh recording begins: a new recording epoch (INV-2c).
-            this.recordingEpoch++;
-            // The flag the retire drain guard reads. It was declared ("set at its begin") and only ever cleared, so
-            // celtium$recordingOpen() was blind to the frame's own recording and rc.24's guard never fired - which is
-            // why the tester's black screen came back after that fix with the same VUID (objects bound to an open
-            // command buffer destroyed under it). Set here, at the one place the frame's unified buffer begins; the
-            // coordinator clears it at submit and on every fallback path.
-            this.frameBufferOpen = true;
-            // S3-b D7: the native pack frame seat opens with the frame's unified buffer -
-            // the one point where the context, the begun buffer and the frame id are all
-            // live. The terrain driver resolves lazily through the factory (the frontend
-            // is created on first terrain use). The swapchain supply is the frame's
-            // active colour target, built by celtium$seatSwapchainTargets() from the
-            // borrow decision the frame head just made (D7 seat ruling, NEON 2026-11-28:
-            // option (b) - a null supply is not a landing form). A frame with no live
-            // target, or a minimized 0x0 target (FP-4), opens no seat.
-            if (org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.nativeFrameOpen()) {
-                // A seat that escaped its own frame's closes must not leak a dead
-                // command buffer into this frame: close it before this frame's opens.
-                // The all-exit close discipline (finish, the abandon seats, the stall
-                // seats) makes this unreachable in the steady state; it stands so a
-                // missed close degrades to a lost pack frame, never to a stale seat.
-                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
-            }
-            org.soutalab.celtium.core.frame.ActiveRenderTargets seatTargets =
-                    this.presentSwapchain.celtium$seatSwapchainTargets();
-            if (seatTargets != null) {
-                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
-                        this.context, this.commandBuffer, seatTargets,
-                        ctx -> celtium$lane1().terrainDriver(), this.frameId);
-            }
-            // The coordinator's frame opens at the same point (plan 2.2 template pick).
-            // A frame recorded through this backend runs the fixed four-stage template:
-            // the pack executor, when a pack is active, records through the seat above
-            // rather than through this frame path, so the pick's inputs are stated as
-            // the fixed template's here and the executor's frames are picked on its own
-            // entry when the world-pass hook is wired (S3-b D7-c).
-            this.frameCoordinator.beginFrame(false, false);
-            // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
-            // fact only when the submission that carries it is accepted; opening a recording on a handle that still
-            // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
-            VulkanGlTexture.beginLayoutRecording(this.commandBuffer);
-            // The named targets keep the same discipline on the same recording (audit-vulkan-core E2):
-            // their transitions become fact only when this buffer's submission is accepted, and opening
-            // this recording drops the previous one's uncommitted notes with it.
-            this.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());
-            // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
-            // belongs; without it validation reports every timestamp write as using an unavailable query.
-            if (this.timestampPool != 0) {
-                // Only the terrain pairs unless a report collects: the pool grew to TIMESTAMP_SLOTS for the window and
-                // mark slots, and resetting all of them at every command buffer was a per-frame cost the shipping path
-                // paid for a report it does not run (measured: 1.032x slower against the build before). The range must
-                // follow the write path's own predicate - a window write without its reset is precisely
-                // VUID-vkCmdWriteTimestamp-00830, which the frame budget's first leg reproduced.
-                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, celtium$timestampPoolBase(),
-                        celtium$windowTimestampsActive() ? TIMESTAMP_SLOTS : WINDOW_SLOT_BASE * 2);
-                this.windowTimestampCount = 0;
-                this.gpuMarkCount = 0;
-                if (this.timestampsUsable && org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
-                    // Written only while the report is collecting: they are the report's own numbers, and a validation leg
-                    // that is not asking for them should not carry extra query writes (measured: ten
-                    // VUID-vkCmdWriteTimestamp-00830 errors on the discrete card when the batched end path also wrote one).
-                    vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
-                            celtium$timestampPoolBase() + (FRAME_TIMESTAMP_SLOT * 2));
-                    this.frameEndTimestampWritten = false;
-                }
-            }
-            if (this.statisticsPool != 0) {
-                // This slot's fence has completed above, so none of its queries are in flight. Queries the
-                // readback never consumed are dropped samples, counted before the reset discards them.
-                int written = this.statisticsSlotCounts[this.frameSlot];
-                if (written > 0) {
-                    int unread = written - Integer.bitCount(this.statisticsSlotConsumed[this.frameSlot]);
-                    if (unread > 0) {
-                        this.statisticsDroppedSamples += unread;
-                    }
-                }
-                vkCmdResetQueryPool(this.commandBuffer, this.statisticsPool,
-                        this.frameSlot * STATS_PER_SLOT, STATS_PER_SLOT);
-                this.statisticsSlotCounts[this.frameSlot] = 0;
-                this.statisticsSlotConsumed[this.frameSlot] = 0;
-            }
-        }
-        // The indirect packet pages are slot-owned: the slot's prior fence already completed above (or it never
-        // submitted), so its pages may be rewritten from the start of this recording. Without this call the field
-        // stays -1 and every terrain batch falls back with "no_indirect_recording_slot_owns_the_packets" - measured
-        // as offers=7011/fallbacks=7011/draws=0 on leg swap6-amd, the whole indirect path dead letter.
-        // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
-        // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
-        this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
-        this.passScX = this.passScY = this.passScW = this.passScH = -1;
-        this.passBiasC = this.passBiasS = Float.NaN;
-        // The pass area is the window's until a pass says otherwise; see the field's own note.
-        this.passAreaWidth = this.targetWidth;
-        this.passAreaHeight = this.targetHeight;
-        // Open the unified frame buffer for this frame: recordings coalesce into it unconditionally - no
-        // target carries a semaphore contract any more (Stage 2 submit unification).
-        this.frameBufferOpen = true;
-        // The frame's slot is final here (the slot wait and the ring slot reset are both above): the batch
-        // wiring takes it for its staging adapter and opens the frame's first capture segment (S5-2).
-        celtium$beginBatcherFrame();
-    }
 
     /**
      * Maps an OpenGL blend factor onto its Vulkan equivalent.
@@ -20744,6 +19507,7 @@ this.frameBufferOpen = false;
             default: return -1;
         }
     }
+
 
     /**
      * Draws one synthetic {@code POSITION_COLOR} group with known NDC vertices through the immediate pipeline.
@@ -20819,10 +19583,10 @@ this.frameBufferOpen = false;
             int recordIndex = this.drawRecords.record(push, -1);
             if (recordIndex >= 0) {
                 try (MemoryStack stack = MemoryStack.stackPush()) {
-                    org.lwjgl.vulkan.VK10.vkCmdBindPipeline(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.vkCmdBindPipeline(this.frame.commandBuffer,
                             org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                             this.immediatePipeline.celtium$handle());
-                    org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets(this.frame.commandBuffer,
                             org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                             this.immediatePipeline.celtium$pipelineLayout(), 0,
                             stack.longs(this.drawRecords.descriptorSet()),
@@ -20830,10 +19594,10 @@ this.frameBufferOpen = false;
                     // The records set is now inside the open recording: a later window's
                     // lightmap change must defer to the frame boundary, not rewrite it here.
                     this.drawRecords.noteSetBound();
-                    org.lwjgl.vulkan.VK10.vkCmdPushConstants(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.vkCmdPushConstants(this.frame.commandBuffer,
                             this.immediatePipeline.celtium$pipelineLayout(),
                             org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, push);
-                    this.isolationMesh.bindAndDrawInstanced(this.commandBuffer, recordIndex);
+                    this.isolationMesh.bindAndDrawInstanced(this.frame.commandBuffer, recordIndex);
                 }
                 java.util.Arrays.fill(this.immediateBindCache, -1L);
             }
@@ -20842,18 +19606,28 @@ this.frameBufferOpen = false;
         }
     }
 
+
     /** The model run waiting to be drawn: consecutive compatible runs merge into its command range. */
     VulkanModelInstances.Run pendingModelRun;
+
     long pendingModelTextureSet;
+
     float[] pendingModelProjection;
+
     float[] pendingModelFog;
+
     long pendingModelViewportHash = Long.MIN_VALUE;
+
     boolean pendingModelActive;
+
     /** Model runs drawn and how many of those absorbed a following run; the ratio is the merge rate. */
     long modelRunsDrawn;
+
     long modelRunsMerged;
+
     /** Model runs dropped at draw time because modelInstances or bindlessBinding was absent (DP-22). */
     long modelRunDropped;
+
 
     /** Draws the model run held back for merging; called before anything else draws or the segment ends. */
     void celtium$flushPendingModelRun() {
@@ -20868,14 +19642,18 @@ this.frameBufferOpen = false;
             return;
         }
         this.modelRunsDrawn++;
-        this.modelInstances.draw(this.commandBuffer, run, this.pendingModelTextureSet,
+        this.modelInstances.draw(this.frame.commandBuffer, run, this.pendingModelTextureSet,
                 this.context.multiDrawIndirectEnabled(), this.pendingModelProjection, this.pendingModelFog);
     }
 
+
     /** Whether the last group drawn in this segment was a model run with the pipeline and set recorded below. */
     boolean modelBindValid;
+
     long modelBoundPipeline = -1L;
+
     long modelBoundTextureSet = -1L;
+
 
     /**
      * {@return whether the descriptor a queued item, block or particle group was prepared with is no longer
@@ -20909,6 +19687,7 @@ this.frameBufferOpen = false;
         }
         return false;
     }
+
 
     /**
      * Draws the pending groups, optionally only those belonging to one render target.
@@ -20954,7 +19733,7 @@ this.frameBufferOpen = false;
             this.batchSegmentOpen = false;
             this.batchSegmentCaptures = 0;
         }
-        this.batchRing.selectSlot(this.frameSlot);
+        this.batchRing.selectSlot(this.frame.frameSlot);
         this.batchBatcher.beginFrame(this.batchRing);
         this.batchSegmentOpen = true;
         this.batchSegmentCaptures = 0;
@@ -20962,18 +19741,20 @@ this.frameBufferOpen = false;
         this.batchTextureBindings.clear();
     }
 
+
     /** Opens a capture segment on the frame's slot when none is open (a later drain segment of this frame). */
     private void celtium$ensureBatchSegment() {
         if (this.batchSegmentOpen || this.batchBatcher == null) {
             return;
         }
-        this.batchRing.selectSlot(this.frameSlot);
+        this.batchRing.selectSlot(this.frame.frameSlot);
         this.batchBatcher.beginFrame(this.batchRing);
         this.batchSegmentOpen = true;
         this.batchSegmentCaptures = 0;
         this.batchStateDonors.clear();
         this.batchTextureBindings.clear();
     }
+
 
     /**
      * Closes the open capture segment and executes its plan, synchronously, at the point the caller has
@@ -20992,11 +19773,11 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.batch.BatchPlan plan = this.batchBatcher.endFrame();
         boolean executed = captures > 0;
         if (executed) {
-            long vertexBuffer = this.context.celtium$frameLinearRing().buffer(this.frameSlot);
+            long vertexBuffer = this.context.celtium$frameLinearRing().buffer(this.frame.frameSlot);
             long indexBuffer = this.context.sharedQuadIndexBuffer().buffer();
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                vkCmdBindVertexBuffers(this.commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
-                vkCmdBindIndexBuffer(this.commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
+                vkCmdBindVertexBuffers(this.frame.commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
+                vkCmdBindIndexBuffer(this.frame.commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
                 this.batchExecutor.execute(plan, new BatchDrawSink(stack));
             }
             // The segment bound pipelines, sets and buffers outside the immediate bind cache's knowledge:
@@ -21007,6 +19788,7 @@ this.frameBufferOpen = false;
         this.batchTextureBindings.clear();
         return executed;
     }
+
 
     /**
      * {@return whether this group can be captured into a batch segment}: its prepared pipeline
@@ -21045,6 +19827,7 @@ this.frameBufferOpen = false;
                 || pipeline instanceof VulkanImmediateColourRecordsPipeline;
     }
 
+
     /**
      * {@return whether this group's draw order is free under the group-open census' definition}: blending
      * off, depth test on, depth writes on - read from the group's own captured state, the mapped form of
@@ -21058,6 +19841,7 @@ this.frameBufferOpen = false;
         return state != null && state.length > 4
                 && state[0] == 0 && state[3] != 0 && state[4] != 0;
     }
+
 
     /**
      * {@return the descriptor cache key a batch texture binding is checked and rebuilt under}:
@@ -21073,10 +19857,11 @@ this.frameBufferOpen = false;
         if (twin instanceof VulkanImmediateItemRecordsPipeline itemTwin && !itemTwin.lit()) {
             return prepared.textureKey;
         }
-        VulkanGlTexture current = celtium$registry().get(textureSlot);
+        VulkanGlTexture current = this.owner.celtium$registry().get(textureSlot);
         return (current == null ? prepared.textureKey : current.key()) * 31L
                 + (this.lightmapTexture == null ? 0L : this.lightmapTexture.key());
     }
+
 
     /**
      * Attempts to capture this group into the open batch segment at drain time (the capture
@@ -21112,6 +19897,7 @@ this.frameBufferOpen = false;
     // in the array. Bounded and off the production path when the property is absent.
     private static final boolean CAPTURE_DUMP_ENABLED =
             System.getProperty("celtium.debug.bindlessSlotDump") != null;
+
     private static int captureDumpBudget = 400;
 
     private static void celtium$logCaptureForSlotDump(int textureSlot, boolean textureInRecord,
@@ -21211,7 +19997,7 @@ this.frameBufferOpen = false;
         long arraySet = 0L;
         if (twin instanceof VulkanImmediateTextureRecordsPipeline recordsTwin
                 && recordsTwin.celtium$bindlessArrayEligible()) {
-            int resolved = celtium$bindlessIndex(celtium$registry().get(textureSlot), textureSlot);
+            int resolved = celtium$bindlessIndex(this.owner.celtium$registry().get(textureSlot), textureSlot);
             if (resolved >= 0) {
                 org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
                         this.context.bindlessBinding();
@@ -21315,6 +20101,7 @@ this.frameBufferOpen = false;
         return true;
     }
 
+
     /**
      * Interns this group's command-state tuple in the open segment and returns its state key.
      * <p>
@@ -21342,6 +20129,7 @@ this.frameBufferOpen = false;
         return donors.size() - 1;
     }
 
+
     /** {@return whether two groups carry the same command-state tuple a batch state key names}. */
     private static boolean celtium$sameBatchState(ImmediateGroup a, ImmediateGroup b) {
         return a.scissorEnabled == b.scissorEnabled
@@ -21351,6 +20139,7 @@ this.frameBufferOpen = false;
                 && a.polygonOffsetFactor == b.polygonOffsetFactor
                 && a.polygonOffsetUnits == b.polygonOffsetUnits;
     }
+
 
     /**
      * Writes one group's record for a direct (per-group) twin draw, taking the store's
@@ -21377,6 +20166,7 @@ this.frameBufferOpen = false;
         }
         return recordIndex;
     }
+
 
     /**
      * Draws one particle group through its record-reading twin directly: the family's per-group form
@@ -21406,14 +20196,14 @@ this.frameBufferOpen = false;
         }
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            vkCmdBindPipeline(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, twin.celtium$handle());
-            vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, twin.celtium$handle());
+            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     twin.celtium$pipelineLayout(), 0, stack.longs(prepared.descriptor), null);
-            vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     twin.celtium$pipelineLayout(), 1, stack.longs(this.drawRecords.descriptorSet()),
                     stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
             this.drawRecords.noteSetBound();
-            mesh.bindAndDrawInstanced(this.commandBuffer, recordIndex);
+            mesh.bindAndDrawInstanced(this.frame.commandBuffer, recordIndex);
         }
         // The binds above bypass the flush's bind cache: whatever it believes is bound no longer is.
         java.util.Arrays.fill(this.immediateBindCache, -1L);
@@ -21421,6 +20211,7 @@ this.frameBufferOpen = false;
         this.particleDrawCount++;
         return true;
     }
+
 
     /** What a direct twin draw binds: the twin's handles, its records set index, its push size and its counter family. */
     private static final class TwinDraw {
@@ -21439,6 +20230,7 @@ this.frameBufferOpen = false;
             this.family = family;
         }
     }
+
 
     /**
      * {@return the direct-draw binding for a prepared pipeline}, or null when it is not one of
@@ -21465,24 +20257,26 @@ this.frameBufferOpen = false;
         return null;
     }
 
+
     /** Binds a direct twin draw's pipeline, sets and push, in the order the records layout declares. */
     private void celtium$bindTwinDraw(TwinDraw twin, PreparedImmediate prepared,
             java.nio.ByteBuffer push, MemoryStack stack) {
-        vkCmdBindPipeline(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, twin.handle);
+        vkCmdBindPipeline(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, twin.handle);
         if (twin.recordsSet != 0) {
-            vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     twin.layout, 0, stack.longs(prepared.descriptor), null);
         }
-        vkCmdBindDescriptorSets(this.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 twin.layout, twin.recordsSet, stack.longs(this.drawRecords.descriptorSet()),
                 stack.ints((int) this.drawRecords.descriptorDynamicOffset()));
         this.drawRecords.noteSetBound();
         if (twin.pushBytes > 0) {
-            vkCmdPushConstants(this.commandBuffer, twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+            vkCmdPushConstants(this.frame.commandBuffer, twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                     org.lwjgl.system.MemoryUtil.memByteBuffer(
                             org.lwjgl.system.MemoryUtil.memAddress(push), twin.pushBytes));
         }
     }
+
 
     /** Counts one direct twin draw in its family's counters. */
     private void celtium$noteTwinDraw(int family, long variantStart) {
@@ -21498,6 +20292,7 @@ this.frameBufferOpen = false;
         else if (family == 2) this.blockDrawCount++;
         else this.genericDrawCount++;
     }
+
 
     /**
      * Draws one group through its record-reading twin directly: the generalized form of
@@ -21527,13 +20322,14 @@ this.frameBufferOpen = false;
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             celtium$bindTwinDraw(twin, prepared, push, stack);
-            mesh.bindAndDrawInstanced(this.commandBuffer, recordIndex);
+            mesh.bindAndDrawInstanced(this.frame.commandBuffer, recordIndex);
         }
         // The binds above bypass the flush's bind cache: whatever it believes is bound no longer is.
         java.util.Arrays.fill(this.immediateBindCache, -1L);
         celtium$noteTwinDraw(twin.family, variantStart);
         return true;
     }
+
 
     /**
      * The non-quad emitter's delegation to the direct draw, counted in the census's third and
@@ -21557,6 +20353,7 @@ this.frameBufferOpen = false;
         }
         return drew;
     }
+
 
     /**
      * Draws one non-quad group by re-expanding its vertices through the non-quad emitter
@@ -21609,18 +20406,18 @@ this.frameBufferOpen = false;
             return false;
         }
         long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-        long ringBuffer = this.context.celtium$frameLinearRing().buffer(this.frameSlot);
+        long ringBuffer = this.context.celtium$frameLinearRing().buffer(this.frame.frameSlot);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             celtium$bindTwinDraw(twin, prepared, push, stack);
-            vkCmdBindVertexBuffers(this.commandBuffer, 0, stack.longs(ringBuffer),
+            vkCmdBindVertexBuffers(this.frame.commandBuffer, 0, stack.longs(ringBuffer),
                     stack.longs(emission.vertexOffset));
             if (emission.indexed()) {
-                vkCmdBindIndexBuffer(this.commandBuffer, ringBuffer, emission.indexOffset,
+                vkCmdBindIndexBuffer(this.frame.commandBuffer, ringBuffer, emission.indexOffset,
                         VK_INDEX_TYPE_UINT32);
-                org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(this.commandBuffer, emission.indexCount,
+                org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(this.frame.commandBuffer, emission.indexCount,
                         1, 0, 0, recordIndex);
             } else {
-                org.lwjgl.vulkan.VK10.vkCmdDraw(this.commandBuffer, emission.vertexCount, 1, 0,
+                org.lwjgl.vulkan.VK10.vkCmdDraw(this.frame.commandBuffer, emission.vertexCount, 1, 0,
                         recordIndex);
             }
         }
@@ -21634,6 +20431,7 @@ this.frameBufferOpen = false;
         celtium$noteTwinDraw(twin.family, variantStart);
         return true;
     }
+
 
     /**
      * Issues this group's polygon-offset depth bias: the drain loop's own block, factored so the batch
@@ -21649,7 +20447,7 @@ this.frameBufferOpen = false;
         // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
         // whatever the last draw left. Zeros are the state GL has when the offset is off.
         if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
-            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+            org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.frame.commandBuffer, constantFactor, 0.0F, slopeFactor);
             this.passBiasC = constantFactor;
             this.passBiasS = slopeFactor;
         } else {
@@ -21662,6 +20460,7 @@ this.frameBufferOpen = false;
             this.immediateStatistics.noteImmediateDepthBiasedGroups();
         }
     }
+
 
     /**
      * The production {@link org.soutalab.celtium.vulkan.batch.BatchPlanExecutor.DrawSink} for one segment
@@ -21685,13 +20484,13 @@ this.frameBufferOpen = false;
         @Override
         public void bindPipeline(int pipelineKey) {
             this.twin = batchTwinBindings.get(Integer.valueOf(pipelineKey));
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
+            vkCmdBindPipeline(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.pipeline);
             // The records set is bound with the pipeline, at the family's own index: set 1 for the
             // texture, item, block and particle families (set 0 is the per-texture pair), set 0 for
             // the colour family, whose layout declares the records set alone. The dynamic offset is
             // read now, at execution: a store grow during the window moved the slice, and the
             // offset that names this window's records is the current one.
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                     this.twin.recordsSet, this.stack.longs(drawRecords.descriptorSet()),
                     this.stack.ints((int) drawRecords.descriptorDynamicOffset()));
             drawRecords.noteSetBound();
@@ -21700,7 +20499,7 @@ this.frameBufferOpen = false;
                 // entries name their textures in their records, so no per-texture bind follows
                 // for them, and a per-texture drop verdict left over from an earlier entry of
                 // this segment never applies to them.
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 this.textureDropped = false;
@@ -21725,7 +20524,7 @@ this.frameBufferOpen = false;
                 // (the entries' flag suppresses the ask); defensively, the only set this twin
                 // reads at set 0 is the array itself, so rebind that and never enter the
                 // per-texture registration, eviction-check or drop procedure for it.
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
+                vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout,
                         0, this.stack.longs(this.twin.arraySet), null);
                 this.arraySetBound = true;
                 return;
@@ -21749,7 +20548,7 @@ this.frameBufferOpen = false;
                 // wrapper, in the family's own form (the pair-keyed families take the drain's light map,
                 // as the drain's own rebuild does); when no rebuild is available, the entries that
                 // sample this texture are dropped (counted), never drawn with the retired set.
-                VulkanGlTexture current = celtium$registry().get(textureSlot);
+                VulkanGlTexture current = this.owner.celtium$registry().get(textureSlot);
                 long rebuilt = current == null ? 0L
                         : binding.celtium$rebuild(current, lightmapTexture);
                 if (rebuilt == 0L) {
@@ -21759,7 +20558,7 @@ this.frameBufferOpen = false;
                 binding.descriptor = rebuilt;
                 descriptor = rebuilt;
             }
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
+            vkCmdBindDescriptorSets(this.frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.twin.layout, 0,
                     this.stack.longs(descriptor), null);
         }
 
@@ -21771,7 +20570,7 @@ this.frameBufferOpen = false;
             float constantFactor = offsetEnabled ? donor.polygonOffsetUnits : 0.0F;
             float slopeFactor = offsetEnabled ? donor.polygonOffsetFactor : 0.0F;
             if (constantFactor != passBiasC || slopeFactor != passBiasS) {
-                vkCmdSetDepthBias(commandBuffer, constantFactor, 0.0F, slopeFactor);
+                vkCmdSetDepthBias(this.frame.commandBuffer, constantFactor, 0.0F, slopeFactor);
                 passBiasC = constantFactor;
                 passBiasS = slopeFactor;
             }
@@ -21796,10 +20595,10 @@ this.frameBufferOpen = false;
                 // the frame ring's mapping at the store's offset reads geometry bytes as the
                 // fragment's tint and alpha reference - the panel-background defect's seat.
                 long address = drawRecords.recordAddress(firstInstance);
-                vkCmdPushConstants(commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                vkCmdPushConstants(this.frame.commandBuffer, this.twin.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }
-            vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            vkCmdDrawIndexed(this.frame.commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
         }
     }
 
@@ -21818,13 +20617,13 @@ this.frameBufferOpen = false;
             // capture and the direct twin draws write into it from the group loop. Selecting here makes
             // the store's lifetime the window's, like the group list it parallels, and the frame's
             // lightmap is bound into the slot's unified set 1 alongside the records.
-            this.drawRecords.selectSlot(this.frameSlot);
+            this.drawRecords.selectSlot(this.frame.frameSlot);
             if (this.lightmapTexture != null) {
                 this.drawRecords.bindLightmap(this.lightmapTexture.view(), this.lightmapTexture.sampler(),
                         this.lightmapTexture.samplingLayout());
             }
         }
-        try { this.commandState.requireDraw(target); }
+        try { this.frame.commandState.requireDraw(target); }
         catch (IllegalStateException error) { this.immediateStatistics.noteInvalidImmediateRecords(); throw error; }
         // The depth-bias dedup tracks command state that a pipeline bind can invalidate: binding a pipeline without
         // VK_DYNAMIC_STATE_DEPTH_BIAS in its dynamic states resets it (VUID-vkCmdDrawIndexed-None-07834, measured on
@@ -21951,7 +20750,7 @@ this.frameBufferOpen = false;
                     // A captured segment in front of this group executes before its queued clears record.
                     celtium$flushBatchSegment();
                     celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                    this.retiredImmediateGroups.add(group);
+                    this.frame.retiredImmediateGroups.add(group);
                     this.immediateStatistics.noteSelfCompositeSkips();
                     continue;
                 }
@@ -21963,7 +20762,7 @@ this.frameBufferOpen = false;
                         // freed by the next completion drain, which is safe because this group was never submitted.
                         celtium$flushBatchSegment();
                         celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                        this.retiredImmediateGroups.add(group);
+                        this.frame.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleTargetGeneration();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
                         continue;
@@ -21976,7 +20775,7 @@ this.frameBufferOpen = false;
                         // completion drain, which is safe because the group was never submitted.
                         celtium$flushBatchSegment();
                         celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                        this.retiredImmediateGroups.add(group);
+                        this.frame.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleWorldEpoch();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
                         continue;
@@ -21985,8 +20784,8 @@ this.frameBufferOpen = false;
                 if (group.modelRun != null) {
                     // A captured segment in front of this group executes before the model run it precedes.
                     celtium$flushBatchSegment();
-                    this.modelReplay.celtium$drawModelRun(group);
-                    gpuMark("run");
+                    this.owner.modelReplay.celtium$drawModelRun(group);
+                    this.frame.gpuMark("run");
                     // A model run is drawn from the replay's own instance buffer, but it is still a group in the queue
                     // and a clear can ride it exactly as it rides a mesh group. This path used to `continue` past the
                     // replay, so a clear attached to a model-run group was silently dropped - invisible while the
@@ -21994,7 +20793,7 @@ this.frameBufferOpen = false;
                     // allowed to ride the queue (CLEAR_DEFER).
                     if (group.postClears != null) {
                         celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                        gpuMark("pass-clear");
+                        this.frame.gpuMark("pass-clear");
                         group.postClears = null;
                     }
                     continue;
@@ -22043,7 +20842,7 @@ this.frameBufferOpen = false;
                     // under the registry's monitor, paid on every format-2 group of every window, and format 2 is 18%
                     // of the accepted batches on the measured scene. The counter it feeds is printed by the
                     // diagnostics line, so a run that wants it asks for it.
-                    int mirrorFlags = celtium$registry().celtium$mirrorSourceFlags(group.texture);
+                    int mirrorFlags = this.owner.celtium$registry().celtium$mirrorSourceFlags(group.texture);
                     if ((mirrorFlags & 1) != 0 && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
                         this.targetStatistics.noteSplashSourcedGroups();
                     }
@@ -22067,30 +20866,30 @@ this.frameBufferOpen = false;
                         && group.prepared.pipeline instanceof VulkanImmediateItemRecordsPipeline) {
                     this.itemCensus++;
                     System.out.println("[Celtium] CELTIUM_ITEM_GROUP n=" + this.itemCensus
-                            + " frame=" + this.frameId + " format=" + group.formatId
+                            + " frame=" + this.frame.frameId + " format=" + group.formatId
                             + " texture=" + group.texture + " batches=" + group.batches
                             + " verts=" + mesh.vertexCount() + " target=" + group.target
                             + " worldPass=" + this.worldPassActive);
                 }
                 if (this.menuGroupCensus < 24 && !this.worldPassActive) {
                     this.menuGroupCensus++;
-                    System.out.println("[Celtium] CELTIUM_MENU_GROUP frame=" + this.frameId
+                    System.out.println("[Celtium] CELTIUM_MENU_GROUP frame=" + this.frame.frameId
                             + " texture=" + group.texture + " format=" + group.formatId
                             + " batches=" + group.batches + " verts=" + mesh.vertexCount()
                             + " mirrorBound=" + this.immediateState.boundTextureName()
                             + " target=" + group.target
-                            + " mirrorSource=" + celtium$registry().celtium$mirrorSourceFor(group.texture));
+                            + " mirrorSource=" + this.owner.celtium$registry().celtium$mirrorSourceFor(group.texture));
                 }
                 if (group.formatId == 2 && this.mirrorDrawLogs < MIRROR_DRAW_LOG_LIMIT) {
                     this.mirrorDrawLogs++;
-                    VulkanGlTexture bound = celtium$registry().get(group.texture);
-                    System.out.println("[Celtium] CELTIUM_MIRROR_DRAW frame=" + this.frameId
+                    VulkanGlTexture bound = this.owner.celtium$registry().get(group.texture);
+                    System.out.println("[Celtium] CELTIUM_MIRROR_DRAW frame=" + this.frame.frameId
                             + " groupTexture=" + group.texture
                             + " preparedKey=0x" + Long.toHexString(prepared.textureKey)
                             + " resolvedKey=0x" + Long.toHexString(bound == null ? 0L : bound.key())
                             + " resolvedSize=" + (bound == null ? "none" : bound.width() + "x" + bound.height())
                             + " descriptor=0x" + Long.toHexString(prepared.descriptor)
-                            + " mirrorSource=" + celtium$registry().celtium$mirrorSourceFor(group.texture)
+                            + " mirrorSource=" + this.owner.celtium$registry().celtium$mirrorSourceFor(group.texture)
                             + " target=" + group.target + " batches=" + group.batches
                             // The view the descriptor samples, against the view the live pair has, and whether the
                             // wrapper stands for that pair at all. A group whose key is current can still hold a view
@@ -22137,7 +20936,7 @@ this.frameBufferOpen = false;
                         currentTexture = group.textureImage;
                     }
                     if (currentTexture == null) {
-                        currentTexture = celtium$registry().get(group.texture);
+                        currentTexture = this.owner.celtium$registry().get(group.texture);
                     }
                     // A measurement switch, never a mode: rebuild every textured group's descriptor at the draw from the
                     // wrapper the registry resolves now. A group whose key is unchanged can still hold a set written
@@ -22193,14 +20992,14 @@ this.frameBufferOpen = false;
                             // still better than binding a descriptor whose view has been destroyed.
                             this.immediateStatistics.noteStaleGroupRefusals();
                             if (this.immediateStatistics.staleGroupRefusals() <= 4) {
-                                record("group for GL texture " + group.texture + " was prepared with key 0x"
+                                this.reports.record("group for GL texture " + group.texture + " was prepared with key 0x"
                                         + Long.toHexString(prepared.textureKey) + " but the wrapper is now key 0x"
                                         + Long.toHexString(currentTexture.key())
                                         + "; the group is refused rather than drawn with a destroyed view");
                             }
                             celtium$flushBatchSegment();
                             celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                            this.retiredImmediateGroups.add(group);
+                            this.frame.retiredImmediateGroups.add(group);
                             this.immediateStatistics.noteImmediateGroupsDiscarded();
                             continue;
                         }
@@ -22470,15 +21269,15 @@ this.frameBufferOpen = false;
                         // erased by it, and the picture then shows the clear colour - which is the fog colour, the same
                         // value a fully fogged plane would have. The clear count is the frame target's, so this says
                         // whether the clear had already been applied when the plane's command was recorded.
-                        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
+                        if (SKY_FRAME_PROBE >= 0L && this.frame.frameId >= SKY_FRAME_PROBE
                                 && this.skyDrawProbeLines < SKY_FRAME_PROBE_LIMIT) {
                             this.skyDrawProbeLines++;
                             GllessFrameTarget probeTarget = offTargetTarget();
-                            System.out.println("[Celtium] CELTIUM_SKY_DRAW frame=" + this.frameId
+                            System.out.println("[Celtium] CELTIUM_SKY_DRAW frame=" + this.frame.frameId
                                     + " clears=" + (probeTarget == null ? -1 : probeTarget.clearsApplied())
                                     + " colourClears=" + (probeTarget == null ? -1 : probeTarget.colourClearsApplied())
                                     + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
-                                    + " inPass=" + this.commandState.inRenderPass()
+                                    + " inPass=" + this.frame.commandState.inRenderPass()
                                     + " target=" + (group.target == target)
                                     + " batches=" + group.batches
                                     + " vertices=" + (group.mesh == null ? -1 : group.mesh.vertexCount()));
@@ -22610,7 +21409,7 @@ this.frameBufferOpen = false;
                 this.frameDrawn++;
                 if ((DRAW_SITE_ENABLED || ENQ_ALL_GROUPS) && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
                         && (DRAW_SITE_FORMAT < 0 || DRAW_SITE_FORMAT == group.formatId)
-                        && this.frameId >= DRAW_SITE_MIN_FRAME
+                        && this.frame.frameId >= DRAW_SITE_MIN_FRAME
                         && this.immediateStatistics.immediateDrawSiteLogged() < DRAW_SITE_LIMIT) {
                     // Where this group was drawn, not only that it was: the three sites test against different depth
                     // contents, so "drawn" and "in the picture" are different questions and this is the line that
@@ -22620,20 +21419,20 @@ this.frameBufferOpen = false;
                     // and the completion epoch at that moment. The copy prints the same three beside readImage=, so
                     // "had the faces' pass executed when the copy ran" is answerable from one artifact.
                     this.lastDrawnImage = this.passAttachedColorImage;
-                    this.lastDrawnFrame = this.frameId;
+                    this.lastDrawnFrame = this.frame.frameId;
                     this.lastDrawnEpoch = VulkanContext.completedEpoch();
                     System.out.println("[Celtium] CELTIUM_DRAW_SITE #" + this.immediateStatistics.immediateDrawSiteLogged()
                         + " colour=" + (this.currentGroupColor == null ? "none"
                                 : round3(this.currentGroupColor[0]) + "," + round3(this.currentGroupColor[1]) + ","
                                         + round3(this.currentGroupColor[2]) + "," + round3(this.currentGroupColor[3]))
-                            + " frame=" + this.frameId + " fmt=" + group.formatId
+                            + " frame=" + this.frame.frameId + " fmt=" + group.formatId
                             + " site=" + this.immediateDrawSite
                             + " target=" + group.target + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
-                            + " passOpen=" + (this.commandState != null && this.commandState.inRenderPass())
+                            + " passOpen=" + (this.frame.commandState != null && this.frame.commandState.inRenderPass())
                             + " vertices=" + mesh.vertexCount() + " indices=" + mesh.indexCount()
                             + " batches=" + batches + " pending=" + this.immediateGroups.size()
                             + " windows=" + this.immediateStatistics.immediateWindows() + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
-                            + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId)
+                            + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frame.frameId)
                             // The image this pass attached, so the draw site and the copy can be put against each
                             // other in one frame: the copy line already carries frame= and readImage=, and the
                             // ordering question (does the copy run before the faces' pass, or is the pair cleared
@@ -22653,10 +21452,10 @@ this.frameBufferOpen = false;
                 this.pendingImmediateIndices = celtium$pendingIndicesAfterDraw(
                         this.pendingImmediateIndices, group.modelRun != null || group.indexFlushExempt,
                         mesh.indexCount());
-                this.recordedImmediateGroups.add(group); // until submit success; not freed here
+                this.frame.recordedImmediateGroups.add(group); // until submit success; not freed here
                 if (org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
                     // Format, texture, index count and blend: enough to name which draw a large delta belongs to.
-                    gpuMark("g" + group.formatId + "/t" + group.texture + "/i" + mesh.indexCount()
+                    this.frame.gpuMark("g" + group.formatId + "/t" + group.texture + "/i" + mesh.indexCount()
                             + "/b" + (group.state != null && group.state.length > 0 ? group.state[0] : -1)
                             + (group.target == this.targetRegistry.mainIdentity() ? "" : "/off"));
                 }
@@ -22669,7 +21468,7 @@ this.frameBufferOpen = false;
                 // after the draws they erase and before the groups that follow them.
                 if (group.postClears != null) {
                     celtium$recordQueuedClearsInPass(group.postClears, group.target);
-                    gpuMark("pass-clear");
+                    this.frame.gpuMark("pass-clear");
                 }
                 group.postClears = null;
             }
@@ -22707,7 +21506,7 @@ this.frameBufferOpen = false;
                         counts.hasNext(); ) {
                     largest = Math.max(largest, counts.nextInt());
                 }
-                System.out.println("[Celtium] CELTIUM_MERGE_CENSUS frame=" + this.frameId
+                System.out.println("[Celtium] CELTIUM_MERGE_CENSUS frame=" + this.frame.frameId
                         + " groups=" + groups.size() + " distinctPipelines="
                         + (censusPipelines == null ? -1 : censusPipelines.size())
                         + " mergeableRuns=" + censusRuns.size()
@@ -22747,8 +21546,10 @@ this.frameBufferOpen = false;
     }
 
 
+
     /** Set when a group in the current flush asked for a sub-rectangle, so the pass viewport is restored once. */
     private boolean groupViewportNarrowed;
+
     /**
      * OPT-10's record-side half: what the last dynamic-state commands in the current command buffer set. A group
      * whose rectangle or bias is what is already set does not re-emit the command - the values are ints or floats,
@@ -22759,8 +21560,11 @@ this.frameBufferOpen = false;
      * command buffer's dynamic state is genuinely undefined.
      */
     int passVpX, passVpY, passVpW, passVpH;
+
     int passScX, passScY, passScW, passScH;
+
     float passBiasC = Float.NaN, passBiasS = Float.NaN;
+
     /**
      * OPT-12: {vertexBuffer, indexBuffer, vertexBindOffset, indexBindOffset, pipeline, descriptorSet} - what the
      * current command buffer actually has bound for the immediate-draw path. Consecutive groups in a flush repeat
@@ -22769,6 +21573,7 @@ this.frameBufferOpen = false;
      * other pass's binds between windows leave this stale, which is exactly what the fill discards.
      */
     final long[] immediateBindCache = new long[6];
+
 
     /**
      * Applies one group's GL viewport as a Vulkan viewport and scissor.
@@ -22820,15 +21625,15 @@ this.frameBufferOpen = false;
             this.immediateOffTargetViewports++;
         }
         if (x0 != this.passVpX || y != this.passVpY || width != this.passVpW || height != this.passVpH) {
-            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = this.groupViewportScratch;
+            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = this.owner.groupViewportScratch;
             if (vkViewport == null) {
                 vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1);
-                this.groupViewportScratch = vkViewport;
+                this.owner.groupViewportScratch = vkViewport;
             }
             vkViewport.get(0).x((float) x0).y((float) y)
                     .width((float) width).height((float) height)
                     .minDepth(0.0f).maxDepth(1.0f);
-            vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+            vkCmdSetViewport(this.frame.commandBuffer, 0, vkViewport);
             this.passVpX = x0;
             this.passVpY = y;
             this.passVpW = width;
@@ -22908,14 +21713,14 @@ this.frameBufferOpen = false;
         }
         if (scissorX != this.passScX || scissorY != this.passScY
                 || scissorWidth != this.passScW || scissorHeight != this.passScH) {
-            org.lwjgl.vulkan.VkRect2D.Buffer scissor = this.groupScissorScratch;
+            org.lwjgl.vulkan.VkRect2D.Buffer scissor = this.owner.groupScissorScratch;
             if (scissor == null) {
                 scissor = org.lwjgl.vulkan.VkRect2D.calloc(1);
-                this.groupScissorScratch = scissor;
+                this.owner.groupScissorScratch = scissor;
             }
             scissor.get(0).offset().set(scissorX, scissorY);
             scissor.get(0).extent().set(scissorWidth, scissorHeight);
-            vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            vkCmdSetScissor(this.frame.commandBuffer, 0, scissor);
             this.passScX = scissorX;
             this.passScY = scissorY;
             this.passScW = scissorWidth;
@@ -22948,6 +21753,7 @@ this.frameBufferOpen = false;
                 clip, clipEnabled, empty);
     }
 
+
     /**
      * Prints the command state a colour group is drawn with, for the two populations that differ in the creative
      * inventory: the RGB-only write mask (the hovered-slot highlight, which leaves no pixels) and the full mask (the
@@ -22962,7 +21768,7 @@ this.frameBufferOpen = false;
                                                  int scissorX, int scissorY, int scissorWidth, int scissorHeight,
                                                  int[] clip, boolean clipEnabled, boolean emptyViewport) {
         if (!DRAW_STATE_CENSUS || group.formatId != VulkanImmediateFormats.POSITION_COLOR
-                || group.state == null || group.state.length < 12 || this.frameId < DRAW_STATE_MIN_FRAME) {
+                || group.state == null || group.state.length < 12 || this.frame.frameId < DRAW_STATE_MIN_FRAME) {
             return;
         }
         int mask = group.state[11];
@@ -22976,7 +21782,7 @@ this.frameBufferOpen = false;
         } else {
             this.drawStateCensusFull++;
         }
-        System.out.println("[Celtium] CELTIUM_DRAW_STATE frame=" + this.frameId
+        System.out.println("[Celtium] CELTIUM_DRAW_STATE frame=" + this.frame.frameId
                 + " rgbOnly=" + rgbOnly + " mask=0x" + Integer.toHexString(mask)
                 + " target=" + group.target
                 + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
@@ -22993,18 +21799,24 @@ this.frameBufferOpen = false;
                                 ? colour.celtium$colorBlend().describe() : "other"));
     }
 
+
     /** Split out of this class (2026-11-06); see HighlightProbe. */
     final HighlightProbe highlightProbe = new HighlightProbe(this);
+
 
     /** Bounded lines of the narrow-to-full viewport transitions (see CELTIUM_GROUP_VIEWPORT). */
     private int immediateNarrowViewportLogs;
 
+
     /** Groups drawn with a viewport narrower than the target: the counter that says the sub-rect path is live. */
     private long immediateNarrowViewports;
+
     /** Groups whose Vulkan scissor was the intersection of the target with the game's own glScissor box (BH-09). */
     private long immediateScissoredGroups;
+
     /** Groups whose clipped viewport is empty: an off-drawable rectangle, which GL would also draw nothing for. */
     private long immediateOffTargetViewports;
+
 
 
     /**
@@ -23020,6 +21832,7 @@ this.frameBufferOpen = false;
         result[10] = 0.5f * (projection[10] + projection[11]);
         result[14] = 0.5f * (projection[14] + projection[15]);
     }
+
 
     /**
      * Reads the matrices OpenGL is currently using. Called on the render thread while the GL context is current, so
@@ -23061,9 +21874,10 @@ this.frameBufferOpen = false;
                 MemoryUtil.memFree(modelView);
             }
         } catch (RuntimeException | LinkageError error) {
-            record("could not read the OpenGL matrices for an immediate batch: " + describe(error));
+            this.reports.record("could not read the OpenGL matrices for an immediate batch: " + describe(error));
         }
     }
+
 
     /**
      * Writes {@code projection * modelView} into the push constants.
@@ -23100,565 +21914,12 @@ this.frameBufferOpen = false;
     }
 
 
-
-
-
-    /**
-     * Waits for the last submission of this backend to finish, and refuses to wait forever.
-     * <p>
-     * The fence exists from creation but is signalled only by a submission the driver accepted, so waiting on it when
-     * nothing was submitted is a wait that can never end - which is exactly what a failed {@code vkQueueSubmit} leaves
-     * behind: the previous code cleared the pending flag *before* waiting and passed {@code Long.MAX_VALUE}, so a
-     * submission that never reached the queue, or a device that stopped making progress, hung the client instead of
-     * ending the run. The wait is bounded now, the flag is cleared only once the wait has resolved, and the queue is
-     * only drained after the fence actually signalled - draining a queue whose work never completes would hang in the
-     * driver instead.
-     */
-    /**
-     * Ends all work the device is doing, so resources can be released without the GPU still reading them.
-     * <p>
-     * <b>This wait cannot be bounded by the API.</b> {@code vkDeviceWaitIdle} takes no timeout, and it is the honest
-     * call here because submissions from several command buffers and from the bridge's handoffs are outstanding at
-     * once. The comment used to claim the frame waits' timeout applied to it, which was not true of the call it
-     * describes - and a doc that promises a bound the code does not have is worse than no bound, because it stops
-     * anyone adding one.
-     * <p>
-     * What is done instead: a watchdog names the stall. If the call has not returned after the same timeout the frame
-     * waits use, one bounded line is recorded and {@code gpuStalled} is set, so a device that stopped making progress
-     * leaves evidence and every later path that must not reset, re-record or free in-use resources already refuses on
-     * that flag. The call itself still returns when the driver returns; nothing here can interrupt it.
-     * <p>
-     * Used for resource release/replacement, including a pair framebuffer's render-pass change.
-     * Cache hits and initial pair-framebuffer creation do not call this wait.
-     */
-    /**
-     * Whether a {@code vkDeviceWaitIdle} result is the device-loss report {@code settleGpu} absorbs as a
-     * false return instead of an exception (item 416). Only {@code VK_ERROR_DEVICE_LOST} qualifies: it is the
-     * one result that says the device is gone for good, so no caller's release may proceed and no reload is
-     * served by dying on the detection.
-     */
-    static boolean celtium$settleReportsDeviceLoss(int result) {
-        return result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
-    }
-
     /** The read side's door to {@link #settleGpu}: the settle itself stays private, under the declaration
      *  the device-lost contract pins, so {@code CopyReadSide} comes through here. */
     boolean celtium$settleGpuForReadSide(String reason) {
-        return settleGpu(reason);
+        return this.frame.settleGpu(reason);
     }
 
-    private boolean settleGpu(String reason) {
-        celtium$watchDeviceWait(reason);
-        if (this.gpuStalled) {
-            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
-            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
-            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
-            // It reports rather than throws: the exception reached Minecraft's render loop and killed the client on the
-            // crash screen, which the idle-failure injection measured as exit 255 with no report at all.
-            this.submissionStatistics.noteStalledTeardownSkips();
-            record("not releasing resources after a stall: " + reason);
-            return false;
-        }
-        // Close the submission stream before the wait (T3 review M4): a frame
-        // buffer still open or a batch still queued has not been submitted, so
-        // waiting on the device alone would confirm nothing about it - and a
-        // teardown gate composed of "no recording, nothing queued, everything
-        // confirmed" could pass over work that was never sent. Finishing and
-        // flushing here makes the wait below cover everything recorded so
-        // far, which is what the gate's completion half then reads.
-        if (this.context.celtium$recordingOpen()) {
-            celtium$finishFrameBuffer();
-        }
-        this.context.celtium$flushBatchedSubmits();
-        long start = System.nanoTime();
-        int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
-        synchronized (this.deviceWaitLock) {
-            // This call's wait returned: answer its own token so a late watchdog for it cannot call it a stall.
-            this.deviceWaitFinishedToken = this.submissionStatistics.deviceWaitToken();
-        }
-        if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-            this.noteStalled();
-            if (celtium$settleReportsDeviceLoss(result)) {
-                // The device is already gone (issue #425, item 416): the wait did not lose it, it detected the
-                // loss. Every caller of this wait already treats a false return as "release nothing" - delete()
-                // stops, eviction keeps its regions, a recreation keeps the old target, the loading screen keeps
-                // its resources - which is the only safe answer when nothing the GPU holds can be waited on.
-                // Throwing instead turned a renderer reload whose teardown merely detected the loss into the
-                // crash that reported it (the reporter's first report, on a scheduled task thread). Other
-                // failures keep the throw: they are not a known-gone device, and absorbing them silently would
-                // let a caller free resources under a GPU whose state nobody has established.
-                record("settleGpu(" + reason + "): vkDeviceWaitIdle returned VK_ERROR_DEVICE_LOST; the device is"
-                        + " already lost, so nothing is released and the teardown stops here");
-                return false;
-            }
-            throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
-        }
-        long millis = (System.nanoTime() - start) / 1_000_000L;
-        if (millis > 200L) {
-            record("settleGpu(" + reason + ") waited " + millis + "ms for the device");
-        }
-        // A device-wide idle is a confirmation of every submission, whichever fence it carried: mark the slots so
-        // the deferred bookkeeping (arena epochs, retired groups, the retire queue) can run before the callers free
-        // the resources it covers.
-        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (this.scheduler.isPending(slot)) {
-                celtium$noteSlotConfirmed(slot, false);
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Starts the watchdog that names a {@code vkDeviceWaitIdle} which never returns.
-     * <p>
-     * A daemon thread rather than an interrupt: the call cannot be interrupted, so the only useful thing a watchdog can
-     * do is leave evidence and set the flag the failure paths already key on. It is created per call and exits after
-     * firing once, so a normal run costs one short-lived thread per teardown.
-     */
-    private void celtium$watchDeviceWait(String reason) {
-        // Per-call token, not a shared boolean (audit A05). With one flag, a watchdog from an earlier wait that fires
-        // late reads the flag a NEWER wait has already cleared and declares a stall for a wait that has only just
-        // started - a false stall, and a false stall is expensive here because gpuStalled makes every later path
-        // refuse to release resources. Each call takes the next token and only the watchdog holding the current one
-        // may report; the wait's completion sets the token to "finished", so a late watchdog finds its own call
-        // already answered.
-        this.submissionStatistics.noteDeviceWaitToken();
-        long token = this.submissionStatistics.deviceWaitToken();
-        Thread watchdog = new Thread(() -> {
-            try {
-                Thread.sleep(IDLE_TIMEOUT_NANOS / 1_000_000L);
-            } catch (InterruptedException interrupted) {
-                return;
-            }
-            synchronized (this.deviceWaitLock) {
-                if (this.submissionStatistics.deviceWaitToken() != token || this.deviceWaitFinishedToken == token) {
-                    // Either a later wait has taken over (this watchdog is stale) or this call's wait already
-                    // returned. Neither is a stall, and saying so is the whole point of the token.
-                    return;
-                }
-                this.deviceWaitFinishedToken = token;
-                this.gpuStalled = true;
-                record("settleGpu(" + reason + "): vkDeviceWaitIdle has not returned after "
-                        + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s (wait token " + token
-                        + "); the device has stopped making progress. No recorded work is reset, re-recorded or"
-                        + " freed from here on.");
-            }
-        }, "celtium-device-wait-watchdog");
-        watchdog.setDaemon(true);
-        watchdog.start();
-    }
-
-    /**
-     * Waits for one frame slot's submission to complete.
-     * <p>
-     * OPT-08's retirement rule in one place: this slot's own fence decides whether the slot may be reused, and because
-     * a Vulkan queue completes in submission order, a signalled fence also confirms every earlier submission - which is
-     * what the sequence watermark records for the resource lists below.
-     */
-    private boolean waitForSlot(int slot) {
-        if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
-            if (slot >= 0 && slot < FRAME_SLOTS) {
-                // Nothing of this slot's is in flight. If it ever carried a submission, that submission's
-                // confirmation already recycled its linear ring at the confirmation itself
-                // (celtium$noteSlotConfirmed), so there is nothing left to reset here.
-                celtium$drainBindlessReleases();
-            }
-            return true;
-        }
-        // A wait decision is actually being made for a pending submission: count the attempt here so
-        // the early return above (nothing in flight, no wait at all) stays invisible, and give the
-        // attempt its verdict below - fast when the timeline branch confirms the slot, fallback when
-        // the fence wait is what confirms it. A timeline stall ends the wait without a verdict (the
-        // fence never runs), so fast + fallback can honestly read below attempts.
-        TIMELINE_WAIT_PATH.attempt();
-        long deferredToken = this.slotDeferredTokens[slot];
-        if (deferredToken != 0) {
-            // The slot's submission is still queued in the batched list: the batch is submitted only when that
-            // list flushes, so the flush has to happen before the wait or the wait blocks on a batch nothing
-            // submitted yet.
-            this.context.celtium$flushBatchedSubmits();
-            // Stage 2 + R-56: the batch this slot rode in signalled the frame timeline as it submitted, and on
-            // a timeline device that counter value is the batch's only confirmation - the batch carries no
-            // fence. The wait is a single counter wait on the value the batch was handed - the frame's one
-            // permitted blocking wait. Its timeout disposition is the fence wait's, re-expressed on the same
-            // await rather than by falling through to a second mechanism: the retries re-await the value, and
-            // the stall latch and frame abandon after them are the established answer to a slot that will not
-            // confirm. The fault-injection switches exercise this path now: they used to skip it deliberately
-            // so the fence wait's failure shapes ran, and with no batch fence left those shapes live here -
-            // the injected result is assigned after the real await, exactly as the fence path assigns it
-            // after its real wait.
-            long timelineValue = this.context.celtium$timelineValueForDeferredToken(deferredToken);
-            org.soutalab.celtium.vulkan.hal.FrameTimeline timeline = this.context.frameTimeline();
-            if (timeline != null && timelineValue > 0L) {
-                long started = System.nanoTime();
-                int result = timeline.awaitValueResult(timelineValue, IDLE_TIMEOUT_NANOS);
-                this.celtium$recordFrameWait(started);
-                if (FENCE_WAIT_FAULT) {
-                    // A wait that times out after the submission was accepted: the command buffer may still
-                    // be in flight, so nothing it recorded may be reset, re-recorded or destroyed. This is
-                    // the second half of the rule the submit fault covers, exercised on the slot wait that
-                    // replaced the old queue-wide drain.
-                    result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
-                    System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
-                }
-                if (DEVICE_LOST_FAULT && result == org.lwjgl.vulkan.VK10.VK_SUCCESS
-                        && this.injectedDeviceLosses == 0) {
-                    // One lost device, once: reporting the loss after a real submission is the post-submit
-                    // case the pre-submit vkQueueSubmit fault cannot produce - the queue took the command
-                    // buffer and the answer is the device is gone.
-                    this.injectedDeviceLosses++;
-                    result = org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
-                    System.out.println("[Celtium] CELTIUM_DEVICE_LOST injected");
-                }
-                if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
-                    // A timed-out wait is not by itself a dead device: a swapchain rebuild, a resize or a
-                    // driver that is busy with a long submission all produce one, and latching on the first
-                    // timeout stops the renderer for the rest of the session. The wait is retried a bounded
-                    // number of times (per wait, not per session) before the latch, and both are counted -
-                    // the fence wait's disposition, restated on this await (R-56).
-                    this.submissionStatistics.noteIdleWaitTimeouts();
-                    int retries = 0;
-                    while (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT && retries < IDLE_WAIT_RETRIES) {
-                        retries++;
-                        this.submissionStatistics.noteIdleWaitRetries();
-                        record("waitForSlot(" + slot + "): the timeline did not reach " + timelineValue
-                                + " within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; retry " + retries
-                                + " of " + IDLE_WAIT_RETRIES + " before treating the device as stalled"
-                                + " (timeouts=" + this.submissionStatistics.idleWaitTimeouts() + ")");
-                        result = timeline.awaitValueResult(timelineValue, IDLE_TIMEOUT_NANOS);
-                        if (FENCE_WAIT_FAULT) {
-                            // The fault re-applies inside the retry loop (R-56 injection redesign): on a
-                            // healthy device the real re-await answers SUCCESS at once, so a fault assigned
-                            // only before the loop was always overwritten by the first retry and the stall
-                            // seat behind the loop could never be exercised. Re-assigning after each
-                            // re-await makes every retry read as the same timeout, so the wait runs its
-                            // full bounded course (the initial wait plus IDLE_WAIT_RETRIES) and reaches
-                            // noteStalled() below.
-                            result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
-                            System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
-                        }
-                    }
-                }
-                if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
-                    this.submissionStatistics.noteIdleWaitTimeouts();
-                    this.noteStalled();
-                    // The abandon-path flag clear, as on the fence path below (bughunt LANE-05 #3).
-                    this.frameBufferOpen = false;
-                    this.frameTarget.abandonFrame("frame slot timeline timed out");
-                    // The stalled frame's pack seat closes with it (D7 seat ruling:
-                    // endNativeFrame on every exit path, GPU stall included).
-                    org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
-                    return false;
-                }
-                if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
-                        && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                    record("waitForSlot(" + slot + "): vkWaitSemaphores returned " + result);
-                    this.noteStalled();
-                    this.frameBufferOpen = false;
-                    this.frameTarget.abandonFrame("frame slot timeline wait failed: " + result);
-                    return false;
-                }
-                this.scheduler.noteSlotWait(true);
-                // The batch is shared: the slot's confirm (and the flag's clear) runs inside the reclaim's
-                // callback, once, rather than here - polling also frees every earlier entry the timeline
-                // value covered. A device the wait reported lost surfaces from the poll instead: the poll's
-                // counter read is where the loss is detected on this path.
-                this.context.celtium$pollDeferredSubmits();
-                celtium$drainBindlessReleases();
-                // The timeline wait confirmed this slot - a success the bounded retries reached is
-                // still the timeline's confirmation, so the final result decides the verdict.
-                TIMELINE_WAIT_PATH.fast();
-                return true;
-            }
-        }
-        // The timeline branch did not confirm this slot (no timeline, no value, or the slot never
-        // rode a batch): the fence wait below is the attempt's verdict.
-        TIMELINE_WAIT_PATH.fallback();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            LongBuffer fences = stack.mallocLong(1);
-            // A batched slot on a device without a timeline waits on its batch's fence, resolved from the
-            // token it holds; a slot that submitted directly waits on its own fence.
-            fences.put(0, deferredToken != 0
-                    ? this.context.celtium$fenceForDeferredToken(deferredToken) : this.slotFences[slot]);
-            long started = System.nanoTime();
-            int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
-            this.celtium$recordFrameWait(started);
-            if (FENCE_WAIT_FAULT) {
-                // A wait that times out after the submission was accepted: the command buffer may still be in flight, so
-                // nothing it recorded may be reset, re-recorded or destroyed. This is the second half of the rule the
-                // submit fault covers, exercised on the slot wait that replaced the old queue-wide drain.
-                result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
-                System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
-            }
-            if (DEVICE_LOST_FAULT && result == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.injectedDeviceLosses == 0) {
-                // One lost device, once: reporting the loss after a real submission is the post-submit case the
-                // pre-submit vkQueueSubmit fault cannot produce - the queue took the command buffer and the answer
-                // is the device is gone.
-                this.injectedDeviceLosses++;
-                result = org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
-                System.out.println("[Celtium] CELTIUM_DEVICE_LOST injected");
-            }
-            if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
-                // A timed-out fence wait is not by itself a dead device: a swapchain rebuild, a resize or a driver that
-                // is busy with a long submission all produce one, and latching on the first timeout stops the renderer for
-                // the rest of the session - measured on the world-resize leg, where `stalledStops=1` after the resize
-                // left `presentedImageFramesAtCapture=0` and no picture. The wait is retried a bounded number of times
-                // (per wait, not per session) before the latch, and both are counted.
-                this.submissionStatistics.noteIdleWaitTimeouts();
-                int retries = 0;
-                while (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT && retries < IDLE_WAIT_RETRIES) {
-                    retries++;
-                    this.submissionStatistics.noteIdleWaitRetries();
-                    record("waitForSlot(" + slot + "): the fence did not signal within "
-                            + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; retry " + retries + " of "
-                            + IDLE_WAIT_RETRIES + " before treating the device as stalled (timeouts="
-                            + this.submissionStatistics.idleWaitTimeouts() + ")");
-                    result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
-                    if (FENCE_WAIT_FAULT) {
-                        // The fault re-applies inside the retry loop, as on the timeline branch above
-                        // (R-56 injection redesign): without the re-assignment the first retry's real
-                        // wait overwrote the one pre-loop forgery with its true SUCCESS and the stall
-                        // seat behind the loop stayed unreachable for this injection.
-                        result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
-                        System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
-                    }
-                }
-            }
-            if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
-                this.submissionStatistics.noteIdleWaitTimeouts();
-                this.noteStalled();
-                // An abandoned frame is not "the frame is still recording": the flag must not route the
-                // next beginCommands into the buffer whose recording the abandon just discards. Cleared on the
-                // abandon paths only - this clear used to run unconditionally before both checks, so a wait that
-                // merely succeeded while a frame was open (the immediate-window waitForIdle path) cleared the
-                // flag behind its owner's back and the next beginCommands took the new-begin path into a
-                // "nested begin" failure (bughunt LANE-05 #3).
-                this.frameBufferOpen = false;
-                this.frameTarget.abandonFrame("frame slot fence timed out");
-                // The stalled frame's pack seat closes with it (D7 seat ruling:
-                // endNativeFrame on every exit path, GPU stall included).
-                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
-                return false;
-            }
-            if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
-                    && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                record("waitForSlot(" + slot + "): vkWaitForFences returned " + result);
-                this.noteStalled();
-                // The abandon-path flag clear, as in the timeout branch above (bughunt LANE-05 #3).
-                this.frameBufferOpen = false;
-                this.frameTarget.abandonFrame("frame slot fence failed: " + result);
-                return false;
-            }
-            this.scheduler.noteSlotWait(true);
-            if (deferredToken != 0) {
-                // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the reclaim's
-                // callback, once, rather than here - polling also frees every earlier entry the fence covered.
-                this.context.celtium$pollDeferredSubmits();
-            } else {
-                celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
-            }
-            // The confirmation above - direct, or inside the reclaim callback the poll just ran - has
-            // already recycled the slot's linear ring at the confirmation tail.
-            celtium$drainBindlessReleases();
-            return true;
-        }
-    }
-
-    /**
-     * Advances the bindless binding's deferred releases against the merged completion currency
-     * (Stage 5 stage 3, section 3.5). Called only from {@link #waitForSlot(int)}'s success exits -
-     * the frame loop's one completion gate -
-     * so a retired texture's array slot is freed only once the counter says every submission that
-     * could still sample it has completed. The peek form is deliberate: a frame that never created
-     * the binding has nothing to drain.
-     */
-    private void celtium$drainBindlessReleases() {
-        org.soutalab.celtium.vulkan.bindless.BindlessTextureBinding binding =
-                this.context.celtium$bindlessBindingOrNull();
-        if (binding != null) {
-            binding.advance(this.context.celtium$slabCompletedValue());
-            // Slot dump instrument tick (no-op unless -Dceltium.debug.bindlessSlotDump is set).
-            this.celtium$registry().celtium$maybeDumpBindlessSlots();
-        }
-    }
-
-    /**
-     * Confirms every pending slot whose submission is already confirmed - by its fence's signal, or, for a
-     * batched slot on a timeline device, by the counter reaching its batch's value - without blocking.
-     * <p>
-     * This is the shape the per-submission drains were replaced by: a submission's completion is observed where a
-     * later step can use it - at the next begin, the next window, the next poll after a flush - rather than being
-     * paid for on the spot by the render thread. Returns how many slots were confirmed, which callers use for the
-     * "nothing is in flight anymore" statement the retire queue needs.
-     */
-    private int celtium$pollCompletedSlots() {
-        this.scheduler.notePoll(false);
-        int confirmed = 0;
-        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (!this.scheduler.isPending(slot) || this.slotFences[slot] == 0) {
-                continue;
-            }
-            long deferredToken = this.slotDeferredTokens[slot];
-            if (deferredToken != 0) {
-                // Batched slot: its confirm lives in the reclaim callback, so the poll only triggers the
-                // context poll - a confirmed batch reclaims the entry, which runs the slot confirmation
-                // exactly once. On a timeline device the confirmation is the counter reaching the batch's
-                // value (R-56: the batch has no fence to query; a lost device surfaces from the counter
-                // read itself, as the check inside completedValue). On the fallback path the batch's fence,
-                // resolved from the token, is queried as before.
-                org.soutalab.celtium.vulkan.hal.FrameTimeline timeline = this.context.frameTimeline();
-                if (timeline != null) {
-                    long timelineValue = this.context.celtium$timelineValueForDeferredToken(deferredToken);
-                    if (timelineValue > 0L && timeline.isComplete(timelineValue)) {
-                        this.context.celtium$pollDeferredSubmits();
-                        confirmed++;
-                        this.scheduler.notePollConfirmation();
-                    }
-                    continue;
-                }
-                int deferredStatus = vkGetFenceStatus(this.context.device(),
-                        this.context.celtium$fenceForDeferredToken(deferredToken));
-                if (deferredStatus == org.lwjgl.vulkan.VK10.VK_SUCCESS
-                        || deferredStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                    this.context.celtium$pollDeferredSubmits();
-                    confirmed++;
-                    this.scheduler.notePollConfirmation();
-                }
-                continue;
-            }
-            int status = vkGetFenceStatus(this.context.device(), this.slotFences[slot]);
-            if (status == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                confirmed++;
-                this.scheduler.notePollConfirmation();
-                celtium$noteSlotConfirmed(slot, false);
-            } else if (status == org.lwjgl.vulkan.VK10.VK_NOT_READY) {
-                // Still in flight: the next user of this slot pays the bounded wait, not this thread.
-            } else if (status == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                // Completion-equivalent for pending purposes: nothing will ever run, and the resources the
-                // submission named are as free as they will ever get.
-                confirmed++;
-                this.scheduler.notePollConfirmation();
-                celtium$noteSlotConfirmed(slot, true);
-            } else {
-                record("pollCompletedSlots: vkGetFenceStatus returned " + status + " for slot " + slot);
-            }
-        }
-        return confirmed;
-    }
-
-    /**
-     * The deferred counterpart of the slot's own {@code vkQueueSubmit}: the ended slot buffer joins the batched
-     * list, and the token naming the batch is recorded as this slot's completion proxy until the reclaim runs the
-     * confirmation. Every piece of bookkeeping the direct submit performs (pending bit, sequence, retirement) is
-     * the coordinator's own code - the only change is where the queue sees the work.
-     */
-    public void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
-            int[] waitStages, long[] signalSemaphores) {
-        final int slot = this.frameSlot;
-        this.slotSubmitNanos[slot] = System.nanoTime();
-        this.slotDeferredTokens[slot] = this.context.celtium$submitDeferredFrame(
-                commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
-                lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
-        celtium$snapshotTimingState();
-    }
-
-    /**
-     * Moves this frame's accumulated timestamp state into a per-submission snapshot, at the one point
-     * where the state is final: the frame's buffer has ended and its submission is queued. The live
-     * accumulators restart empty for the next recording, and the readback consumes the snapshot only
-     * once the scheduler confirms this submission - the wait the old read-the-live-state shape could
-     * not make, because by the next begin the accumulators already described a newer, still
-     * unconfirmed frame and were cleared either way. The sequence is the one the coordinator's
-     * bookkeeping is about to stamp for this submission: the same {@code submitSequence() + 1} the
-     * arena's in-flight marking reads in that bookkeeping. A frame that timed nothing queues no
-     * snapshot and files nothing, which is what keeps its terrain column at zero rather than at a
-     * stale sum.
-     */
-    private void celtium$snapshotTimingState() {
-        if (this.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed) {
-            return;
-        }
-        this.timingReadback.offer(new TerrainTimingReadback.Snapshot(
-                this.scheduler.submitSequence() + 1L, this.frameId, celtium$timestampPoolBase(),
-                this.timestampSlots, new java.util.HashMap<>(this.timestampPasses),
-                new java.util.HashMap<>(this.timestampPackPassNames),
-                this.windowTimestampCount,
-                java.util.Arrays.copyOf(this.windowTimestampTargets, this.windowTimestampCount),
-                this.immediatePassTimed, this.frameGpuTimed,
-                this.gpuMarkCount, java.util.Arrays.copyOf(this.gpuMarkLabels, this.gpuMarkCount)));
-        this.timestampPasses.clear();
-        this.timestampPackPassNames.clear();
-        this.timestampSlots = 0;
-        this.windowTimestampCount = 0;
-        this.immediatePassTimed = false;
-        this.frameGpuTimed = false;
-        this.gpuMarkCount = 0;
-    }
-
-    /** Stamps the direct (non-deferred) submit path, which the frame coordinator drives itself. */
-    public void celtium$noteDirectSubmit() {
-        this.slotSubmitNanos[this.frameSlot] = System.nanoTime();
-    }
-
-    /**
-     * The bookkeeping one confirmed slot completion makes true: the fence was observed signalled (or the device
-     * reported lost, which is completion-equivalent for pending purposes), so the slot may be re-recorded and every
-     * resource gated on its sequence may be released.
-     * <p>
-     * Every route that confirms a slot runs through this one tail - the slot wait's success exits, the
-     * completion poll, the deferred submits' reclaim callback, a device-wide idle - so the per-frame
-     * linear ring's reset hangs off this method rather than off any one route: the confirmation recorded
-     * here is exactly the reset gate's precondition (Stage 2), and a route that confirms without passing
-     * here does not exist.
-     */
-    private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
-        long submitNanos = this.slotSubmitNanos[slot];
-        if (submitNanos != 0L) {
-            this.slotSubmitNanos[slot] = 0L;
-            celtium$noteSubmitToFence(slot, System.nanoTime() - submitNanos);
-        }
-        this.slotDeferredTokens[slot] = 0;
-        this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
-        // Stage 2's reset gate, seated at the confirmation itself: the slot's linear-ring slices are the
-        // GPU's no longer, whichever route observed the completion. The wait-only wiring this replaces
-        // left poll-confirmed slots unrecycled - the poll is the dominant confirmation route and never
-        // enters the wait - so their ring cursor accumulated across reuses until the slot pinned at
-        // capacity and every record of a window was refused (the stage-4 legs' droppedDraws). The reset
-        // stays hold-aware: a consumer still holding slices of this slot defers it to its last release.
-        this.context.celtium$resetFrameLinearSlot(slot);
-        // Queue order: this submission's completion implies every earlier one finished too, and the
-        // scheduler's noteCompleted records exactly that.
-        if (this.slotCommandStates[slot].state() == VulkanCommandBufferState.State.PENDING) {
-            this.slotCommandStates[slot].completed();
-        }
-        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
-            this.submissionPending = false;
-        }
-        VulkanContext.noteCompletionConfirmed(lostDevice);
-        celtium$onSubmissionConfirmed();
-    }
-
-    /**
-     * The shared "a submission was confirmed" tail: the arena's completion epoch advances, and every retired group
-     * whose submission sequence is covered by the watermark may be released now.
-     */
-    private void celtium$onSubmissionConfirmed() {
-        if (this.frameArena != null) {
-            this.frameArena.completed(VulkanContext.completedEpoch(), this.scheduler.completedSubmitSequence());
-        }
-        releaseRetiredImmediateGroups();
-        if (!celtium$recordingOpen()
-                && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()
-                && this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) {
-            // The retire queue is drained per device: this device's entries may only flush when nothing of this
-            // device is in flight at all - the same statement the drain used to establish, reached here through
-            // the watermark. Another device's entries wait for that device's own drain (L06-01/BH10-09).
-            int drained = VulkanRetireQueue.flushFor(this.context.device().address());
-            if (drained > 0) {
-                this.submissionStatistics.addRetiredFlushes(drained);
-            }
-        }
-    }
 
     /** Slots confirmed by the bounded wait on the reuse path, counted separately from the polls. */
 
@@ -23667,13 +21928,13 @@ this.frameBufferOpen = false;
         // result here and a real latency test to be kept apart. It fires after a configured number of waits, not on the
         // first: failing the first wait stalls before the renderer exists, which is a start-up question rather than the
         // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
-        this.submissionStatistics.noteIdleWait();
-        if (FAIL_IDLE_AFTER > 0 && this.submissionStatistics.idleWaits() >= FAIL_IDLE_AFTER) {
+        this.frame.submissionStatistics.noteIdleWait();
+        if (FAIL_IDLE_AFTER > 0 && this.frame.submissionStatistics.idleWaits() >= FAIL_IDLE_AFTER) {
 // An abandoned frame is not "the frame is still recording": the flag must not route the
 // next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
-            this.submissionStatistics.noteInjectedIdleFailures();
-            this.noteStalled();
+this.frame.frameBufferOpen = false;
+            this.frame.submissionStatistics.noteInjectedIdleFailures();
+            this.frame.noteStalled();
             // Nothing was submitted, so the frame's semaphores are never consumed. Leaving the frame open made the
             // caller's endFrame() wait in the GL write-back for a Vulkan signal that cannot come: the injected idle
             // failure then hung the client (exit 124, report missing) instead of ending the run with a message.
@@ -23690,23 +21951,24 @@ this.frameBufferOpen = false;
         // Every pending slot, not only the current one: the callers of this method (the present, endFrame, teardown,
         // the recovery paths) need "the GPU has finished everything submitted". Each slot's own fence carries the
         // bounded wait; the single-fence tail the old shape kept here was the same wait the slot loop already does.
-        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (this.scheduler.isPending(slot) && !waitForSlot(slot)) {
+        for (int slot = 0; slot < FrameCoordinator.FRAME_SLOTS; slot++) {
+            if (this.frame.scheduler.isPending(slot) && !this.frame.waitForSlot(slot)) {
                 return false;
             }
         }
-        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
-            this.submissionPending = false;
+        if (this.frame.scheduler.completedSubmitSequence() >= this.frame.scheduler.submitSequence()) {
+            this.frame.submissionPending = false;
         }
         // Deferred buffer retirement (OPT-07): the queue is idle and, when no recording is open, nothing can still
         // name these buffers - so this is the point that may free them. Freeing them while a recording exists is
         // exactly the invalidation the list was added to avoid, hence the explicit emptiness check rather than an
         // unconditional drain.
-        if (!this.frameBufferOpen && !this.immediateWindowBusy && !this.commandState.recording()) {
+        if (!this.frame.frameBufferOpen && !this.immediateWindowBusy && !this.frame.commandState.recording()) {
             this.context.celtium$destroyRetiredBuffers();
         }
         return true;
     }
+
 
     /**
      * Submits the recordings this frame has made so far, without consuming the frame's semaphores.
@@ -23719,35 +21981,27 @@ this.frameBufferOpen = false;
      * submission to consume - the semaphore pair is signalled and waited exactly once, as it always was.
      */
     void submitOpenFrameBuffer() {
-        if (!this.frameBufferOpen || this.immediateWindowBusy) {
+        if (!this.frame.frameBufferOpen || this.immediateWindowBusy) {
             return;
         }
-        if (this.commandState.inRenderPass()) {
-            vkCmdEndRenderPass(this.commandBuffer);
-            this.commandState.endPass();
+        if (this.frame.commandState.inRenderPass()) {
+            vkCmdEndRenderPass(this.frame.commandBuffer);
+            this.frame.commandState.endPass();
         }
-        this.frameCoordinator.celtium$finishFrameBuffer();
+        this.frame.celtium$finishFrameBuffer();
         this.context.celtium$flushBatchedSubmits();
     }
 
-    /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */
-    private static final long IDLE_TIMEOUT_NANOS = 5_000_000_000L;
-    /**
-     * How many times a timed-out fence wait is retried before the renderer latches. A resize or a swapchain rebuild
-     * produces transient timeouts; a device that has genuinely stopped produces one on every attempt. Counted as
-     * {@code idleWaitTimeouts}/{@code idleWaitRetries} so the report says which of the two happened.
-     */
-    private static final int IDLE_WAIT_RETRIES = 3;
     /** The game's main framebuffer's own size, reported on its bind; 0 until it has been reported. */
     int mainFramebufferWidth;
+
     int mainFramebufferHeight;
+
 
     // ------------------------------------------------------------------ shared resources
 
     /** How many times the shared index buffer was regenerated; printed on the stats line. */
     long sharedIndexRegenerations;
-
-
 
     private int alignmentFromDevice() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -23763,121 +22017,16 @@ this.frameBufferOpen = false;
         return (value + mask) & ~mask;
     }
 
-    /**
-     * Debug aid: copies the first vertices of the buffer the first draw uses into host-visible memory and decodes
-     * them. It answers the one question the CPU-side logs cannot: what the GPU actually holds.
-     */
-    private void ensureReadback() {
-        if (this.readbackBuffer != 0) {
-            return;
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkBufferCreateInfo create = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack).sType$Default()
-                    .size(READBACK_SLOTS * 64L).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateBuffer(this.context.device(), create, null, handle), "vkCreateBuffer(readback)");
-            this.readbackBuffer = handle.get(0);
-            org.lwjgl.vulkan.VkMemoryRequirements requirements = org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
-            vkGetBufferMemoryRequirements(this.context.device(), this.readbackBuffer, requirements);
-            org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties properties =
-                    org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(this.context.physicalDevice(), properties);
-            int type = -1;
-            for (int i = 0; i < properties.memoryTypeCount(); i++) {
-                int flags = properties.memoryTypes(i).propertyFlags();
-                if ((requirements.memoryTypeBits() & (1 << i)) != 0
-                        && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0
-                        && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
-                    type = i;
-                    break;
-                }
-            }
-            if (type < 0) {
-                throw new IllegalStateException("No host-visible coherent memory type for the debug readback");
-            }
-            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
-                    .sType$Default().allocationSize(requirements.size()).memoryTypeIndex(type);
-            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTerrainGpuBackend:5047")) {
-                throw new IllegalStateException("injected allocation failure: VulkanTerrainGpuBackend:5047");
-            }
-            check(VulkanContext.allocateMemory(this.context.device(), allocate, handle, "readbackStaging"), "vkAllocateMemory(readback)");
-            this.readbackMemory = handle.get(0);
-            check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
-                    "vkBindBufferMemory(readback)");
-            org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
-            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, READBACK_SLOTS * 64L, 0, pointer), "vkMapMemory(readback)");
-            this.readbackMapped = pointer.get(0);
-        }
-    }
-
-
-    private void readBackAndLog() {
-        this.readbackPending = false;
-        this.readbackDone = true;
-        if (!waitForIdle()) throw new IllegalStateException("readback fence did not complete");
-        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped,
-                Math.max(READBACK_COPY_BYTES, this.readbackSlots * READBACK_COPY_BYTES));
-        view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        StringBuilder line = new StringBuilder("gpu draws:");
-        int colourCounts = 0;
-        it.unimi.dsi.fastutil.ints.Int2IntRBTreeMap histogram = new it.unimi.dsi.fastutil.ints.Int2IntRBTreeMap();
-        for (int slot = 0; slot < this.readbackSlots; slot++) {
-            if (!this.readbackValid[slot]) {
-                // The copy for this slot was refused, so the block holds whatever was there before it. Decoding it
-                // would put a stale colour into the histogram and into the diagnostic this exists to be.
-                continue;
-            }
-            int base = slot * READBACK_COPY_BYTES;
-            int colour = view.getInt(base + 12);
-            histogram.put(colour, histogram.get(colour) + 1);
-            if (slot < 10) {
-                line.append(" [").append(slot).append("] colour=0x").append(Integer.toHexString(colour))
-                        .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)))
-                        .append(" pos=(").append(fmt(view.getFloat(base))).append(',')
-                        .append(fmt(view.getFloat(base + 4))).append(',')
-                        .append(fmt(view.getFloat(base + 8))).append(')');
-            }
-        }
-        colourCounts = histogram.size();
-        line.append(" distinctColours=").append(colourCounts).append(" histogram=");
-        int shown = 0;
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry e : histogram.int2IntEntrySet()) {
-            if (shown++ >= 8) break;
-            line.append('0').append(Integer.toHexString(e.getIntKey())).append('x').append(e.getIntValue()).append(' ');
-        }
-        record(line.toString());
-        // stdout as well as the list: this is the only place that shows what the GPU holds rather than what the CPU
-        // wrote, and the diagnostics list is not printed by every run.
-        if (VERTEX_DIAGNOSTICS) {
-            System.out.println("[Celtium] CELTIUM_GPU_VERTEX " + line);
-        }
-    }
 
     /** Short float formatting for the readback line. */
     private static String fmt(float value) {
         return String.format(java.util.Locale.ROOT, "%.1f", Float.valueOf(value));
     }
 
-    void record(String diagnostic) {
-        this.reports.addLine(diagnostic);
-        // Also printed: diagnostics() rebuilds the list on every call, so a recorded failure (an ordering flush that
-        // dropped its batches, a stalled device, a refused window) was discarded unprinted the next time the report or
-        // F3 asked - RLCraft's 741 ordering-flush failures were visible only as a counter. One tag, so the log
-        // limiter bounds it (-Dceltium.debug.logLinesPerTag lifts the bound for a verification run).
-        // Each distinct message once: some records are informational and repeat every frame (the light map's name),
-        // and thousands of copies would bury the failures this line exists for.
-        if (this.printedRecords.size() < 4096 && this.printedRecords.add(diagnostic)) {
-            System.out.println("[Celtium] CELTIUM_RECORD " + diagnostic);
-        }
-    }
-
-    /** The distinct {@link #record} messages already printed; bounded so a message carrying a counter cannot grow it. */
-    private final java.util.Set<String> printedRecords = new java.util.HashSet<String>();
-
-
     static String describe(Throwable error) {
         return error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
     }
+
 
     /**
      * {@link #describe} plus where it was thrown, for the one failure path whose cause is invisible without it.
@@ -23898,11 +22047,6 @@ this.frameBufferOpen = false;
         return line.toString();
     }
 
-    static void check(int result, String operation) {
-        if (result != VK_SUCCESS) {
-            throw new IllegalStateException(operation + " returned " + result);
-        }
-    }
 
     /** Per-region device memory. */
 
@@ -23918,37 +22062,10 @@ this.frameBufferOpen = false;
         return count;
     }
 
-
     static boolean celtium$allowPreTransform(boolean hasRetained, boolean hasModProgram, boolean preTransformable) {
         return !hasRetained && !hasModProgram && preTransformable;
     }
 
-    public void updateTimings() {
-        // The vertex readback is read once per run, after a frame that recorded its copies: this is the frame boundary.
-        // Wait until at least two draws were remembered: the first frame of a session draws almost nothing, and reading
-        // then would report a single vertex and say nothing about the sections that are actually visible.
-        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots >= READBACK_SLOTS / 2) readBackAndLog();
-        // The immediate window count is per frame. The measurement that forced the limit: the first window of a frame
-        // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
-        // unchanged, which is what blackened the captured frame.
-        // A flush is not a frame: it increments the flush count and leaves the frame's budget and counters alone (S11).
-        this.immediateStatistics.noteFlushCount();
-        this.framesSeen++;
-        // The lightmap is refreshed by Minecraft every frame through DynamicTexture, whose upload path no hook of this
-        // project has been able to reach without crashing the client. Dropping the mirrors here makes the next use of
-        // each re-read its GL texture; the interval is a property so the cost can be measured rather than assumed.
-        if (MIRROR_REFRESH_FRAMES > 0 && (++this.mirrorRefreshCounter % MIRROR_REFRESH_FRAMES) == 0) {
-            if (this.textureRegistry != null) {
-                this.textureRegistry.invalidateAll();
-                this.mirrorRefreshes++;
-            }
-        }
-        // Item 359: the statistics read stands outside updateTimingsBody on purpose - that body's early
-        // return (no timestamp pool, or no pass timed this frame) must not be able to starve this read, or a
-        // timestamp-less device would report a silent instrument, which reads as "nothing was drawn".
-        readPipelineStatistics();
-        updateTimingsBody();
-    }
 
     /**
      * {@return the chain-pair identity whose colour contents should be handed off (copied) into {@code drawIdentity}}
@@ -23982,10 +22099,12 @@ this.frameBufferOpen = false;
     }
 
 
+
     /** {@return whether an off-target immediate window must use the load/store depth render pass}. */
     static boolean celtium$preserveWindowDepth(boolean terrainToDepthTarget, boolean hasDepthRecord) {
         return terrainToDepthTarget && hasDepthRecord;
     }
+
 
     /**
      * Copies slot 0 from {@code handoffSource} and any matching extra MRT slots from their current published
@@ -23997,7 +22116,7 @@ this.frameBufferOpen = false;
                                                    long handoffSource,
                                                    int targetColors) {
         int copied = 0;
-        if (pairOwner.copyChainPairColorSlot(handoffSource, 0, drawIdentity, 0, this.commandBuffer)) {
+        if (pairOwner.copyChainPairColorSlot(handoffSource, 0, drawIdentity, 0, this.frame.commandBuffer)) {
             copied++;
         }
         for (int s = 1; s < targetColors; s++) {
@@ -24009,12 +22128,11 @@ this.frameBufferOpen = false;
             int srcSlot = this.presentSwapchain.publishedFrameImageSlots.get(slotName);
             if (srcOwner != Long.MIN_VALUE && srcOwner != 0L && srcOwner != drawIdentity
                     && pairOwner.chainPairExists(srcOwner) && pairOwner.chainPairAcquired(srcOwner)) {
-                if (pairOwner.copyChainPairColorSlot(srcOwner, srcSlot, drawIdentity, s, this.commandBuffer)) {
+                if (pairOwner.copyChainPairColorSlot(srcOwner, srcSlot, drawIdentity, s, this.frame.commandBuffer)) {
                     copied++;
                 }
             }
         }
         return copied;
     }
-
 }
