@@ -67,9 +67,11 @@ class ForgetTextureCleanupTest {
             // Only texture 26's 3 mip levels (0, 1, 2) should remain.
             assertEquals(3, texLevels.size(), "all mip levels 0..5 of texture 25 must be cleared");
 
-            Field texCapturesField = GlsmFrontend.class.getDeclaredField("texCaptures");
+            Field texCapturesField = org.soutalab.celtium.vulkan.TextureCaptureStore.class
+                    .getDeclaredField("texCaptures");
             texCapturesField.setAccessible(true);
-            Map<?, ?> texCaptures = (Map<?, ?>) texCapturesField.get(stub);
+            Map<?, ?> texCaptures = (Map<?, ?>) texCapturesField
+                    .get(org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore());
             assertEquals(3, texCaptures.size(), "all mip captures 0..5 of texture 25 must be cleared");
         } finally {
             installedField.set(null, previous);

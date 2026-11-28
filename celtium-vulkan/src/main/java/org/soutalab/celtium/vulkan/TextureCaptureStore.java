@@ -65,6 +65,33 @@ public final class TextureCaptureStore {
     public TextureCaptureStore() {
     }
 
+    /**
+     * Drops every filed record and resets the serial and the census. The store's lifetime is the GL
+     * context's: a new capture entrance means a new context, so {@code GlsmFrontend}'s constructor calls
+     * this to give the new context an empty store - the isolation the per-entrance maps had before the
+     * ownership inversion made the store the registry's single seat.
+     */
+    public void clear() {
+        this.texCaptures.clear();
+        this.suppliedSerials.clear();
+        this.texPatchBacklog.clear();
+        this.texUploadSerial.set(0L);
+        this.fullCaptures.set(0);
+        this.subCaptures.set(0);
+        this.undefinedExtents.set(0);
+        this.unconvertedUploads.set(0);
+        this.identicalPatches.set(0);
+        this.identicalFullImages.set(0);
+        this.patchKeys.clear();
+        this.patchBranchBacklog = 0;
+        this.patchBranchSurface = 0;
+        this.patchBranchLone = 0;
+        this.patchBranchPaste = 0;
+        this.texPatchBytes = 0L;
+        celtium$announcedPending = false;
+        celtium$announcedCaptureSkips = 0L;
+    }
+
     /** The level key every store here is keyed by: {@code (textureName << 16) | level}. */
     static long texLevelKey(int name, int level) {
         return ((long) name << 16) | (level & 0xFFL);

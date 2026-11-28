@@ -4573,6 +4573,8 @@ public final class GlsmFrontend implements FunctionProvider {
         this.textures = textures;
         this.readableRangeProvider = readableRangeProvider != null
                 ? readableRangeProvider : ReadableMemoryRanges.defaultProvider();
+        // A new entrance is a new GL context: the registry's capture store starts empty for it.
+        VulkanTextureRegistry.captureStore().clear();
         // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
         // the GL "unbound" name a caller can legitimately store.
         this.textureBindings.defaultReturnValue(-1);
