@@ -10,7 +10,7 @@
 <p align="center"><b>🌋 A native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC, built from Celeritas.</b></p>
 
 <p align="center">
-  <a href="https://github.com/souta-lab/celtium/releases"><img alt="Release" src="https://img.shields.io/github/v/release/souta-lab/celtium?include_prereleases&style=for-the-badge&logo=github&label=release&color=24292f"></a>
+  <a href="https://github.com/souta-lab/facet/releases"><img alt="Release" src="https://img.shields.io/github/v/release/souta-lab/facet?include_prereleases&style=for-the-badge&logo=github&label=release&color=24292f"></a>
   <a href="#-requirements"><img alt="Minecraft 1.12.2" src="https://img.shields.io/badge/Minecraft-1.12.2-3C8527?style=for-the-badge&logo=minecraft&logoColor=white"></a>
   <a href="#-requirements"><img alt="CleanroomMC 0.7" src="https://img.shields.io/badge/CleanroomMC-0.7-7B42BC?style=for-the-badge"></a>
   <a href="#-requirements"><img alt="Vulkan 1.2" src="https://img.shields.io/badge/Vulkan-1.2-AC162C?style=for-the-badge&logo=vulkan&logoColor=white"></a>
@@ -150,7 +150,7 @@ Vulkan 1.2 alone is not a compatibility guarantee: features are chosen by device
 4. Use [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine), not Alfheim (unsupported).
 5. Start the game, enter a world, and check the GUI, menus, creative tabs and tooltips.
 
-Download: [Celtium 0.2.2](https://github.com/souta-lab/celtium/releases/tag/v0.2.2).
+Download: [Celtium 0.2.2](https://github.com/souta-lab/facet/releases/tag/v0.2.2).
 The r14 performance numbers above predate round 15 (`0.2.2`); post-`0.2.2` paired KPI re-measurement on current `main`
 is pending.
 

@@ -15,15 +15,15 @@ GL so that all mods work, and no general GL-emulation layer is being built. See 
 ## Current HEI presented-frame evidence (2026-10-13, after PRs #70 and #71)
 
 **The old claim that in-world GUIs fail to reach the Vulkan presented image was false.**
-[Issue #69](https://github.com/souta-lab/celtium/issues/69) documents the correction: the allegedly
+[Issue #69](https://github.com/souta-lab/facet/issues/69) documents the correction: the allegedly
 "identical world and GUI" screenshots were both captured **while the GUI was open**. The original
 Resource Packs and Language frames visibly display their controls. Their equality says nothing
 about whether the GUI rendered; comparison against a pre-GUI frame instead changes over 99.99% of pixels.
 
 **New acceptance legs from the same rebuilt 0.0.4-alpha JAR**, sha256
 `69496a109f1e3490b04ea51c3c51b815a2a8efc4be614b444c6d0fe6a07a8a75`, on
-source commit `6f9663f1f` (the change merged as [PR #71](https://github.com/souta-lab/celtium/pull/71),
-rebased on [PR #70](https://github.com/souta-lab/celtium/pull/70)):
+source commit `6f9663f1f` (the change merged as [PR #71](https://github.com/souta-lab/facet/pull/71),
+rebased on [PR #70](https://github.com/souta-lab/facet/pull/70)):
 
 | Physical GPU | Actual mod/screen | Exit / Vulkan validation | GUI screenshot | Picture gate |
 |---|---|---|---|---|
