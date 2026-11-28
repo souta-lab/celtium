@@ -4386,13 +4386,11 @@ public final class GlsmFrontend implements FunctionProvider {
         return stub == null ? 1.0 : GlsmClearState.current().depth();
     }
 
-    // ---- texture captures: the answers the mirrors read --------------------------------------------------
+    // ---- texture captures --------------------------------------------------
     //
-    // Extracted (giant-split seam 7, QUEUE 688): the capture answers moved to TextureCaptureStore, which owns
-    // them now. The doors below keep their names and exact signatures; each answers the documented default
-    // when no stub is installed and otherwise delegates, so no caller changes.
-
-                                                        : a framebuffer's colour attachment with nothing captured; its owner publishes. */
+    // The capture answers the mirrors read live in TextureCaptureStore now (S3-b E5 seat B): the store is
+    // the HAL texture registry's seat and every reader - mirrors, registry, copy paths, the frame release -
+    // asks it directly. No doors remain here.
 
                     final org.soutalab.celtium.vulkan.NativeRasterState raster;
     final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
