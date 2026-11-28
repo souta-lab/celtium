@@ -20,7 +20,7 @@ final class ModShaderCompilerLargeSourceTest {
 
     @Test
     void compilerEncodesSourceOffMemoryStackAndFreesIt() throws Exception {
-        Path source = Path.of("src/main/java/org/soutalab/celtium/vulkan/gl/ModShaderCompiler.java");
+        Path source = Path.of("src/main/java/org/soutalab/celtium/vulkan/shader/ModShaderCompiler.java");
         if (!Files.exists(source)) {
             source = Path.of("celtium-vulkan").resolve(source);
         }
