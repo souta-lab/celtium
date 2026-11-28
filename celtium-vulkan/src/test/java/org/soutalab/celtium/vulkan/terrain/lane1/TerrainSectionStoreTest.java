@@ -11,6 +11,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -132,6 +133,31 @@ class TerrainSectionStoreTest {
             SectionDesc second = SectionDesc.readFrom(out, SectionDesc.BYTE_SIZE);
             assertEquals(0, first.sectionX(), "key order: (0,0,0) before (1,0,0)");
             assertEquals(1, second.sectionX());
+        }
+    }
+
+    @Test
+    void layerRangeUploadMatchesDescriptorSlotsAndUsesRelativeQuadOffsets() {
+        TerrainSectionStore store = newStore();
+        store.upload(5, 0, 0, geometry(2, new short[0]), 1L);
+        store.upload(0, 0, 0, new SectionGeometry(
+                List.of(), List.of(quad(0)), List.of(quad(1), quad(2)),
+                List.of(general()), List.of(general(), general()), List.of(), new short[0]), 1L);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment descriptors = arena.allocate(96, 8);
+            MemorySegment ranges = arena.allocate(96, 4);
+            assertEquals(2, store.writeDescriptors(descriptors, 0));
+            store.writeLayerRanges(ranges);
+
+            SectionDesc first = SectionDesc.readFrom(descriptors, 0);
+            assertEquals(0, first.sectionX());
+            assertEquals(32L, first.axisSlabOffset());
+            assertEquals(80L, first.generalSlabOffset());
+            assertEquals(5, SectionDesc.readFrom(descriptors, 48).sectionX());
+            assertArrayEquals(new int[]{
+                    0, 0, 0, 1,  0, 1, 1, 2,  1, 2, 3, 0,
+                    0, 2, 0, 1,  2, 0, 1, 0,  2, 0, 1, 0
+            }, ranges.toArray(ValueLayout.JAVA_INT));
         }
     }
 }

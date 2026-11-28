@@ -11,7 +11,7 @@ import org.soutalab.celtium.core.shader.PackTerrainDriver;
 import org.soutalab.celtium.core.shader.TerrainPassKind;
 import org.soutalab.celtium.core.shader.TerrainStageProgram;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -22,32 +22,34 @@ import java.util.List;
  * vertices per quad, vertex-pulled from the shared resident slab (the main and shadow stages read
  * the same geometry; falsification condition K1's vertex-pulling MDI shape).
  * <p>
- * The draw emission itself goes through a {@link DrawSink}: in production the sink writes the
- * commands into the cull stage's indirect buffer and issues {@code vkCmdDrawIndirectCount}; on
- * the CPU-cull path (and in tests) it records from the command list this stage builds. The
- * command list is pure data - {@link DrawCommand} - so the stage's decisions are unit-testable
- * without a device.
+ * The CPU path emits packed commands through {@link DrawSink}. The main-view GPU path
+ * delegates the prebuilt command regions to {@link IndirectDrawSink}.
  */
 public final class TerrainDrawStage implements PackTerrainDriver {
 
-    /**
-     * One indirect draw: {@code vertexCount} vertices starting at quad {@code firstQuad} of a slab.
-     * {@code general} selects the stream - the 80 B general slab when true, the 16 B axis slab when
-     * false; the two streams share the pass's fragment stage and differ in the vertex entry point.
-     */
+    /** Receives the first commandCount records, each containing vertexCount, firstQuad, slot and stream. */
+    @FunctionalInterface
+    public interface DrawSink {
+        void draw(VulkanCommandStream stream, TerrainPassKind kind, int[] packed, int commandCount);
+    }
+
+    @FunctionalInterface
+    public interface IndirectDrawSink {
+        void drawPass(VulkanCommandStream stream, TerrainPassKind kind, int layer);
+    }
+
+    /** Compatibility for callers that consume the original per-pass list. */
+    @Deprecated
     public record DrawCommand(int vertexCount, int firstQuad, int sectionSlot, int layer, boolean general) {
     }
 
-
-
-    /** Receives one pass's draw commands against the pass's command stream. */
+    @Deprecated
     @FunctionalInterface
-    public interface DrawSink {
-        void draw(VulkanCommandStream cmd, TerrainPassKind kind, List<DrawCommand> commands);
+    public interface LegacyDrawSink {
+        void draw(VulkanCommandStream stream, TerrainPassKind kind, List<DrawCommand> commands);
     }
 
     private final TerrainWorld world;
-    private final TerrainCullStage cullStage;
     private final DrawSink drawSink;
     private long lastDrawnQuads;
     private int lastVisibleSections;
@@ -60,14 +62,66 @@ public final class TerrainDrawStage implements PackTerrainDriver {
     private CameraPose cachedPose;
     private boolean cachedShadow;
     private long cachedGeneration = -1L;
-    private List<SectionDesc> cachedVisible = List.of();
-    private List<TerrainSectionStore.LayerRange[]> cachedRanges = List.of();
-    private int[] cachedSlots = new int[0];
+    private SectionDesc[] cacheDescs = new SectionDesc[0];
+    private TerrainSectionStore.LayerRange[][] cacheRanges = new TerrainSectionStore.LayerRange[0][];
+    private int[] cacheSlots = new int[0];
+    private int cacheCount;
+    private int[] packed = new int[0];
+    private IndirectDrawSink indirectSink;
+    private long indirectFrame;
+    private boolean armed;
 
     public TerrainDrawStage(TerrainWorld world, TerrainCullStage cullStage, DrawSink drawSink) {
         this.world = world;
-        this.cullStage = cullStage;
         this.drawSink = drawSink;
+    }
+
+    @Deprecated
+    public TerrainDrawStage(TerrainWorld world, TerrainCullStage cullStage, LegacyDrawSink drawSink) {
+        this(world, cullStage, (stream, kind, packed, count) -> {
+            List<DrawCommand> commands = new java.util.ArrayList<>(count);
+            int layer = layerOf(kind);
+            for (int index = 0; index < count; index++) {
+                int base = index * 4;
+                commands.add(new DrawCommand(packed[base], packed[base + 1], packed[base + 2],
+                        layer, packed[base + 3] != 0));
+            }
+            drawSink.draw(stream, kind, List.copyOf(commands));
+        });
+    }
+
+    public void setIndirectDrawSink(IndirectDrawSink sink) {
+        indirectSink = sink;
+    }
+
+    public void armIndirect(long frameId) {
+        indirectFrame = frameId;
+        armed = true;
+    }
+
+    void disarmIndirect() {
+        armed = false;
+    }
+
+    public boolean indirectArmed(long frameId) {
+        return armed && indirectFrame == frameId;
+    }
+
+    public void recordTerrainPassIndirect(VulkanCommandStream stream, TerrainPassKind kind,
+                                          TerrainStageProgram program, ActiveRenderTargets targets) {
+        if (indirectSink == null) {
+            recordTerrainPass(stream, kind, program, targets);
+            return;
+        }
+        stream.beginRendering(targets);
+        try {
+            if (program != null) {
+                stream.bindTerrainProgram(program);
+            }
+            indirectSink.drawPass(stream, kind, layerOf(kind));
+        } finally {
+            stream.endRendering();
+        }
     }
 
     @Override
@@ -100,9 +154,14 @@ public final class TerrainDrawStage implements PackTerrainDriver {
         if (cachedFrustum != frustum || cachedShadow != kind.isShadow()
                 || cachedGeneration != generation || !java.util.Objects.equals(pose, cachedPose)) {
             List<SectionDesc> descriptors = store.descriptors();
-            List<SectionDesc> visible = new ArrayList<>();
-            List<TerrainSectionStore.LayerRange[]> ranges = new ArrayList<>();
-            List<Integer> slots = new ArrayList<>();
+            if (descriptors.size() > cacheSlots.length) {
+                int capacity = Math.max(descriptors.size(), Math.max(16, cacheSlots.length * 2));
+                cacheSlots = Arrays.copyOf(cacheSlots, capacity);
+                cacheDescs = Arrays.copyOf(cacheDescs, capacity);
+                cacheRanges = Arrays.copyOf(cacheRanges, capacity);
+                packed = new int[capacity * 8];
+            }
+            int count = 0;
             for (int slot = 0; slot < descriptors.size(); slot++) {
                 SectionDesc desc = descriptors.get(slot);
                 if (!TerrainCullStage.sectionVisible(frustum, pose, desc)) {
@@ -113,57 +172,65 @@ public final class TerrainDrawStage implements PackTerrainDriver {
                 if (layerRanges == null) {
                     continue;
                 }
-                visible.add(desc);
-                ranges.add(layerRanges);
-                slots.add(Integer.valueOf(slot));
+                cacheDescs[count] = desc;
+                cacheRanges[count] = layerRanges;
+                cacheSlots[count++] = slot;
             }
+            if (count < cacheCount) {
+                Arrays.fill(cacheDescs, count, cacheCount, null);
+                Arrays.fill(cacheRanges, count, cacheCount, null);
+            }
+            cacheCount = count;
             cachedFrustum = frustum;
             cachedPose = pose;
             cachedShadow = kind.isShadow();
             cachedGeneration = generation;
-            cachedVisible = visible;
-            cachedRanges = ranges;
-            cachedSlots = slots.stream().mapToInt(Integer::intValue).toArray();
         }
-        // Opaque kinds are depth-tested and order-free, so their commands are grouped by
-        // stream (all axis, then all general): the sink binds a pipeline per stream switch,
-        // and interleaving the streams per section made it bind ~once per draw (Gate G1
-        // profile). Translucent kinds keep section order - their blending is order-bound.
+        // Opaque passes group streams to limit pipeline switches. Translucent passes keep
+        // the section order used by the CPU blend path.
         boolean groupStreams = kind != TerrainPassKind.MAIN_TRANSLUCENT
                 && kind != TerrainPassKind.SHADOW_TRANSLUCENT;
-        List<DrawCommand> commands = new ArrayList<>();
-        List<DrawCommand> generalCommands = groupStreams ? new ArrayList<>() : commands;
+        int count = 0;
+        int generalCount = 0;
         long quads = 0L;
-        int visibleCount = cachedVisible.size();
-        for (int i = 0; i < cachedVisible.size(); i++) {
-            SectionDesc desc = cachedVisible.get(i);
-            int slot = cachedSlots[i];
-            TerrainSectionStore.LayerRange range = cachedRanges.get(i)[layer];
+        for (int i = 0; i < cacheCount; i++) {
+            SectionDesc desc = cacheDescs[i];
+            int slot = cacheSlots[i];
+            TerrainSectionStore.LayerRange range = cacheRanges[i][layer];
             if (range.axisQuadCount() > 0) {
-                commands.add(new DrawCommand(range.axisQuadCount() * 6,
-                        (int) (desc.axisSlabOffset() / 16L) + range.axisQuadOffset(), slot, layer, false));
+                emit(count++, range.axisQuadCount(),
+                        (int) (desc.axisSlabOffset() / 16L) + range.axisQuadOffset(), slot, 0);
                 quads += range.axisQuadCount();
             }
             if (range.generalQuadCount() > 0) {
-                generalCommands.add(new DrawCommand(range.generalQuadCount() * 6,
-                        (int) (desc.generalSlabOffset() / GeneralQuad.BYTE_SIZE) + range.generalQuadOffset(), slot, layer, true));
+                int index = groupStreams ? cacheCount + generalCount++ : count++;
+                emit(index, range.generalQuadCount(),
+                        (int) (desc.generalSlabOffset() / GeneralQuad.BYTE_SIZE) + range.generalQuadOffset(),
+                        slot, 1);
                 quads += range.generalQuadCount();
             }
         }
-        if (groupStreams) {
-            commands.addAll(generalCommands);
-        }
-        if (layer == 0 && !kind.isShadow()) {
+        if (generalCount > 0) {
+            System.arraycopy(packed, cacheCount * 4, packed, count * 4, generalCount * 4);
+            count += generalCount;
         }
         cmd.beginRendering(targets);
         try {
             cmd.bindTerrainProgram(program);
-            drawSink.draw(cmd, kind, List.copyOf(commands));
+            drawSink.draw(cmd, kind, packed, count);
         } finally {
             cmd.endRendering();
         }
-        lastVisibleSections = visibleCount;
+        lastVisibleSections = cacheCount;
         lastDrawnQuads = quads;
+    }
+
+    private void emit(int index, int quadCount, int firstQuad, int slot, int stream) {
+        int base = index * 4;
+        packed[base] = quadCount * 6;
+        packed[base + 1] = firstQuad;
+        packed[base + 2] = slot;
+        packed[base + 3] = stream;
     }
 
     @Override
