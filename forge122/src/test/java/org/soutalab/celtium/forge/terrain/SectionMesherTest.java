@@ -533,4 +533,100 @@ class SectionMesherTest {
         assertEquals(3, snap.sectionX());
         assertEquals(-2, snap.sectionZ());
     }
+
+    // ------------------------------------------------------------------
+    // S2-b-perf K2 (Gate G2-31): the greedyEnabled switch. The off arm must
+    // emit exactly the greedy arm's face set, only unmerged - that identity
+    // is what makes the on/off pair a usable measurement contrast.
+    // ------------------------------------------------------------------
+
+    /** Every unit face a buffer's axis quads cover, as (layer, plane, cell, texture) keys. */
+    private static java.util.Set<String> unitFaces(MeshBuffers out) {
+        int[] uAxisByAxis = {2, 0, 0};
+        int[] vAxisByAxis = {1, 2, 1};
+        java.util.Set<String> faces = new java.util.TreeSet<>();
+        for (int layer = 0; layer < TerrainLayer.COUNT; layer++) {
+            for (int i = 0; i < out.axisCount(layer); i++) {
+                PackedAxisQuad quad = out.axisQuad(layer, i);
+                int axis = quad.axis();
+                int[] corner = {quad.minX(), quad.minY(), quad.minZ()};
+                for (int du = 0; du < quad.extentU(); du++) {
+                    for (int dv = 0; dv < quad.extentV(); dv++) {
+                        int[] cell = corner.clone();
+                        cell[uAxisByAxis[axis]] += du;
+                        cell[vAxisByAxis[axis]] += dv;
+                        faces.add(layer + ":" + axis + ":" + quad.negativeFacing() + ":"
+                                + cell[0] + "," + cell[1] + "," + cell[2]
+                                + ":" + quad.textureIndex());
+                    }
+                }
+            }
+        }
+        return faces;
+    }
+
+    @Test
+    void greedyOffEmitsTheSameFacesUnmerged() {
+        WorldSectionSnapshot snap = snapshot();
+        // A flat 6x6 stone platform: the top and bottom faces merge hard under greedy.
+        for (int x = 5; x <= 10; x++) {
+            for (int z = 5; z <= 10; z++) {
+                set(snap, x, 8, z, STONE);
+            }
+        }
+        Stub stub = new Stub();
+        MeshBuffers greedy = mesh(snap, stub, MesherOptions.PACK_OFF);
+        MeshBuffers singles = mesh(snap, stub, new MesherOptions(
+                NativeLeafCulling.Mode.DEFAULT, false, TerrainVertexRequirements.NONE, false));
+        assertEquals(unitFaces(greedy), unitFaces(singles),
+                "the off arm covers exactly the greedy arm's faces");
+        assertTrue(singles.axisTotal() > greedy.axisTotal(),
+                "unmerged emission is strictly more quads on a mergeable platform: "
+                        + singles.axisTotal() + " vs " + greedy.axisTotal());
+    }
+
+    @Test
+    void greedyOffComposesWithThePackNoGreedySeparation() {
+        WorldSectionSnapshot snap = snapshot();
+        for (int x = 5; x <= 10; x++) {
+            for (int z = 5; z <= 10; z++) {
+                set(snap, x, 8, z, STONE);
+            }
+        }
+        // A sway row on top: under a pack its faces are noGreedy singles in both arms.
+        for (int x = 5; x <= 10; x++) {
+            set(snap, x, 9, 7, SWAY);
+        }
+        Stub stub = new Stub();
+        MeshBuffers greedy = mesh(snap, stub, new MesherOptions(
+                NativeLeafCulling.Mode.DEFAULT, true, TerrainVertexRequirements.NONE, true));
+        MeshBuffers singles = mesh(snap, stub, new MesherOptions(
+                NativeLeafCulling.Mode.DEFAULT, true, TerrainVertexRequirements.NONE, false));
+        assertEquals(unitFaces(greedy), unitFaces(singles),
+                "pack arm: the off switch changes merging only, never the face set");
+        assertTrue(singles.axisTotal() >= greedy.axisTotal());
+    }
+
+    @Test
+    void greedyPropertySelectsTheOffArm() {
+        String previous = System.getProperty("celtium.terrain.greedy");
+        try {
+            System.clearProperty("celtium.terrain.greedy");
+            assertSame(MesherOptions.PACK_OFF, MesherOptions.packOffFromProperty());
+            System.setProperty("celtium.terrain.greedy", "true");
+            assertSame(MesherOptions.PACK_OFF, MesherOptions.packOffFromProperty());
+            System.setProperty("celtium.terrain.greedy", "false");
+            MesherOptions off = MesherOptions.packOffFromProperty();
+            assertFalse(off.greedyEnabled());
+            assertEquals(MesherOptions.PACK_OFF.leafMode(), off.leafMode());
+            assertEquals(MesherOptions.PACK_OFF.packInUse(), off.packInUse());
+            assertEquals(MesherOptions.PACK_OFF.requirements(), off.requirements());
+        } finally {
+            if (previous == null) {
+                System.clearProperty("celtium.terrain.greedy");
+            } else {
+                System.setProperty("celtium.terrain.greedy", previous);
+            }
+        }
+    }
 }
