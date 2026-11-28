@@ -75,7 +75,7 @@ class PrewarmFallbackColorGateContractTest {
 
     /** The body of {@code celtium$resolveImmediatePipeline}, from its signature to the next member. */
     private static String resolveMethodBody(String source) {
-        int start = source.indexOf("private Object celtium$resolveImmediatePipeline");
+        int start = source.indexOf("Object celtium$resolveImmediatePipeline");
         assertTrue(start >= 0, "the resolution method exists");
         int end = source.indexOf("\n    private ", start);
         assertTrue(end > start, "the method body is delimited by the next member");

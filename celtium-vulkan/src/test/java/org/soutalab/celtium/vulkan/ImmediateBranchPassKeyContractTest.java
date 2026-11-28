@@ -119,8 +119,8 @@ class ImmediateBranchPassKeyContractTest {
         assertEquals(2, count(source, "celtium$immediateBranchKey(format, key, pass)"),
                 "the exact reads - the resolver's and the synchronous build path's - are"
                         + " pass-keyed (the standard read is the multi-line third call)");
-        int resolve = source.indexOf("private Object celtium$resolveImmediatePipeline");
-        int prewarm = source.indexOf("private void celtium$requestImmediatePipelinePrewarm", resolve);
+        int resolve = source.indexOf("Object celtium$resolveImmediatePipeline");
+        int prewarm = source.indexOf("void celtium$requestImmediatePipelinePrewarm", resolve);
         assertTrue(resolve >= 0 && prewarm > resolve, "the resolver body is present");
         String body = source.substring(resolve, prewarm);
         assertTrue(body.contains("long branchKey = celtium$immediateBranchKey(format, key, pass);"),

@@ -123,7 +123,7 @@ class FenceWaitFaultRetryContractTest {
     @Test
     void theLatchAndItsGuardsAreUntouched() throws IOException {
         String source = readBackend();
-        int latch = source.indexOf("private void noteStalled()");
+        int latch = source.indexOf("void noteStalled()");
         assertTrue(latch >= 0, "noteStalled exists");
         int latchEnd = source.indexOf("\n    }", latch);
         assertTrue(latchEnd > latch, "noteStalled's end is found");
@@ -142,7 +142,7 @@ class FenceWaitFaultRetryContractTest {
 
     /** waitForSlot's body: from its signature to the next member's javadoc. */
     private static String waitForSlot(String source) {
-        int start = source.indexOf("private boolean waitForSlot(int slot)");
+        int start = source.indexOf("boolean waitForSlot(int slot)");
         assertTrue(start >= 0, "waitForSlot exists");
         int end = source.indexOf("\n    /**", start);
         assertTrue(end > start, "waitForSlot's end is found");

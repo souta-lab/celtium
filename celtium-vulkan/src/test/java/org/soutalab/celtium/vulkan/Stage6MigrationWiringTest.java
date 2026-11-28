@@ -132,7 +132,7 @@ class Stage6MigrationWiringTest {
     @DisplayName("the capture population is the twin population with the shared-quad shape, not the stage-4 populations")
     void capturePopulationIsTheTwinPopulation() throws IOException {
         String backend = read(BACKEND);
-        int eligible = backend.indexOf("private boolean celtium$batchEligible(");
+        int eligible = backend.indexOf("boolean celtium$batchEligible(");
         assertTrue(eligible >= 0, "the eligibility decision exists");
         int end = backend.indexOf("static boolean celtium$batchOrderFree", eligible);
         String body = backend.substring(eligible, end);
@@ -166,7 +166,7 @@ class Stage6MigrationWiringTest {
         assertEquals(2, occurrences(backend,
                         "this.batchBatcher.captureQuads(0, pipelineKey, stateKey, 0, textureSlot,"),
                 "the capture call appears twice in the wiring: the attempt and the mid-flush retry");
-        int capture = backend.indexOf("private boolean celtium$tryCaptureBatchGroup(");
+        int capture = backend.indexOf("boolean celtium$tryCaptureBatchGroup(");
         String body = backend.substring(capture, capture + 9000);
         int attempt = body.indexOf("boolean captured = this.batchBatcher.captureQuads(");
         int flush = body.indexOf("celtium$flushBatchSegment();", attempt);
@@ -181,7 +181,7 @@ class Stage6MigrationWiringTest {
     @DisplayName("the drain fallback chain is particle fallback, non-quad emitter, direct twin draw")
     void drainFallbackChain() throws IOException {
         String backend = read(BACKEND);
-        int drain = backend.indexOf("private void drawPendingImmediate(Long onlyTarget)");
+        int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
         String body = backend.substring(drain, drain + 120000);
         int particle = body.indexOf("celtium$drawParticleGroupFallback(group, mesh, prepared, push);");

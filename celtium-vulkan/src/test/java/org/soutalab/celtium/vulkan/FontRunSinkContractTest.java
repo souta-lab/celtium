@@ -41,8 +41,8 @@ class FontRunSinkContractTest {
 
     /** The sink body: from its signature to the matrix-boundary delegate that follows it. */
     private static String sinkRegion(String source) {
-        int start = source.indexOf("private boolean celtium$submitFontRun(FontBatch.Run run) {");
-        int end = source.indexOf("private void celtium$fontMatrixBoundary()", start);
+        int start = source.indexOf("boolean celtium$submitFontRun(FontBatch.Run run) {");
+        int end = source.indexOf("void celtium$fontMatrixBoundary()", start);
         assertTrue(start >= 0 && end > start, "the sink region is located");
         return source.substring(start, end);
     }
@@ -79,16 +79,16 @@ class FontRunSinkContractTest {
 
     /** The batch-population gate: from its signature to the capture attempt that follows it. */
     private static String eligibilityRegion(String source) {
-        int start = source.indexOf("private boolean celtium$batchEligible(ImmediateGroup group");
-        int end = source.indexOf("private boolean celtium$tryCaptureBatchGroup(", start);
+        int start = source.indexOf("boolean celtium$batchEligible(ImmediateGroup group");
+        int end = source.indexOf("boolean celtium$tryCaptureBatchGroup(", start);
         assertTrue(start >= 0 && end > start, "the eligibility region is located");
         return source.substring(start, end);
     }
 
     /** The drain-time capture attempt: from its signature to the state interning that follows it. */
     private static String captureRegion(String source) {
-        int start = source.indexOf("private boolean celtium$tryCaptureBatchGroup(ImmediateGroup group");
-        int end = source.indexOf("private int celtium$internBatchState(ImmediateGroup group) {", start);
+        int start = source.indexOf("boolean celtium$tryCaptureBatchGroup(ImmediateGroup group");
+        int end = source.indexOf("int celtium$internBatchState(ImmediateGroup group) {", start);
         assertTrue(start >= 0 && end > start, "the capture region is located");
         return source.substring(start, end);
     }

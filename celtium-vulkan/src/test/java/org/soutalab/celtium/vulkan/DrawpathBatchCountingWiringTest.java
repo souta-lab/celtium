@@ -55,15 +55,15 @@ class DrawpathBatchCountingWiringTest {
                 "no fallback still promises success on a drop");
         assertEquals(2, occurrences(backend, "this.batchDroppedDraws++;\n            return false;"),
                 "the particle and direct fallbacks count the drop and return false");
-        String emitter = methodBody(backend, "private boolean celtium$emitNonQuadGroup(");
+        String emitter = methodBody(backend, "boolean celtium$emitNonQuadGroup(");
         int refusal = emitter.indexOf("this.batchDroppedDraws++;");
         assertTrue(refusal >= 0 && emitter.indexOf("return false;", refusal) > refusal,
                 "the emitter's record refusal returns false");
-        String particle = methodBody(backend, "private boolean celtium$drawParticleGroupFallback(");
+        String particle = methodBody(backend, "boolean celtium$drawParticleGroupFallback(");
         assertTrue(particle.indexOf("return false;") >= 0
                         && particle.indexOf("return true;") > particle.indexOf("mesh.bindAndDrawInstanced"),
                 "the particle fallback returns true only after its draw");
-        String direct = methodBody(backend, "private boolean celtium$drawGroupDirect(");
+        String direct = methodBody(backend, "boolean celtium$drawGroupDirect(");
         assertTrue(direct.indexOf("return false;") >= 0
                         && direct.indexOf("return true;") > direct.indexOf("mesh.bindAndDrawInstanced"),
                 "the direct fallback returns true only after its draw");
@@ -73,7 +73,7 @@ class DrawpathBatchCountingWiringTest {
     @DisplayName("DP-12: the drain gates the drawn accounting and the sky census on groupDrew")
     void drainGatesDrawnAccountingOnGroupDrew() throws IOException {
         String backend = read(BACKEND);
-        int drain = backend.indexOf("private void drawPendingImmediate(Long onlyTarget)");
+        int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
         String body = backend.substring(drain, drain + 120000);
         assertTrue(body.contains("boolean groupDrew = false;"),

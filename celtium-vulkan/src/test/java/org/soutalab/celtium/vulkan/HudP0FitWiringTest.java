@@ -92,7 +92,7 @@ class HudP0FitWiringTest {
     @Test
     void theCloseSiteStampsTheGroupBesideTheCensusNote() throws IOException {
         String backend = Files.readString(findRepoFile(MAIN + "Lane2ImmediateRecorder.java"));
-        String close = methodSlice(backend, "private void closeCurrentImmediateGroupBody() {", 30000);
+        String close = methodSlice(backend, "void closeCurrentImmediateGroupBody() {", 30000);
         int note = close.indexOf("celtium$noteHudP0Group();");
         assertTrue(note >= 0, "the census note still runs at the close site");
         String after = close.substring(note, Math.min(close.length(), note + 4000));

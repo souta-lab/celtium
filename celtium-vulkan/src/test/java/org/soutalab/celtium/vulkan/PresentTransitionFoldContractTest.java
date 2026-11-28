@@ -132,7 +132,7 @@ class PresentTransitionFoldContractTest {
      */
     @Test
     void theBoundaryHoldsItsFlushOnlyForALiveBorrowOutsideSkipPresent() throws IOException {
-        String body = window(read(BACKEND), "private void celtium$flushPendingAtFrameBoundaryBody(", 9000);
+        String body = window(read(BACKEND), "void celtium$flushPendingAtFrameBoundaryBody(", 9000);
         assertTrue(body.contains("!SKIP_PRESENT"),
                 "a skipped present never holds the batch");
         assertTrue(body.contains("hasLivePresentBorrow()"),

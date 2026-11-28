@@ -128,7 +128,7 @@ class ReporterDeskHardeningTest {
         assertTrue(catchBody.contains("celtium$detachRegistration();"),
                 "the catch detaches the registration: nothing keeps drawing into the half-deleted backend");
 
-        int settled = source.indexOf("private void celtium$deleteSettled() {");
+        int settled = source.indexOf("void celtium$deleteSettled() {");
         assertTrue(settled >= 0, "the release sequence is its own method");
         String settledBody = source.substring(settled, settled + 16000);
         int windowExit = settledBody.indexOf("if (this.windowOwned) {");

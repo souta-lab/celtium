@@ -73,7 +73,7 @@ class SiblingEvictedDescriptorRebuildTest {
     void siblingQueryUsesEachFamilysCacheKey() throws IOException {
         String source = backendSource();
         int helper = source.indexOf(
-                "private boolean celtium$siblingSetEvicted(PreparedImmediate prepared, VulkanGlTexture currentTexture)");
+                "boolean celtium$siblingSetEvicted(PreparedImmediate prepared, VulkanGlTexture currentTexture)");
         assertTrue(helper >= 0, "the sibling eviction query exists");
         int pairKey = source.indexOf("(currentTexture.key() * 31L) + lightmapKey", helper);
         assertTrue(pairKey > helper,

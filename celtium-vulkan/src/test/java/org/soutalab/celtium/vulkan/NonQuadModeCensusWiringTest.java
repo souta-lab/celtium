@@ -61,7 +61,7 @@ class NonQuadModeCensusWiringTest {
         String backend = read(BACKEND);
         assertEquals(1, occurrences(backend, OFFERED_INCREMENT),
                 "the offered increment has exactly one site");
-        int drain = backend.indexOf("private void drawPendingImmediate(Long onlyTarget)");
+        int drain = backend.indexOf("void drawPendingImmediate(Long onlyTarget)");
         assertTrue(drain >= 0, "the drain exists");
         String body = backend.substring(drain, drain + 120000);
         int branch = body.indexOf("group.drawMode != org.lwjgl.opengl.GL11.GL_QUADS");
@@ -77,7 +77,7 @@ class NonQuadModeCensusWiringTest {
         String backend = read(BACKEND);
         assertEquals(1, occurrences(backend, EMITTED_INCREMENT),
                 "the emitted increment has exactly one site");
-        int start = backend.indexOf("private boolean celtium$emitNonQuadGroup(");
+        int start = backend.indexOf("boolean celtium$emitNonQuadGroup(");
         assertTrue(start >= 0, "the emitter exists");
         int end = backend.indexOf("return true;\n    }", start);
         String body = backend.substring(start, end);
@@ -103,14 +103,14 @@ class NonQuadModeCensusWiringTest {
                 "the delegated increment has exactly one site");
         assertEquals(2, occurrences(backend, dropped),
                 "the dropped increment has two sites: the delegation helper and the emitter's own refusal");
-        int helper = backend.indexOf("private boolean celtium$delegateNonQuadToDirect(");
+        int helper = backend.indexOf("boolean celtium$delegateNonQuadToDirect(");
         assertTrue(helper >= 0, "the delegation helper exists");
         String helperBody = backend.substring(helper, helper + 1600);
         assertTrue(helperBody.indexOf("celtium$drawGroupDirect(group, mesh, prepared, push)") >= 0
                         && helperBody.indexOf(delegated) > helperBody.indexOf("celtium$drawGroupDirect(group, mesh, prepared, push)")
                         && helperBody.indexOf(dropped) > helperBody.indexOf("celtium$drawGroupDirect(group, mesh, prepared, push)"),
                 "the helper counts delegated or dropped from the direct draw's outcome");
-        int emitter = backend.indexOf("private boolean celtium$emitNonQuadGroup(");
+        int emitter = backend.indexOf("boolean celtium$emitNonQuadGroup(");
         String emitterBody = backend.substring(emitter, backend.indexOf("return true;\n    }", emitter));
         assertTrue(emitterBody.indexOf(dropped) > emitterBody.indexOf("int recordIndex = celtium$recordForDirectDraw(push);"),
                 "the emitter's own record refusal lands in the dropped column");

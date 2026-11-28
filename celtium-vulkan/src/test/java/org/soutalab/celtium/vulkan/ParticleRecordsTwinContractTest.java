@@ -210,7 +210,7 @@ class ParticleRecordsTwinContractTest {
     @DisplayName("the descriptor probe's vehicle is the record-reading twin")
     void probeVehicleIsTheTwin() throws IOException {
         String backend = read(BACKEND);
-        assertTrue(backend.contains("private VulkanImmediateParticleRecordsPipeline descriptorProbe;"),
+        assertTrue(backend.contains("VulkanImmediateParticleRecordsPipeline descriptorProbe;"),
                 "the probe field holds a twin");
         assertTrue(backend.contains("VulkanImmediateParticleRecordsPipeline.create(this.context, renderPass,"),
                 "the probe is built through the twin's factory, against the batch's own pass as before");

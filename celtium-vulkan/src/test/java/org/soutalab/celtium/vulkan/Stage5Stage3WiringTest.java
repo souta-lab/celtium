@@ -115,7 +115,7 @@ class Stage5Stage3WiringTest {
         String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertEquals(4, occurrences(backend, "celtium$drainBindlessReleases()"),
                 "one definition and a call at each of waitForSlot's three success exits");
-        int helper = backend.indexOf("private void celtium$drainBindlessReleases()");
+        int helper = backend.indexOf("void celtium$drainBindlessReleases()");
         assertTrue(helper >= 0, "the drain helper is declared");
         String body = backend.substring(helper, helper + 600);
         assertTrue(body.contains("celtium$bindlessBindingOrNull()")

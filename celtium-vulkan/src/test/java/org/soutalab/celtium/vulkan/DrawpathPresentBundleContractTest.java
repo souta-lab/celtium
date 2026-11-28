@@ -119,7 +119,7 @@ class DrawpathPresentBundleContractTest {
         assertTrue(backend.contains("void celtium$noteStalledOnDeviceLoss()"),
                 "the backend has the sync door");
         String door = region(backend, "void celtium$noteStalledOnDeviceLoss()",
-                "private static final int FAIL_IDLE_AFTER");
+                "static final int FAIL_IDLE_AFTER");
         assertTrue(door.contains("this.context.celtium$isDeviceLost()"),
                 "the door reads the context's loss fact");
         assertTrue(door.contains("this.noteStalled()"),

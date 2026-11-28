@@ -72,7 +72,7 @@ class BoundTargetRoutedClearTest {
     void theConsumeConsultsTheRoutedAllowance() throws IOException {
         String source = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
-        int consume = source.indexOf("private void celtium$consumeRoutedTargetClear(");
+        int consume = source.indexOf("void celtium$consumeRoutedTargetClear(");
         assertTrue(consume >= 0, "the consume is declared");
         String body = source.substring(consume, consume + 4000);
         assertTrue(body.contains("celtium$routedDepthClearAllowed(depthKey,"),

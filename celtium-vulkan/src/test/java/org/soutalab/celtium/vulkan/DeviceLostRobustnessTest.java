@@ -53,7 +53,7 @@ class DeviceLostRobustnessTest {
     void theSettleConsultsTheRuleBeforeItsThrow() throws IOException {
         String source = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java"));
-        int settleStart = source.indexOf("private boolean settleGpu(String reason)");
+        int settleStart = source.indexOf("boolean settleGpu(String reason)");
         assertTrue(settleStart >= 0, "settleGpu is declared");
         String settle = source.substring(settleStart, settleStart + 6000);
         int rule = settle.indexOf("celtium$settleReportsDeviceLoss(result)");

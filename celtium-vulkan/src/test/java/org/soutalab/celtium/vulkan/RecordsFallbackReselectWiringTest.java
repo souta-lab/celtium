@@ -78,7 +78,7 @@ class RecordsFallbackReselectWiringTest {
         // The reselection replaces the selection the open segment's entries will bind at
         // their flush, so the capture seat's retry must stand after a flush of that
         // segment - the order the method's own mid-flush retry already uses.
-        int capture = backend.indexOf("private boolean celtium$tryCaptureBatchGroup");
+        int capture = backend.indexOf("boolean celtium$tryCaptureBatchGroup");
         int flush = backend.indexOf("celtium$flushBatchSegment();", capture);
         int reselect = backend.indexOf("this.drawRecords.reselectFallback()", capture);
         assertTrue(capture >= 0 && flush > capture && reselect > flush,

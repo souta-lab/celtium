@@ -49,7 +49,7 @@ class ChainPairMultiFramebufferTest {
     @Test
     void theIdentityCountedAskDispatchesByCount() throws IOException {
         String body = methodSlice(backendSource(),
-                "private long ensureChainPairFramebuffer(long identity, long renderPass, int colorCount) {", 2200);
+                "long ensureChainPairFramebuffer(long identity, long renderPass, int colorCount) {", 2200);
         assertTrue(body.contains("framebufferCache().chainPair(identity, renderPass, glless, this.targetWidth,"),
                 "a one-colour ask on an explicit identity delegates to the legacy entry for that identity");
         assertTrue(body.contains("framebufferCache().chainPairMulti(identity, renderPass, glless, colorCount,"),
@@ -59,7 +59,7 @@ class ChainPairMultiFramebufferTest {
     @Test
     void theCountedAskDispatchesByCount() throws IOException {
         String body = methodSlice(backendSource(),
-                "private long ensureChainPairFramebuffer(long renderPass, int colorCount) {", 2200);
+                "long ensureChainPairFramebuffer(long renderPass, int colorCount) {", 2200);
         assertTrue(body.contains("return ensureChainPairFramebuffer(renderPass);"),
                 "a one-colour ask delegates to the legacy entry");
         assertTrue(body.contains("framebufferCache().chainPairMulti(renderPass, glless, colorCount,"),
@@ -69,7 +69,7 @@ class ChainPairMultiFramebufferTest {
     @Test
     void theLegacyEntryKeepsItsSingleColourShape() throws IOException {
         String body = methodSlice(backendSource(),
-                "private long ensureChainPairFramebuffer(long renderPass) {", 600);
+                "long ensureChainPairFramebuffer(long renderPass) {", 600);
         assertTrue(body.contains("framebufferCache().chainPair(renderPass, glless, this.targetWidth,"),
                 "the uncounted ask still serves the one-colour entry");
         assertFalse(body.contains(".chainPairMulti(renderPass"),

@@ -120,7 +120,7 @@ class RingRecordsSeparationContractTest {
     @Test
     @DisplayName("the queue discard frees non-borrowed meshes before recycling their groups")
     void theDiscardFreesMeshesBeforeRecycling() throws IOException {
-        String body = methodBody(read(BACKEND), "private void celtium$discardImmediateGroups()");
+        String body = methodBody(read(BACKEND), "void celtium$discardImmediateGroups()");
         int free = body.indexOf("group.mesh.delete()");
         int recycle = body.indexOf("ImmediateGroup.recycle(group)");
         assertTrue(free >= 0, "a discard that only recycles leaks every dropped group's ring hold");
@@ -133,7 +133,7 @@ class RingRecordsSeparationContractTest {
     @Test
     @DisplayName("a group built for a non-main target never opens a ring mesh")
     void nonMainTargetGroupsSkipTheRing() throws IOException {
-        String body = methodBody(read(BACKEND), "private VulkanDynamicMesh celtium$newImmediateMesh()");
+        String body = methodBody(read(BACKEND), "VulkanDynamicMesh celtium$newImmediateMesh()");
         int gate = body.indexOf("this.targetRegistry.currentIsMain()");
         int ring = body.indexOf("openRingMesh(");
         assertTrue(gate >= 0, "the mesh home is decided by the registry's routing answer");

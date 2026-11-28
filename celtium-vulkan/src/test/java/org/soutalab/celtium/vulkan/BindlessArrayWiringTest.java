@@ -111,8 +111,8 @@ class BindlessArrayWiringTest {
     @Test
     void captureResolvesTheIndexAndFlagsTheEntry() throws IOException {
         String backend = read(BACKEND);
-        int capture = backend.indexOf("private boolean celtium$tryCaptureBatchGroup(");
-        int intern = backend.indexOf("private int celtium$internBatchState(", capture);
+        int capture = backend.indexOf("boolean celtium$tryCaptureBatchGroup(");
+        int intern = backend.indexOf("int celtium$internBatchState(", capture);
         assertTrue(capture >= 0 && intern > capture, "the capture region is located");
         String body = backend.substring(capture, intern);
         assertTrue(body.contains("celtium$bindlessIndex(celtium$registry().get(textureSlot), textureSlot)"),
@@ -181,8 +181,8 @@ class BindlessArrayWiringTest {
     @Test
     void captureCarriesTheArrayTwinsPushBytes() throws IOException {
         String backend = read(BACKEND);
-        int capture = backend.indexOf("private boolean celtium$tryCaptureBatchGroup(");
-        int intern = backend.indexOf("private int celtium$internBatchState(", capture);
+        int capture = backend.indexOf("boolean celtium$tryCaptureBatchGroup(");
+        int intern = backend.indexOf("int celtium$internBatchState(", capture);
         assertTrue(capture >= 0 && intern > capture, "the capture region is located");
         String body = backend.substring(capture, intern);
         int adopted = body.indexOf("captureTwin = arrayTwin;");

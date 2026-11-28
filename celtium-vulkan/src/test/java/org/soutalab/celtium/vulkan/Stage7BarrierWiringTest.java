@@ -152,7 +152,7 @@ class Stage7BarrierWiringTest {
     @DisplayName("batch segments are confirmed at the funnel's far side")
     void batchSegmentsAreConfirmed() throws IOException {
         String backend = read(BACKEND);
-        assertTrue(backend.contains("private boolean celtium$flushBatchSegment()"),
+        assertTrue(backend.contains("boolean celtium$flushBatchSegment()"),
                 "the segment confirmation receiver exists");
         assertTrue(backend.contains("private final class BatchDrawSink implements"),
                 "the batch draw sink is the segment receiver's partner");

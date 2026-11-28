@@ -122,7 +122,7 @@ class SlotConfirmationRingResetContractTest {
     @DisplayName("the confirmation tail resets the confirmed slot's ring, exactly once")
     void theConfirmationTailResetsTheRing() throws IOException {
         String body = methodBody(read(BACKEND),
-                "private void celtium$noteSlotConfirmed(int slot, boolean lostDevice)");
+                "void celtium$noteSlotConfirmed(int slot, boolean lostDevice)");
         assertEquals(1, occurrences(body, "this.context.celtium$resetFrameLinearSlot(slot);"),
                 "every confirmation route runs through this tail, so the reset seated here is the"
                         + " one every confirmed slot gets - poll-confirmed slots included");
@@ -131,7 +131,7 @@ class SlotConfirmationRingResetContractTest {
     @Test
     @DisplayName("the slot wait carries no ring reset of its own")
     void theSlotWaitCarriesNoRingReset() throws IOException {
-        String body = methodBody(read(BACKEND), "private boolean waitForSlot(int slot)");
+        String body = methodBody(read(BACKEND), "boolean waitForSlot(int slot)");
         assertFalse(body.contains("resetFrameLinearSlot"),
                 "the wait's three private reset copies are removed: a second seat is how the"
                         + " poll route came to be skipped, and a wait-side copy must not grow back");
@@ -147,7 +147,7 @@ class SlotConfirmationRingResetContractTest {
     @Test
     @DisplayName("the completion poll confirms through the tail")
     void thePollConfirmsThroughTheTail() throws IOException {
-        String body = methodBody(read(BACKEND), "private int celtium$pollCompletedSlots()");
+        String body = methodBody(read(BACKEND), "int celtium$pollCompletedSlots()");
         assertTrue(body.contains("celtium$noteSlotConfirmed(slot, false)"),
                 "a fence the poll observes signalled confirms through the tail, ring reset included");
         assertTrue(body.contains("celtium$noteSlotConfirmed(slot, true)"),
@@ -168,7 +168,7 @@ class SlotConfirmationRingResetContractTest {
     @Test
     @DisplayName("the device-idle settle confirms every pending slot through the tail")
     void theSettleConfirmsThroughTheTail() throws IOException {
-        String body = methodBody(read(BACKEND), "private boolean settleGpu(String reason)");
+        String body = methodBody(read(BACKEND), "boolean settleGpu(String reason)");
         assertTrue(body.contains("celtium$noteSlotConfirmed(slot, false)"),
                 "vkDeviceWaitIdle confirms every pending slot, and it does so through the tail");
     }
