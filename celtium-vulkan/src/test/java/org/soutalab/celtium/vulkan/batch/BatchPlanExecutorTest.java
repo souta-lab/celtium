@@ -18,12 +18,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * even for the same slot, because the array entry leaves the texture array bound at the
  * set index the per-texture set occupies. What a bind or a draw does on a real command
  * buffer is the production sink's side of the seam and stays with the wiring leg.
+ *
+ * <p>The accounting half of the contract (G2-24) is fixed here too: a sink answers each
+ * draw with accepted or dropped, a drop is counted at the sink's seat as it is answered,
+ * and {@code execute} returns the accepted tally - so the dropped count of an execution
+ * is the entry count minus the return value, exactly the seat counter's growth.
  */
 class BatchPlanExecutorTest {
 
     /** Records every sink call as one line, in call order. */
     private static final class RecordingSink implements BatchPlanExecutor.DrawSink {
         final List<String> calls = new ArrayList<>();
+        /** Entries (named by firstInstance) this sink refuses - the texture-drop stand-in. */
+        final java.util.Set<Integer> refusedInstances = new java.util.HashSet<>();
+        /** The fake's seat counter: one per refused entry, counted as the drop is answered. */
+        int seatDropped;
 
         @Override
         public void bindPipeline(int pipelineKey) {
@@ -41,10 +50,17 @@ class BatchPlanExecutorTest {
         }
 
         @Override
-        public void drawIndexed(int indexCount, int instanceCount, int firstIndex,
-                                int vertexOffset, int firstInstance) {
-            this.calls.add("draw ic=" + indexCount + " n=" + instanceCount
-                    + " fi=" + firstIndex + " vo=" + vertexOffset + " inst=" + firstInstance);
+        public boolean drawIndexed(int indexCount, int instanceCount, int firstIndex,
+                                   int vertexOffset, int firstInstance) {
+            String line = " ic=" + indexCount + " n=" + instanceCount
+                    + " fi=" + firstIndex + " vo=" + vertexOffset + " inst=" + firstInstance;
+            if (this.refusedInstances.contains(Integer.valueOf(firstInstance))) {
+                this.seatDropped++;
+                this.calls.add("dropped" + line);
+                return false;
+            }
+            this.calls.add("draw" + line);
+            return true;
         }
     }
 
@@ -84,7 +100,8 @@ class BatchPlanExecutorTest {
     @Test
     void emptyPlanIssuesNothing() {
         RecordingSink sink = new RecordingSink();
-        new BatchPlanExecutor().execute(plan(new int[0], new int[0], 0), sink);
+        int accepted = new BatchPlanExecutor().execute(plan(new int[0], new int[0], 0), sink);
+        assertEquals(0, accepted);
         assertTrue(sink.calls.isEmpty());
     }
 
@@ -92,7 +109,7 @@ class BatchPlanExecutorTest {
     void entriesAreIssuedInPlanOrderWithTheirFieldsVerbatim() {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = recordRidingPlan(new int[]{7, 8, 9}, new int[]{1, 1, 1}, 3);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(3, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=7", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "pipeline=8", "draw ic=12 n=1 fi=6 vo=101 inst=1",
@@ -103,7 +120,7 @@ class BatchPlanExecutorTest {
     void pipelineBindsOnlyWhereTheKeyChanges() {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = recordRidingPlan(new int[]{5, 5, 6, 6, 5}, new int[]{1, 1, 1, 1, 1}, 5);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(5, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=5", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
@@ -116,7 +133,7 @@ class BatchPlanExecutorTest {
     void textureRebindsAtEveryChangePointOnThePerTexturePath() {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = plan(new int[]{5, 5, 5, 5}, new int[]{11, 11, 22, 11}, 4);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(4, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=5", "texture=11", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
@@ -128,7 +145,7 @@ class BatchPlanExecutorTest {
     void textureChangesNeverRebindForRecordRidingEntries() {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = recordRidingPlan(new int[]{5, 5, 5}, new int[]{11, 22, 33}, 3);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(3, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=5", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "draw ic=12 n=1 fi=6 vo=101 inst=1",
@@ -146,7 +163,7 @@ class BatchPlanExecutorTest {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = plan(new int[]{5, 6, 5}, new int[]{11, 22, 11}, new int[]{0, 0, 0},
                 new boolean[]{false, true, false}, 3);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(3, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=5", "texture=11", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "pipeline=6", "draw ic=12 n=1 fi=6 vo=101 inst=1",
@@ -162,7 +179,7 @@ class BatchPlanExecutorTest {
     void stateChangesReissueStateWithoutRebindingPipelineOrTexture() {
         RecordingSink sink = new RecordingSink();
         BatchPlan plan = plan(new int[]{5, 5}, new int[]{11, 11}, new int[]{3, 4}, 2);
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(2, new BatchPlanExecutor().execute(plan, sink));
         assertEquals(List.of(
                 "pipeline=5", "texture=11", "state=3", "draw ic=6 n=1 fi=0 vo=100 inst=0",
                 "state=4", "draw ic=12 n=1 fi=6 vo=101 inst=1"), sink.calls);
@@ -189,12 +206,50 @@ class BatchPlanExecutorTest {
         assertEquals(3, plan.entryCount());
 
         RecordingSink sink = new RecordingSink();
-        new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(3, new BatchPlanExecutor().execute(plan, sink));
         List<String> bindsAndDraws = new ArrayList<>();
         for (String call : sink.calls) {
             bindsAndDraws.add(call.startsWith("draw") ? "draw" : call);
         }
         assertEquals(List.of("pipeline=5", "texture=101", "state=0", "draw",
                 "texture=202", "draw", "texture=101", "draw"), bindsAndDraws);
+    }
+
+    /**
+     * The accounting contract (G2-24): entries the sink refuses are answered as drops,
+     * counted at the sink's seat, and left out of the accepted tally the executor returns -
+     * so the caller's dropped count (entries minus accepted) equals the seat counter's
+     * growth exactly, and no dropped entry is ever accounted as drawn. The walk itself is
+     * undisturbed: every entry is still offered once, in plan order.
+     */
+    @Test
+    void droppedEntriesAreAnsweredCountedAtTheSeatAndLeftOutOfTheAcceptedTally() {
+        RecordingSink sink = new RecordingSink();
+        sink.refusedInstances.add(Integer.valueOf(1));
+        sink.refusedInstances.add(Integer.valueOf(3));
+        BatchPlan plan = recordRidingPlan(new int[]{5, 5, 5, 5}, new int[]{1, 1, 1, 1}, 4);
+        int accepted = new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(2, accepted);
+        assertEquals(2, sink.seatDropped);
+        assertEquals(plan.entryCount() - accepted, sink.seatDropped);
+        assertEquals(List.of(
+                "pipeline=5", "state=0", "draw ic=6 n=1 fi=0 vo=100 inst=0",
+                "dropped ic=12 n=1 fi=6 vo=101 inst=1",
+                "draw ic=18 n=1 fi=12 vo=102 inst=2",
+                "dropped ic=24 n=1 fi=18 vo=103 inst=3"), sink.calls);
+    }
+
+    /** A plan whose entries all drop accepts nothing, and the seat holds every drop. */
+    @Test
+    void aPlanWhoseEntriesAllDropAcceptsNothing() {
+        RecordingSink sink = new RecordingSink();
+        sink.refusedInstances.add(Integer.valueOf(0));
+        sink.refusedInstances.add(Integer.valueOf(1));
+        BatchPlan plan = recordRidingPlan(new int[]{5, 5}, new int[]{1, 1}, 2);
+        int accepted = new BatchPlanExecutor().execute(plan, sink);
+        assertEquals(0, accepted);
+        assertEquals(plan.entryCount(), sink.seatDropped);
+        assertTrue(sink.calls.stream().noneMatch(call -> call.startsWith("draw ")),
+                "no dropped entry is recorded as a draw");
     }
 }

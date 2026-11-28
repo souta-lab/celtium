@@ -138,10 +138,10 @@ class BindlessArrayWiringTest {
                 "the backend no longer pins the batcher to the per-texture shape");
         assertFalse(read(BATCHER).contains("bindlessEnabled"),
                 "the batcher holds no frame-wide bindless flag");
-        assertTrue(read(EXECUTOR).contains("public void execute(BatchPlan plan, DrawSink sink)"),
+        assertTrue(read(EXECUTOR).contains("public int execute(BatchPlan plan, DrawSink sink)"),
                 "the executor takes no frame-wide shape argument");
-        assertTrue(read(BACKEND).contains("this.batchExecutor.execute(plan, new BatchDrawSink(stack));"),
-                "the flush hands the executor the plan and the sink only");
+        assertTrue(read(BACKEND).contains("int acceptedDraws = this.batchExecutor.execute(plan, new BatchDrawSink(stack));"),
+                "the flush hands the executor the plan and the sink only, and accounts by its verdict");
     }
 
     /** The route census carries the array count, so the verification leg can read the share. */

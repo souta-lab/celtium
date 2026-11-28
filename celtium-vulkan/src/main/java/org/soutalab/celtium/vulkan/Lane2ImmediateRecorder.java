@@ -19769,7 +19769,21 @@ this.frame.frameBufferOpen = false;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 vkCmdBindVertexBuffers(this.frame.commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0L));
                 vkCmdBindIndexBuffer(this.frame.commandBuffer, indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
-                this.batchExecutor.execute(plan, new BatchDrawSink(stack));
+                long droppedBefore = this.batchDroppedDraws;
+                int acceptedDraws = this.batchExecutor.execute(plan, new BatchDrawSink(stack));
+                // The segment is accounted by the executor's verdict, not by submission
+                // (G2-24): each entry the sink refused was counted at the seat as it
+                // refused it, so the seat counter's growth over this call is the dropped
+                // tally and equals the entries the accepted tally leaves over. A sink
+                // that ever answered a drop without counting it would leave the loss
+                // keys short; count any such shortfall here, at the seat, so the keys
+                // the verification summary reads can never understate a drop. With the
+                // production sink the shortfall is always zero.
+                long countedDrops = this.batchDroppedDraws - droppedBefore;
+                int unaccountedDrops = plan.entryCount() - acceptedDraws - (int) countedDrops;
+                if (unaccountedDrops > 0) {
+                    this.batchDroppedDraws += unaccountedDrops;
+                }
             }
             // The segment bound pipelines, sets and buffers outside the immediate bind cache's knowledge:
             // the next per-group draw rebinds everything, exactly as after a window head.
@@ -20568,11 +20582,13 @@ this.frame.frameBufferOpen = false;
         }
 
         @Override
-        public void drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
+        public boolean drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
                 int firstInstance) {
             if (this.textureDropped) {
+                // The drop is counted here, at the seat, and answered as a drop: the
+                // executor's accepted tally never takes this entry for drawn (G2-24).
                 batchDroppedDraws++;
-                return;
+                return false;
             }
             if (this.twin.pushBytes > 0) {
                 // This family's fragment stage reads part of its input from the push range, not from
@@ -20590,6 +20606,7 @@ this.frame.frameBufferOpen = false;
                         org.lwjgl.system.MemoryUtil.memByteBuffer(address, this.twin.pushBytes));
             }
             vkCmdDrawIndexed(Lane2ImmediateRecorder.this.frame.commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            return true;
         }
     }
 

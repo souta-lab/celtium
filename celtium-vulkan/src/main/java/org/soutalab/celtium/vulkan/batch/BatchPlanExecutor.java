@@ -37,6 +37,15 @@ package org.soutalab.celtium.vulkan.batch;
  * {@link DrawSink#drawIndexed} with one {@code vkCmdDrawIndexed} carrying the entry's fields
  * verbatim. Tests answer it with a recording fake, which is what fixes the executor's own
  * contract here: order, bind points and argument pass-through.
+ *
+ * <p>The draw submission carries the accounting contract (G2-24): {@code drawIndexed}
+ * answers whether the entry was accepted (recorded) or dropped, a sink that drops an
+ * entry counts the drop at its own seat before answering {@code false}, and
+ * {@link #execute} returns the accepted tally, so the dropped count of one execution is
+ * {@code plan.entryCount()} minus the return value - by contract exactly the seat drop
+ * counter's growth over the call. No caller ever has to take "submitted" for "drawn":
+ * the old void signature did exactly that, and a draw the sink dropped was accounted as
+ * drawn with no way to correct it after the fact.
  */
 public final class BatchPlanExecutor {
 
@@ -61,13 +70,27 @@ public final class BatchPlanExecutor {
          */
         void bindState(int stateKey);
 
-        /** Records one indexed draw with the plan entry's fields, verbatim. */
-        void drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
-                         int firstInstance);
+        /**
+         * Records one indexed draw with the plan entry's fields, verbatim.
+         *
+         * @return true when the draw was recorded (accepted); false when the entry was
+         *         dropped. A dropping sink counts the drop at its seat before returning
+         *         false - a drop is never silent and never reported as drawn. A bind-side
+         *         refusal (a texture whose set could not be rebuilt, say) is carried to
+         *         the entry's draw and answered here, at the entry the refusal costs.
+         */
+        boolean drawIndexed(int indexCount, int instanceCount, int firstIndex, int vertexOffset,
+                            int firstInstance);
     }
 
-    /** Issues {@code plan}'s entries, in plan order, on {@code sink}. */
-    public void execute(BatchPlan plan, DrawSink sink) {
+    /**
+     * Issues {@code plan}'s entries, in plan order, on {@code sink}.
+     *
+     * @return how many of the plan's entries the sink accepted; the rest were dropped
+     *         (and counted at the sink's seat, per the {@link DrawSink} contract)
+     */
+    public int execute(BatchPlan plan, DrawSink sink) {
+        int accepted = 0;
         int entries = plan.entryCount();
         boolean pipelineBound = false;
         int boundPipeline = 0;
@@ -102,9 +125,12 @@ public final class BatchPlanExecutor {
                 boundState = stateKey;
                 stateBound = true;
             }
-            sink.drawIndexed(plan.indexCount(entry), plan.instanceCount(entry),
+            if (sink.drawIndexed(plan.indexCount(entry), plan.instanceCount(entry),
                     plan.firstIndex(entry), plan.vertexOffset(entry),
-                    plan.firstInstance(entry));
+                    plan.firstInstance(entry))) {
+                accepted++;
+            }
         }
+        return accepted;
     }
 }
