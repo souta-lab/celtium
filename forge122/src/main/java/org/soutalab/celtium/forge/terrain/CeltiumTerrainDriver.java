@@ -541,7 +541,11 @@ public final class CeltiumTerrainDriver {
             dirty.remove(k);
             snapshots++;
             int sx = keyX(k), sy = keyY(k), sz = keyZ(k);
-            WorldSectionSnapshot snapshot = new WorldSectionSnapshot();
+            WorldSectionSnapshot snapshot = scheduler.acquireSnapshot();
+            // A fill that throws leaves the snapshot half-written: it is dropped, not
+            // returned to the pool (the pre-pool code dropped it the same way). Once the
+            // build is handed off, the future's completion - success, failure, or the
+            // cancellation an unload triggers - returns the snapshot to the pool.
             ForgeSectionScanner.fill(snapshot, world, faceData, fluids, sx, sy, sz);
             lightFingerprints.put(k, lightFingerprint(sx, sy, sz));
             if (!populatedChunks.contains(net.minecraft.util.math.ChunkPos.asLong(sx, sz))) {
@@ -552,7 +556,10 @@ public final class CeltiumTerrainDriver {
             } else {
                 awaitingLight.remove(k);
             }
-            pending.put(k, scheduler.build(snapshot, faceData, MesherOptions.PACK_OFF));
+            CompletableFuture<MeshBuffers> future =
+                    scheduler.build(snapshot, faceData, MesherOptions.PACK_OFF);
+            future.whenComplete((buffers, error) -> scheduler.releaseSnapshot(snapshot));
+            pending.put(k, future);
         }
     }
 
