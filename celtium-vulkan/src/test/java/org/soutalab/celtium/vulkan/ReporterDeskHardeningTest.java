@@ -115,7 +115,7 @@ class ReporterDeskHardeningTest {
         assertTrue(delete >= 0, "delete() is declared");
         String deleteBody = source.substring(delete, delete + 7000);
         int guard = deleteBody.indexOf("if (this.fullyDeleted) {");
-        int settle = deleteBody.indexOf("if (!settleGpu(\"backend delete\")) {");
+        int settle = deleteBody.indexOf("if (!this.frameCoordinator.settleGpu(\"backend delete\")) {");
         int sequence = deleteBody.indexOf("celtium$deleteSettled();");
         int caught = deleteBody.indexOf("catch (RuntimeException | LinkageError failure)", sequence);
         assertTrue(guard >= 0 && guard < settle,

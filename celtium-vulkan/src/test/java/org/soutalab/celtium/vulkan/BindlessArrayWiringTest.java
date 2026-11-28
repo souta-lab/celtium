@@ -115,7 +115,7 @@ class BindlessArrayWiringTest {
         int intern = backend.indexOf("int celtium$internBatchState(", capture);
         assertTrue(capture >= 0 && intern > capture, "the capture region is located");
         String body = backend.substring(capture, intern);
-        assertTrue(body.contains("celtium$bindlessIndex(celtium$registry().get(textureSlot), textureSlot)"),
+        assertTrue(body.contains("celtium$bindlessIndex(this.owner.celtium$registry().get(textureSlot), textureSlot)"),
                 "the index is resolved at capture through the pure lookup");
         assertTrue(body.contains("celtium$arrayPipelineForBatch(recordsTwin,"),
                 "the array twin is resolved from the prepared twin");

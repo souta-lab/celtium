@@ -82,7 +82,7 @@ class SwapchainRebuildOrderContractTest {
         assertEquals(0, count(body, "if (!ensureSwapchain())"),
                 "the full ensure must not gate the swap point again - it would consume the"
                         + " pending rebuild under the borrow this body presents");
-        int present = body.indexOf("backend.swapchain.presentDirect(backend.frameTarget)");
+        int present = body.indexOf("funnel.swapchain.presentDirect(funnel.frameTarget)");
         assertTrue(present >= 0, "the direct present call is present");
         int consume = body.indexOf("consumeSwapchainRebuild();");
         assertTrue(consume > present,

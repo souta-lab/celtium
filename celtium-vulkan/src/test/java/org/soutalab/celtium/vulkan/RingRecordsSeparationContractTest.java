@@ -141,7 +141,7 @@ class RingRecordsSeparationContractTest {
                 "the ring is opened only inside the main-target branch; a non-main group falls"
                         + " through to the arena and owning meshes, so it cannot pin a ring slot"
                         + " while it waits for its target's pass");
-        assertTrue(body.contains("this.frameArena.openMesh()"),
+        assertTrue(body.contains("this.frame.frameArena.openMesh()"),
                 "the arena remains the next home down for a group the ring does not take");
     }
 

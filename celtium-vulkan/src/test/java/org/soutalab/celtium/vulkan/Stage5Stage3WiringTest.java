@@ -82,8 +82,8 @@ class Stage5Stage3WiringTest {
         int registry = copyReadSide.indexOf("VulkanTextureRegistry celtium$registry()");
         assertTrue(registry >= 0, "the registry accessor is declared");
         String body = copyReadSide.substring(registry, registry + 1200);
-        assertTrue(body.contains("new VulkanTextureRegistry(this.backend.context)")
-                        && body.contains("setBindlessBinding(this.backend.context.bindlessBinding())"),
+        assertTrue(body.contains("new VulkanTextureRegistry(frame.context)")
+                        && body.contains("setBindlessBinding(frame.context.bindlessBinding())"),
                 "creation and injection happen together, before any texture exists");
     }
 
@@ -129,7 +129,7 @@ class Stage5Stage3WiringTest {
         String backend = read(BACKEND) + read(COORDINATOR) + read(ADAPTER);
         assertTrue(backend.contains("InstanceDataStore.create(this.context)"),
                 "the store is created through the unified store's factory");
-        assertTrue(backend.contains("this.drawRecords.selectSlot(this.frameSlot)"),
+        assertTrue(backend.contains("this.drawRecords.selectSlot(this.frame.frameSlot)"),
                 "each window selects the frame slot being built");
         assertTrue(backend.contains("this.drawRecords.bindLightmap("),
                 "the frame's lightmap is bound into the unified set 1");

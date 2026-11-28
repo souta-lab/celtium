@@ -112,7 +112,7 @@ class Stage7BarrierWiringTest {
                         "// ---- attribute stacks")
                         .contains("FramebufferBindings.current().bind(target, name);"),
                 "with no entry installed the route still lands on the bindings seat");
-        assertTrue(frontend.contains("vulkan.celtium$readPixels(FramebufferBindings.current().readFramebuffer()"),
+        assertTrue(frontend.contains("vulkanBackend().celtium$readPixels(FramebufferBindings.current().readFramebuffer()"),
                 "the readback serve reaches the backend's readPixels entry");
         assertTrue(frontend.contains("vulkan.celtium$getTexImage(NativeTextureBindings.current().texture2d()"),
                 "the getTexImage serve reaches the backend's readback entry");

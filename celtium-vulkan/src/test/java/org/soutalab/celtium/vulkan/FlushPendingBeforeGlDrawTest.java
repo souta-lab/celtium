@@ -33,6 +33,10 @@ class FlushPendingBeforeGlDrawTest {
         // installed by hand: the per-format post-accept drop row is one of them since the drawpath
         // audit (DP-10) wired it at the replacement-drop seat below.
         setField(backend, "postAcceptDroppedByFormat", new int[VulkanImmediateFormats.COUNT]);
+        // E7: the frame state (frameId and friends) lives on the FrameCoordinator the funnel
+        // points at; the flush path reads the current frame id through it.
+        setField(backend, "frame",
+                (FrameCoordinator) unsafe.allocateInstance(FrameCoordinator.class));
         return backend;
     }
 

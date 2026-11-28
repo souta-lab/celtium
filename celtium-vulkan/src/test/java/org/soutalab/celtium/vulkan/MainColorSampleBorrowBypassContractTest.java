@@ -46,7 +46,7 @@ class MainColorSampleBorrowBypassContractTest {
                 "the route notes the main-sampling demand on the backend latch");
         assertTrue(body.contains("hasLivePresentBorrow()"),
                 "the closure is conditioned on a live present borrow");
-        int closed = body.indexOf("this.mainColorSampledBorrowClosedFrame = this.frameId;");
+        int closed = body.indexOf("this.mainColorSampledBorrowClosedFrame = this.frame.frameId;");
         assertTrue(closed >= 0, "the closure records the frame it closed");
         assertTrue(body.indexOf("return false;", closed) > closed,
                 "the publication is refused on the closed frame, after recording it");
@@ -62,7 +62,7 @@ class MainColorSampleBorrowBypassContractTest {
                 "the closed frame starts at the no-frame sentinel");
         assertEquals(1, source.split("this\\.mainColorSampled = true;", -1).length - 1,
                 "one site notes the demand: the frame-image publication route");
-        assertEquals(1, source.split("this\\.mainColorSampledBorrowClosedFrame = this\\.frameId;", -1).length - 1,
+        assertEquals(1, source.split("this\\.mainColorSampledBorrowClosedFrame = this\\.frame\\.frameId;", -1).length - 1,
                 "one site records a closed frame: the live-borrow refusal in the same route");
     }
 
@@ -73,7 +73,7 @@ class MainColorSampleBorrowBypassContractTest {
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java"));
         int readback = source.indexOf("celtium$noteBorrowBypass(\"readback\")");
         assertTrue(readback >= 0, "the readback bypass condition is present");
-        int condition = source.indexOf("if (backend.mainColorSampled) {");
+        int condition = source.indexOf("if (funnel.mainColorSampled) {");
         assertTrue(condition > readback,
                 "the main-sampled condition follows the pre-existing bypass conditions");
         int noted = source.indexOf("celtium$noteBorrowBypass(\"main-sampled\")", condition);

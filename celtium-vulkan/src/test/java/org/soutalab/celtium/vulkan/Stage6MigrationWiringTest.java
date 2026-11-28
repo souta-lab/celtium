@@ -102,13 +102,13 @@ class Stage6MigrationWiringTest {
     @DisplayName("the host dispatches every format to its family's twin factory")
     void hostDispatchesEveryFamily() throws IOException {
         String host = read(HOST);
-        assertTrue(host.contains("VulkanImmediateItemRecordsPipeline.create(this.b.context, pass,"),
+        assertTrue(host.contains("VulkanImmediateItemRecordsPipeline.create(b.context, pass,"),
                 "item twins are built by the host");
-        assertTrue(host.contains("VulkanImmediateBlockRecordsPipeline.create(this.b.context, pass,"),
+        assertTrue(host.contains("VulkanImmediateBlockRecordsPipeline.create(b.context, pass,"),
                 "block twins are built by the host");
-        assertTrue(host.contains("VulkanImmediateColourRecordsPipeline.create(this.b.context, pass,"),
+        assertTrue(host.contains("VulkanImmediateColourRecordsPipeline.create(b.context, pass,"),
                 "colour twins are built by the host");
-        assertTrue(host.contains("VulkanImmediateTextureRecordsPipeline.createForTexGen(this.b.context, pass,"),
+        assertTrue(host.contains("VulkanImmediateTextureRecordsPipeline.createForTexGen(b.context, pass,"),
                 "texgen twins are built by the host");
         assertTrue(host.contains("VulkanImmediateTextureRecordsPipeline.createForCombine4("),
                 "combine4 twins are built by the host");

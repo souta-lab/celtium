@@ -73,10 +73,10 @@ class DrawpathTerrainHealthContractTest {
     @Test
     void atlasBackoffEntriesAreCountedAtTheFailureSeat() throws IOException {
         String copy = read(COPY_READ_SIDE);
-        assertEquals(1, count(copy, "this.backend.atlasRefreshFailures++"),
+        assertEquals(1, count(copy, "funnel.atlasRefreshFailures++"),
                 "exactly one seat counts atlas backoff entries");
         int failed = copy.indexOf("block atlas upload failed");
-        int counted = copy.indexOf("this.backend.atlasRefreshFailures++");
+        int counted = copy.indexOf("funnel.atlasRefreshFailures++");
         int backoff = copy.indexOf("this.backend.atlasRefreshCountdown = 400", counted);
         assertTrue(failed >= 0 && counted > failed && backoff > counted,
                 "the count sits in the failure catch, beside the backoff it names");

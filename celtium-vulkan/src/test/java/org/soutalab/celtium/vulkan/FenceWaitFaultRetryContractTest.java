@@ -137,7 +137,14 @@ class FenceWaitFaultRetryContractTest {
     }
 
     private static String readBackend() throws IOException {
-        return Files.readString(findRepoFile(BACKEND_SOURCE)).replace("\r\n", "\n");
+        // E7: the former monolith is three seat files; the backend surface is their union
+        // (the gpuStalled reader-guard census still totals 33 across the seats).
+        return (Files.readString(findRepoFile(BACKEND_SOURCE))
+                + Files.readString(findRepoFile(
+                        "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"))
+                + Files.readString(findRepoFile(
+                        "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java")))
+                .replace("\r\n", "\n");
     }
 
     /** waitForSlot's body: from its signature to the next member's javadoc. */

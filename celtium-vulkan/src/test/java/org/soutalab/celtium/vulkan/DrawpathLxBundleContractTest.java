@@ -95,8 +95,8 @@ class DrawpathLxBundleContractTest {
     @Test
     void theVerifyLineCarriesTheVanillaReceiverCensusAndTheStageGateSummary() throws IOException {
         String diagnostics = read(DIAGNOSTICS);
-        assertTrue(diagnostics.contains("b.frameCoordinator.postChainCreationFailures()"));
-        assertTrue(diagnostics.contains("b.frameCoordinator.postChainUnsupportedRefusals()"));
+        assertTrue(diagnostics.contains("frame.postChainCreationFailures()"));
+        assertTrue(diagnostics.contains("frame.postChainUnsupportedRefusals()"));
         assertTrue(diagnostics.contains("StageGate.system().summary()"));
     }
 

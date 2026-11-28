@@ -77,7 +77,7 @@ class BorrowExtentGateContractTest {
     @Test
     void theGateReadsBothExtentsLiveAndFollowsTheExistingConditions() throws IOException {
         String body = ensureBody();
-        assertTrue(body.contains("backend.swapchain.width(), backend.swapchain.height(),"),
+        assertTrue(body.contains("funnel.swapchain.width(), funnel.swapchain.height(),"),
                 "the generation extent is read from the swapchain at the call");
         assertTrue(body.contains("target.width(), target.height()"),
                 "the target extent is read from the target at the call, so a remake is seen");

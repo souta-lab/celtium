@@ -118,7 +118,7 @@ class FrameImageSamplingInitContractTest {
 
     private static String backendSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"));
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */

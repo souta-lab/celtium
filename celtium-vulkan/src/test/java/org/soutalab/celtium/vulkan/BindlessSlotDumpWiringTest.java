@@ -85,7 +85,9 @@ class BindlessSlotDumpWiringTest {
     /** The dump only runs if the frame completion gate ticks it. */
     @Test
     void frameGateTicksTheDump() throws IOException {
-        String backend = read(BACKEND);
+        // E7: the completion gate is the frame seat's poll; it ticks the dump through the
+        // adapter's registry door.
+        String backend = read("celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java");
         assertTrue(backend.contains("celtium$maybeDumpBindlessSlots()"),
                 "the backend ticks the slot dump from its completion gate");
     }

@@ -24,6 +24,9 @@ class FallbackWiringContractTest {
 
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java";
+    // E7: the slot wait (and its fallback registration) sits on the frame seat.
+    private static final String COORDINATOR =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java";
     private static final String FRAME_ARENA =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameArena.java";
 
@@ -97,11 +100,11 @@ class FallbackWiringContractTest {
      */
     @Test
     void slotWaitCountsOneAttemptAndExactlyOneVerdict() throws IOException {
-        String backend = read(BACKEND);
+        String backend = read(COORDINATOR);
         assertTrue(backend.contains("FallbackPaths.register(FallbackPaths.SYNC_TIMELINE)"),
                 "the backend holds the sync.timeline handle");
 
-        int start = backend.indexOf("private boolean waitForSlot(int slot)");
+        int start = backend.indexOf("boolean waitForSlot(int slot)");
         assertTrue(start >= 0, "waitForSlot is declared");
         int end = backend.length();
         for (String next : new String[] {"\n    private ", "\n    public ", "\n    protected "}) {

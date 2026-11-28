@@ -79,9 +79,9 @@ class DrawpathPresentBundleContractTest {
                 "void runSwapchainProbe()");
         assertTrue(ensure.contains("target.celtium$takeBorrowAcquireVerdict()"),
                 "the borrow ensure consumes the verdict");
-        assertTrue(ensure.contains("backend.swapchain.celtium$noteBorrowOutOfDate()"),
+        assertTrue(ensure.contains("funnel.swapchain.celtium$noteBorrowOutOfDate()"),
                 "an out-of-date borrow latches the rebuild");
-        assertTrue(ensure.contains("backend.swapchain.celtium$noteBorrowSurfaceLost()"),
+        assertTrue(ensure.contains("funnel.swapchain.celtium$noteBorrowSurfaceLost()"),
                 "a lost-surface borrow latches the surface recreation");
         assertTrue(ensure.contains("celtium$reportDeviceLost(\"the borrow acquire\", borrowVerdict)"),
                 "a device-lost borrow reaches the context's loss funnel");
@@ -122,11 +122,11 @@ class DrawpathPresentBundleContractTest {
                 "static final int FAIL_IDLE_AFTER");
         assertTrue(door.contains("this.context.celtium$isDeviceLost()"),
                 "the door reads the context's loss fact");
-        assertTrue(door.contains("this.noteStalled()"),
+        assertTrue(door.contains("this.frame.noteStalled()"),
                 "the door latches the backend's own stall");
 
         String body = presentFrameBody(readRepoFile(PRESENT_SWAPCHAIN_SOURCE));
-        assertEquals(2, countOccurrences(body, "backend.celtium$noteStalledOnDeviceLoss()"),
+        assertEquals(2, countOccurrences(body, "funnel.celtium$noteStalledOnDeviceLoss()"),
                 "the sync runs at the body's head and after its present attempt");
     }
 
@@ -139,7 +139,7 @@ class DrawpathPresentBundleContractTest {
     @Test
     void thePresentBodyTailRunsAfterTheCatch() throws IOException {
         String body = presentFrameBody(readRepoFile(PRESENT_SWAPCHAIN_SOURCE));
-        int catchSeat = body.indexOf("backend.lastPresentResult = \"present threw: \" + error;");
+        int catchSeat = body.indexOf("funnel.lastPresentResult = \"present threw: \" + error;");
         assertTrue(catchSeat >= 0, "the present body's catch exists");
         String afterCatch = body.substring(catchSeat);
         int consume = afterCatch.indexOf("consumeSwapchainRebuild();");
@@ -152,8 +152,8 @@ class DrawpathPresentBundleContractTest {
                 "the present body no longer re-borrows: FP-1 moved the borrow to the frame head");
 
         String backend = readRepoFile(BACKEND_SOURCE) + readRepoFile(COORDINATOR) + readRepoFile(ADAPTER);
-        int begin = backend.indexOf("void beginCommands()");
-        assertTrue(begin >= 0, "the frame's command begin exists");
+        int begin = backend.indexOf("void beginFrame(boolean packActive");
+        assertTrue(begin >= 0, "the frame begin exists (E7: beginCommands integrated into beginFrame)");
         int headBorrow = backend.indexOf("this.presentSwapchain.celtium$ensureBorrowedFrameImage();", begin);
         int reset = backend.indexOf("vkResetCommandBuffer(this.commandBuffer, 0)", begin);
         assertTrue(headBorrow > begin, "the frame head ensures the borrow (FP-1)");
@@ -166,7 +166,7 @@ class DrawpathPresentBundleContractTest {
     @Test
     void thePresentHeartbeatPrintsTheSkipTotal() throws IOException {
         String present = readRepoFile(PRESENT_SWAPCHAIN_SOURCE);
-        assertTrue(present.contains("skips=\" + backend.presentSkips"),
+        assertTrue(present.contains("skips=\" + funnel.presentSkips"),
                 "CELTIUM_PRESENT carries the aggregate presentSkips a leg can gate on");
         assertTrue(present.contains("skipsByReason=[noTarget/stalled="),
                 "the per-reason split stays beside the total");

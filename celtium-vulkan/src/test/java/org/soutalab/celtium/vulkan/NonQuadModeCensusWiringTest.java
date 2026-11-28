@@ -122,13 +122,13 @@ class NonQuadModeCensusWiringTest {
         String diagnostics = read(DIAGNOSTICS);
         assertTrue(diagnostics.contains("celtium/nonQuadByMode["),
                 "the summary carries the census field");
-        assertTrue(diagnostics.contains("b.nonQuadOfferedByMode"),
+        assertTrue(diagnostics.contains("funnel.nonQuadOfferedByMode"),
                 "the summary reads the offered counter");
-        assertTrue(diagnostics.contains("b.nonQuadEmittedByMode"),
+        assertTrue(diagnostics.contains("funnel.nonQuadEmittedByMode"),
                 "the summary reads the emitted counter");
-        assertTrue(diagnostics.contains("b.nonQuadDelegatedByMode"),
+        assertTrue(diagnostics.contains("funnel.nonQuadDelegatedByMode"),
                 "the summary reads the delegated counter");
-        assertTrue(diagnostics.contains("b.nonQuadDroppedByMode"),
+        assertTrue(diagnostics.contains("funnel.nonQuadDroppedByMode"),
                 "the summary reads the dropped counter");
     }
 

@@ -139,7 +139,7 @@ class DrawpathBatchCountingWiringTest {
                 "VERIFY no longer prints the unflushed failure text");
         assertEquals(1, occurrences(diagnostics, "offTargetRefusals="),
                 "the offTargetRefusals key prints exactly once: the live by-reason map");
-        assertTrue(diagnostics.contains("b.offTargetRefusalsByReason"),
+        assertTrue(diagnostics.contains("funnel.offTargetRefusalsByReason"),
                 "the surviving print is the by-reason map");
         assertTrue(diagnostics.contains("\" windowFlushFailures=\" + funnel.targetStatistics.windowFlushFailures()"),
                 "the live window-flush failure counter still prints");

@@ -55,7 +55,7 @@ class NamedTargetLayoutWiringTest {
         String backend = Files.readString(findRepoFile(MAIN + "FrameCoordinator.java"));
         int foreign = backend.indexOf("VulkanGlTexture.beginLayoutRecording(this.commandBuffer);");
         int named = backend.indexOf(
-                "this.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());");
+                "this.funnel.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());");
         assertTrue(foreign >= 0, "the foreign-image recording is opened at beginCommands");
         assertTrue(named > foreign, "the named-target recording opens at the same point");
     }
@@ -64,8 +64,8 @@ class NamedTargetLayoutWiringTest {
     void theCoordinatorCommitsTheRecordingWithTheForeignImageOne() throws IOException {
         String coordinator = Files.readString(findRepoFile(MAIN + "FrameCoordinator.java"));
         String bookkeeping = methodSlice(coordinator, "private void celtium$noteSubmissionBookkeeping(", 4000);
-        int foreign = bookkeeping.indexOf("VulkanGlTexture.commitLayoutRecording(this.host.commandBuffer());");
-        int named = bookkeeping.indexOf("commitNamedTargetLayoutRecording(this.host.commandBuffer().address());");
+        int foreign = bookkeeping.indexOf("VulkanGlTexture.commitLayoutRecording(this.commandBuffer);");
+        int named = bookkeeping.indexOf("this.funnel.targetRegistry.commitNamedTargetLayoutRecording(this.commandBuffer.address());");
         assertTrue(foreign >= 0, "the foreign-image recording is committed in the submission bookkeeping");
         assertTrue(named > foreign,
                 "the named-target recording is committed at the same acceptance point");

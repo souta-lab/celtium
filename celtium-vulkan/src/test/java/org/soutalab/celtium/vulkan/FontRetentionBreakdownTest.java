@@ -124,7 +124,7 @@ class FontRetentionBreakdownTest {
         Path path = Files.exists(direct) ? direct
                 : Paths.get("../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java");
         String diag = Files.readString(path).replace("\r\n", "\n");
-        int anchor = diag.indexOf("+ b.fontStats.run0()");
+        int anchor = diag.indexOf("+ funnel.fontStats.run0()");
         assertTrue(anchor >= 0, "fontStats.run0() anchor is located");
         String window = diag.substring(anchor, Math.min(diag.length(), anchor + 200));
         assertTrue(window.contains("+ \" \" + funnel.fontStats.retentionSummary()"),
