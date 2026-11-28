@@ -1733,10 +1733,10 @@ public final class VulkanGlTexture {
         GlLevel level = null;
         boolean stubCaptureMissing =
                 org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadRgba8(glTextureId, 0, null) == null;
-        java.util.List<org.soutalab.celtium.vulkan.gl.TextureCaptureStore.PendingPatch> pendingPatches =
+        java.util.List<TextureCaptureStore.PendingPatch> pendingPatches =
                 stubCaptureMissing
                         ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.texturePendingPatches(glTextureId, 0)
-                        : java.util.Collections.<org.soutalab.celtium.vulkan.gl.TextureCaptureStore.PendingPatch>emptyList();
+                        : java.util.Collections.<TextureCaptureStore.PendingPatch>emptyList();
         if (stubCaptureMissing && !pendingPatches.isEmpty()) {
             level = null;
         } else {
@@ -1784,12 +1784,12 @@ public final class VulkanGlTexture {
                     uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
                             singleSurface(level.pixels), 1, glTextureId);
                 }
-                java.util.List<org.soutalab.celtium.vulkan.gl.TextureCaptureStore.PendingPatch> pending =
+                java.util.List<TextureCaptureStore.PendingPatch> pending =
                         pendingPatches.isEmpty()
                                 ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.texturePendingPatches(
                                         glTextureId, 0)
                                 : pendingPatches;
-                for (org.soutalab.celtium.vulkan.gl.TextureCaptureStore.PendingPatch patch : pending) {
+                for (TextureCaptureStore.PendingPatch patch : pending) {
                     if (patch.serial <= applied) {
                         continue;
                     }

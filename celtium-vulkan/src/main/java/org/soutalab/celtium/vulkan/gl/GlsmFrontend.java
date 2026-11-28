@@ -4422,7 +4422,7 @@ public final class GlsmFrontend implements FunctionProvider {
     public static java.util.List<TextureCaptureStore.PendingPatch> texturePendingPatches(int textureName, int level) {
         GlsmFrontend stub = installed;
         return stub == null
-                ? new java.util.ArrayList<PendingPatch>()
+                ? new java.util.ArrayList<TextureCaptureStore.PendingPatch>()
                 : stub.textureCaptures.texturePendingPatches(textureName, level);
     }
 

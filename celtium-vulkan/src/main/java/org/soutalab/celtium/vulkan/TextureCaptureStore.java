@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.gl.GlsmBufferState;
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+import org.soutalab.celtium.vulkan.gl.GlsmNameLedger;
 
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
@@ -640,7 +642,7 @@ public final class TextureCaptureStore {
      * {@code GL_RGB} with {@code GL_UNSIGNED_BYTE}. Rows are read where GL would read them, padded to the recorded
      * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
      */
-    ByteBuffer uploadToRgba8(GlsmFrontend stub, int width, int height, int format, int type, long pixels) {
+    public ByteBuffer uploadToRgba8(GlsmFrontend stub, int width, int height, int format, int type, long pixels) {
         if (stub.pixelUnpackBuffer > 0) {
             // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
             // so the offset is resolved to an address inside it - bounds-checked against the buffer's logical size.
