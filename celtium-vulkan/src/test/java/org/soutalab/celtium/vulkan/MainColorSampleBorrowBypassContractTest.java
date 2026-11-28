@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -23,9 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * publication entry for the {@code "frame-image"} route notes the demand
  * on a backend latch and refuses the one publication while a borrow is
  * live; the borrow decision bypasses on the latch from the next frame on;
- * and {@code ModPrograms} refuses the closed frame's blend-off pass into
- * main, whose inputs that frame are only the chain's cleared
- * intermediates.
+ * and a mod-program pass into main is refused by the immediate path on
+ * every frame - the closed frame included - whose inputs that frame are
+ * only the chain's cleared intermediates. (That refusal used to sit in
+ * the ModPrograms prepare; since its retirement in ruling step 5 the
+ * offer site refuses any batch with a program bound, so the closed
+ * frame's pass is refused by construction.)
  */
 class MainColorSampleBorrowBypassContractTest {
 
@@ -76,22 +80,18 @@ class MainColorSampleBorrowBypassContractTest {
         assertTrue(noted > condition, "the bypass is noted under the main-sampled reason");
     }
 
-    /** ModPrograms refuses the closed frame's blend-off pass into main. */
+    /** A batch with a program bound is refused at the offer site, on the closed frame too. */
     @Test
-    void modProgramsRefusesTheOpaqueMainPassOnTheClosedFrame() throws IOException {
-        String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java"));
-        int guard = source.indexOf("b.mainColorSampledBorrowClosedFrame == b.frameId");
-        assertTrue(guard >= 0, "the closed-frame guard is present in the prepare path");
-        int descriptor = source.indexOf("long set = pipeline.samplersAndImages", guard);
-        assertTrue(descriptor > guard, "the closure guard runs before descriptor allocation");
-        String body = source.substring(guard, descriptor);
-        assertTrue(body.contains("!like.celtium$colorBlend().blend()"),
-                "the guard is scoped to blend-off passes");
-        assertTrue(body.contains("b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()"),
-                "the guard is scoped to passes into the game's framebuffer");
-        assertTrue(body.contains("celtium$modFailure"),
-                "the guard refuses through the prepare path's failure channel");
+    void theOfferSiteRefusesEveryProgramBoundBatch() throws IOException {
+        String source = backendSource();
+        assertTrue(source.contains("celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture)"),
+                "the refusal is recorded at the offer site");
+        assertTrue(source.contains("if (boundProgram != 0 && !untexturedFallback) {"),
+                "the refusal gates on a bound program outside the untextured fallback");
+        assertFalse(source.contains("celtium$modPrepared"),
+                "the retired ModPrograms prepare no longer sits in the draw path");
+        assertFalse(source.contains("this.modPrograms"),
+                "the ModPrograms seat itself is gone from the backend");
     }
 
     private static String backendSource() throws IOException {

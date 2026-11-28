@@ -1630,8 +1630,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // descriptor-set collisions that no log ever showed.
         this.diagnostics.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary()
                 + " unmatchedUniformWrites=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.unmatchedUniformWrites()
-                + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions()
-                + " descriptorSetKeyCollisions=" + this.modPrograms.celtium$descriptorSetKeyCollisions());
+                + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions());
         if (HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
@@ -4469,9 +4468,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int frameIntervalCount;
 
     void celtium$noteFrameBoundary(String where) {
-        if (ModPrograms.MOD_READBACK) {
-            this.modPrograms.celtium$reportModInputReadback();
-        }
         if (!FRAME_STATS) {
             return;
         }
@@ -4627,8 +4623,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /**
      * {@return whether the bound-target terrain route is on for the property's value}: on unless the value reads
-     * "false", the mod-programs rule ({@code ModPrograms#MOD_PROGRAMS}). Package-private and static so the default
-     * is pinned without a device.
+     * "false". Package-private and static so the default is pinned without a device.
      */
     static boolean celtium$terrainToBoundTargetEnabled(String property) {
         return !"false".equalsIgnoreCase(property);
@@ -4776,8 +4771,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int depthJudgeLastNoted = Integer.MIN_VALUE;
     private int pairWindowPreserveDepthLogs;
     private int sharedDepthClearRefusalLogs;
-    /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
-    private boolean currentGroupIsModProgram;
     /**
      * The render area of the pass currently open, in the images it attaches.
      * <p>
@@ -4789,8 +4782,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     int passAreaWidth;
     int passAreaHeight;
-    /** A mod's own shader programs drawn natively (opt-in); split out of this class (2026-11-06), see ModPrograms. */
-    final ModPrograms modPrograms = new ModPrograms(this);
     /** Core-owned native fullscreen pass registry and frame executor (Phase 0); no-op when no passes are registered. */
     final NativePassRegistry nativePassRegistry = new NativePassRegistry(this.targetRegistry);
     final PassExecutor nativePassExecutor;
@@ -11051,12 +11042,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.immediateStatistics.noteBatchTimed();
             }
             this.immediateStatistics.noteProgramQueryCount();
-            // A mod's own program that the stub lowered and compiled is drawn, not refused (VulkanModProgramPipeline).
+            // A mod's own program is Lane 3's work (the direct-GL converter), never this path's: a batch
+            // offered with a program bound is refused here so the GL capture draws it with the program
+            // that is actually bound (ruling section 1.4 - the ModPrograms native prepare is retired).
             // One refusal is not a refusal: when the batch's texture state is disabled, the bound program is
             // not the program a fixed-function stack would draw it with (the untextured variant is), so a
             // textured program that happens to be bound must not gate it - when the only gap is the
             // attribute mapping, the batch takes the built-in path below exactly as if no program were
-            // bound. The check runs here, before the executable query, so a batch that falls back is never
+            // bound. The check runs here, before the refusal, so a batch that falls back is never
             // reported as not drawn; every other refusal is untouched and reported as before.
             boolean untexturedFallback = false;
             if (boundProgram != 0 && boundProgram != Integer.MIN_VALUE) {
@@ -11069,11 +11062,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     celtium$recordUntexturedFallback(boundProgram, formatId, bound);
                 }
             }
-            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modDrawProgram =
-                    !untexturedFallback && boundProgram != 0 && boundProgram != Integer.MIN_VALUE
-                            ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
-                            : null;
-            if (boundProgram != 0 && modDrawProgram == null && !untexturedFallback) {
+            if (boundProgram != 0 && !untexturedFallback) {
                 celtium$offerStage(9);
                 celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
@@ -11116,7 +11105,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // batches whose key already differs, and a noMerge leg kept the shipped group count (r65nomerge: 115-117 a
             // frame against the control's 117-120), so it measured nothing.
             boolean fastMerged = !NO_MERGE && retained == null && this.currentImmediateMesh != null
-                    && modDrawProgram == null && !this.currentGroupIsModProgram
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
                     && this.currentGroupStateKey == stateKey
@@ -11205,15 +11193,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.immediateStatistics.noteRefusedBeforeAppend();
                 celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
                 return false;
-            }
-            if (modDrawProgram != null) {
-                prepared = this.modPrograms.celtium$modPrepared(modDrawProgram, boundProgram, formatId, prepared);
-                if (prepared == null) {
-                    this.immediateLastRefusal = "mod program: " + this.modPrograms.lastModProgramFailure;
-                    this.immediateStatistics.noteRefusedBeforeAppend();
-                    celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
-                    return false;
-                }
             }
             // Stage 11 marks the end of the preflight: the pipeline and descriptor are decided.
             celtium$offerStage(11);
@@ -11518,7 +11497,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // assigning first made those two terms never differ - every opening fell into open-state-key or
                 // open-other (leg census-amd: 360k open-other, 0 open-format, 0 open-texture).
                 this.currentGroupFormatId = formatId;
-                this.currentGroupIsModProgram = modDrawProgram != null;
                 this.currentGroupTexture = boundTexture;
                 this.currentGroupStateKey = stateKey;
                 // The group's own copy of the captured state. Without this the field stayed at its initialised
@@ -13826,14 +13804,6 @@ this.frameBufferOpen = false;
         // without the walk would leak the whole family. The host empties its caches as it goes,
         // so the second teardown path finds nothing and releases nothing again.
         released += this.recordsPipelines.celtium$releaseAll();
-        // Mod program pipelines are built like one of the variants released above and keyed by it: they go with it.
-        for (VulkanModProgramPipeline modProgram : this.modPrograms.modProgramPipelines.values()) {
-            released += releaseDirect(modProgram == null ? null : modProgram::delete);
-        }
-        this.modPrograms.modProgramPipelines.clear();
-        // The prepare memo holds one of the pipelines just released: it forgets with the map, so no later
-        // prepare can be handed a released pipeline through it (roam-hunt-11).
-        this.modPrograms.celtium$forgetLastModPipeline();
         // Shader-pack terrain pipelines are the same kind of object - a live pipeline with descriptor pools,
         // keyed by the program's SPIR-V identity - and they go with it too. The full delete cleared them, but
         // the world teardown path did not (roam-hunt-9): the render passes they were built against outlive a
@@ -15418,6 +15388,38 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return how many colour targets the framebuffer a prepare is being made for attaches}: the main
+     * framebuffer's one, and for a mod's own framebuffer the publication record's count - the same record
+     * the window sizes its pass from, so the pipeline and the pass cannot disagree about the target.
+     * Seated here from the retired {@code ModPrograms} (ruling step 5): the standard prepare path reads it
+     * for every batch, so it was never mod-program machinery.
+     */
+    int celtium$currentTargetColors() {
+        long identity = this.currentFramebufferIdentity;
+        if (identity == this.targetRegistry.mainIdentity()) {
+            return 1;
+        }
+        return Math.max(1, this.publishedTextures.colorAttachmentCount(identity));
+    }
+
+    /**
+     * {@return whether a published colour name's image is stale}: the name was published over the frame
+     * target's own colour image - the publication carries neither a chain-pair owner nor a depth record,
+     * the two records that give a publication another liveness source - and the image it names is no
+     * longer either live colour image the target holds (the frame image, or the off-target image).
+     * This is the liveness rule {@link #celtium$pruneStalePublishedNames} applies when it
+     * runs; the resolutions that read the published table cannot wait for that walk, because the walk's
+     * trigger does not watch the frame image and the borrowed swapchain image rotates under the
+     * published name every frame. Static and pure so the rule is pinned without a device. Seated here
+     * from the retired {@code ModPrograms} (ruling step 5, the stale-publication KEEP).
+     */
+    static boolean celtium$staleFramePublication(long publishedImage, long frameColorImage,
+            long offTargetColorImage, long publishedIdentity, long publishedDepthKey) {
+        return publishedImage != 0L && publishedDepthKey == 0L && publishedIdentity == Long.MIN_VALUE
+                && publishedImage != frameColorImage && publishedImage != offTargetColorImage;
+    }
+
+    /**
      * {@link #prepareImmediate(int, int, long, int[])} with the texture's wrapper already resolved by the caller.
      * <p>
      * The accept path resolves the bound name before its merge decision (the predicate's identity term needs the
@@ -15442,11 +15444,10 @@ this.frameBufferOpen = false;
         // happens here, at the pipeline boundary only, so groups do not split by class. For the default
         // class the fold is the identity and the pass choice is the one this code always made (rule R6).
         TargetFormatClass pairClass = celtium$currentPairFormatClass();
-        // The target's colour count, from the same publication record the mod-program path reads
-        // (celtium$modTargetColors): a multi-target window's pass attaches that many colours, and the
-        // pipeline is built against that count's pass, so the count is part of what a prepared material
-        // depends on and folds into the key beside the class.
-        int targetColors = this.modPrograms.celtium$modTargetColors();
+        // The target's colour count, from the publication record: a multi-target window's pass
+        // attaches that many colours, and the pipeline is built against that count's pass, so the
+        // count is part of what a prepared material depends on and folds into the key beside the class.
+        int targetColors = celtium$currentTargetColors();
         long effectiveKey = celtium$pipelineColorKey(celtium$pipelineKey(key, pairClass.ordinal()),
                 targetColors);
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
@@ -15634,7 +15635,7 @@ this.frameBufferOpen = false;
         boolean staleFramePublication = false;
         if (textureId != 0 && texture != null && publishedImage != 0L) {
             GllessFrameTarget liveTarget = offTargetTarget();
-            staleFramePublication = ModPrograms.celtium$staleFramePublication(publishedImage,
+            staleFramePublication = celtium$staleFramePublication(publishedImage,
                     this.frameTarget == null ? 0L : this.frameTarget.colorImage(),
                     liveTarget == null ? 0L : liveTarget.offTargetColorImage(),
                     this.publishedFrameImageIdentities.get(textureId),
@@ -16735,29 +16736,6 @@ this.frameBufferOpen = false;
         // transition is recorded outside the pass, before the draw, like the outline's.
         // Its own bracket: the loop walks every published name (38 at the end of the measured run) and each name costs
         // hash lookups under VulkanGlTexture's monitor, so this is the candidate for the window's unnamed remainder.
-        // The window's own target. activeImmediateTarget is only assigned when the pass begins, further down, so at
-        // this point it still names the previous window's target (measured: every probe here saw the queued mod group
-        // of the window *before*).
-        long windowTarget = this.targetRegistry.currentIdentity();
-        if (ModPrograms.MOD_READBACK && this.modPrograms.modReadbackLabels == null && this.frameId >= 300) {
-            this.modPrograms.celtium$recordModInputReadback(windowTarget);
-        }
-        this.modPrograms.celtium$reportChainInputPatch(windowTarget);
-        if (ModPrograms.MOD_READ_BARRIER && this.modPrograms.celtium$queuedForTargetHasModProgram(windowTarget)) {
-            // A mod pass samples framebuffers earlier windows of this frame drew into; they stay in GENERAL, and
-            // nothing else makes one pass's colour writes visible to a later pass's fragment reads.
-            org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier =
-                    org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default()
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
-            BackendCallCounters.noteBarrier();
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                            | org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, barrier, null, null);
-        }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPublish");
         try {
             this.celtium$transitionPublishedFrameTextures(false);
@@ -23425,17 +23403,6 @@ this.frameBufferOpen = false;
                     // immediate family's group is either captured or drawn by one of the twin
                     // fallbacks above.
                     if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
-                        if (value.label != null && this.modPrograms.modTraceLines < 400 && this.frameId >= 300
-                                && this.frameId < 300 + ModPrograms.MOD_TRACE_FRAMES) {
-                            // The order the passes are *recorded* in, against the order they were offered in (the
-                            // label carries the offer's frame): a copy recorded before the pass that fills its
-                            // source reads that source's previous contents.
-                            this.modPrograms.modTraceLines++;
-                            System.out.println("[Celtium] CELTIUM_MOD_DRAW_ORDER recordFrame=" + this.frameId
-                                    + " seq=" + this.modPrograms.modTraceLines + " site=" + this.immediateDrawSite
-                                    + " groupTarget=0x" + Long.toHexString(group.target)
-                                    + " " + value.label);
-                        }
                         value.draw(this.commandBuffer, mesh, this.immediateBindCache);
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");

@@ -27,8 +27,6 @@ class DrawpathLxBundleContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
     private static final String DIAGNOSTICS =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java";
-    private static final String MOD_PROGRAMS =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java";
     private static final String COMPOSITOR =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeFramebufferCompositor.java";
     private static final String SHADER_GROUP_MIXIN =
@@ -130,35 +128,28 @@ class DrawpathLxBundleContractTest {
                 "the verify line carries the count");
     }
 
-    // DP-35: mod-program refusals aggregate per fixed reason category.
+    // DP-35: mod-program refusals aggregate per fixed reason category. The census seat moved
+    // to Lane 3's DirectGlRefusalCensus with the ModPrograms retirement (ruling section 2.2);
+    // the verify line's key shape is unchanged.
 
     @Test
-    void everyModFailureSeatCarriesItsCategory() throws IOException {
-        String programs = read(MOD_PROGRAMS);
-        assertEquals(13, count(programs, "celtium$modFailure(programId, ModRefusal."),
-                "every remaining refusal seat in celtium$modPrepared names its category");
-        assertTrue(programs.contains("celtium$modFailure(int programId, ModRefusal category, String reason)"),
-                "the funnel itself takes the category");
-        assertTrue(programs.contains("celtium$noteModRefusal(ModRefusal.UNSUPPORTED)"),
-                "the executable query's refusal counts");
+    void theVerifyLineCarriesTheLane3RefusalAggregate() throws IOException {
         assertTrue(read(DIAGNOSTICS).contains("DirectGlRefusalCensus.refusalSummary()"),
                 "the verify line carries the aggregate");
     }
 
     @Test
     void theRefusalSummaryNamesEveryCategory() {
-        long[] counts = new long[ModPrograms.ModRefusal.values().length];
-        counts[ModPrograms.ModRefusal.DISABLED.ordinal()] = 2;
-        counts[ModPrograms.ModRefusal.DESCRIPTOR_EXHAUSTED.ordinal()] = 1;
-        String summary = ModPrograms.celtium$formatRefusalSummary(3, counts);
-        assertTrue(summary.startsWith("modRefusals=3 modRefusalsByReason["),
+        String summary = org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.refusalSummary();
+        assertTrue(summary.startsWith("modRefusals=") && summary.contains(" modRefusalsByReason["),
                 "the total leads, in the verify line's key shape: " + summary);
-        for (ModPrograms.ModRefusal category : ModPrograms.ModRefusal.values()) {
-            assertTrue(summary.contains(category.key + "="),
-                    "every category is named, zero or not: " + category.key);
+        for (org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.Reason category
+                : org.soutalab.celtium.glcompat.backend.DirectGlRefusalCensus.Reason.values()) {
+            assertTrue(summary.contains(category.key() + "="),
+                    "every category is named, zero or not: " + category.key());
+            assertTrue(category.key().matches("[a-z_]+"),
+                    "category keys stay snake_case for the loss gate's parser: " + category.key());
         }
-        assertTrue(summary.contains("disabled=2") && summary.contains("descriptorExhausted=1"),
-                "the counts land under their category keys: " + summary);
     }
 
     // DP-37: native-pass refusals are in the verify body, not only the census line.

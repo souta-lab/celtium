@@ -80,7 +80,7 @@ class ImmediateMultiColorPassContractTest {
     @DisplayName("prepare reads the count from the mod-program source and folds it into the key")
     void prepareReadsAndFoldsTheTargetColorCount() throws IOException {
         String source = read(BACKEND);
-        assertTrue(source.contains("int targetColors = this.modPrograms.celtium$modTargetColors();"),
+        assertTrue(source.contains("int targetColors = celtium$currentTargetColors();"),
                 "the count comes from the publication record, the same source mod programs read");
         assertTrue(source.contains("celtium$pipelineColorKey(celtium$pipelineKey(key, pairClass.ordinal()),"),
                 "the count folds into the effective key beside the class, before any family cache sees it");
