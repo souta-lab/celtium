@@ -44,7 +44,7 @@ import java.util.List;
  * While off, each entrance's stamp is one static-final boolean read inside the scoped
  * flush helper, which then calls {@code flushPendingBeforeGlDraw} directly - the same
  * off-cost discipline as {@link HudCensus}. The report rides the
- * {@link FramePassTimings} window cadence beside {@link PackUniformCensus}: one
+ * {@link FramePassTimings} window cadence beside {@link the frame-pass window cadence}: one
  * {@code CELTIUM_GLDRAW_WINDOW_CENSUS} line per 200-frame window that opened a window,
  * carrying the window's per-cause counts and the since-start totals. All state is
  * render-thread confined; the aggregation lives in {@link Ledger} so it is testable

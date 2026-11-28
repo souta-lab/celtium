@@ -18,9 +18,9 @@ import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_ALWAYS;
 /**
  * Core-owned registry of native fullscreen shader passes (Phase 0).
  * <p>
- * Passes registered here compile directly via {@link ModShaderCompiler} and execute through {@link PassExecutor} using
- * {@link VulkanModProgramPipeline}. Nothing here routes through {@code GlsmFrontend} or {@code ModProgramRegistry},
- * and its counters stay separate from the stub's program/refusal census.
+ * Passes registered here compile directly via {@link ModShaderCompiler} and execute through {@link PassExecutor}.
+ * Nothing here routes through the legacy GL capture entrance, and its counters stay separate from the
+ * capture entrance's program/refusal census.
  */
 public final class NativePassRegistry {
 
@@ -297,7 +297,7 @@ public final class NativePassRegistry {
         this.lastFailure = passName + ": " + reason;
     }
 
-    /** Emits the native pass census line, completely separate from GlStub / ModProgramRegistry counters. */
+    /** Emits the native pass census line, completely separate from the capture entrance counters. */
     public String censusLine(String trigger) {
         return "[Celtium] CELTIUM_NATIVE_PASS via=" + trigger
                 + " registered=" + this.passes.size()

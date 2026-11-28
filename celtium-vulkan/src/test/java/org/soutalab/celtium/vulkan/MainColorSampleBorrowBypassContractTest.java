@@ -86,7 +86,7 @@ class MainColorSampleBorrowBypassContractTest {
         String source = backendSource();
         assertTrue(source.contains("celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture)"),
                 "the refusal is recorded at the offer site");
-        assertTrue(source.contains("if (boundProgram != 0 && !untexturedFallback) {"),
+        assertTrue(source.contains("if (boundProgram != 0) {"),
                 "the refusal gates on a bound program outside the untextured fallback");
         assertFalse(source.contains("celtium$modPrepared"),
                 "the retired ModPrograms prepare no longer sits in the draw path");

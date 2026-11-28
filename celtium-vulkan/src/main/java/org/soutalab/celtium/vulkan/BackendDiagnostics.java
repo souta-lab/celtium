@@ -1646,9 +1646,7 @@ final class BackendDiagnostics {
         // Unconditional for the same reason: these counters were kept but read by nothing outside tests, so a
         // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
         // descriptor-set collisions that no log ever showed.
-        this.lines.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary()
-                + " unmatchedUniformWrites=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.unmatchedUniformWrites()
-                + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions());
+        this.lines.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary());
         if (VulkanTerrainGpuBackend.HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
