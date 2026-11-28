@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 /**
  * The stub's function table, extracted from {@code GlsmFrontend} unchanged in behaviour
@@ -13,10 +13,10 @@ package org.soutalab.celtium.vulkan.gl;
  * {@code fn(...)} factory and name its semantics ids, which is why those ids are package-private
  * (the same shape the argument-type encoding already had for {@link GlTrampolines}).
  */
-final class GlFunctionTable {
+public final class GlFunctionTable {
 
     /** Registers every row, in id order. Called once from the stub's static block. */
-    static void registerAll() {
+    public static void registerAll() {
         registerNamesAndQueries();
         registerBuffersAndTextures();
         registerStateAndDraws();

@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;

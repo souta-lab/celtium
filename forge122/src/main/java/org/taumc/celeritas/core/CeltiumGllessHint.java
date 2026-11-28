@@ -199,7 +199,7 @@ public final class CeltiumGllessHint {
                 value = IDENTITY;
                 break;
             case 0x1F02: // GL_VERSION - must stay parseable: Cleanroom's Kirino patch reads it
-                value = org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString();
+                value = org.soutalab.celtium.glcompat.capture.GlContextTerms.versionString();
                 break;
             case 0x1F03: // GL_EXTENSIONS
                 value = "GL_ARB_shader_image_load_store";
@@ -2934,13 +2934,13 @@ public final class CeltiumGllessHint {
             int major = config.getField("OPENGL_VERSION_MAJOR").getInt(null);
             int minor = config.getField("OPENGL_VERSION_MINOR").getInt(null);
             boolean compat = config.getField("OPENGL_COMPAT_PROFILE").getBoolean(null);
-            boolean wasLatched = org.soutalab.celtium.vulkan.gl.GlContextTerms.latched();
-            org.soutalab.celtium.vulkan.gl.GlContextTerms.noteContextRequest(major, minor, compat);
+            boolean wasLatched = org.soutalab.celtium.glcompat.capture.GlContextTerms.latched();
+            org.soutalab.celtium.glcompat.capture.GlContextTerms.noteContextRequest(major, minor, compat);
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
                     "CELTIUM_GL_CONTEXT_TERMS latched: requested={}.{} compat={} -> version={}",
                     Integer.valueOf(major), Integer.valueOf(minor), Boolean.valueOf(compat),
-                    org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString());
-            if (!wasLatched && org.soutalab.celtium.vulkan.gl.GlContextTerms.latched() && compat) {
+                    org.soutalab.celtium.glcompat.capture.GlContextTerms.versionString());
+            if (!wasLatched && org.soutalab.celtium.glcompat.capture.GlContextTerms.latched() && compat) {
                 // A compatibility request resolves to the 3.0.0 floor by design; name the way out in the
                 // log so a mod dying on "requires OpenGL 3.3" is diagnosable from latest.log alone.
                 org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(

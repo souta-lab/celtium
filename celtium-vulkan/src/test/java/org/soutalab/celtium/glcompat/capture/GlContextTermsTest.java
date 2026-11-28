@@ -1,8 +1,8 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.GlContextTerms.Terms;
+import org.soutalab.celtium.glcompat.capture.GlContextTerms.Terms;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;

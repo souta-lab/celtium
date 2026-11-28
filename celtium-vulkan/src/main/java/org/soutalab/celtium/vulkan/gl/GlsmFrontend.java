@@ -1,5 +1,11 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.glcompat.capture.ClientArrayRange;
+import org.soutalab.celtium.glcompat.capture.DispatchThreadGate;
+import org.soutalab.celtium.glcompat.capture.GlContextTerms;
+import org.soutalab.celtium.glcompat.capture.GlFunctionTable;
+import org.soutalab.celtium.glcompat.capture.GlTrampolines;
+import org.soutalab.celtium.glcompat.capture.GlsmStringState;
 import org.soutalab.celtium.vulkan.TextureCaptureStore;
 import org.soutalab.celtium.vulkan.TextureLevelAnswer;
 import org.soutalab.celtium.vulkan.TextureParameterRecord;
@@ -4776,44 +4782,6 @@ public final class GlsmFrontend implements FunctionProvider {
      * same shape as the argument scratch's claim; the CAS is paid once per outermost dispatch, and only by a
      * call that finds the gate free or contended.
      */
-    static final class DispatchThreadGate {
-        /** The arriving thread now occupies dispatch (its depth went 0 to 1). */
-        static final int ENTERED = 0;
-        /** The arriving thread already occupied dispatch and re-entered (its depth grew). */
-        static final int REENTERED = 1;
-        /** Another thread occupies dispatch; the call must not proceed. */
-        static final int REFUSED = -1;
-
-        private final java.util.concurrent.atomic.AtomicReference<Thread> active =
-                new java.util.concurrent.atomic.AtomicReference<Thread>();
-        /** Nested-dispatch depth of the occupying thread; only that thread touches it. */
-        private int depth;
-
-        int enter(Thread self) {
-            Thread current = this.active.get();
-            if (current == self) {
-                this.depth++;
-                return REENTERED;
-            }
-            if (current == null && this.active.compareAndSet(null, self)) {
-                this.depth = 1;
-                return ENTERED;
-            }
-            return REFUSED;
-        }
-
-        void exit(Thread self) {
-            if (--this.depth == 0) {
-                this.active.set(null);
-            }
-        }
-
-        /** {@return the thread inside dispatch, or {@code null} when the gate is free}; for refusal lines. */
-        Thread activeThread() {
-            return this.active.get();
-        }
-    }
-
     /** The one gate every dispatch on this stub passes through; see {@link DispatchThreadGate}. */
     private final DispatchThreadGate dispatchGate = new DispatchThreadGate();
 

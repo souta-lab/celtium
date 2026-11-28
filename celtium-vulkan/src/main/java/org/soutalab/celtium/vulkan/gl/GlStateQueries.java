@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.glcompat.capture.GlContextTerms;
+import org.soutalab.celtium.glcompat.capture.GlsmStringState;
 import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;

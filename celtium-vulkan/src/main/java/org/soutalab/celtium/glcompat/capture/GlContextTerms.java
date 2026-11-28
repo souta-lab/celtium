@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.glcompat.capture;
 
 /**
  * The terms of the one GL context this GL-less renderer creates: the version it reports, and the profile
