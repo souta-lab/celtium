@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
 
 import org.junit.jupiter.api.Test;
@@ -185,10 +187,10 @@ class NativeRasterStateOwnershipTest {
             assertEquals(73, this.nativeState.boundTextureName());
             call("glGetIntegerv", 0x8069, MemoryUtil.memAddress(out));
             assertEquals(73, out.getInt(0));
-            assertEquals(8, GlsmFrontend.textureLevelParameter(73, 0, 0x1000));
+            assertEquals(8, VulkanTextureRegistry.captureStore().textureLevelParameter(73, 0, 0x1000));
             GlsmFrontend.forgetTextureAllocation(73);
             assertEquals(0, this.nativeState.boundTextureName());
-            assertEquals(0, GlsmFrontend.textureLevelParameter(73, 0, 0x1000));
+            assertEquals(0, VulkanTextureRegistry.captureStore().textureLevelParameter(73, 0, 0x1000));
         } finally { installed.set(null, previous); MemoryUtil.memFree(out); }
     }
 

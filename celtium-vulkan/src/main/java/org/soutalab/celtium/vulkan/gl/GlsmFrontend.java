@@ -4392,154 +4392,9 @@ public final class GlsmFrontend implements FunctionProvider {
     // them now. The doors below keep their names and exact signatures; each answers the documented default
     // when no stub is installed and otherwise delegates, so no caller changes.
 
-    /** The RGBA8 pixels the game uploaded for a texture level; see {@link TextureCaptureStore}. */
-    public static java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
-        GlsmFrontend stub = installed;
-        if (stub == null) {
-            if (outWidthHeight != null && outWidthHeight.length >= 2) {
-                outWidthHeight[0] = 0;
-                outWidthHeight[1] = 0;
-            }
-            return null;
-        }
-        return stub.textureCaptures.textureUploadRgba8(textureName, level, outWidthHeight);
-    }
+                                                        : a framebuffer's colour attachment with nothing captured; its owner publishes. */
 
-    /** The texel offset the level's captured record covers inside its level; see {@link TextureCaptureStore}. */
-    public static boolean textureUploadOffset(int textureName, int level, int[] outXY) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureUploadOffset(textureName, level, outXY);
-    }
-
-    /** Whether the level has backlog patches waiting; see {@link TextureCaptureStore}. */
-    public static boolean textureHasPendingPatches(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureHasPendingPatches(textureName, level);
-    }
-
-    /** A snapshot of the level's backlog patches, ordered by write serial; see {@link TextureCaptureStore}. */
-    public static java.util.List<TextureCaptureStore.PendingPatch> texturePendingPatches(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub == null
-                ? new java.util.ArrayList<TextureCaptureStore.PendingPatch>()
-                : stub.textureCaptures.texturePendingPatches(textureName, level);
-    }
-
-    /** Drops every backlog patch at or below {@code uptoSerial} for the level; see {@link TextureCaptureStore}. */
-    public static void texturePatchesConsumed(int textureName, int level, long uptoSerial) {
-        GlsmFrontend stub = installed;
-        if (stub != null) {
-            stub.textureCaptures.texturePatchesConsumed(textureName, level, uptoSerial);
-        }
-    }
-
-    /** The serial the most recent level write took, any texture; see {@link TextureCaptureStore}. */
-    public static long textureWriteEpoch() {
-        GlsmFrontend stub = installed;
-        return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureWriteEpoch();
-    }
-
-    /** The write serial the level's captured record carries; see {@link TextureCaptureStore}. */
-    public static long textureUploadSerial(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureUploadSerial(textureName, level);
-    }
-
-    /** Whether the texture was allocated with a NULL data pointer; see {@link TextureCaptureStore}. */
-    public static boolean textureAllocatedWithoutData(int textureName) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureAllocatedWithoutData(textureName);
-    }
-
-    /** Whether the level exists but holds no game pixels; see {@link TextureCaptureStore}. */
-    public static boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureLevelAllocatedWithoutPixels(textureName, level);
-    }
-
-    /** Whether the level holds pixels the game itself wrote; see {@link TextureCaptureStore}. */
-    public static boolean textureLevelHasGamePixels(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.textureLevelHasGamePixels(textureName, level);
-    }
-
-    /** Whether a mirror upload of this level has provably nothing to read; see {@link TextureCaptureStore}. */
-    public static boolean celtium$levelHasNothingToRead(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub == null || stub.textureCaptures.celtium$levelHasNothingToRead(textureName, level);
-    }
-
-    /**
-     * {@return whether a full mirror supply for this GL name has to wait for the framebuffer that renders into it}.
-     * <p>
-     * The registry's lookups already defer a name that is a framebuffer's colour attachment and has no captured
-     * content: the image the name stands for is published by whoever owns the framebuffer, and an empty mirror built
-     * here would be superseded (and retired) a moment later. The lazy supply in the immediate and model paths was the
-     * one caller that bypassed that rule - it asked for an image directly, then ran a full upload whose only possible
-     * answer for a render target is the capture-miss "the level was allocated with no data and no upload ever wrote
-     * pixels into it". The cost is not the refusal, it is the image: one device allocation and one sampler per
-     * render-target name, then a retire, and a counted capture miss that says a supply failed when there was nothing
-     * to supply.
-     * <p>
-     * The answer stays "supply now" when the stub does hold content: a game pixel in level 0 (a texture that was
-     * uploaded before it became an attachment) or a pending patch backlog (the game is filling the level now). Those
-     * are the two sources the full upload can actually read, which is why they are the exception rather than the rule.
-     * The same question is asked by {@code fillFromCapture} when it refuses an all-zero surface.
-     *
-     * @param textureName the GL texture name the bound batch samples
-     */
-    public static boolean celtium$mirrorWaitsForFramebuffer(int textureName) {
-        if (textureName <= 0) {
-            return false;
-        }
-        return celtium$mirrorWaitsForFramebuffer(celtium$framebufferForColorTexture(textureName) != 0,
-                textureHasPendingPatches(textureName, 0), textureLevelHasGamePixels(textureName, 0));
-    }
-
-    /** The rule itself, with the three facts it reads passed in; see {@link TextureCaptureStore}. */
-    static boolean celtium$mirrorWaitsForFramebuffer(boolean colourAttachment, boolean pendingPatches,
-            boolean gamePixels) {
-        return TextureCaptureStore.celtium$mirrorWaitsForFramebuffer(colourAttachment, pendingPatches, gamePixels);
-    }
-
-    /** {@link #celtium$supplyDecision}: the level holds content a full upload can read. */
-    public static final int SUPPLY_NOW = TextureCaptureStore.SUPPLY_NOW;
-    /** {@link #celtium$supplyDecision}: a framebuffer's colour attachment with nothing captured; its owner publishes. */
-    public static final int SUPPLY_WAIT_FRAMEBUFFER = TextureCaptureStore.SUPPLY_WAIT_FRAMEBUFFER;
-    /** {@link #celtium$supplyDecision}: no captured record and no patch backlog, so the upload would throw. */
-    public static final int SUPPLY_NOTHING_TO_READ = TextureCaptureStore.SUPPLY_NOTHING_TO_READ;
-
-    /** Which of the three supply outcomes this level has; see {@link TextureCaptureStore}. */
-    public static int celtium$supplyDecision(int textureName, int level) {
-        GlsmFrontend stub = installed;
-        return stub == null
-                ? SUPPLY_NOTHING_TO_READ
-                : stub.textureCaptures.celtium$supplyDecision(textureName, level);
-    }
-
-    /** One line of capture diagnostics; see {@link TextureCaptureStore}. */
-    public static String textureCaptureSummary() {
-        GlsmFrontend stub = installed;
-        return stub == null
-                ? "texture capture: levels=0 full=0 patches=0 undefined=0 unconverted=0 bytes=0"
-                : stub.textureCaptures.textureCaptureSummary();
-    }
-
-    /** The RGBA8 bytes the filed captures currently hold; see {@link TextureCaptureStore}. */
-    public static long textureCaptureBytes() {
-        GlsmFrontend stub = installed;
-        return stub == null ? 0L : stub.textureCaptures.textureCaptureBytes();
-    }
-
-    /** Drops the stub's CPU copy of every captured level that has settled; see {@link TextureCaptureStore}. */
-    public static long[] releaseSettledTextureCaptures() {
-        GlsmFrontend stub = installed;
-        return stub == null
-                ? new long[] { 0L, 0L }
-                : stub.textureCaptures.releaseSettledTextureCaptures();
-    }
-
-    final org.soutalab.celtium.vulkan.NativeRasterState raster;
+                    final org.soutalab.celtium.vulkan.NativeRasterState raster;
     final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
     private final ReadableMemoryRanges.Provider readableRangeProvider;
 
@@ -6720,22 +6575,7 @@ public final class GlsmFrontend implements FunctionProvider {
      */
     private static final int[] TEXTURE_EXTENT_SCRATCH = new int[2];
 
-    /** {@return a texture's level-0 width and height as GL last defined them}, or null when nothing was recorded. */
-    public static int[] celtium$textureExtent(int glTextureName) {
-        GlsmFrontend stub = installed;
-        if (stub == null || glTextureName == 0) {
-            return null;
-        }
-        int[] level = stub.textureCaptures.texLevels().get(texLevelKey(glTextureName, 0));
-        if (level == null) {
-            return null;
-        }
-        TEXTURE_EXTENT_SCRATCH[0] = level[0];
-        TEXTURE_EXTENT_SCRATCH[1] = level[1];
-        return TEXTURE_EXTENT_SCRATCH;
-    }
-
-    /** {@return the draw framebuffer the stub last bound}, or -1 when no stub is installed. */
+        /** {@return the draw framebuffer the stub last bound}, or -1 when no stub is installed. */
     public static int celtium$drawFramebuffer() {
         GlsmFrontend stub = installed;
         return stub == null ? -1 : stub.drawFbo;
@@ -7083,12 +6923,7 @@ public final class GlsmFrontend implements FunctionProvider {
         return this.textureCaptures.uploadToRgba8(this, width, height, format, type, pixels);
     }
 
-    /** Arms the one-shot skip for the patch an announcement just applied; see {@link TextureCaptureStore}. */
-    public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
-        TextureCaptureStore.celtium$noteAnnouncedPatch(level, x, y, width, height);
-    }
-
-    /** {@return how many captures the announcement made unnecessary} */
+        /** {@return how many captures the announcement made unnecessary} */
     public static long celtium$announcedCaptureSkips() {
         return TextureCaptureStore.celtium$announcedCaptureSkips();
     }
@@ -7124,60 +6959,7 @@ public final class GlsmFrontend implements FunctionProvider {
         }
     }
 
-    /**
-     * A named texture-level query against the GL-less record, without crossing an LWJGL GL45C
-     * native entry point. The value is exactly what our DSA stub function would answer;
-     * a texture with no level record returns 0 instead of inventing dimensions, and a query
-     * before the stub is installed answers 0 as well.
-     */
-    public static int textureLevelParameter(int name, int level, int pname) {
-        GlsmFrontend stub = installed;
-        return stub == null ? 0 : stub.texLevelParamForName(name, level, pname);
-    }
-
-    /** The pname's recorded value for a named texture's level - the DSA form of {@link #texLevelParam}. */
-    private int texLevelParamForName(int name, int level, int pname) {
-        int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
-        if (dims == null) {
-            return 0;
-        }
-        switch (pname) {
-            case 0x1000: // GL_TEXTURE_WIDTH
-                return dims[0];
-            case 0x1001: // GL_TEXTURE_HEIGHT
-                return dims[1];
-            case 0x1003: // GL_TEXTURE_INTERNAL_FORMAT
-                return dims[2];
-            default:
-                return 8; // the component sizes the announced formats describe themselves with
-        }
-    }
-
-    /**
-     * The recorded extent of a named texture's level, in one lookup: {@code out[0]} is the width and {@code out[1]}
-     * the height.
-     * <p>
-     * The accept path asks for both on every offer, and they are one record - {@code texLevels} is keyed by
-     * (name, level) - so the two {@link #textureLevelParameter} calls hashed the same key twice. This is the same
-     * answer with one hash. A level with no record answers {@code false} and leaves {@code out} alone, which is what
-     * the caller's "no extent" test needs; a query before the stub is installed answers {@code false} too.
-     */
-    public static boolean textureLevelExtent(int name, int level, int[] out) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.texLevelExtentForName(name, level, out);
-    }
-
-    private boolean texLevelExtentForName(int name, int level, int[] out) {
-        int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
-        if (dims == null) {
-            return false;
-        }
-        out[0] = dims[0];
-        out[1] = dims[1];
-        return true;
-    }
-
-    /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
+                /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
     private int texLevelParam(int target, int level, int pname) {
         int name = uploadTargetName(target);
         int[] dims = this.textureCaptures.texLevels().get(texLevelKey(name, level));
@@ -7352,13 +7134,7 @@ public final class GlsmFrontend implements FunctionProvider {
     // feeds the record's instrument with, and the static doors the mirror reads through, so the record's
     // consumers keep the signatures they already use.
 
-    /** {@return how many times this texture's recorded parameters changed}, 0 when the game never set one. */
-    public static int textureParameterVersion(int textureName) {
-        GlsmFrontend stub = installed;
-        return stub == null ? 0 : stub.textureCaptures.parameters().version(textureName);
-    }
-
-    /**
+        /**
      * The call site for a parameter set, or the empty string once the instrument has named its shapes.
      * <p>
      * Reading the stack is the expensive part of this instrument, and a texture load sets four parameters per texture,
@@ -7442,32 +7218,7 @@ public final class GlsmFrontend implements FunctionProvider {
                 : stub.textureCaptures.parameters().valueOrDefault(textureName, pname);
     }
 
-    /**
-     * {@return the filter or wrap value recorded for this texture and pname, or -1 when the game never set it}.
-     * <p>
-     * This is the mirror's door to the record: {@link #textureParameter} answers GL's default for an unset pname,
-     * while a caller that wants to keep its own fallback (the mirror's clamp) can tell the two apart here.
-     */
-    public static int recordedTextureParameter(int textureName, int pname) {
-        GlsmFrontend stub = installed;
-        return stub == null ? -1 : stub.textureCaptures.parameters().recordedValue(textureName, pname);
-    }
-
-    /**
-     * {@return the value GL would answer for this texture's pname} - the recorded value, or GL's context default when
-     * the game never set it. See {@link #recordedTextureParameter} for the recorded/absent distinction.
-     */
-    public static int textureParameter(int textureName, int pname) {
-        return textureParameterValue(textureName, pname);
-    }
-
-    /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
-    public static boolean textureParameterRecorded(int textureName, int pname) {
-        GlsmFrontend stub = installed;
-        return stub != null && stub.textureCaptures.parameters().isRecorded(textureName, pname);
-    }
-
-    /** The named texture parameters, bounded: the record census and the query answers. */
+                /** The named texture parameters, bounded: the record census and the query answers. */
     private static String texParamSummary() {
         GlsmFrontend stub = installed;
         if (stub == null) {

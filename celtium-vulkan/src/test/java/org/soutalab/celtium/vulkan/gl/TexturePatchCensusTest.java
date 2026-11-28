@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 
@@ -52,7 +54,7 @@ class TexturePatchCensusTest {
             invoke(dispatch, stub, ids, "glTexSubImage2D", GL_TEXTURE_2D, 0, 2, 3, 1, 1, GL_RGBA,
                     GL_UNSIGNED_BYTE, MemoryUtil.memAddress(patch));
 
-            String summary = GlsmFrontend.textureCaptureSummary();
+            String summary = VulkanTextureRegistry.captureStore().textureCaptureSummary();
             assertTrue(summary.contains("10.0=2[4x4@0,0]"), "expected paste key census in: " + summary);
             assertTrue(summary.contains("11.0=1[1x1@2,3]"), "expected lone key census in: " + summary);
             assertTrue(summary.contains("branches={lone=1, paste=2}"), "expected branch counts in: " + summary);

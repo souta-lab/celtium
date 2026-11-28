@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -144,10 +146,10 @@ class RecycledHandleStateTest {
             handle.invoke("glBindTexture", GL_TEXTURE_2D, 25);
             // A NULL data pointer: storage reserved, no pixels - the render-target idiom.
             handle.invoke("glTexImage2D", GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-            assertTrue(GlsmFrontend.textureAllocatedWithoutData(25),
+            assertTrue(VulkanTextureRegistry.captureStore().textureAllocatedWithoutData(25),
                     "the null allocation is classified while the texture lives");
             GlsmFrontend.forgetTextureAllocation(25);
-            assertFalse(GlsmFrontend.textureAllocatedWithoutData(25),
+            assertFalse(VulkanTextureRegistry.captureStore().textureAllocatedWithoutData(25),
                     "the classification belongs to the deleted object, not to its name's next owner");
         } finally {
             handle.restore();

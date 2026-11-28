@@ -1143,6 +1143,20 @@ public final class TextureCaptureStore {
      * @param textureName the GL texture name the bound batch samples
      * @param level       the mip level
      */
+    /**
+     * {@return whether a full mirror supply for this GL name has to wait for the framebuffer that renders
+     * into it}; the rule form is {@link #celtium$mirrorWaitsForFramebuffer(boolean, boolean, boolean)} and
+     * the three facts are the name's framebuffer attachment, its pending patches and its game pixels.
+     */
+    public boolean celtium$mirrorWaitsForFramebuffer(int textureName) {
+        if (textureName <= 0) {
+            return false;
+        }
+        return celtium$mirrorWaitsForFramebuffer(
+                GlsmFrontend.celtium$framebufferForColorTexture(textureName) != 0,
+                textureHasPendingPatches(textureName, 0), textureLevelHasGamePixels(textureName, 0));
+    }
+
     public int celtium$supplyDecision(int textureName, int level) {
         if (textureName <= 0) {
             return SUPPLY_NOTHING_TO_READ;

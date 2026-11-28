@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 
@@ -55,18 +57,18 @@ class TextureCaptureReleaseTest {
             invoke(dispatch, stub, ids, "glTexImage2D", GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA,
                     GL_UNSIGNED_BYTE, 0L);
 
-            assertNotNull(GlsmFrontend.textureUploadRgba8(10, 0, null));
-            assertNotNull(GlsmFrontend.textureUploadRgba8(11, 0, null));
-            assertNotNull(GlsmFrontend.textureUploadRgba8(13, 0, null));
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(10, 0, null));
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(11, 0, null));
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(13, 0, null));
 
-            long[] released = GlsmFrontend.releaseSettledTextureCaptures();
+            long[] released = VulkanTextureRegistry.captureStore().releaseSettledTextureCaptures();
             assertEquals(1L, released[0], "exactly the settled level is released");
             assertEquals(64L, released[1], "a 4x4 RGBA8 level is 64 bytes");
 
-            assertNull(GlsmFrontend.textureUploadRgba8(10, 0, null), "the settled copy is gone");
-            assertNotNull(GlsmFrontend.textureUploadRgba8(11, 0, null), "the patched copy stays");
-            assertNotNull(GlsmFrontend.textureUploadRgba8(12, 0, null), "the unsupplied copy stays");
-            assertNotNull(GlsmFrontend.textureUploadRgba8(13, 0, null), "the undefined surface stays");
+            assertNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(10, 0, null), "the settled copy is gone");
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(11, 0, null), "the patched copy stays");
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(12, 0, null), "the unsupplied copy stays");
+            assertNotNull(VulkanTextureRegistry.captureStore().textureUploadRgba8(13, 0, null), "the undefined surface stays");
         } finally {
             installedField.set(null, previous);
             MemoryUtil.memFree(full);

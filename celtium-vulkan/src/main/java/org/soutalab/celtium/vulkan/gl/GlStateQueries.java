@@ -287,7 +287,7 @@ final class GlStateQueries {
         }
         int value = GlsmFrontend.textureParameterValue(textureName, paramPname);
         stub.celtium$noteTextureParameterQuery(name, textureName, paramPname, value,
-                GlsmFrontend.textureParameterRecorded(textureName, paramPname));
+                VulkanTextureRegistry.captureStore().textureParameterRecorded(textureName, paramPname));
         if (name.endsWith("fv")) {
             if (paramPname == 0x1004) { // GL_TEXTURE_BORDER_COLOR - four components, GL's initial zero
                 for (int i = 0; i < 4; i++) {

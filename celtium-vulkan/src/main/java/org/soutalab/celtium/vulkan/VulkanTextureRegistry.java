@@ -251,7 +251,7 @@ public final class VulkanTextureRegistry {
      * Under the GL stub, captured surfaces refused because the game never wrote a pixel into the level.
      * <p>
      * A level allocated with a NULL data pointer has a surface (zeros) but no game bytes; the stub answers that through
-     * {@code GlsmFrontend.textureLevelHasGamePixels}. Filling a mirror from one would mark whole content over an image
+     * {@code TextureCaptureStore.textureLevelHasGamePixels}. Filling a mirror from one would mark whole content over an image
      * no upload ever filled - measured as two 1280x720 mirrors and the light map's first read reporting
      * {@code opaque=0/… full=true}. Non-zero here is the number of times that was refused instead.
      */

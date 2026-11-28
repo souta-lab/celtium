@@ -17085,7 +17085,7 @@ this.frameBufferOpen = false;
         // the failed upload was counted as a supply failure although there was nothing a supply could read. Deferring
         // here makes the answer the same one the lookups give; the serial recorded above means the decision is asked
         // once per content change, and a real game upload or patch backlog still supplies as before.
-        if (decision == org.soutalab.celtium.vulkan.gl.GlsmFrontend.SUPPLY_WAIT_FRAMEBUFFER) {
+        if (decision == TextureCaptureStore.SUPPLY_WAIT_FRAMEBUFFER) {
             this.lazyMirrorDeferrals++;
             celtium$noteMirrorDeferred(glTextureId,
                     "the stub holds no captured pixels for it; the owner publishes it");
@@ -17094,7 +17094,7 @@ this.frameBufferOpen = false;
         // The same decision for the name that is not a known framebuffer attachment: no captured record and no patch
         // backlog means the upload has nothing to read, and asking anyway throws the capture-miss. The serial recorded
         // above makes the question once per content change, so a real upload or a patch backlog still supplies.
-        if (decision == org.soutalab.celtium.vulkan.gl.GlsmFrontend.SUPPLY_NOTHING_TO_READ) {
+        if (decision == TextureCaptureStore.SUPPLY_NOTHING_TO_READ) {
             this.lazyMirrorEmptyDeferrals++;
             celtium$noteMirrorDeferred(glTextureId,
                     "the stub holds no captured record and no patch backlog for level 0");

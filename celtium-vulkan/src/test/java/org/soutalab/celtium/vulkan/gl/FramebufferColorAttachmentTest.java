@@ -1,4 +1,6 @@
 package org.soutalab.celtium.vulkan.gl;
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.Test;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
@@ -87,16 +89,16 @@ class FramebufferColorAttachmentTest {
       int texture = 100;
       GlsmFrontend.celtium$bindFramebuffer(0x8CA9, 10); // GL_DRAW_FRAMEBUFFER
       GlsmFrontend.celtium$framebufferTexture2D(0x8CA9, 0x8CE0, 0x0DE1, texture, 0);
-      assertTrue(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(texture),
+      assertTrue(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(texture),
               "a render target with no capture at all has nothing to supply");
-      assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(200),
+      assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(200),
               "a name that is not any framebuffer's attachment is supplied as before");
 
       // The render-target idiom: glTexImage2D with a NULL data pointer leaves an extent and a zero surface, which is
       // not content. fillFromCapture refuses exactly this surface; the supply must not build a mirror for it either.
       GlsmFrontend.celtium$glBindTexture(0x0DE1, texture);
       GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 16, 16, 0, 0x1908, 0x1401, 0L);
-      assertTrue(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(texture),
+      assertTrue(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(texture),
               "a level allocated with no data is not a captured game surface");
 
       // A texture that really was uploaded before it became an attachment has pixels the supply can read.
@@ -108,7 +110,7 @@ class FramebufferColorAttachmentTest {
       } finally {
         org.lwjgl.system.MemoryUtil.memFree(pixels);
       }
-      assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(texture),
+      assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(texture),
               "a captured game upload is content, so the supply runs and fills the mirror");
     } finally {
       installed.set(null, previous);
@@ -121,13 +123,13 @@ class FramebufferColorAttachmentTest {
    * keep the supply path; a name that is not an attachment is never deferred.
    */
   @Test void theDeferralWaitsOnlyWhenThereIsNothingToSupply() {
-    assertTrue(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(true, false, false),
+    assertTrue(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(true, false, false),
             "attachment with neither a capture nor a backlog");
-    assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(true, true, false),
+    assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(true, true, false),
             "a pending patch backlog is replayed by the full upload");
-    assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(true, false, true),
+    assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(true, false, true),
             "a captured game upload is read by the full upload");
-    assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(false, false, false),
+    assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(false, false, false),
             "a name that no framebuffer owns is supplied as before");
   }
 
@@ -220,15 +222,15 @@ class FramebufferColorAttachmentTest {
     installed.set(null, ctor.newInstance());
     try {
       int plain = 300;
-      assertEquals(GlsmFrontend.SUPPLY_NOTHING_TO_READ, GlsmFrontend.celtium$supplyDecision(plain, 0),
+      assertEquals(TextureCaptureStore.SUPPLY_NOTHING_TO_READ, VulkanTextureRegistry.captureStore().celtium$supplyDecision(plain, 0),
               "a name nothing has written has no record and no backlog");
-      assertTrue(GlsmFrontend.celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
+      assertTrue(VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
 
       GlsmFrontend.celtium$glBindTexture(0x0DE1, plain);
       GlsmFrontend.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401, 0L);
-      assertEquals(GlsmFrontend.SUPPLY_NOW, GlsmFrontend.celtium$supplyDecision(plain, 0),
+      assertEquals(TextureCaptureStore.SUPPLY_NOW, VulkanTextureRegistry.captureStore().celtium$supplyDecision(plain, 0),
               "the zero surface is a record the upload reads, so it is not 'nothing to read'");
-      assertFalse(GlsmFrontend.celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
+      assertFalse(VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
 
       java.nio.ByteBuffer pixels = org.lwjgl.system.MemoryUtil.memAlloc(8 * 8 * 4);
       try {
@@ -238,20 +240,20 @@ class FramebufferColorAttachmentTest {
       } finally {
         org.lwjgl.system.MemoryUtil.memFree(pixels);
       }
-      assertEquals(GlsmFrontend.SUPPLY_NOW, GlsmFrontend.celtium$supplyDecision(plain, 0),
+      assertEquals(TextureCaptureStore.SUPPLY_NOW, VulkanTextureRegistry.captureStore().celtium$supplyDecision(plain, 0),
               "a real upload is content");
 
       // The attachment half: a name that is a framebuffer's colour attachment with no captured game pixels.
       int attachment = 301;
       GlsmFrontend.celtium$bindFramebuffer(0x8CA9, 11);
       GlsmFrontend.celtium$framebufferTexture2D(0x8CA9, 0x8CE0, 0x0DE1, attachment, 0);
-      assertEquals(GlsmFrontend.SUPPLY_WAIT_FRAMEBUFFER, GlsmFrontend.celtium$supplyDecision(attachment, 0),
+      assertEquals(TextureCaptureStore.SUPPLY_WAIT_FRAMEBUFFER, VulkanTextureRegistry.captureStore().celtium$supplyDecision(attachment, 0),
               "an attachment with nothing captured waits for the owner that publishes it");
-      assertTrue(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
+      assertTrue(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
 
       // The framebuffer rule is asked first, so an attachment that also has nothing to read answers "wait", not
       // "nothing to read": the two deferrals are counted apart and the reason line differs.
-      assertTrue(GlsmFrontend.celtium$levelHasNothingToRead(attachment, 0),
+      assertTrue(VulkanTextureRegistry.captureStore().celtium$levelHasNothingToRead(attachment, 0),
               "and it also has nothing to read, which is why the order is the thing being pinned");
 
       GlsmFrontend.celtium$glBindTexture(0x0DE1, attachment);
@@ -263,9 +265,9 @@ class FramebufferColorAttachmentTest {
       } finally {
         org.lwjgl.system.MemoryUtil.memFree(attachmentPixels);
       }
-      assertEquals(GlsmFrontend.SUPPLY_NOW, GlsmFrontend.celtium$supplyDecision(attachment, 0),
+      assertEquals(TextureCaptureStore.SUPPLY_NOW, VulkanTextureRegistry.captureStore().celtium$supplyDecision(attachment, 0),
               "a captured game upload is content, so the attachment is supplied rather than deferred");
-      assertFalse(GlsmFrontend.celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
+      assertFalse(VulkanTextureRegistry.captureStore().celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
     } finally {
       installed.set(null, previous);
     }

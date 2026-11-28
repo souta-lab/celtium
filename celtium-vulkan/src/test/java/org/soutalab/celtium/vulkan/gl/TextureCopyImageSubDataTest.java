@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.TextureCaptureStore;
+import org.soutalab.celtium.vulkan.VulkanTextureRegistry;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 
@@ -75,18 +77,18 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
-            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0),
+            long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
+            assertFalse(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(601, 0),
                     "the destination starts as an allocation with no game pixels");
 
             copy(600, 16, 601, 0, 16, 16);
 
-            assertTrue(GlsmFrontend.textureLevelHasGamePixels(601, 0),
+            assertTrue(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(601, 0),
                     "the copied rectangle is game content in the destination level");
-            assertTrue(GlsmFrontend.textureUploadSerial(601, 0) > allocated,
+            assertTrue(VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0) > allocated,
                     "a copy is a write to the level, so a mirror that deferred on the allocation is asked again");
-            ByteBuffer source = GlsmFrontend.textureUploadRgba8(600, 0, new int[2]);
-            ByteBuffer dest = GlsmFrontend.textureUploadRgba8(601, 0, new int[2]);
+            ByteBuffer source = VulkanTextureRegistry.captureStore().textureUploadRgba8(600, 0, new int[2]);
+            ByteBuffer dest = VulkanTextureRegistry.captureStore().textureUploadRgba8(601, 0, new int[2]);
             for (int row = 0; row < 16; row++) {
                 for (int i = 0; i < 16 * 4; i++) {
                     assertEquals(source.get(row * 32 * 4 + 16 * 4 + i), dest.get(row * 16 * 4 + i),
@@ -105,17 +107,17 @@ class TextureCopyImageSubDataTest {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
             copy(600, 16, 601, 0, 16, 16);
-            long afterFirst = GlsmFrontend.textureUploadSerial(601, 0);
+            long afterFirst = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
 
             // FoamFix copies the current frame every tick, and a frame lasts several ticks: the repeats carry
             // the same bytes, and the serial is what makes a mirror re-supply, so they must not move it.
             copy(600, 16, 601, 0, 16, 16);
-            assertEquals(afterFirst, GlsmFrontend.textureUploadSerial(601, 0),
+            assertEquals(afterFirst, VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0),
                     "an identical copy is not a write to the level's content");
 
             // A different frame is a different rectangle: that one is a write.
             copy(600, 0, 601, 0, 16, 16);
-            assertTrue(GlsmFrontend.textureUploadSerial(601, 0) > afterFirst,
+            assertTrue(VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0) > afterFirst,
                     "a copy of different bytes moves the serial, so the mirror re-supplies");
         } finally {
             restore(previous);
@@ -127,13 +129,13 @@ class TextureCopyImageSubDataTest {
         Object previous = install();
         try {
             allocate(601, 16, 16);
-            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
+            long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
 
             copy(999, 0, 601, 0, 16, 16);
 
-            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
+            assertEquals(allocated, VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0),
                     "nothing was captured for the source, so nothing was written");
-            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0),
+            assertFalse(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(601, 0),
                     "and the destination did not gain game pixels from an empty source");
         } finally {
             restore(previous);
@@ -146,14 +148,14 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
+            long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
 
             // The rectangle starts inside the source level but runs past its captured rows.
             copy(600, 24, 601, 0, 16, 16);
 
-            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
+            assertEquals(allocated, VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0),
                     "a copy the source record cannot cover writes nothing, the way GL leaves the level alone");
-            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0));
+            assertFalse(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(601, 0));
         } finally {
             restore(previous);
         }
@@ -165,7 +167,7 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
+            long allocated = VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0);
 
             // A depth other than 1 is a 3D copy, which a 2D capture cannot serve.
             GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_2D, 0, 0, 0, 0,
@@ -174,9 +176,9 @@ class TextureCopyImageSubDataTest {
             GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_3D, 0, 0, 0, 0,
                     601, GL_TEXTURE_2D, 0, 0, 0, 0, 16, 16, 1);
 
-            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
+            assertEquals(allocated, VulkanTextureRegistry.captureStore().textureUploadSerial(601, 0),
                     "neither refused shape wrote into the destination level");
-            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0));
+            assertFalse(VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(601, 0));
         } finally {
             restore(previous);
         }
