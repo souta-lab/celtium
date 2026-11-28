@@ -525,7 +525,8 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         frontend.prepareFrame(frameView, lights,
                 this.funnel.fog.getFogColor(), this.funnel.fog.getFogStart(), this.funnel.fog.getFogEnd(),
                 this.funnel.fog.getFogDensity(), fogMode, this.frameCoordinator.frameId);
-        frontend.collectCompleted();
+        frontend.collectCompleted(
+                this.frameCoordinator.scheduler == null ? 0L : this.frameCoordinator.scheduler.completedSubmitSequence());
     }
 
     public List<String> diagnostics() {

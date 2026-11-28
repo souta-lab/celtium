@@ -31,8 +31,14 @@ import java.util.Map;
  * SectionDesc#NO_AUXILIARY} and the terrain shaders read the fallback entity id 0 - never garbage.
  * <p>
  * All frees are timeline-deferred through the regions; the caller drives {@link
- * #collectCompleted(long)} with the context's slab completion value. Methods are synchronized:
- * mesher threads hand geometry in, the render thread reads descriptors out.
+ * #collectCompleted(long)} with the scheduler's completed-submission watermark. That
+ * watermark is the frees' own currency: the timeline values stamped here are submission
+ * ordinals (the {@code submitSequence} the backend reads at upload/remove time), so only a
+ * watermark in the same scale can ever collect them. A count of completion events (such as
+ * the context's completion epoch) advances on a different scale and must never drive this
+ * collection - under a rebuild burst it lags the stamps indefinitely and the slab stays
+ * full while the submission side looks healthy. Methods are synchronized: mesher threads
+ * hand geometry in, the render thread reads descriptors out.
  */
 public final class TerrainSectionStore {
 

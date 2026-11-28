@@ -289,8 +289,8 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
         return store.sectionCount();
     }
 
-    public synchronized void collectCompleted() {
-        store.collectCompleted(VulkanContext.completedEpoch());
+    public synchronized void collectCompleted(long completedSubmitWatermark) {
+        store.collectCompleted(completedSubmitWatermark);
     }
 
     /**

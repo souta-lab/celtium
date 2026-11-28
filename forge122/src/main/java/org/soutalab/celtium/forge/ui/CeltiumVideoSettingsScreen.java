@@ -14,6 +14,7 @@ import org.soutalab.celtium.forge.ui.OptionEntry.CycleOption;
 import org.soutalab.celtium.forge.ui.OptionEntry.OptionGroup;
 import org.soutalab.celtium.forge.ui.OptionEntry.OptionPage;
 import org.soutalab.celtium.forge.ui.OptionEntry.SliderOption;
+import org.soutalab.celtium.forge.terrain.CeltiumTerrainDriver;
 import org.soutalab.celtium.forge.ui.OptionEntry.ToggleOption;
 import org.taumc.celeritas.CeleritasVintage;
 
@@ -178,7 +179,14 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
             if (flags.contains(OptionFlag.REQUIRES_RENDERER_RELOAD)) {
                 client.renderGlobal.loadRenderers();
             } else if (flags.contains(OptionFlag.REQUIRES_RENDERER_UPDATE)) {
-                client.renderGlobal.setDisplayListEntitiesDirty();
+                // Renderer-affecting settings changed: reload the terrain driver
+                // explicitly. This used to poke RenderGlobal.setDisplayListEntitiesDirty
+                // and rely on its notification reaching the driver; that notification
+                // path was cut (P0-1), so the hook is direct now.
+                CeltiumTerrainDriver driver = CeltiumTerrainDriver.instanceNullable();
+                if (driver != null) {
+                    driver.reload();
+                }
             }
         }
         if (flags.contains(OptionFlag.REQUIRES_ASSET_RELOAD)) {

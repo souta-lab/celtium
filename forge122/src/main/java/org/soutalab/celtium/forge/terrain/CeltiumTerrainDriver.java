@@ -180,7 +180,9 @@ public final class CeltiumTerrainDriver {
      * instruments): primitive counts the driver feeds only while the pass split is on,
      * drained into one line per pass-split report window. The line is the observation
      * seat for the P0 fixes - {@code markArea*} for the block-area expansion,
-     * {@code terrainUpdateAllCalls} for the vanilla notification path,
+     * {@code terrainUpdateAllCalls} for the all-sections reload (the vanilla
+     * notification path that used to trigger it was cut by P0-1, so the count
+     * now reads only genuine reloads),
      * {@code refusedUploads} for the slab completion currency - and {@code tint*} carries
      * the scanner's tint share, accumulated there without brackets.
      */
@@ -290,14 +292,10 @@ public final class CeltiumTerrainDriver {
 
     /** Resource reload: the atlas changed, so every resident section is stale. */
     public void reload() {
-        faceData = null;
-        dirty.addAll(resident);
-    }
-
-    public void scheduleTerrainUpdate() {
         if (org.soutalab.celtium.vulkan.FramePassTimings.passSplitEnabled()) {
             setupStats.noteTerrainUpdateAll();
         }
+        faceData = null;
         dirty.addAll(resident);
     }
 
@@ -305,12 +303,28 @@ public final class CeltiumTerrainDriver {
                                             int maxX, int maxY, int maxZ, boolean important) {
         boolean stats = org.soutalab.celtium.vulkan.FramePassTimings.passSplitEnabled();
         int added = 0;
-        // The border sections are included: a face on the boundary can change either side.
-        for (int x = (minX >> 4) - 1; x <= (maxX >> 4) + 1; x++) {
-            for (int y = Math.max(0, (minY >> 4) - 1); y <= Math.min(15, (maxY >> 4) + 1); y++) {
-                for (int z = (minZ >> 4) - 1; z <= (maxZ >> 4) + 1; z++) {
+        // A neighbor section joins only on an axis where the area actually touches
+        // the shared face: a block on the low edge ((coord & 15) == 0) can change the
+        // face the low neighbor shows, one on the high edge (== 15) the high
+        // neighbor's. The old form expanded by one section on every axis
+        // unconditionally, queueing up to 26 neighbors for a one-block change (P0-2).
+        int x0 = minX >> 4, x1 = maxX >> 4;
+        int y0 = minY >> 4, y1 = maxY >> 4;
+        int z0 = minZ >> 4, z1 = maxZ >> 4;
+        if ((minX & 15) == 0) x0--;
+        if ((maxX & 15) == 15) x1++;
+        if ((minY & 15) == 0) y0--;
+        if ((maxY & 15) == 15) y1++;
+        if ((minZ & 15) == 0) z0--;
+        if ((maxZ & 15) == 15) z1++;
+        for (int x = x0; x <= x1; x++) {
+            for (int y = Math.max(0, y0); y <= Math.min(15, y1); y++) {
+                for (int z = z0; z <= z1; z++) {
                     long k = key(x, y, z);
-                    if (present.contains(k) && dirty.add(k)) {
+                    // A section already queued - in dirty, or with its build in
+                    // flight in pending - is not re-queued: the queued build is
+                    // the rebuild.
+                    if (present.contains(k) && !pending.containsKey(k) && dirty.add(k)) {
                         added++;
                     }
                 }

@@ -224,14 +224,6 @@ public abstract class RenderGlobalMixin {
         return this.renderer.isTerrainRenderComplete();
     }
 
-    @Inject(method = "setDisplayListEntitiesDirty", at = @At("RETURN"))
-    private void onTerrainUpdateScheduled(CallbackInfo ci) {
-        if (!celtium$isGameRenderGlobal()) {
-            return;
-        }
-        this.renderer.scheduleTerrainUpdate();
-    }
-
     /**
      * @reason Redirect the chunk layer render passes to our renderer
      * @author JellySquid
