@@ -1229,38 +1229,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return backend;
     }
 
-    private NativeLoadingScreen loadingScreen;
-    private boolean loadingProgressDumped;
-
-    /**
-     * The size the loading screen is laid out at: the swapchain's extent when it is usable, the requested size
-     * otherwise.
-     * <p>
-     * The request is {@code Minecraft.displayWidth/displayHeight}, which the game initialises to the size it
-     * asked the window for and does not refresh while FML loads - the only refresh path ({@code updateDisplay()}
-     * reading {@code Display.getWidth()/getHeight()}) runs once before the compositor has settled the window's
-     * real size, and then not again until the game loop starts. The swapchain is the opposite: {@link
-     * #ensureSwapchain()} rebuilds it until its extent matches the surface, and the present blit scales the
-     * laid-out image to that whole extent, so laying out at a stale requested size under a differently-sized
-     * window presents the splash anisotropically stretched (or clipped, before the first rebuild) for the whole
-     * load - the winisol configuration, a 1280x720 request in a 626x1056 pane. The swapchain extent is the area
-     * this present actually fills, so it is the layout's measure, and no new native size query is added to the
-     * loading thread to get it. When the two agree - the ordinary launch - the result is the requested size
-     * unchanged. A non-positive swapchain extent keeps the requested size, as before this decision existed.
-     */
-    static int[] loadingProgressSize(int requestedWidth, int requestedHeight, int swapchainWidth,
-            int swapchainHeight) {
-        if (swapchainWidth > 0 && swapchainHeight > 0) {
-            return new int[] {swapchainWidth, swapchainHeight};
-        }
-        return new int[] {requestedWidth, requestedHeight};
-    }
+    /** The loading screen's own surface (S3-b addendum 4-1): owns the native screen and its dump state. */
+    private final LoadingScreenSurface loadingSurface = new LoadingScreenSurface();
 
     /**
      * Presents Forge's loading screen ({@link NativeLoadingScreen}): Forge's loader supplies the progress and the
      * splash configuration, this path draws Forge's frame into its own image and presents it.
      * <p>
-     * The frame is laid out at {@link #loadingProgressSize} rather than at the requested size the caller passes:
+     * The frame is laid out at {@link LoadingScreenSurface#layoutSize} rather than at the requested size the caller passes:
      * those are the game's cached display fields, frozen at the requested size for the whole load, while the
      * swapchain this presents through already follows the window.
      *
@@ -1272,39 +1248,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             java.awt.image.BufferedImage font, String[] titles, String[] messages, int[] steps, int[] totals,
             int angle) {
         if (!this.windowBackend || this.gpuStalled || !ensureSwapchain()) return null;
-        int[] size = loadingProgressSize(width, height, this.swapchain.width(), this.swapchain.height());
-        if (this.loadingScreen == null) this.loadingScreen = new NativeLoadingScreen(this.context);
-        NativeLoadingScreen.Style style = new NativeLoadingScreen.Style();
-        style.background = colors[0];
-        style.barBorder = colors[1];
-        style.bar = colors[2];
-        style.barBackground = colors[3];
-        style.memoryGood = colors[4];
-        style.memoryWarn = colors[5];
-        style.memoryLow = colors[6];
-        style.showMemory = showMemory;
-        style.rotate = rotate;
-        style.logoOffset = logoOffset;
-        NativeLoadingScreen.Bar[] bars = new NativeLoadingScreen.Bar[titles.length];
-        for (int i = 0; i < bars.length; i++) {
-            bars[i] = new NativeLoadingScreen.Bar(titles[i], messages[i], steps[i], totals[i]);
-        }
-        VulkanGlTexture image = this.loadingScreen.update(size[0], size[1], style, logo, forge, font, bars, angle);
-        String directory = FRAME_DUMP_DIR;
-        if (!this.loadingProgressDumped && directory != null
-                && DUMP_LOADING_PROGRESS && steps.length > 0 && steps[0] > 0) {
-            this.swapchain.requestPresentedImageDump(java.nio.file.Paths.get(directory, "forge-loading-progress.png"));
-            this.loadingProgressDumped = true;
-        }
-        this.swapchain.presentImage(image.image(), image.samplingLayout(), size[0], size[1]);
-        return size;
+        return this.loadingSurface.present(this.context, this.swapchain, width, height, colors, showMemory,
+                rotate, logoOffset, logo, forge, font, titles, messages, steps, totals, angle);
     }
 
     public void finishLoadingProgress() {
-        if (this.loadingScreen != null && settleGpu("loading screen finished")) {
-            this.loadingScreen.delete();
-            this.loadingScreen = null;
-        }
+        this.loadingSurface.finish(() -> settleGpu("loading screen finished"));
     }
 
     /** True while this instance exists only for the window and no world renderer has adopted it yet. */
@@ -3660,8 +3609,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
     static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
-    private static final boolean DUMP_LOADING_PROGRESS =
-            HarnessConfig.bool("dumpLoadingProgress", false);
     /**
      * On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather
      * than per frame. The mirror-dump family's one switch is {@code -Dceltium.vulkan.mirrorDump=<dir>}
@@ -17567,10 +17514,7 @@ this.frameBufferOpen = false;
             this.windowBackend = true;
             return;
         }
-        if (this.loadingScreen != null) {
-            this.loadingScreen.delete();
-            this.loadingScreen = null;
-        }
+        this.loadingSurface.delete();
         // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
         // the last submission has completed and nothing more will be recorded: the release is immediate and counted as
         // teardown, not as a free without a completed wait (audit N02).
