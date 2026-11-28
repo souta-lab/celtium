@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TerrainSectionStoreTest {
@@ -74,6 +75,42 @@ class TerrainSectionStoreTest {
         store.collectCompleted(5L);
         assertEquals(usedBefore, store.axisUsedBytes());
         assertEquals(1, store.sectionCount());
+    }
+
+    @Test
+    void pressureRecoveryIsKeyedToTheSubmissionWatermark() {
+        // The backend stamps uploads and removals with the scheduler's submission ordinal
+        // (submitSequence), so a deferred free can only be collected by a value in that same
+        // scale: the completed-submission watermark. A count of completion events is a
+        // different currency - it advances per confirmed fence wait, not per submission
+        // ordinal - and never reaches the stamps, so a slab filled under pressure would
+        // never recover if collection were driven by it (R-102).
+        TerrainSectionStore store = new TerrainSectionStore(new HostSlabSpace(64L),
+                new HostSlabSpace(1 << 16), new HostSlabSpace(1 << 16));
+        store.upload(0, 0, 0, geometry(2, new short[0]), 70L);
+        store.upload(1, 0, 0, geometry(2, new short[0]), 71L);
+        assertEquals(64L, store.axisUsedBytes(), "slab full: two sections of two axis quads");
+
+        assertTrue(store.remove(1, 0, 0, 72L));
+        assertEquals(64L, store.axisUsedBytes(),
+                "the removed range stays used until its submission stamp is collected");
+        assertThrows(IllegalStateException.class,
+                () -> store.upload(2, 0, 0, geometry(2, new short[0]), 72L),
+                "pressure: no room while the deferred free is uncollected");
+
+        store.collectCompleted(4L);
+        assertEquals(64L, store.axisUsedBytes(),
+                "a completion-event count is not the stamps' currency: nothing is collected");
+        assertThrows(IllegalStateException.class,
+                () -> store.upload(2, 0, 0, geometry(2, new short[0]), 72L),
+                "still refused after collection in the wrong currency");
+
+        store.collectCompleted(72L);
+        assertEquals(32L, store.axisUsedBytes(),
+                "the submission watermark collects the deferred free");
+        store.upload(2, 0, 0, geometry(2, new short[0]), 72L);
+        assertEquals(64L, store.axisUsedBytes());
+        assertEquals(2, store.sectionCount());
     }
 
     @Test
