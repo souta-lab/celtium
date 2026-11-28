@@ -168,7 +168,11 @@ public final class TerrainDrawStage implements PackTerrainDriver {
 
     @Override
     public void gatherShadowBlockEntities(FrustumPlanes shadowFrustum, BlockEntitySink sink) {
-        for (TerrainWorld.BlockEntityEntry entry : world.blockEntitiesIn(shadowFrustum)) {
+        CameraPose shadowOrigin = world.shadowPose();
+        if (shadowOrigin == null) {
+            throw new IllegalStateException("shadow block entities gathered before the shadow view was prepared");
+        }
+        for (TerrainWorld.BlockEntityEntry entry : world.blockEntitiesIn(shadowFrustum, shadowOrigin)) {
             sink.accept(entry.blockX(), entry.blockY(), entry.blockZ(), entry.typeId());
         }
     }

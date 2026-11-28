@@ -1,5 +1,6 @@
 package org.soutalab.celtium.vulkan.terrain.lane1;
 
+import org.joml.Matrix4d;
 import org.joml.Matrix4f;
 import org.soutalab.celtium.core.frame.CameraPose;
 import org.soutalab.celtium.core.frame.FrustumPlanes;
@@ -40,11 +41,14 @@ public final class FrustumExtractor {
                                DepthConvention depthConvention) {
         Objects.requireNonNull(origin, "origin");
         Objects.requireNonNull(depthConvention, "depthConvention");
-        Matrix4f combined = matrix(projection).mul(matrix(modelView));
+        Matrix4f proj = matrix(projection);
+        Matrix4f view = matrix(modelView);
+        Matrix4f combined = proj.mul(view, new Matrix4f());
         float[] viewProj = combined.get(new float[16]);
-        float determinant = combined.determinant();
         FrustumPlanes planes = FrustumPlanes.permissive();
-        if (combined.isFinite() && Float.isFinite(determinant) && determinant != 0.0f) {
+        Matrix4d determinantInput = new Matrix4d();
+        if (usable(proj, determinantInput) && usable(view, determinantInput)
+                && usable(combined, determinantInput)) {
             float[] coefficients = new float[FrustumPlanes.FLOAT_COUNT];
             writePlane(viewProj, coefficients, FrustumPlanes.LEFT, 3, 0, 1);
             writePlane(viewProj, coefficients, FrustumPlanes.RIGHT, 3, 0, -1);
@@ -59,6 +63,12 @@ public final class FrustumExtractor {
             planes = FrustumPlanes.of(coefficients);
         }
         return new View(origin, viewProj, planes);
+    }
+
+    private static boolean usable(Matrix4f matrix, Matrix4d determinantInput) {
+        // Use double for the determinant so a finite scale does not overflow or
+        // underflow during the singularity test.
+        return matrix.isFinite() && determinantInput.set(matrix).determinant() != 0.0;
     }
 
     private static Matrix4f matrix(float[] values) {

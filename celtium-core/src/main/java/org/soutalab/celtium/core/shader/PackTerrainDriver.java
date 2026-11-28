@@ -20,10 +20,10 @@ import org.soutalab.celtium.core.frame.VulkanCommandStream;
  */
 public interface PackTerrainDriver {
 
-    /** Makes the main camera's view the culling input for this frame. */
+    /** Makes the main view the culling input for this frame. The pose supplies the frustum origin. */
     void prepareMainView(CameraPose cam, FrustumPlanes frustum, long frameId);
 
-    /** Makes the pack's shadow camera the culling input for the shadow stage. */
+    /** Makes the shadow view the culling input for the shadow stage. The pose supplies the frustum origin. */
     void prepareShadowView(CameraPose shadowCam, FrustumPlanes shadowFrustum, float shadowDistance, long frameId);
 
     /** Records one terrain pass: binds the program and draws the culled sections for {@code kind}. */
@@ -33,7 +33,7 @@ public interface PackTerrainDriver {
     /**
      * Hands every block entity inside the shadow frustum to the sink, for the non-terrain lane to
      * draw into the shadow pass (gap G-7: this collection is explicit because the predecessor
-     * design dropped these entities silently).
+     * design dropped these entities silently). Uses the origin installed by {@link #prepareShadowView}.
      */
     void gatherShadowBlockEntities(FrustumPlanes shadowFrustum, BlockEntitySink sink);
 
