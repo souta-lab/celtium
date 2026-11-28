@@ -32,6 +32,11 @@ public interface CeltiumBackend {
             org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometry geometry) {
     }
 
+    /** The raw-array counterpart (S2-b-perf CPU-4): no per-quad objects are materialised. */
+    default void celtium$lane1UploadSectionRaw(int x, int y, int z,
+            org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometryRaw raw) {
+    }
+
     /** Removes one section from the Lane 1 resident store. */
     default void celtium$lane1RemoveSection(int x, int y, int z) {
     }

@@ -1435,6 +1435,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     @Override
+    public void celtium$lane1UploadSectionRaw(int x, int y, int z,
+            org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometryRaw raw) {
+        celtium$lane1().uploadSectionRaw(x, y, z, raw,
+                this.scheduler == null ? 0L : this.scheduler.submitSequence());
+    }
+
+    @Override
     public void celtium$lane1RemoveSection(int x, int y, int z) {
         if (this.lane1 != null) {
             this.lane1.removeSection(x, y, z,

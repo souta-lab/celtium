@@ -11,7 +11,7 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import org.soutalab.celtium.vulkan.CeltiumBackend;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
-import org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometry;
+import org.soutalab.celtium.vulkan.terrain.lane1.SectionGeometryRaw;
 import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
 import org.taumc.celeritas.mixin.core.terrain.ChunkProviderClientAccessor;
 
@@ -593,7 +593,7 @@ public final class CeltiumTerrainDriver {
             long k = entry.getKey();
             try {
                 if (present.contains(k)) {
-                    backend.celtium$lane1UploadSection(keyX(k), keyY(k), keyZ(k), toGeometry(buffers));
+                    backend.celtium$lane1UploadSectionRaw(keyX(k), keyY(k), keyZ(k), toRaw(buffers));
                     if (backend.celtium$lane1HasSection(keyX(k), keyY(k), keyZ(k))) {
                         resident.add(k);
                         sweepKeysDirty = true;
@@ -615,20 +615,22 @@ public final class CeltiumTerrainDriver {
         }
     }
 
-    private static SectionGeometry toGeometry(MeshBuffers buffers) {
-        short[] aux = buffers.auxEnabled() ? buffers.auxColumn() : new short[0];
-        int axisTotal = buffers.axisTotal();
-        if (aux.length != axisTotal) {
-            aux = new short[0];
-        }
-        return new SectionGeometry(
-                List.copyOf(buffers.axisLayerList(0)),
-                List.copyOf(buffers.axisLayerList(1)),
-                List.copyOf(buffers.axisLayerList(2)),
-                List.copyOf(buffers.generalLayerList(0)),
-                List.copyOf(buffers.generalLayerList(1)),
-                List.copyOf(buffers.generalLayerList(2)),
-                aux);
+    /**
+     * The upload carrier in the mesher's own storage shape (S2-b-perf CPU-4): references to
+     * the pooled buffers' backing arrays, consumed synchronously by the store's bulk copy
+     * before the buffers return to the pool in the caller's finally - the old form built a
+     * record and two list copies per quad on this thread.
+     */
+    private static SectionGeometryRaw toRaw(MeshBuffers buffers) {
+        return new SectionGeometryRaw(
+                new int[][]{buffers.axisWords(0), buffers.axisWords(1), buffers.axisWords(2)},
+                new int[]{buffers.axisCount(0), buffers.axisCount(1), buffers.axisCount(2)},
+                new short[][]{buffers.axisAuxArray(0), buffers.axisAuxArray(1), buffers.axisAuxArray(2)},
+                buffers.auxEnabled(),
+                new float[][]{buffers.generalPositions(0), buffers.generalPositions(1),
+                        buffers.generalPositions(2)},
+                new int[][]{buffers.generalMeta(0), buffers.generalMeta(1), buffers.generalMeta(2)},
+                new int[]{buffers.generalCount(0), buffers.generalCount(1), buffers.generalCount(2)});
     }
 
     // ------------------------------------------------------------------
