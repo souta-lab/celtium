@@ -92,6 +92,8 @@ class StaleFramePublicationTest {
 
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+    private static final String PRESENT =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java";
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative));
     }
@@ -137,8 +139,9 @@ class StaleFramePublicationTest {
     @Test
     void transitionWalkCarriesTheFrameImageInItsPruneTrigger() throws IOException {
         // The walk's seat moved from the retired PostChainBridge into the backend itself
-        // (ruling step 5); the prune trigger's shape is unchanged.
-        String source = read(BACKEND);
+        // (ruling step 5), and from the backend into PresentSwapchain with the rest of the
+        // published-frame machinery (S3-b E6); the prune trigger's shape is unchanged.
+        String source = read(PRESENT);
         assertEquals(3, count(source, "publishedCacheFrameImage"),
                 "the field, the trigger comparison and the memo update");
         assertTrue(source.contains("frameColorImage != this.publishedCacheFrameImage"),
