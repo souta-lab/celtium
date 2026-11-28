@@ -4,9 +4,10 @@ import java.util.Arrays;
 
 /**
  * Six frustum planes as (a, b, c, d) coefficient quadruples, in the order left, right, bottom, top,
- * near, far. A point is inside the frustum when every plane's {@code a*x + b*y + c*z + d} is
- * non-negative. The culling stage uploads these verbatim, so the representation is the flat
- * 24-float array the GPU consumes - no matrix type crosses the interface.
+ * near, far, in camera-origin-relative space. Subtract the view's world origin in double
+ * precision before evaluating a world-space point. The same origin must be used for the
+ * view-projection transform and for plane evaluation. A point is inside when every plane's
+ * {@code a*x + b*y + c*z + d} is non-negative. The GPU consumes the same 24 coefficients.
  */
 public final class FrustumPlanes {
 
@@ -20,19 +21,37 @@ public final class FrustumPlanes {
     public static final int NEAR = 4;
     public static final int FAR = 5;
 
+    private static final FrustumPlanes PERMISSIVE = new FrustumPlanes(new float[FLOAT_COUNT]);
+
     private final float[] coefficients;
 
     private FrustumPlanes(float[] coefficients) {
         this.coefficients = coefficients;
     }
 
-    /** @param coefficients exactly {@link #FLOAT_COUNT} floats, six (a, b, c, d) quadruples. Copied. */
+    /**
+     * Copies six camera-origin-relative (a, b, c, d) quadruples.
+     *
+     * @throws IllegalArgumentException if the array is null or has a length other than 24
+     * @return the permissive frustum if any coefficient is non-finite
+     */
     public static FrustumPlanes of(float[] coefficients) {
         if (coefficients == null || coefficients.length != FLOAT_COUNT) {
             throw new IllegalArgumentException(
                     "a frustum is exactly " + FLOAT_COUNT + " coefficients (6 planes x abcd)");
         }
-        return new FrustumPlanes(coefficients.clone());
+        float[] copy = coefficients.clone();
+        for (float coefficient : copy) {
+            if (!Float.isFinite(coefficient)) {
+                return permissive();
+            }
+        }
+        return new FrustumPlanes(copy);
+    }
+
+    /** An immutable frustum whose six plane evaluations are zero for every finite point. */
+    public static FrustumPlanes permissive() {
+        return PERMISSIVE;
     }
 
     public float coefficient(int plane, int component) {
@@ -42,7 +61,7 @@ public final class FrustumPlanes {
         return coefficients[plane * 4 + component];
     }
 
-    /** Signed distance of a point from a plane; non-negative means inside that plane's half-space. */
+    /** Evaluates a camera-origin-relative point. A non-negative result is inside the half-space. */
     public float signedDistance(int plane, double x, double y, double z) {
         int base = plane * 4;
         return (float) (coefficients[base] * x + coefficients[base + 1] * y
