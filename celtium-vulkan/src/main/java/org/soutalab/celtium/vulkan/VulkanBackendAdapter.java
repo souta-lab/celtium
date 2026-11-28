@@ -76,10 +76,7 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         this.funnel.presentSwapchain = this.presentSwapchain;
         this.funnel.owner = this;
         this.copyReadSide = new CopyReadSide(this.frameCoordinator, this.funnel, this.presentSwapchain);
-        this.copyReadSide.owner = this;
-        this.presentSwapchain.owner = this;
         this.frameStats = new FrameStatsReport(this.frameCoordinator, this.funnel);
-        this.frameStats.owner = this;
         this.reports.bind(this.frameCoordinator, this.funnel, this.presentSwapchain, this);
 
         this.context = context;
@@ -1392,38 +1389,37 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
     }
 
     @Override
-    public boolean celtium$depthWritesLive() { {
+    public boolean celtium$depthWritesLive() {
         return this.funnel.celtium$depthWritesLive();
     }
 
     @Override
-    public boolean celtium$isGpuStalled() { {
+    public boolean celtium$isGpuStalled() {
         return this.frameCoordinator.celtium$isGpuStalled();
     }
 
     @Override
-    @Override
-    public String lastRefusal() { {
+    public String lastRefusal() {
         return this.funnel.lastRefusal();
     }
 
     @Override
-    public void celtium$rawAttachmentTextureDeleted(int framebuffer) { {
+    public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
         this.funnel.celtium$rawAttachmentTextureDeleted();
     }
 
     @Override
-    public void celtium$rawTextureDeleted(int texture) { {
+    public void celtium$rawTextureDeleted(int texture) {
         this.funnel.celtium$rawTextureDeleted();
     }
 
     @Override
-    public void celtium$frameBoundary() { {
+    public void celtium$frameBoundary() {
         this.funnel.celtium$frameBoundary();
     }
 
     @Override
-    public void celtium$flushPendingAtFrameBoundary() { {
+    public void celtium$flushPendingAtFrameBoundary() {
         this.frameCoordinator.celtium$flushPendingAtFrameBoundary();
     }
 
