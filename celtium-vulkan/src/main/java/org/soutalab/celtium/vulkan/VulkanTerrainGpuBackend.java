@@ -11041,6 +11041,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 // next beginCommands into the buffer whose recording the abandon just discards.
 this.frameBufferOpen = false;
                     this.frameTarget.abandonFrame("immediate window submit failure");
+                    // The abandoned frame's pack seat closes with it (D7 seat ruling:
+                    // endNativeFrame on every exit path, abandon included).
+                    org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
@@ -13042,9 +13045,15 @@ this.frameBufferOpen = false;
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
         BackendCallCounters.reportIfDue(this.frameId);
-        this.frameCoordinator.celtium$finishFrameBuffer();
-        // The native pack frame seat closes with the frame buffer it was opened on.
-        org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+        // The native pack frame seat closes with the frame buffer it was opened on -
+        // in a finally, so an exception escaping the coordinator's finish cannot leave
+        // the seat holding this frame's command buffer into the next frame (D7 seat
+        // ruling: endNativeFrame on every exit path, exception escape included).
+        try {
+            this.frameCoordinator.celtium$finishFrameBuffer();
+        } finally {
+            org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+        }
         // The frame buffer this call just finished is the submission a post chain's deferred
         // first-use commit waits on (drawpath audit DP-32): settle it now that the recording is
         // ended and batched for the queue - or, on a stall, now that it was reset instead.
@@ -14182,6 +14191,9 @@ this.frameBufferOpen = false;
 // An abandoned frame is not "the frame is still recording": the flag must not route the
 // next beginCommands into the buffer whose recording the abandon just discards.
 this.frameBufferOpen = false;
+                        // The abandoned frame's pack seat closes with it (D7 seat ruling:
+                        // endNativeFrame on every exit path, abandon included).
+                        org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
                         // The recording has to be unwound with the flag, or the state keeps saying "recording"
                         // while no frame buffer owns it. The recovery submission above is either deferred
                         // (the unified buffer: submitCommands() returns RECORDED without ending the buffer) or was
@@ -20576,6 +20588,36 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * The native pack frame seat's swapchain supply for this frame (D7 seat ruling,
+     * NEON 2026-11-28, construction spec): a single colour attachment naming the
+     * frame's active colour target - the borrowed present image's view while a
+     * borrow is live, the target's own view on a bypass frame - with no depth
+     * attachment (the executor's depth-format-0 contract) and the target's real
+     * extent. The target's accessors are borrow-aware and its format is the
+     * borrow's own gate, so the view and format named here always describe the
+     * image the frame actually renders into.
+     *
+     * @return the targets, or null when this frame opens no seat: no live target,
+     *         or a minimized 0x0 target (FP-4 - no borrow, no seat)
+     */
+    private org.soutalab.celtium.core.frame.ActiveRenderTargets celtium$seatSwapchainTargets() {
+        if (!(this.frameTarget instanceof GllessFrameTarget target)) {
+            return null;
+        }
+        int width = target.width();
+        int height = target.height();
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        return new org.soutalab.celtium.core.frame.ActiveRenderTargets(
+                java.util.List.of(new org.soutalab.celtium.core.frame.ActiveRenderTargets.RenderTargetView(
+                        target.colorView(), target.colorFormat(),
+                        org.soutalab.celtium.core.frame.ActiveRenderTargets.LoadOp.DONT_CARE,
+                        org.soutalab.celtium.core.frame.ActiveRenderTargets.StoreOp.STORE)),
+                null, width, height);
+    }
+
     void beginCommands() {
         if (this.frameBufferOpen) {
             // The frame's buffer is still recording: a later segment (window, terrain pass) continues into it
@@ -20644,6 +20686,14 @@ this.frameBufferOpen = false;
             // recording nor an executing command buffer.
             this.drawRecords.beginFrame(this.frameSlot);
         }
+        // FP-1 (plan 8.3 item 8; D7 seat ruling, NEON 2026-11-28): this frame's present-image
+        // borrow is decided here, at the frame head. The acquire used to sit in the present
+        // body's tail - one frame early, and outside the frame it served. The ensure is
+        // idempotent (a live borrow stands) and gated (a bypassed frame keeps its own image
+        // and takes the composed present), and it must run before the recording opens below:
+        // the ensure refuses while a recording is open. The native pack frame seat opened
+        // further down is built from the target this decision leaves active.
+        this.presentSwapchain.celtium$ensureBorrowedFrameImage();
         // No VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT: the flag tells the driver it may free the buffer's internal
         // allocations, and this buffer is reset and re-begun every frame - so the release is paid every frame and the
         // allocations are re-made every frame. The spec allows either; keeping them is the reuse the frame wants. The
@@ -20671,13 +20721,25 @@ this.frameBufferOpen = false;
             // S3-b D7: the native pack frame seat opens with the frame's unified buffer -
             // the one point where the context, the begun buffer and the frame id are all
             // live. The terrain driver resolves lazily through the factory (the frontend
-            // is created on first terrain use), and the swapchain targets stay unbound
-            // until their supply form is ruled: the seat's record path has no caller
-            // until the world-pass hook is wired, so opening the seat changes no frame's
-            // behavior yet. The seat closes in celtium$finishFrameBuffer.
-            org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
-                    this.context, this.commandBuffer, null,
-                    ctx -> celtium$lane1().terrainDriver(), this.frameId);
+            // is created on first terrain use). The swapchain supply is the frame's
+            // active colour target, built by celtium$seatSwapchainTargets() from the
+            // borrow decision the frame head just made (D7 seat ruling, NEON 2026-11-28:
+            // option (b) - a null supply is not a landing form). A frame with no live
+            // target, or a minimized 0x0 target (FP-4), opens no seat.
+            if (org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.nativeFrameOpen()) {
+                // A seat that escaped its own frame's closes must not leak a dead
+                // command buffer into this frame: close it before this frame's opens.
+                // The all-exit close discipline (finish, the abandon seats, the stall
+                // seats) makes this unreachable in the steady state; it stands so a
+                // missed close degrades to a lost pack frame, never to a stale seat.
+                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
+            }
+            org.soutalab.celtium.core.frame.ActiveRenderTargets seatTargets = celtium$seatSwapchainTargets();
+            if (seatTargets != null) {
+                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
+                        this.context, this.commandBuffer, seatTargets,
+                        ctx -> celtium$lane1().terrainDriver(), this.frameId);
+            }
             // The coordinator's frame opens at the same point (plan 2.2 template pick).
             // A frame recorded through this backend runs the fixed four-stage template:
             // the pack executor, when a pack is active, records through the seat above
@@ -23400,6 +23462,9 @@ this.frameBufferOpen = false;
                     // The abandon-path flag clear, as on the fence path below (bughunt LANE-05 #3).
                     this.frameBufferOpen = false;
                     this.frameTarget.abandonFrame("frame slot timeline timed out");
+                    // The stalled frame's pack seat closes with it (D7 seat ruling:
+                    // endNativeFrame on every exit path, GPU stall included).
+                    org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
                     return false;
                 }
                 if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
@@ -23487,6 +23552,9 @@ this.frameBufferOpen = false;
                 // "nested begin" failure (bughunt LANE-05 #3).
                 this.frameBufferOpen = false;
                 this.frameTarget.abandonFrame("frame slot fence timed out");
+                // The stalled frame's pack seat closes with it (D7 seat ruling:
+                // endNativeFrame on every exit path, GPU stall included).
+                org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
                 return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS

@@ -127,8 +127,11 @@ class DrawpathPresentBundleContractTest {
     }
 
     // DP-18: the present body's tail runs on the exception path too; the skip total is printed.
+    // FP-1 succession (plan 8.3 item 8, S3-b): the tail's re-borrow moved to the frame head -
+    // the backend's beginCommands ensures the borrow before the recording opens - so the
+    // consumption is the tail's remaining half, and the borrow's seat is pinned here instead.
 
-    /** The rebuild consumption and the re-borrow sit after the catch, not inside the try. */
+    /** The rebuild consumption sits after the catch, and the borrow sits at the frame head. */
     @Test
     void thePresentBodyTailRunsAfterTheCatch() throws IOException {
         String body = presentFrameBody(readRepoFile(PRESENT_SWAPCHAIN_SOURCE));
@@ -136,13 +139,23 @@ class DrawpathPresentBundleContractTest {
         assertTrue(catchSeat >= 0, "the present body's catch exists");
         String afterCatch = body.substring(catchSeat);
         int consume = afterCatch.indexOf("consumeSwapchainRebuild();");
-        int reborrow = afterCatch.indexOf("celtium$ensureBorrowedFrameImage();");
         int returned = afterCatch.indexOf("return reached;");
         assertTrue(consume > 0, "the rebuild consumption runs after the catch");
-        assertTrue(reborrow > consume, "the re-borrow follows the consumption");
-        assertTrue(returned > reborrow, "the body returns the attempt's result after its tail");
+        assertTrue(returned > consume, "the body returns the attempt's result after its tail");
         assertEquals(1, countOccurrences(body, "consumeSwapchainRebuild();"),
                 "the consumption exists once - the in-try copy was moved, not duplicated");
+        assertEquals(0, countOccurrences(body, "celtium$ensureBorrowedFrameImage();"),
+                "the present body no longer re-borrows: FP-1 moved the borrow to the frame head");
+
+        String backend = readRepoFile(BACKEND_SOURCE);
+        int begin = backend.indexOf("void beginCommands()");
+        assertTrue(begin >= 0, "the frame's command begin exists");
+        int headBorrow = backend.indexOf("this.presentSwapchain.celtium$ensureBorrowedFrameImage();", begin);
+        int reset = backend.indexOf("vkResetCommandBuffer(this.commandBuffer, 0)", begin);
+        assertTrue(headBorrow > begin, "the frame head ensures the borrow (FP-1)");
+        assertTrue(reset > headBorrow,
+                "the borrow is ensured before the recording opens - the ensure refuses while"
+                        + " a recording is open");
     }
 
     /** The heartbeat prints the aggregate skip count beside the per-reason split. */

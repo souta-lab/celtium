@@ -48,7 +48,12 @@ class SwapchainRebuildOrderContractTest {
 
     /**
      * The swap point's head ensure is the existence-only form, and the rebuild consumption sits
-     * after the present call and before the next frame's borrow is taken.
+     * after the present call. The next frame's borrow used to be taken right after the
+     * consumption, in this body's tail; FP-1 (plan 8.3 item 8) moved it to the next frame's
+     * head, which still follows the consumption in execution order - so a borrow taken after
+     * a consumed rebuild borrows the new generation exactly as before, and the ordering this
+     * test protects is unchanged. The head seat itself is pinned by
+     * {@code DrawpathPresentBundleContractTest}.
      */
     @Test
     void theSwapPointConsumesRebuildsOnlyAfterItsPresentAttempt() throws IOException {
@@ -82,10 +87,10 @@ class SwapchainRebuildOrderContractTest {
         int consume = body.indexOf("consumeSwapchainRebuild();");
         assertTrue(consume > present,
                 "the rebuild consumption runs after the present attempt, not before it");
-        int borrow = body.indexOf("celtium$ensureBorrowedFrameImage();");
-        assertTrue(borrow > consume,
-                "the next frame's borrow is taken after the consumption, so it borrows the new"
-                        + " generation when a rebuild was consumed");
+        assertEquals(0, count(body, "celtium$ensureBorrowedFrameImage();"),
+                "the present body no longer borrows for the next frame: FP-1 moved the borrow"
+                        + " to the frame head (the backend's beginCommands), after this"
+                        + " consumption in execution order");
     }
 
     /**

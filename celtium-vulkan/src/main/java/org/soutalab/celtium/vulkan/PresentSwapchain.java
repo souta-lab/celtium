@@ -399,7 +399,12 @@ final class PresentSwapchain {
         // indistinguishable from the path never existing (the fallback-visibility rule).
         // 1. A shader pack is active. The pack's own passes sample the frame colour and write through
         //    their targets; the frame they compose must be an image those passes can sample.
-        if (org.soutalab.celtium.vulkan.ShaderPackBridge.areShadersEnabled()) {
+        //    The built-in pack runtime is not this condition (D7 seat ruling, NEON 2026-11-28): its
+        //    intermediates all live on its own attachment slab and its final pass writes only the
+        //    swapchain image, so a built-in pack frame keeps the direct-present borrow - the probe
+        //    below names the external pack path this bypass was written for.
+        if (org.soutalab.celtium.vulkan.ShaderPackBridge.areShadersEnabled()
+                && !org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.builtInPackActive()) {
             celtium$noteBorrowBypass("shader-pack");
             return;
         }
@@ -969,21 +974,22 @@ final class PresentSwapchain {
         }
         // R-06: the present attempt is complete - the drain, the frame-buffer finish and the present itself
         // have all been submitted against the generation this frame borrowed - so the generation change the
-        // swapchain's verdicts asked for is consumed now, before the next frame's borrow is taken below.
-        // Consuming it at the head of this body instead dropped the generation under the live borrow, which
-        // is the ordering VUID-vkQueueSubmit-pCommandBuffers-00070 and the transition frame's
+        // swapchain's verdicts asked for is consumed now, before the next frame's borrow is taken at its
+        // head. Consuming it at the head of this body instead dropped the generation under the live borrow,
+        // which is the ordering VUID-vkQueueSubmit-pCommandBuffers-00070 and the transition frame's
         // VUID-vkCmdDrawIndexed-renderPass-02684 were measured on.
         // DP-18: this tail used to sit inside the try, so a present that threw skipped it entirely - the
         // rebuild the failed present's own verdicts had asked for was never consumed (the stale
-        // generation stayed, and every later frame failed the same way) and no borrow was taken for the
-        // next frame. It runs after the catch now: the consumption is idempotent (a verdict whose
-        // swapchain is already gone consumes nothing) and the borrow ensure keeps its own gates, so the
-        // exception path takes the same shape as the return path.
+        // generation stayed, and every later frame failed the same way). It runs after the catch now:
+        // the consumption is idempotent (a verdict whose swapchain is already gone consumes nothing),
+        // so the exception path takes the same shape as the return path.
         consumeSwapchainRebuild();
-        // The present released the frame's borrow on every path through presentDirect: borrow the
-        // next frame's image now, so the rendering that starts when this call returns attaches the
-        // swapchain image from its first pass.
-        celtium$ensureBorrowedFrameImage();
+        // FP-1 (plan 8.3 item 8): the next frame's present image is no longer borrowed here, in
+        // the present body's tail. The borrow is decided at the frame head, in the backend's
+        // beginCommands before the recording opens, where the native pack frame seat is built
+        // from the by-then-active target - the tail borrow sat one frame early and outside the
+        // frame it served, so a frame whose present was skipped or abandoned carried a borrow
+        // decision made for a different frame.
         // A device loss this attempt itself observed (DP-17, routed into the context by the swapchain)
         // latches the backend's stall before the next frame records anything.
         backend.celtium$noteStalledOnDeviceLoss();

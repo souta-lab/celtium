@@ -128,6 +128,7 @@ public final class ShaderPackRuntime {
             CompiledShaderPack compiled = compiler.compile(shadersRoot,
                     Map.copyOf(pendingOptionValues), PackCompilerCapabilities.DEFAULT_VULKAN_13);
             this.compiledPack = compiled;
+            builtInPackActive = true;
             this.activePackName = packName;
             this.activePackShadersRoot = shadersRoot;
             this.frameFailures = 0;
@@ -151,6 +152,7 @@ public final class ShaderPackRuntime {
     }
 
     public void deactivate() {
+        builtInPackActive = false;
         if (executor != null) {
             executor.close();
             executor = null;
@@ -209,6 +211,21 @@ public final class ShaderPackRuntime {
     private static ActiveRenderTargets seatSwapchain;
     private static Function<VulkanContext, PackTerrainDriver> seatTerrainDriverFactory;
     private static long seatFrameId;
+
+    /**
+     * Whether the built-in pack runtime currently has a pack active, visible to the
+     * frame machinery without an instance handle: the present-image borrow gate reads
+     * it to keep the direct-present borrow for built-in pack frames (the executor's
+     * intermediates live on its own slab and its final pass writes only the swapchain
+     * image), where the external-pack probe's bypass was written for a path whose
+     * passes sample the frame colour (D7 seat ruling, NEON 2026-11-28).
+     */
+    private static volatile boolean builtInPackActive;
+
+    /** Whether a pack is active in the built-in runtime (any instance). */
+    public static boolean builtInPackActive() {
+        return builtInPackActive;
+    }
 
     /** Opens the native frame seat for one frame (frame-owner integration point). */
     public static synchronized void beginNativeFrame(VulkanContext context, VkCommandBuffer cmd,
