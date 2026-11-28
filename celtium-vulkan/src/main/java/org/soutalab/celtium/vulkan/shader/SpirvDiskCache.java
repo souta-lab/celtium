@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan.shader;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

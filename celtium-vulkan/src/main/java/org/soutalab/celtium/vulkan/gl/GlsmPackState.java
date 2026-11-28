@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;

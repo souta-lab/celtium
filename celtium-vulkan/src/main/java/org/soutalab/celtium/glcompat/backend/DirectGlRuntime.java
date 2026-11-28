@@ -2390,7 +2390,7 @@ final class DirectGlRuntime {
             for (int i = 0; i < compiled.uniforms().size(); i++) {
                 rec.uniformLocations.put(compiled.uniforms().get(i).name(), i);
             }
-            for (org.soutalab.celtium.vulkan.gl.ModGlslTranslator.Attribute attribute
+            for (org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute attribute
                     : compiled.attributes()) {
                 Integer override = rec.preLinkAttribLocations.get(attribute.name());
                 rec.attribLocations.put(attribute.name(),
@@ -2723,7 +2723,7 @@ final class DirectGlRuntime {
 
     // -- uniform setters: values land in the program's packed block at member offsets ----------------
 
-    private org.soutalab.celtium.vulkan.gl.ModGlslTranslator.UniformMember memberOf(int location) {
+    private org.soutalab.celtium.vulkan.shader.ModGlslTranslator.UniformMember memberOf(int location) {
         DirectGlRecords.Program rec = this.programs.get(this.currentProgram);
         if (rec == null || rec.compiled == null || location < 0
                 || location >= rec.compiled.uniforms().size()) {

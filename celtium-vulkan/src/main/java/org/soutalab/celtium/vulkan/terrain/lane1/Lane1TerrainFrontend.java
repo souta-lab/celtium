@@ -45,7 +45,7 @@ import org.soutalab.celtium.core.shader.TerrainPassKind;
 import org.soutalab.celtium.core.shader.TerrainStageProgram;
 import org.soutalab.celtium.vulkan.VulkanContext;
 import org.soutalab.celtium.vulkan.VulkanHostBuffer;
-import org.soutalab.celtium.vulkan.gl.ModShaderCompiler;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;

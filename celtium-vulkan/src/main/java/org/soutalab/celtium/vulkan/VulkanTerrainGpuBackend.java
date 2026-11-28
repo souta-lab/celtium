@@ -1640,7 +1640,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // Unconditional for the same reason: these counters were kept but read by nothing outside tests, so a
         // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
         // descriptor-set collisions that no log ever showed.
-        this.diagnostics.add("modPrograms: " + org.soutalab.celtium.vulkan.gl.ModShaderCompiler.compileRefusalSummary()
+        this.diagnostics.add("modPrograms: " + org.soutalab.celtium.vulkan.shader.ModShaderCompiler.compileRefusalSummary()
                 + " unmatchedUniformWrites=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.unmatchedUniformWrites()
                 + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions()
                 + " descriptorSetKeyCollisions=" + this.modPrograms.celtium$descriptorSetKeyCollisions());

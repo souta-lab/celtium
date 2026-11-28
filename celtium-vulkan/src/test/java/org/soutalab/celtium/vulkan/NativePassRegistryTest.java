@@ -10,7 +10,7 @@ import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetClearPolicy;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetSizing;
 import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
-import org.soutalab.celtium.vulkan.gl.ModShaderCompiler;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.util.List;
 

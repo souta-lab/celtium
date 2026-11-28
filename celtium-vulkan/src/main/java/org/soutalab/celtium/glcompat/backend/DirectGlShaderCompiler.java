@@ -5,8 +5,8 @@ import java.nio.ByteOrder;
 import java.util.List;
 
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
-import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
-import org.soutalab.celtium.vulkan.gl.ModShaderCompiler;
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 /**
  * The converter's SPIR-V compiler (the plan's {@code SpirvCompiler}): a mod program's GLSL pair

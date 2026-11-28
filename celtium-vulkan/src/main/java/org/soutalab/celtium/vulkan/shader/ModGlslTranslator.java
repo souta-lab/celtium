@@ -1,4 +1,6 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan.shader;
+
+import org.soutalab.celtium.vulkan.gl.GlsmPackState;
 
 import java.util.ArrayList;
 import java.util.Arrays;

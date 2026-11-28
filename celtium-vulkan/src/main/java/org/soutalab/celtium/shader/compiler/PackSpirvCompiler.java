@@ -7,8 +7,8 @@ import org.jetbrains.annotations.Nullable;
 import org.soutalab.celtium.core.shader.DescriptorBindingPlan;
 import org.soutalab.celtium.core.shader.ShaderStage;
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
-import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
-import org.soutalab.celtium.vulkan.gl.ModShaderCompiler;
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

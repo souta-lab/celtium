@@ -2,7 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
-import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;

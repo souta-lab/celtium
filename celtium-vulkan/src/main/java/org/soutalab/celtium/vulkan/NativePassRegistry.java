@@ -1,6 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.gl.ModShaderCompiler;
+import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.util.ArrayList;
 import java.util.Collections;

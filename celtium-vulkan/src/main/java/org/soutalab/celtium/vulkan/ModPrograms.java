@@ -264,7 +264,7 @@ final class ModPrograms {
         long drawnFastKey = (long) programId * 0x9E3779B97F4A7C15L ^ b.currentFramebufferIdentity;
         drawnFastKey = Long.rotateLeft(drawnFastKey, 17) ^ System.identityHashCode(like);
         for (int i = 0; i < samplerCount; i++) {
-            org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
+            org.soutalab.celtium.vulkan.shader.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
             int[] unitValue = program.ints(sampler.name());
             int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
             String unitRefusal = celtium$samplerUnitRefusal(sampler.name(), unit);
@@ -302,7 +302,7 @@ final class ModPrograms {
             textures[i] = texture;
             drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 13);
         }
-        java.util.List<org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding> imageBindings =
+        java.util.List<org.soutalab.celtium.vulkan.shader.ModGlslTranslator.ImageBinding> imageBindings =
                 program.lowered().images();
         int imageCount = imageBindings.size();
         VulkanGlTexture[] imageTextures = imageCount == 0 ? EMPTY_TEXTURES : new VulkanGlTexture[imageCount];
@@ -360,7 +360,7 @@ final class ModPrograms {
         if (needsCensusReport || MOD_TRACE_FRAMES > 0 || MOD_READBACK) {
             StringBuilder inputs = new StringBuilder();
             for (int i = 0; i < samplerCount; i++) {
-                org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
+                org.soutalab.celtium.vulkan.shader.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
                 int[] unitValue = program.ints(sampler.name());
                 int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
                 int name = b.immediateState.boundTextureName(unit);

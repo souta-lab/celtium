@@ -1,6 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 
 import java.nio.ByteBuffer;

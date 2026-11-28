@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
+import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 
 import java.util.List;
 
