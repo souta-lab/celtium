@@ -10,6 +10,7 @@ import org.soutalab.celtium.vulkan.hal.TransientAttachmentSlab;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import static org.lwjgl.vulkan.VK10.*;
