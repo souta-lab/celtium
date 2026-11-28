@@ -235,6 +235,16 @@ class PackDualCullContractTest {
         @Override
         public void bindTerrainProgram(TerrainStageProgram program) {
         }
+
+        @Override
+        public int frameSlot() {
+            return 0;
+        }
+
+        @Override
+        public long frameId() {
+            return 0L;
+        }
     }
 
     private static TerrainStageProgram program(TerrainPassKind kind) {

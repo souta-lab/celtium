@@ -23,15 +23,20 @@ public final class Lane1CommandStream implements VulkanCommandStream {
     private final float[][] clearColors;
     private final float clearDepth;
     private final int clearStencil;
+    private final long frameId;
+    private final int frameSlot;
 
     public Lane1CommandStream(VulkanContext context, long nativeCommandBuffer,
                               Consumer<TerrainStageProgram> pipelineBinder,
-                              float[][] clearColors, float clearDepth, int clearStencil) {
+                              float[][] clearColors, float clearDepth, int clearStencil,
+                              long frameId, int frameSlot) {
         this.commandBuffer = new VkCommandBuffer(nativeCommandBuffer, context.device());
         this.pipelineBinder = pipelineBinder;
         this.clearColors = clearColors;
         this.clearDepth = clearDepth;
         this.clearStencil = clearStencil;
+        this.frameId = frameId;
+        this.frameSlot = frameSlot;
     }
 
     @Override
@@ -60,5 +65,17 @@ public final class Lane1CommandStream implements VulkanCommandStream {
     @Override
     public void bindTerrainProgram(TerrainStageProgram program) {
         pipelineBinder.accept(program);
+    }
+
+    /** The seat's frame slot, presented by the frame owner through the executor (raw value). */
+    @Override
+    public int frameSlot() {
+        return frameSlot;
+    }
+
+    /** The seat's frame id, presented by the frame owner through the executor. */
+    @Override
+    public long frameId() {
+        return frameId;
     }
 }

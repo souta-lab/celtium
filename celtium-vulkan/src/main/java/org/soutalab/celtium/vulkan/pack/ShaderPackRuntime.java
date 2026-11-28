@@ -173,7 +173,8 @@ public final class ShaderPackRuntime {
      */
     public boolean onFrame(VulkanContext context, VkCommandBuffer cmd, FrameContext ctx,
                            PackFrameEnvironment env,
-                           Function<VulkanContext, PackTerrainDriver> terrainDriverFactory) {
+                           Function<VulkanContext, PackTerrainDriver> terrainDriverFactory,
+                           long seatFrameId, int seatFrameSlot) {
         if (compiledPack == null) {
             return false;
         }
@@ -184,7 +185,7 @@ public final class ShaderPackRuntime {
                 executor = new PackFrameExecutor(context, compiledPack, driver,
                         oneShotSubmitter(context), FRAMES_IN_FLIGHT, shadowExtent);
             }
-            executor.executeFrame(cmd, ctx, env);
+            executor.executeFrame(cmd, ctx, env, seatFrameId, seatFrameSlot);
             executor.reportTimings(ctx.frameId());
             return true;
         } catch (RuntimeException e) {
@@ -211,6 +212,9 @@ public final class ShaderPackRuntime {
     private static ActiveRenderTargets seatSwapchain;
     private static Function<VulkanContext, PackTerrainDriver> seatTerrainDriverFactory;
     private static long seatFrameId;
+    /** The seat's frame slot; -1 is the sentinel for "no seat open" (unlike the frame id,
+     *  the slot has no sentinel convention of its own, so this class defines one). */
+    private static int seatFrameSlot = -1;
 
     /**
      * Whether the built-in pack runtime currently has a pack active, visible to the
@@ -231,12 +235,13 @@ public final class ShaderPackRuntime {
     public static synchronized void beginNativeFrame(VulkanContext context, VkCommandBuffer cmd,
                                                      ActiveRenderTargets swapchain,
                                                      Function<VulkanContext, PackTerrainDriver> terrainDriverFactory,
-                                                     long frameId) {
+                                                     long frameId, int frameSlot) {
         seatContext = context;
         seatCommandBuffer = cmd;
         seatSwapchain = swapchain;
         seatTerrainDriverFactory = terrainDriverFactory;
         seatFrameId = frameId;
+        seatFrameSlot = frameSlot;
     }
 
     /** Closes the native frame seat opened by {@link #beginNativeFrame}. */
@@ -245,6 +250,7 @@ public final class ShaderPackRuntime {
         seatCommandBuffer = null;
         seatSwapchain = null;
         seatTerrainDriverFactory = null;
+        seatFrameSlot = -1;
     }
 
     public static synchronized boolean nativeFrameOpen() {
@@ -261,6 +267,11 @@ public final class ShaderPackRuntime {
         return seatFrameId;
     }
 
+    /** The frame slot of the open seat (-1 when no seat is open). */
+    public static synchronized int seatFrameSlot() {
+        return seatFrameSlot;
+    }
+
     /**
      * Records the pack frame from the open native seat.
      *
@@ -270,15 +281,19 @@ public final class ShaderPackRuntime {
         VulkanContext context;
         VkCommandBuffer cmd;
         Function<VulkanContext, PackTerrainDriver> factory;
+        long frameId;
+        int frameSlot;
         synchronized (ShaderPackRuntime.class) {
             context = seatContext;
             cmd = seatCommandBuffer;
             factory = seatTerrainDriverFactory;
+            frameId = seatFrameId;
+            frameSlot = seatFrameSlot;
         }
         if (context == null || cmd == null || factory == null) {
             return false;
         }
-        return onFrame(context, cmd, ctx, env, factory);
+        return onFrame(context, cmd, ctx, env, factory, frameId, frameSlot);
     }
 
     private static int shadowExtentOf(CompiledShaderPack compiled) {

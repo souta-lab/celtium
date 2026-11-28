@@ -337,7 +337,8 @@ public final class FrameCoordinator {
             if (seatTargets != null) {
                 org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
                         this.context, this.commandBuffer, seatTargets,
-                        ctx -> this.owner.celtium$lane1().terrainDriver(), this.frameId);
+                        ctx -> this.owner.celtium$lane1().terrainDriver(), this.frameId,
+                        this.frameSlot);
             }
             // The coordinator's frame opens at the same point (plan 2.2 template pick).
             // A frame recorded through this backend runs the fixed four-stage template:

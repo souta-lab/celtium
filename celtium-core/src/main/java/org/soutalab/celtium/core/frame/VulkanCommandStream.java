@@ -25,4 +25,19 @@ public interface VulkanCommandStream {
 
     /** Binds the pipeline the HAL built from a terrain stage program (cached per program). */
     void bindTerrainProgram(TerrainStageProgram program);
+
+    /**
+     * The frame slot of the frame this stream is recording. The raw value is in the frame
+     * owner's (the submission scheduler's) slot space; consumers floorMod it by their own
+     * slot count. It is a different space from any executor-local slot (such as the one
+     * PackFrameExecutor derives from the frame id and its own frames-in-flight count) and
+     * the two are not interchangeable.
+     */
+    int frameSlot();
+
+    /**
+     * The frame id of the frame this stream is recording (the frame owner's counter; the
+     * same id handed to {@code PackTerrainDriver.prepareMainView}).
+     */
+    long frameId();
 }

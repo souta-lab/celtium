@@ -136,6 +136,12 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
     private final VulkanHostBuffer[] indirectBuffers = new VulkanHostBuffer[FRAME_SLOTS];
     private final int[] indirectCursor = new int[FRAME_SLOTS];
     private long indirectFrame = -1L;
+    /** The sink's own cursor-reset key: the frame id presented by the stream being consumed.
+     *  recordPass's reset keys on the frontend's frameId field; in the shell flow both keys
+     *  name the same coordinator counter, so whichever fires first zeroes the cursors and the
+     *  other is a no-op. In the executor flow recordPass never runs, so this is the only
+     *  reset that fires. */
+    private long sinkFrameId = Long.MIN_VALUE;
     private final VulkanHostBuffer[] fogBuffers = new VulkanHostBuffer[KIND_COUNT];
 
     private final long setLayout;
@@ -485,12 +491,25 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
      * {@code vkCmdDrawIndirect} per run (the design's production sink shape; the GPU-side count
      * form stays S3-b's). Falls back to direct draws when the device lacks multiDrawIndirect or
      * the frame's command budget is exhausted.
+     * <p>
+     * The sink consumes the stream in the interface's terms only: the command buffer, the
+     * frame slot and the frame id all come from {@link VulkanCommandStream}. Only for this
+     * frontend's own flow (a {@code ShellStream}) does the sink re-bind per run, from its own
+     * program table; for a foreign stream the stage has already bound the flow's program, so
+     * the sink issues draws only and never re-binds (binding ownership stays with whichever
+     * side owns the flow's {@code bindTerrainProgram}).
      */
     private void sinkDraw(VulkanCommandStream stream, TerrainPassKind kind,
                           int[] packed, int commandCount) {
-        ShellStream shell = (ShellStream) stream;
-        VkCommandBuffer cmd = shell.commandBuffer();
-        int slot = shell.slot();
+        ShellStream shell = stream instanceof ShellStream s ? s : null;
+        VkCommandBuffer cmd = shell != null
+                ? shell.commandBuffer()
+                : new VkCommandBuffer(stream.nativeCommandBuffer(), context.device());
+        int slot = Math.floorMod(stream.frameSlot(), FRAME_SLOTS);
+        if (stream.frameId() != sinkFrameId) {
+            java.util.Arrays.fill(indirectCursor, 0);
+            sinkFrameId = stream.frameId();
+        }
         boolean useIndirect = context.multiDrawIndirectEnabled() && context.drawIndirectFirstInstanceEnabled();
         int index = 0;
         while (index < commandCount) {
@@ -499,8 +518,10 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
             while (end < commandCount && (packed[end * 4 + 3] != 0) == general) {
                 end++;
             }
-            shell.bindTerrainProgram(general
-                    ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
+            if (shell != null) {
+                shell.bindTerrainProgram(general
+                        ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
+            }
             int count = end - index;
             if (useIndirect && indirectCursor[slot] + count <= MAX_INDIRECT_COMMANDS
                     && Integer.compareUnsigned(count, context.maxDrawIndirectCount()) <= 0) {
@@ -646,12 +667,18 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
         if (!context.drawIndirectCountEnabled()) {
             return;
         }
-        ShellStream shell = (ShellStream) stream;
-        int slot = shell.slot();
+        ShellStream shell = stream instanceof ShellStream s ? s : null;
+        VkCommandBuffer cmd = shell != null
+                ? shell.commandBuffer()
+                : new VkCommandBuffer(stream.nativeCommandBuffer(), context.device());
+        int slot = Math.floorMod(stream.frameSlot(), FRAME_SLOTS);
         for (int streamIndex = 0; streamIndex < 2; streamIndex++) {
-            shell.bindTerrainProgram(streamIndex == 0 ? axisPrograms[kind.ordinal()] : generalPrograms[kind.ordinal()]);
+            if (shell != null) {
+                shell.bindTerrainProgram(streamIndex == 0
+                        ? axisPrograms[kind.ordinal()] : generalPrograms[kind.ordinal()]);
+            }
             int region = layer * 2 + streamIndex;
-            VK12.vkCmdDrawIndirectCount(shell.commandBuffer(), cullCommands[slot].buffer(),
+            VK12.vkCmdDrawIndirectCount(cmd, cullCommands[slot].buffer(),
                     (long) region * MAX_SECTIONS * COMMAND_STRIDE, cullCounters[slot].buffer(),
                     (long) region * Integer.BYTES, MAX_SECTIONS, COMMAND_STRIDE);
         }
@@ -1025,6 +1052,18 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
 
         int slot() {
             return slot;
+        }
+
+        /** The slot this stream was built with (already floorMod'ed at construction). */
+        @Override
+        public int frameSlot() {
+            return slot;
+        }
+
+        /** The frontend's current frame id (the coordinator counter prepareFrame received). */
+        @Override
+        public long frameId() {
+            return frameId;
         }
 
         @Override

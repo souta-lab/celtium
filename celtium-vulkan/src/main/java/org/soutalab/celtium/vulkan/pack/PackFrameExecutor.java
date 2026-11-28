@@ -252,7 +252,8 @@ public final class PackFrameExecutor implements AutoCloseable {
      * Records one full pack frame into {@code cmd}. The command buffer must be in recording
      * state and outside any rendering scope; submission and presentation stay with the caller.
      */
-    public void executeFrame(VkCommandBuffer cmd, FrameContext ctx, PackFrameEnvironment env) {
+    public void executeFrame(VkCommandBuffer cmd, FrameContext ctx, PackFrameEnvironment env,
+                             long seatFrameId, int seatFrameSlot) {
         ActiveRenderTargets swapchain = env.swapchainTargets();
         if (swapchain != null) {
             attachments.resize(swapchain.width(), swapchain.height());
@@ -298,13 +299,13 @@ public final class PackFrameExecutor implements AutoCloseable {
                 runComputePass(cmd, shadowCompute.name(), shadowCompute.barrier(),
                         shadowCompute.outputTargets(), slot, env);
             } else if (pass instanceof PackExecutionPlan.OrderedPass.ShadowPass shadow) {
-                runShadowStage(cmd, shadow, slot, env);
+                runShadowStage(cmd, shadow, slot, env, seatFrameId, seatFrameSlot);
             } else if (pass instanceof PackExecutionPlan.OrderedPass.PreparePass prepare) {
                 runFullscreenPass(cmd, passKey(prepare.name()), prepare.program().orElse(null),
                         prepare.inputTargets(), prepare.outputTargets(), prepare.barrier(),
                         slot, env, null, false);
             } else if (pass instanceof PackExecutionPlan.OrderedPass.GBufferPass gbuffer) {
-                runGBufferStage(cmd, gbuffer, slot, env);
+                runGBufferStage(cmd, gbuffer, slot, env, seatFrameId, seatFrameSlot);
             } else if (pass instanceof PackExecutionPlan.OrderedPass.DeferredPass deferred) {
                 runFullscreenPass(cmd, passKey(deferred.name()), deferred.program().orElse(null),
                         deferred.inputTargets(), deferred.outputTargets(), deferred.barrier(),
@@ -354,7 +355,8 @@ public final class PackFrameExecutor implements AutoCloseable {
     // ------------------------------------------------------------------ terrain stages
 
     private void runShadowStage(VkCommandBuffer cmd, PackExecutionPlan.OrderedPass.ShadowPass pass,
-                                  int slot, PackFrameEnvironment env) {
+                                  int slot, PackFrameEnvironment env,
+                                  long seatFrameId, int seatFrameSlot) {
         applyBarrier(cmd, pass.barrier());
         for (String input : pass.inputTargets()) {
             attachments.transitionReadToSampled(cmd, input);
@@ -364,7 +366,7 @@ public final class PackFrameExecutor implements AutoCloseable {
         }
         ActiveRenderTargets clear = attachments.activeTargets(pass.outputTargets(), true);
         ActiveRenderTargets load = attachments.activeTargets(pass.outputTargets(), false);
-        Lane1CommandStream stream = newLane1Stream(cmd, pass.outputTargets(), slot, env);
+        Lane1CommandStream stream = newLane1Stream(cmd, pass.outputTargets(), slot, env, seatFrameId, seatFrameSlot);
         boolean first = true;
         boolean windowDone = false;
         for (TerrainPassKind kind : pass.terrainKinds()) {
@@ -402,7 +404,8 @@ public final class PackFrameExecutor implements AutoCloseable {
     }
 
     private void runGBufferStage(VkCommandBuffer cmd, PackExecutionPlan.OrderedPass.GBufferPass pass,
-                                   int slot, PackFrameEnvironment env) {
+                                   int slot, PackFrameEnvironment env,
+                                   long seatFrameId, int seatFrameSlot) {
         applyBarrier(cmd, pass.barrier());
         for (String input : pass.inputTargets()) {
             attachments.transitionReadToSampled(cmd, input);
@@ -412,7 +415,7 @@ public final class PackFrameExecutor implements AutoCloseable {
         }
         ActiveRenderTargets clear = attachments.activeTargets(pass.outputTargets(), true);
         ActiveRenderTargets load = attachments.activeTargets(pass.outputTargets(), false);
-        Lane1CommandStream stream = newLane1Stream(cmd, pass.outputTargets(), slot, env);
+        Lane1CommandStream stream = newLane1Stream(cmd, pass.outputTargets(), slot, env, seatFrameId, seatFrameSlot);
         boolean first = true;
         boolean entitiesDone = false;
         for (TerrainPassKind kind : pass.terrainKinds()) {
@@ -498,7 +501,8 @@ public final class PackFrameExecutor implements AutoCloseable {
     }
 
     private Lane1CommandStream newLane1Stream(VkCommandBuffer cmd, List<String> outputs,
-                                              int slot, PackFrameEnvironment env) {
+                                              int slot, PackFrameEnvironment env,
+                                              long seatFrameId, int seatFrameSlot) {
         float[][] clearColors = new float[outputs.size()][];
         float clearDepth = 1.0f;
         int colorIndex = 0;
@@ -515,7 +519,8 @@ public final class PackFrameExecutor implements AutoCloseable {
         }
         Consumer<TerrainStageProgram> binder =
                 program -> bindTerrainProgram(cmd, program, slot, env);
-        return new Lane1CommandStream(context, cmd.address(), binder, clearColors, clearDepth, 0);
+        return new Lane1CommandStream(context, cmd.address(), binder, clearColors, clearDepth, 0,
+                seatFrameId, seatFrameSlot);
     }
 
     private void bindTerrainProgram(VkCommandBuffer cmd, TerrainStageProgram program,

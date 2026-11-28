@@ -70,6 +70,16 @@ class TerrainDrawStageTest {
         public void bindTerrainProgram(TerrainStageProgram program) {
             calls.add("bind");
         }
+
+        @Override
+        public int frameSlot() {
+            return 0;
+        }
+
+        @Override
+        public long frameId() {
+            return 0L;
+        }
     }
 
     private static TerrainStageProgram program() {
