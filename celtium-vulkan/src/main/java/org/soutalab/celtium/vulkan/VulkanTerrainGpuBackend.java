@@ -394,8 +394,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Load/store-depth multi-target render passes for shader-pack terrain passes (gbuffers_terrain / shadow). */
     final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap frameVariantPasses =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
-    /** Cached VulkanModProgramPipeline instances for shader-pack terrain passes. */
-    final java.util.Map<String, VulkanModProgramPipeline> packTerrainPipelines = new java.util.HashMap<>();
     /** Host-side state bracket for pack terrain executions; see {@link PackStageStateGuard}. */
     private final PackStageStateGuard packStageStateGuard = new PackStageStateGuard();
     private static final boolean PACK_TERRAIN_PROGRAMS =
@@ -11055,8 +11053,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (boundProgram != 0 && boundProgram != Integer.MIN_VALUE) {
                 org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program bound =
                         org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(boundProgram);
-                untexturedFallback = org.soutalab.celtium.vulkan.VulkanModProgramPipeline
-                        .untexturedBuiltInFallback(bound, formatId,
+                untexturedFallback = celtium$untexturedBuiltInFallback(bound, formatId,
                                 !this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId));
                 if (untexturedFallback) {
                     celtium$recordUntexturedFallback(boundProgram, formatId, bound);
@@ -11929,9 +11926,210 @@ this.frameBufferOpen = false;
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // The untextured-fallback gate, seated here from the retired VulkanModProgramPipeline (ruling
+    // step 5): which batch fields a bound program's attributes may read decides whether a batch whose
+    // texture state is disabled is drawn by the built-in pipeline instead of refused. The gate's
+    // feeder (the bound-program query over ModProgramRegistry) leaves with the vulkan/gl package at
+    // E4; the gate itself is the immediate path's own contract until then.
+    // ---------------------------------------------------------------------------------------------
+    /**
+     * A field of the batch's vertex stream a program attribute can read, with the format and offset the immediate
+     * path's own pipelines declare for it: position at 0, the UV's two floats at 12, the colour's four bytes at 20
+     * (the POSITION_TEX_COLOR layout, 24 bytes - {@code VulkanImmediateTextureRecordsPipeline}'s own attribute descriptions
+     * say the same numbers). A wrong offset here reads a neighbour's bytes and draws the wrong picture without any
+     * Vulkan error, so the numbers are asserted by {@code ModProgramAttributeSourceTest}.
+     */
+    enum AttributeSource {
+        POSITION(org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT, 0),
+        TEXCOORD(org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT, 12),
+        COLOR(org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, 20),
+        /**
+         * GL's current colour, for a layout that carries none: GL feeds a colour attribute whose array is disabled
+         * from the current generic attribute ({@code glColor4f}), the same value for every vertex. Here that is a
+         * second vertex binding ({@code CONSTANT_BINDING}) with stride 0 over four floats the draw writes from the
+         * backend's colour mirror, so every vertex reads the one value - Vulkan's form of a constant attribute.
+         */
+        CONSTANT_COLOR(org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SFLOAT, 0);
+
+        final int format;
+        final int offset;
+
+        AttributeSource(int format, int offset) {
+            this.format = format;
+            this.offset = offset;
+        }
+
+        /** {@return the vertex binding this field is read from}: the batch's own (0), or the constant ring (1). */
+        int binding() {
+            return this == CONSTANT_COLOR ? CONSTANT_BINDING : 0;
+        }
+    }
+
+    /** The vertex binding of the constant-attribute ring (stride 0); the batch's own vertices are binding 0. */
+    static final int CONSTANT_BINDING = 1;
+
+    /** Bytes of one constant colour slot: four floats. */
+    static final int CONSTANT_SLOT_BYTES = 16;
+
+    /**
+     * The texture-coordinate names: the lowering's own (a legacy {@code gl_MultiTexCoord0} comes back as
+     * {@code celtium_MultiTexCoord0}), the GLSL 330 fixed-function generator's {@code a_TexCoord0} and Iris's
+     * {@code iris_MultiTexCoord0} (its transformer renames {@code gl_MultiTexCoord0} and injects it at location 2),
+     * each a {@code vec4} reading the batch's two UV floats - Vulkan fills the missing components with (0, 0, 0, 1),
+     * the same values GL supplies, which is what the generator's {@code coord.st / q} division needs.
+     * {@code iris_MultiTexCoord1} is not in this set: it is handled in {@code celtium$attributeSource} because only one layout
+     * may answer it (see there).
+     */
+    private static final java.util.Set<String> TEXCOORD_NAMES =
+            java.util.Set.of("celtium_MultiTexCoord0", "a_TexCoord0", "iris_MultiTexCoord0");
+
+    /**
+     * The position names: the lowering's {@code celtium_Vertex}, which is {@code gl_Vertex} - and {@code ftransform()},
+     * which expands to a use of it, so a legacy program that both declares its own attributes and calls
+     * {@code ftransform()} has this one at a nonzero location. It was refused as "no source" for that reason and only
+     * that reason. Iris's {@code iris_Vertex} is the same rename made by its transformer (injected at location 0, so
+     * the location-0 fallback already answered it; naming it here drops that reliance). The three-float format fills
+     * its {@code vec4}'s w with 1, as GL's vertex position had.
+     */
+    private static final java.util.Set<String> POSITION_NAMES = java.util.Set.of("celtium_Vertex", "iris_Vertex");
+
+    /**
+     * The colour names: the lowering's {@code celtium_Color}, the fixed-function generator's {@code a_Color} and
+     * Iris's {@code iris_Color} (its transformer renames {@code gl_Color}, injected at location 1 in the patch shapes
+     * that declare it). As with the other colour names it only resolves on the colour layout; on the colourless
+     * layout it stays refused - a program that needs a colour value no batch field carries is the separate
+     * constant-attribute question, not a name this gate can answer.
+     */
+    private static final java.util.Set<String> COLOR_NAMES = java.util.Set.of("celtium_Color", "a_Color", "iris_Color");
+
+    /**
+     * {@return whether a batch this program cannot draw may be drawn by the built-in pipeline instead of
+     * refused}: the batch's texture state is disabled, so the bound program is not the program a
+     * fixed-function stack would draw it with - {@code Gui.drawRect} and the gradient-rect family run
+     * with texturing off and are rendered by the untextured program variant, whatever textured program
+     * happens to be bound - and the only thing wrong with the bound program for this batch is the
+     * attribute mapping. The measured arrival is Demonica's GLSM: its textured FFP program stays bound
+     * across the menu's rectangle draws, and a POSITION batch under it was refused for reading a texture
+     * coordinate the batch does not carry, so the rectangles vanished (demonica-gui-1, mechanism (a)).
+     * <p>
+     * Every other refusal stands: the program must be one the stub itself lowered and compiled (an
+     * unlowered binding - the ShaderGroup post-process shape - is refused exactly as before), and a
+     * batch with its texture state enabled is refused exactly as before.
+     */
+    /**
+     * {@return why this program and batch layout cannot be drawn}, or null when they can. Checked before any Vulkan
+     * object is created, so a refusal costs nothing. Seated here from the retired
+     * {@code VulkanModProgramPipeline} with the rest of the fallback gate (ruling step 5).
+     */
+    public static String celtium$modProgramUnsupported(
+            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program, int formatId) {
+        if (program == null || program.lowered() == null) {
+            return "the program is not lowered";
+        }
+        if (!program.lowered().ok()) {
+            // The lowering's own reason, not just the fact: the LINKED line printed it once at link time,
+            // but the per-batch refusal line is the one a leg reads, and it repeated only the general text.
+            String failure = program.lowered().failure();
+            return failure == null ? "the program is not lowered"
+                    : "the program is not lowered (" + failure + ")";
+        }
+        if (!program.compiled()) {
+            return "the program has no SPIR-V (" + program.compileFailure() + ")";
+        }
+        return celtium$unsupportedAttributes(program.lowered().attributes(), formatId);
+    }
+
+    public static boolean celtium$untexturedBuiltInFallback(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program, int formatId,
+                                                    boolean textureDisabled) {
+        if (!textureDisabled || program == null || program.lowered() == null || !program.lowered().ok()
+                || !program.compiled()) {
+            return false;
+        }
+        return celtium$unsupportedAttributes(program.lowered().attributes(), formatId) != null;
+    }
+
+    /**
+     * {@return why this program's attributes cannot be read from this batch layout}, or null when they can - the
+     * format half of the program-level refusal question, split out so both halves are testable without a device: which formats map
+     * onto program attributes at all, and which attribute reads which of the layout's fields.
+     * <p>
+     * {@code POSITION} (id 7) maps its one field: the layout is twelve bytes of position and nothing else, so a
+     * program whose attributes all read the position draws with it, and any other attribute is refused by name in
+     * {@code celtium$attributeSource}. The measured arrival is Iris's horizon mesh (an octagonal prism and two gridded planes,
+     * 1,384 position-only vertices submitted every frame from {@code HorizonRenderer}): the sky program it is
+     * submitted under also reads a colour, which GL supplies from the current generic attribute - the pipeline
+     * sets it to the fog colour immediately before the draw - so that program stays refused here until the
+     * constant-attribute question is answered, now with the attribute named instead of the whole format.
+     */
+    static String celtium$unsupportedAttributes(java.util.List<org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute> attributes, int formatId) {
+        if (formatId != VulkanImmediateFormats.POSITION_TEX && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR
+                && formatId != VulkanImmediateFormats.POSITION) {
+            return "batch format " + formatId + " is not mapped onto program attributes";
+        }
+        for (org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute attribute : attributes) {
+            if (celtium$attributeSource(attribute, formatId) == null) {
+                return "attribute " + attribute.name() + " has no source in format " + formatId;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@return the batch field this attribute reads}, or null when this layout has no such field.
+     * <p>
+     * Names first, then the location-0 alias: a vertex, a texture coordinate or a colour is identified by what the
+     * source called it, whichever location the program gave it, while GL's generic attribute 0 with no known name is
+     * the position - a rule that has to stay, because a legacy {@code attribute vec3 position;} is lowered to location
+     * 0 under its own name and a name whitelist alone would refuse every such program. An unknown attribute is null,
+     * never a guess: the same bytes read as the wrong field draw a wrong picture with no Vulkan error to show for it.
+     */
+    static AttributeSource celtium$attributeSource(org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute attribute, int formatId) {
+        if (POSITION_NAMES.contains(attribute.name())) {
+            return AttributeSource.POSITION;
+        }
+        if ("iris_MultiTexCoord1".equals(attribute.name())) {
+            // Iris's second texture coordinate (injected at location 3). The fullscreen-quad path folds its two
+            // attributes at offset 12 onto the one UV the batch carries, and POSITION_TEX is that path's layout, so
+            // the name reads TEXCOORD there. POSITION_TEX_COLOR has no second UV field at all - the same ground on
+            // which the fixed-function generator's a_TexCoord1 stays refused - so it is refused there rather than
+            // answered with the first UV. Terrain programs, whose second coordinate is a light map, do not come
+            // through this gate (they travel the Celeritas channel), so the fold cannot leak into them.
+            return formatId == VulkanImmediateFormats.POSITION_TEX ? AttributeSource.TEXCOORD : null;
+        }
+        if (TEXCOORD_NAMES.contains(attribute.name())) {
+            // POSITION carries no UV element: offset 12 in a 12-byte vertex is the next vertex's position, so the
+            // name is answered only by the layouts that carry the field. A program that reads a texture coordinate
+            // the batch does not carry is refused here, as a colour read on a colourless layout already is.
+            return formatId == VulkanImmediateFormats.POSITION_TEX
+                    || formatId == VulkanImmediateFormats.POSITION_TEX_COLOR ? AttributeSource.TEXCOORD : null;
+        }
+        if (COLOR_NAMES.contains(attribute.name())) {
+            // POSITION_TEX has no colour element; a program that reads one needs the colour layout, not this batch.
+            // POSITION is answered with GL's current colour (the constant attribute): its measured arrival is Iris's
+            // horizon mesh, drawn by the sky program right after glColor4f(fog colour), which is exactly the value GL
+            // would hand gl_Color there. POSITION_TEX stays refused until a measured case says what feeds it.
+            if (formatId == VulkanImmediateFormats.POSITION_TEX_COLOR) {
+                return AttributeSource.COLOR;
+            }
+            return formatId == VulkanImmediateFormats.POSITION ? AttributeSource.CONSTANT_COLOR : null;
+        }
+        return attribute.location() == 0 ? AttributeSource.POSITION : null;
+    }
+
+    /** {@return whether any of these attributes reads the constant ring on this layout} (static and pure, for tests). */
+    static boolean celtium$readsConstantAttributes(java.util.List<org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute> attributes, int formatId) {
+        for (org.soutalab.celtium.vulkan.shader.ModGlslTranslator.Attribute attribute : attributes) {
+            if (celtium$attributeSource(attribute, formatId) == AttributeSource.CONSTANT_COLOR) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Reports (once per program and format) a batch drawn by the built-in pipeline under a bound program
-     * it could not use: the untextured fallback of {@code VulkanModProgramPipeline.untexturedBuiltInFallback}.
+     * it could not use: the untextured fallback of {@code celtium$untexturedBuiltInFallback}.
      * The line names the attribute gap that would have refused the batch, so a leg reading the log sees
      * both that the gap occurred and that the batch was drawn anyway.
      */
@@ -11941,7 +12139,7 @@ this.frameBufferOpen = false;
         if (this.untexturedFallbackIds.putIfAbsent(programKey, 1) == null) {
             System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_FALLBACK program=" + boundProgram
                     + " format=" + formatId + " route=builtin-untextured reason="
-                    + org.soutalab.celtium.vulkan.VulkanModProgramPipeline.unsupportedAttributes(
+                    + celtium$unsupportedAttributes(
                             bound.lowered().attributes(), formatId)
                     + " (the batch's texture state is disabled, so the bound program is not the program"
                     + " a fixed-function stack would draw it with)");
@@ -13802,16 +14000,6 @@ this.frameBufferOpen = false;
         // without the walk would leak the whole family. The host empties its caches as it goes,
         // so the second teardown path finds nothing and releases nothing again.
         released += this.recordsPipelines.celtium$releaseAll();
-        // Shader-pack terrain pipelines are the same kind of object - a live pipeline with descriptor pools,
-        // keyed by the program's SPIR-V identity - and they go with it too. The full delete cleared them, but
-        // the world teardown path did not (roam-hunt-9): the render passes they were built against outlive a
-        // world, the pipelines must not. A pack that recreates its programs for the next world (a pack switch,
-        // a resource reload) would leave the old entries unreachable by key yet alive for the rest of the
-        // process, and a later key collision could hand the new world a pipeline built from the old SPIR-V.
-        for (VulkanModProgramPipeline packPipeline : this.packTerrainPipelines.values()) {
-            released += releaseDirect(packPipeline == null ? null : packPipeline::delete);
-        }
-        this.packTerrainPipelines.clear();
         released += releaseDirect(this.immediatePipeline == null ? null : () -> this.immediatePipeline.delete());
         this.immediatePipeline = null;
         released += releaseImmediateMesh(this.isolationMesh);
@@ -18386,10 +18574,6 @@ this.frameBufferOpen = false;
             }
         }
         this.frameVariantPasses.clear();
-        for (VulkanModProgramPipeline packPipe : this.packTerrainPipelines.values()) {
-            packPipe.delete();
-        }
-        this.packTerrainPipelines.clear();
         this.chainPairVariantColorCounts.clear();
         for (int slot = 0; slot < this.formatClassPipelinePasses.length; slot++) {
             if (this.formatClassPipelinePasses[slot] != 0) {
@@ -18397,10 +18581,6 @@ this.frameBufferOpen = false;
                         this.formatClassPipelinePasses[slot], null);
                 this.formatClassPipelinePasses[slot] = 0;
             }
-        }
-        if (this.postChain != null) {
-            this.postChain.delete();
-            this.postChain = null;
         }
         if (this.atlasTexture != null) {
             this.atlasTexture.delete();
@@ -20293,9 +20473,6 @@ this.frameBufferOpen = false;
     /** The bound for that line: it is per model list per frame, so it needs a cap even in a diagnostics run. */
     static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
 
-
-    /** The post-process chain executor, created lazily the first frame a chain group actually renders. */
-    VulkanPostChain postChain;
 
     /**
      * Whether anything has asked to sample the frame's own colour image through the {@code "frame-image"}
@@ -23166,12 +23343,11 @@ this.frameBufferOpen = false;
                 }
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcResolve");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPush");
-                boolean isModDraw = prepared.pipeline instanceof VulkanModProgramPipeline.Draw;
-                if (!isModDraw && PUSH_COMPONENT_CENSUS) {
+                if (PUSH_COMPONENT_CENSUS) {
                     celtium$notePushComponents(group);
                 }
-                long pushBlockKey = (!isModDraw && PUSH_BLOCK_CACHE) ? celtium$pushBlockKey(group) : 0L;
-                boolean pushBlockCached = isModDraw || (PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push));
+                long pushBlockKey = PUSH_BLOCK_CACHE ? celtium$pushBlockKey(group) : 0L;
+                boolean pushBlockCached = PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push);
                 if (!pushBlockCached) {
                 // The fill below is left unindented inside this guard on purpose: it is ninety lines of column writes
                 // whose offsets are the shader contract, and re-indenting them would bury that contract in the diff.
@@ -23373,11 +23549,7 @@ this.frameBufferOpen = false;
                             celtium$setGroupViewport(groupStack, group, this.passAreaWidth, this.passAreaHeight);
                             celtium$issueGroupDepthBias(group);
                         }
-                        if (prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
-                            // A mod program's own draw form is not a records twin: it keeps the
-                            // direct branch below, the only pipeline form that still reaches it
-                            // (Stage 5 stage 6).
-                        } else if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline) {
+                        if (prepared.pipeline instanceof VulkanImmediateParticleRecordsPipeline) {
                             // The family's per-group form is gone (Stage 5 S5-3): an uncaptured particle
                             // group is drawn through its twin directly - never dropped silently.
                             fallbackDrawn = celtium$drawParticleGroupFallback(group, mesh, prepared, push);
@@ -23397,12 +23569,11 @@ this.frameBufferOpen = false;
                         }
                     }
                     if (!batchCaptured && !fallbackDrawn) {
-                    // Only a mod program's Draw reaches this branch (Stage 5 stage 6): every
-                    // immediate family's group is either captured or drawn by one of the twin
-                    // fallbacks above.
-                    if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
-                        value.draw(this.commandBuffer, mesh, this.immediateBindCache);
-                    }
+                    // No third route remains: a mod program's own Draw form was the only pipeline
+                    // that reached this branch, and it retired with VulkanModProgramPipeline
+                    // (ruling step 5). A group here was dropped by a fallback and is counted in
+                    // batchDroppedDraws; the bracket still closes, so the next group's timing is
+                    // not charged with this group's remainder.
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
                     if (fallbackDrawn || batchCaptured) {
@@ -23414,13 +23585,12 @@ this.frameBufferOpen = false;
                         // its draw records later, at the segment's flush, under the segment's own accounting.
                         org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
-                    // The three routes that draw a group: captured into a segment (the draw records at the
-                    // segment's flush), drawn by a twin fallback, or drawn by a mod program's own Draw form
-                    // in the branch above. A group none of them drew was dropped by a fallback and counted
-                    // in batchDroppedDraws; the sky census here and the drawn accounting after this block
-                    // both gate on this, so the drop is not also counted as a draw (drawpath audit DP-12).
-                    groupDrew = batchCaptured || fallbackDrawn
-                            || pipeline instanceof VulkanModProgramPipeline.Draw;
+                    // The two routes that draw a group: captured into a segment (the draw records at the
+                    // segment's flush) or drawn by a twin fallback. A group neither drew was dropped by
+                    // a fallback and counted in batchDroppedDraws; the sky census here and the drawn
+                    // accounting after this block both gate on this, so the drop is not also counted as
+                    // a draw (drawpath audit DP-12).
+                    groupDrew = batchCaptured || fallbackDrawn;
                     if (skyGroup && groupDrew) {
                         // Reached only after the draw was issued (indirect or direct), so the suffix is the fact the
                         // offer census could not supply.

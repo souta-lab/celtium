@@ -2,7 +2,7 @@ package org.soutalab.celtium.vulkan.gl;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.VulkanModProgramPipeline;
+import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,15 +46,15 @@ class ModProgramUntexturedFallbackTest {
         // The pre-fix disposition, on the reporter's exact inputs: this is the refusal the fix removes
         // for texture-disabled batches only - the reason itself is unchanged.
         assertEquals("attribute a_TexCoord0 has no source in format 7",
-                VulkanModProgramPipeline.unsupported(texturedProgram(), 7));
+                VulkanTerrainGpuBackend.celtium$modProgramUnsupported(texturedProgram(), 7));
     }
 
     @Test
     void aTextureDisabledPositionBatchFallsBackAndATexturedOneDoesNot() {
         ModProgramRegistry.Program program = texturedProgram();
-        assertTrue(VulkanModProgramPipeline.untexturedBuiltInFallback(program, 7, true),
+        assertTrue(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(program, 7, true),
                 "a drawRect-shaped batch (POSITION, texture state disabled) must take the built-in path");
-        assertFalse(VulkanModProgramPipeline.untexturedBuiltInFallback(program, 7, false),
+        assertFalse(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(program, 7, false),
                 "the same batch with its texture state enabled is still refused");
     }
 
@@ -64,17 +64,17 @@ class ModProgramUntexturedFallbackTest {
         // family submits it with texturing disabled, so it shares the hole and the fallback.
         ModProgramRegistry.Program program = texturedProgram();
         assertEquals("batch format 1 is not mapped onto program attributes",
-                VulkanModProgramPipeline.unsupported(program, 1));
-        assertTrue(VulkanModProgramPipeline.untexturedBuiltInFallback(program, 1, true));
-        assertFalse(VulkanModProgramPipeline.untexturedBuiltInFallback(program, 1, false));
+                VulkanTerrainGpuBackend.celtium$modProgramUnsupported(program, 1));
+        assertTrue(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(program, 1, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(program, 1, false));
     }
 
     @Test
     void aBatchTheProgramCanDrawIsNotAFallbackCandidate() {
         // POSITION_TEX (6) sources both attributes: the program draws the batch itself.
         ModProgramRegistry.Program program = texturedProgram();
-        assertNull(VulkanModProgramPipeline.unsupported(program, 6));
-        assertFalse(VulkanModProgramPipeline.untexturedBuiltInFallback(program, 6, true));
+        assertNull(VulkanTerrainGpuBackend.celtium$modProgramUnsupported(program, 6));
+        assertFalse(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(program, 6, true));
     }
 
     @Test
@@ -86,8 +86,8 @@ class ModProgramUntexturedFallbackTest {
         ModProgramRegistry.attach(7301, 7302);
         ModProgramRegistry.Program unlowered = ModProgramRegistry.link(7301);
         assertFalse(unlowered.lowered().ok());
-        assertFalse(VulkanModProgramPipeline.untexturedBuiltInFallback(unlowered, 7, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(unlowered, 7, true));
         // And no program at all is never a fallback candidate.
-        assertFalse(VulkanModProgramPipeline.untexturedBuiltInFallback(null, 7, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$untexturedBuiltInFallback(null, 7, true));
     }
 }

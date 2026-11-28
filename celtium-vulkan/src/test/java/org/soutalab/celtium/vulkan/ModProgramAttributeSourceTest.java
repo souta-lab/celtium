@@ -87,14 +87,14 @@ class ModProgramAttributeSourceTest {
                 new ModGlslTranslator.Attribute("a_Color", "vec4", 1),
                 new ModGlslTranslator.Attribute("a_TexCoord0", "vec4", 2)), attributes);
         // Leg 18's refusal, and the attribute that would have followed it: both must read a field of format 2.
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes,
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(attributes,
                 VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.POSITION,
-                VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.COLOR,
-                VulkanModProgramPipeline.source(attributes.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
-                VulkanModProgramPipeline.source(attributes.get(2), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.POSITION,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(0), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.COLOR,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(2), VulkanImmediateFormats.POSITION_TEX_COLOR));
     }
 
     @Test
@@ -102,16 +102,16 @@ class ModProgramAttributeSourceTest {
         // Load-bearing (TerrainVertexLayoutTest's rule): a colour described at the wrong offset reads a neighbour's
         // bytes and draws the wrong colour with no Vulkan error. POSITION_TEX_COLOR is position for 12 bytes, then the
         // UV's two floats, then four colour bytes, ending exactly at the 24-byte stride.
-        assertEquals(0, VulkanModProgramPipeline.Source.POSITION.offset);
-        assertEquals(VK_FORMAT_R32G32B32_SFLOAT, VulkanModProgramPipeline.Source.POSITION.format);
-        assertEquals(12, VulkanModProgramPipeline.Source.TEXCOORD.offset);
-        assertEquals(VK_FORMAT_R32G32_SFLOAT, VulkanModProgramPipeline.Source.TEXCOORD.format);
-        assertEquals(20, VulkanModProgramPipeline.Source.COLOR.offset);
-        assertEquals(VK_FORMAT_R8G8B8A8_UNORM, VulkanModProgramPipeline.Source.COLOR.format);
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD.offset + 8,
-                VulkanModProgramPipeline.Source.COLOR.offset);
+        assertEquals(0, VulkanTerrainGpuBackend.AttributeSource.POSITION.offset);
+        assertEquals(VK_FORMAT_R32G32B32_SFLOAT, VulkanTerrainGpuBackend.AttributeSource.POSITION.format);
+        assertEquals(12, VulkanTerrainGpuBackend.AttributeSource.TEXCOORD.offset);
+        assertEquals(VK_FORMAT_R32G32_SFLOAT, VulkanTerrainGpuBackend.AttributeSource.TEXCOORD.format);
+        assertEquals(20, VulkanTerrainGpuBackend.AttributeSource.COLOR.offset);
+        assertEquals(VK_FORMAT_R8G8B8A8_UNORM, VulkanTerrainGpuBackend.AttributeSource.COLOR.format);
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD.offset + 8,
+                VulkanTerrainGpuBackend.AttributeSource.COLOR.offset);
         assertEquals(VulkanImmediateTextureRecordsPipeline.VERTEX_BYTES,
-                VulkanModProgramPipeline.Source.COLOR.offset + 4,
+                VulkanTerrainGpuBackend.AttributeSource.COLOR.offset + 4,
                 "the colour ends at the stride; a fifth byte would be the next vertex's position");
     }
 
@@ -119,7 +119,7 @@ class ModProgramAttributeSourceTest {
     void aColourAttributeIsRefusedByTheColorlessLayout() {
         // POSITION_TEX (20 bytes) carries no colour element at all. The refusal names the attribute and the layout, so
         // a leg reads which one asked for what the batch does not have.
-        String refusal = VulkanModProgramPipeline.unsupportedAttributes(glsmAttributes(),
+        String refusal = VulkanTerrainGpuBackend.celtium$unsupportedAttributes(glsmAttributes(),
                 VulkanImmediateFormats.POSITION_TEX);
         assertNotNull(refusal, "a colour read from a layout without a colour element reads the next vertex");
         assertEquals("attribute a_Color has no source in format " + VulkanImmediateFormats.POSITION_TEX, refusal);
@@ -144,9 +144,9 @@ class ModProgramAttributeSourceTest {
                 """);
         assertNull(result.failure(), () -> "unexpected lowering failure: " + result.failure());
         assertEquals("attribute a_TexCoord1 has no source in format 2",
-                VulkanModProgramPipeline.unsupportedAttributes(result.attributes(),
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(result.attributes(),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertNull(VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("a_Normal", "vec3", 4),
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(new ModGlslTranslator.Attribute("a_Normal", "vec3", 4),
                 VulkanImmediateFormats.POSITION_TEX_COLOR));
     }
 
@@ -173,19 +173,19 @@ class ModProgramAttributeSourceTest {
                 new ModGlslTranslator.Attribute("celtium_Vertex", "vec4", 1),
                 new ModGlslTranslator.Attribute("celtium_Color", "vec4", 2),
                 new ModGlslTranslator.Attribute("celtium_MultiTexCoord0", "vec4", 3)), result.attributes());
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(result.attributes(),
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(result.attributes(),
                 VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.POSITION,
-                VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("position", "vec3", 0),
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.POSITION,
+                VulkanTerrainGpuBackend.celtium$attributeSource(new ModGlslTranslator.Attribute("position", "vec3", 0),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.POSITION,
-                VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("celtium_Vertex", "vec4", 1),
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.POSITION,
+                VulkanTerrainGpuBackend.celtium$attributeSource(new ModGlslTranslator.Attribute("celtium_Vertex", "vec4", 1),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
-                VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("celtium_MultiTexCoord0", "vec4", 1),
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD,
+                VulkanTerrainGpuBackend.celtium$attributeSource(new ModGlslTranslator.Attribute("celtium_MultiTexCoord0", "vec4", 1),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.COLOR,
-                VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("celtium_Color", "vec4", 2),
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.COLOR,
+                VulkanTerrainGpuBackend.celtium$attributeSource(new ModGlslTranslator.Attribute("celtium_Color", "vec4", 2),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
     }
 
@@ -229,21 +229,21 @@ class ModProgramAttributeSourceTest {
                 new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2),
                 new ModGlslTranslator.Attribute("iris_MultiTexCoord1", "vec4", 3)), attributes);
         // Tier 1's refusal: format 6 carries the UV at offset 12, so all three names must read a field of it.
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes,
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(attributes,
                 VulkanImmediateFormats.POSITION_TEX));
-        assertEquals(VulkanModProgramPipeline.Source.POSITION,
-                VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION_TEX));
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
-                VulkanModProgramPipeline.source(attributes.get(1), VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.POSITION,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(0), VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(1), VulkanImmediateFormats.POSITION_TEX));
         // The quad path folds the second coordinate's attribute (also offset 12) onto the one UV, so it reads
         // the same field on this layout.
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
-                VulkanModProgramPipeline.source(attributes.get(2), VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(2), VulkanImmediateFormats.POSITION_TEX));
         // Without the second coordinate, the same names also serve the colour layout, whose UV is the same field.
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes.subList(0, 2),
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(attributes.subList(0, 2),
                 VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
-                VulkanModProgramPipeline.source(attributes.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.TEXCOORD,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
     }
 
     @Test
@@ -251,11 +251,11 @@ class ModProgramAttributeSourceTest {
         // Format 2 has no second UV field at all - the ground on which a_TexCoord1 stays refused above - so the
         // fold that POSITION_TEX permits must not leak into it.
         List<ModGlslTranslator.Attribute> attributes = irisAttributes();
-        assertNull(VulkanModProgramPipeline.source(attributes.get(2),
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(2),
                 VulkanImmediateFormats.POSITION_TEX_COLOR));
         assertEquals("attribute iris_MultiTexCoord1 has no source in format "
                         + VulkanImmediateFormats.POSITION_TEX_COLOR,
-                VulkanModProgramPipeline.unsupportedAttributes(attributes,
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(attributes,
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
     }
 
@@ -265,25 +265,25 @@ class ModProgramAttributeSourceTest {
         // where none does. Serving a colour value no field carries is the constant-attribute question, which this
         // gate does not answer.
         ModGlslTranslator.Attribute irisColor = new ModGlslTranslator.Attribute("iris_Color", "vec4", 1);
-        assertEquals(VulkanModProgramPipeline.Source.COLOR,
-                VulkanModProgramPipeline.source(irisColor, VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertNull(VulkanModProgramPipeline.source(irisColor, VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.COLOR,
+                VulkanTerrainGpuBackend.celtium$attributeSource(irisColor, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(irisColor, VulkanImmediateFormats.POSITION_TEX));
         assertEquals("attribute iris_Color has no source in format " + VulkanImmediateFormats.POSITION_TEX,
-                VulkanModProgramPipeline.unsupportedAttributes(List.of(irisColor),
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(List.of(irisColor),
                         VulkanImmediateFormats.POSITION_TEX));
         // Neither layout carries a normal field, so iris_Normal stays refused on both.
         ModGlslTranslator.Attribute irisNormal = new ModGlslTranslator.Attribute("iris_Normal", "vec3", 4);
-        assertNull(VulkanModProgramPipeline.source(irisNormal, VulkanImmediateFormats.POSITION_TEX));
-        assertNull(VulkanModProgramPipeline.source(irisNormal, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(irisNormal, VulkanImmediateFormats.POSITION_TEX));
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(irisNormal, VulkanImmediateFormats.POSITION_TEX_COLOR));
         assertEquals("attribute iris_Normal has no source in format " + VulkanImmediateFormats.POSITION_TEX,
-                VulkanModProgramPipeline.unsupportedAttributes(List.of(irisNormal),
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(List.of(irisNormal),
                         VulkanImmediateFormats.POSITION_TEX));
     }
 
     @Test
     void aLayoutThatMapsNoAttributesIsRefusedBeforeAnyAttributeIsRead() {
         assertEquals("batch format 3 is not mapped onto program attributes",
-                VulkanModProgramPipeline.unsupportedAttributes(List.of(), VulkanImmediateFormats.BLOCK));
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(List.of(), VulkanImmediateFormats.BLOCK));
     }
 
     @Test
@@ -293,14 +293,14 @@ class ModProgramAttributeSourceTest {
         // whole format before any attribute was read, so even this program never drew.
         List<ModGlslTranslator.Attribute> attributes =
                 List.of(new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0));
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes,
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(attributes,
                 VulkanImmediateFormats.POSITION));
-        assertEquals(VulkanModProgramPipeline.Source.POSITION,
-                VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.POSITION,
+                VulkanTerrainGpuBackend.celtium$attributeSource(attributes.get(0), VulkanImmediateFormats.POSITION));
         // The position field (three floats at offset 0) ends exactly at the layout's stride; a fourth float
         // would be the next vertex.
         assertEquals(VulkanImmediateTextureRecordsPipeline.POSITION_BYTES,
-                VulkanModProgramPipeline.Source.POSITION.offset + 12,
+                VulkanTerrainGpuBackend.AttributeSource.POSITION.offset + 12,
                 "the position field ends at the position-only stride");
     }
 
@@ -310,15 +310,15 @@ class ModProgramAttributeSourceTest {
         // value answers on this layout: see theSkyProgramReadsTheCurrentColourAsAConstantAttribute).
         // A texture coordinate is refused the same way: offset 12 in a 12-byte vertex is the next vertex's
         // position, so answering the name with the UV field would read a neighbour's bytes.
-        assertNull(VulkanModProgramPipeline.source(
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(
                 new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2),
                 VulkanImmediateFormats.POSITION));
         assertEquals("attribute iris_MultiTexCoord0 has no source in format " + VulkanImmediateFormats.POSITION,
-                VulkanModProgramPipeline.unsupportedAttributes(
+                VulkanTerrainGpuBackend.celtium$unsupportedAttributes(
                         List.of(new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2)),
                         VulkanImmediateFormats.POSITION));
         // The second coordinate stays refused here too (it is answered only by POSITION_TEX's fold).
-        assertNull(VulkanModProgramPipeline.source(
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(
                 new ModGlslTranslator.Attribute("iris_MultiTexCoord1", "vec4", 3),
                 VulkanImmediateFormats.POSITION));
     }
@@ -331,22 +331,22 @@ class ModProgramAttributeSourceTest {
         List<ModGlslTranslator.Attribute> skyBasic = List.of(
                 new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0),
                 new ModGlslTranslator.Attribute("iris_Color", "vec4", 1));
-        assertNull(VulkanModProgramPipeline.unsupportedAttributes(skyBasic, VulkanImmediateFormats.POSITION));
-        assertEquals(VulkanModProgramPipeline.Source.CONSTANT_COLOR,
-                VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION));
-        assertEquals(VulkanModProgramPipeline.CONSTANT_BINDING,
-                VulkanModProgramPipeline.Source.CONSTANT_COLOR.binding());
-        assertEquals(0, VulkanModProgramPipeline.Source.POSITION.binding());
-        assertEquals(VK_FORMAT_R32G32B32A32_SFLOAT, VulkanModProgramPipeline.Source.CONSTANT_COLOR.format);
-        assertEquals(0, VulkanModProgramPipeline.Source.CONSTANT_COLOR.offset);
-        assertEquals(16, VulkanModProgramPipeline.CONSTANT_SLOT_BYTES);
-        assertTrue(VulkanModProgramPipeline.readsConstant(skyBasic, VulkanImmediateFormats.POSITION));
+        assertNull(VulkanTerrainGpuBackend.celtium$unsupportedAttributes(skyBasic, VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.CONSTANT_COLOR,
+                VulkanTerrainGpuBackend.celtium$attributeSource(skyBasic.get(1), VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanTerrainGpuBackend.CONSTANT_BINDING,
+                VulkanTerrainGpuBackend.AttributeSource.CONSTANT_COLOR.binding());
+        assertEquals(0, VulkanTerrainGpuBackend.AttributeSource.POSITION.binding());
+        assertEquals(VK_FORMAT_R32G32B32A32_SFLOAT, VulkanTerrainGpuBackend.AttributeSource.CONSTANT_COLOR.format);
+        assertEquals(0, VulkanTerrainGpuBackend.AttributeSource.CONSTANT_COLOR.offset);
+        assertEquals(16, VulkanTerrainGpuBackend.CONSTANT_SLOT_BYTES);
+        assertTrue(VulkanTerrainGpuBackend.celtium$readsConstantAttributes(skyBasic, VulkanImmediateFormats.POSITION));
         // The colour layout keeps its own field, and the UV layout still refuses a colour.
-        assertFalse(VulkanModProgramPipeline.readsConstant(skyBasic, VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertEquals(VulkanModProgramPipeline.Source.COLOR,
-                VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
-        assertNull(VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX));
+        assertFalse(VulkanTerrainGpuBackend.celtium$readsConstantAttributes(skyBasic, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanTerrainGpuBackend.AttributeSource.COLOR,
+                VulkanTerrainGpuBackend.celtium$attributeSource(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertNull(VulkanTerrainGpuBackend.celtium$attributeSource(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX));
         // A position-only program builds no ring.
-        assertFalse(VulkanModProgramPipeline.readsConstant(List.of(skyBasic.get(0)), VulkanImmediateFormats.POSITION));
+        assertFalse(VulkanTerrainGpuBackend.celtium$readsConstantAttributes(List.of(skyBasic.get(0)), VulkanImmediateFormats.POSITION));
     }
 }
