@@ -1,6 +1,7 @@
 package org.soutalab.celtium.glcompat.backend;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +25,7 @@ import org.soutalab.celtium.glcompat.capture.ClientArrayRange;
 import org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry;
 import org.soutalab.celtium.glcompat.capture.GlFn;
 import org.soutalab.celtium.glcompat.ffp.ShaderManager;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
 import org.soutalab.celtium.vulkan.lane2.Lane2StateMirror;
 
 /**
@@ -49,6 +51,15 @@ import org.soutalab.celtium.vulkan.lane2.Lane2StateMirror;
  * T2: the successor observable for the two draw tests E4-c retired from VaoAttribRecordTest -
  * draws assembled from a VBO-offset pointer and from a raw client-memory pointer resolved
  * through the published owned range (C2(b)) reach the sink with droppedDraws == 0.
+ * <p>
+ * T3: the framebuffer the draw is submitted under (gate-1 re-diagnosis, layer A). The T1/T2
+ * draws never bind a framebuffer, so the submit path they pin is the FBO 0 pass-through; the
+ * game, however, draws its world phase under its main framebuffer, whose name the runtime
+ * holds no record for (game names come from the capture window and attachments are never
+ * forwarded to this seat), and realization refused every such draw as target_incompatible.
+ * The runtime now maps a bound framebuffer the backend classifies as the game's main one to
+ * the sink's main target (id 0); a bound framebuffer classified as not main keeps the
+ * refusal, and the FBO 0 path is unchanged.
  */
 final class Lane3WiringDrawTest {
 
@@ -63,6 +74,7 @@ final class Lane3WiringDrawTest {
     private static final int GL_VERTEX_SHADER = 0x8B31;
     private static final int GL_FRAGMENT_SHADER = 0x8B30;
     private static final int GL_LINK_STATUS = 0x8B82;
+    private static final int GL_DRAW_FRAMEBUFFER = 0x8CA9;
 
     private DirectGlExecutorTest.FakeSink sink;
     private LightStateRegister register;
@@ -70,6 +82,9 @@ final class Lane3WiringDrawTest {
 
     @BeforeEach
     void connectProductionSink() {
+        // The binding classification seat is process-wide: start each test from its fresh
+        // values so no earlier test's binding can classify this one's draws.
+        FramebufferBindings.current().reset();
         this.sink = new DirectGlExecutorTest.FakeSink();
         // The production singleton: this connection is what fires the C1 wiring.
         DirectGlExecutor.EXECUTOR.setSink(this.sink);
@@ -94,6 +109,7 @@ final class Lane3WiringDrawTest {
         uninstallEntry();
         ClientArrayRange.consumePublished();
         DirectGlExecutor.EXECUTOR.setSink(null);
+        FramebufferBindings.current().reset();
     }
 
     /** The draw tests need the shader compiler, the same availability gate the executor tests use. */
@@ -234,6 +250,116 @@ final class Lane3WiringDrawTest {
             assertNoNewDrops();
         } finally {
             GLStateManager.glDisableClientState(GL_VERTEX_ARRAY);
+        }
+    }
+
+    // ------------------------------------------------------------------ T3
+
+    /** The VBO-offset draw the T2 test pins, as the vehicle for the framebuffer cases. */
+    private void prepareVboOffsetDraw() throws Exception {
+        int vbo = DirectGlExecutor.EXECUTOR.genBuffers();
+        DirectGlExecutor.EXECUTOR.bindBuffer(GL_ARRAY_BUFFER, vbo);
+        ByteBuffer vertices = ByteBuffer.allocateDirect(3 * 3 * 4).order(ByteOrder.nativeOrder());
+        vertices.asFloatBuffer().put(new float[] {-1f, -1f, 0f, 1f, -1f, 0f, 0f, 1f, 0f});
+        DirectGlExecutor.EXECUTOR.bufferData(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW);
+        DirectGlExecutor.EXECUTOR.bindBuffer(GL_ARRAY_BUFFER, 0);
+        call("glBindBuffer", GL_ARRAY_BUFFER, vbo);
+        GLStateManager.glEnableClientState(GL_VERTEX_ARRAY);
+        call("glVertexPointer", 3, GL_FLOAT, 0, 0L);
+    }
+
+    private void endVboOffsetDraw() throws Exception {
+        GLStateManager.glDisableClientState(GL_VERTEX_ARRAY);
+        call("glBindBuffer", GL_ARRAY_BUFFER, 0);
+    }
+
+    @Test
+    void mainClassifiedGameFramebufferDrawReachesTheSinkAsMainTarget() throws Exception {
+        assumeShaderCompiler();
+        installEntry();
+        // A game-created framebuffer: its name came from the capture window, so this runtime
+        // holds no record for it - the shape that refused every world-phase draw in the
+        // glprobe acceptance leg (target_incompatible, 99 of 99 refusals).
+        int gameFbo = 424242;
+        assertFalse(DirectGlExecutor.EXECUTOR.isFramebuffer(gameFbo),
+                "the game framebuffer has no record at the runtime seat");
+        prepareVboOffsetDraw();
+        try {
+            DirectGlExecutor.EXECUTOR.bindFramebuffer(GL_DRAW_FRAMEBUFFER, gameFbo);
+            // The backend's classification of this binding (the framebuffer mixin's report
+            // and the raw-registration route write it here in production): the bound name is
+            // the game's main framebuffer.
+            FramebufferBindings.current().bind(GL_DRAW_FRAMEBUFFER, gameFbo);
+            FramebufferBindings.current().noteDrawIsMain(true);
+            long remapsBefore = DirectGlRefusalCensus.mainTargetRemaps();
+            int drawsBefore = this.sink.draws.size();
+            GLSMDraws.glDrawArrays(GL_TRIANGLES, 0, 3);
+            assertEquals(drawsBefore + 1, this.sink.draws.size(),
+                    "the draw under the game's main framebuffer reaches the sink");
+            assertEquals(0, this.sink.draws.get(this.sink.draws.size() - 1).state().renderTargetId(),
+                    "and lands on the sink's main target, not on a realized side target");
+            assertEquals(remapsBefore + 1, DirectGlRefusalCensus.mainTargetRemaps(),
+                    "the main-target remap is counted");
+            assertNoNewDrops();
+        } finally {
+            DirectGlExecutor.EXECUTOR.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            endVboOffsetDraw();
+        }
+    }
+
+    @Test
+    void nonMainUnrecordedFramebufferDrawIsStillRefused() throws Exception {
+        assumeShaderCompiler();
+        installEntry();
+        // A mod's own framebuffer, likewise without a runtime record, but classified as not
+        // the game's main one: its attachments never reach this seat, so realization is
+        // still impossible and the refusal stands (the layer that forwards game framebuffer
+        // attachments to the runtime is a separate slice).
+        int modFbo = 515151;
+        assertFalse(DirectGlExecutor.EXECUTOR.isFramebuffer(modFbo),
+                "the mod framebuffer has no record at the runtime seat either");
+        prepareVboOffsetDraw();
+        try {
+            DirectGlExecutor.EXECUTOR.bindFramebuffer(GL_DRAW_FRAMEBUFFER, modFbo);
+            FramebufferBindings.current().bind(GL_DRAW_FRAMEBUFFER, modFbo);
+            FramebufferBindings.current().noteDrawIsMain(false);
+            long incompatibleBefore =
+                    DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.TARGET_INCOMPATIBLE);
+            long remapsBefore = DirectGlRefusalCensus.mainTargetRemaps();
+            int drawsBefore = this.sink.draws.size();
+            GLSMDraws.glDrawArrays(GL_TRIANGLES, 0, 3);
+            assertEquals(drawsBefore, this.sink.draws.size(),
+                    "no draw reaches the sink under a non-main framebuffer without a record");
+            assertEquals(this.droppedBefore + 1, DirectGlExecutor.EXECUTOR.droppedDraws(),
+                    "the draw is refused and counted as dropped");
+            assertEquals(incompatibleBefore + 1,
+                    DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.TARGET_INCOMPATIBLE),
+                    "under the target_incompatible reason");
+            assertEquals(remapsBefore, DirectGlRefusalCensus.mainTargetRemaps(),
+                    "and is not remapped to the main target");
+        } finally {
+            DirectGlExecutor.EXECUTOR.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            endVboOffsetDraw();
+        }
+    }
+
+    @Test
+    void defaultFramebufferDrawIsNotRemapped() throws Exception {
+        assumeShaderCompiler();
+        installEntry();
+        prepareVboOffsetDraw();
+        try {
+            long remapsBefore = DirectGlRefusalCensus.mainTargetRemaps();
+            int drawsBefore = this.sink.draws.size();
+            GLSMDraws.glDrawArrays(GL_TRIANGLES, 0, 3);
+            assertEquals(drawsBefore + 1, this.sink.draws.size(),
+                    "the plain default-framebuffer draw reaches the sink as before");
+            assertEquals(0, this.sink.draws.get(this.sink.draws.size() - 1).state().renderTargetId());
+            assertEquals(remapsBefore, DirectGlRefusalCensus.mainTargetRemaps(),
+                    "the FBO 0 path does not count as a remap");
+            assertNoNewDrops();
+        } finally {
+            endVboOffsetDraw();
         }
     }
 

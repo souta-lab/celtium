@@ -29,6 +29,7 @@ import org.soutalab.celtium.core.state.LightStateRegister;
 import org.soutalab.celtium.core.state.RenderStateKey;
 import org.soutalab.celtium.glcompat.GLSMMatrices;
 import org.soutalab.celtium.vulkan.DirectGlSinkExtensions;
+import org.soutalab.celtium.vulkan.FramebufferBindings;
 
 /**
  * The working half of {@link DirectGlExecutor}: the GL object records, the fixed-function state
@@ -774,6 +775,23 @@ final class DirectGlRuntime {
                     this.boundFramebuffers.getOrDefault(GL_FRAMEBUFFER, 0));
         }
         return this.boundFramebuffers.getOrDefault(target, 0);
+    }
+
+    /**
+     * Whether the framebuffer bound for drawing is the game's main render target, in the
+     * backend's own classification: {@link FramebufferBindings} records, at GL-name level, the
+     * bound draw name and whether the routing owner calls that binding the main one (the
+     * framebuffer mixin's identity report, or a raw registration resolving to the game
+     * identity). The name is deliberately not cached here - the mixin keys its classification
+     * by object identity precisely because the name behind one framebuffer can move - so the
+     * answer is read from the binding record at draw time. The recorded name must also match
+     * this runtime's own bound id: if the two binding records ever disagree, the draw keeps
+     * the realization path rather than being rerouted on a classification made for another
+     * binding.
+     */
+    private boolean boundDrawIsGameMainTarget(int fboId) {
+        FramebufferBindings bindings = FramebufferBindings.current();
+        return bindings.drawIsMain() && bindings.drawFramebuffer() == fboId;
     }
 
     // -- generic state queries ---------------------------------------------------------
@@ -3612,13 +3630,24 @@ final class DirectGlRuntime {
                     }
                 }
             }
-            long sinkFbo = ensureSinkFramebuffer(fboId);
-            if (sinkFbo == 0L) {
-                this.droppedDraws++;
-                DirectGlRefusalCensus.note(TARGET_INCOMPATIBLE, "draw framebuffer could not be realized");
-                return;
+            if (boundDrawIsGameMainTarget(fboId)) {
+                // The bound framebuffer is the game's main render target: submit against the
+                // sink's main target (id 0) instead of realizing it as a side target. Game-created
+                // framebuffers have no record at this seat (their names come from the capture
+                // window and their attachments are never forwarded here), so realization refused
+                // every world-phase draw under the main binding; and realizing the main target as
+                // a side target would land the draw in a copy of the game's colour texture, not in
+                // the presented frame. The classification is the backend's own, reused as-is.
+                DirectGlRefusalCensus.noteMainTargetRemap();
+            } else {
+                long sinkFbo = ensureSinkFramebuffer(fboId);
+                if (sinkFbo == 0L) {
+                    this.droppedDraws++;
+                    DirectGlRefusalCensus.note(TARGET_INCOMPATIBLE, "draw framebuffer could not be realized");
+                    return;
+                }
+                renderTargetId = (int) sinkFbo;
             }
-            renderTargetId = (int) sinkFbo;
         }
         DirectGlSinkExtensions extensions = ext();
         if (extensions != null && program.samplerUnits.length > 0) {
