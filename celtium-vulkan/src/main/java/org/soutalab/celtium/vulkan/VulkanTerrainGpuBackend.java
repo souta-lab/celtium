@@ -2654,7 +2654,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
     private int readbackSkippedAfterAnnouncement;
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
-    private int prepareDescriptorFailures;
+    int prepareDescriptorFailures;
     /** Preflights refused because no pass had run yet, and the frame range they happened in. */
     private int prepareNoPassRefusals;
     private long prepareNoPassFirstFrame = -1L;
@@ -3235,9 +3235,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private boolean[] lazySupplySerialRecorded = new boolean[4096];
     String lastLazyMirrorFailure = "none";
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
-    private int glTextureDeletions;
-    private int atlasReestablished;
-    private int lightmapReestablished;
+    int glTextureDeletions;
+    int atlasReestablished;
+    int lightmapReestablished;
     /** The GL texture unit the light map is bound on, passed in from the mod side; -1 until it is known. */
     int lightmapUnit = -1;
     /**
@@ -3325,7 +3325,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Whether the entity layout's first refusal has been reported. */
     private boolean entityProgramLogged;
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
-    private final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
+    final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
     /** (program, format) pairs already reported as drawn by the built-in pipeline under a bound program. */
     private final java.util.LinkedHashMap<String, Integer> untexturedFallbackIds = new java.util.LinkedHashMap<>();
     /** The same refusals grouped by program alone. */
@@ -4503,7 +4503,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static boolean celtium$terrainToBoundTargetEnabled(String property) {
         return !"false".equalsIgnoreCase(property);
     }
-    private long terrainPassesToBoundTarget;
+    long terrainPassesToBoundTarget;
 
     /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
     long terrainPassesToBoundTarget() {
@@ -19922,8 +19922,8 @@ this.frameBufferOpen = false;
     /** Whether a frame target exists, so a pass can be opened. */
     // frameTargetKnown moved to RenderTargetRegistry (refactoring plan R5), as a latch.
     /** Texture uploads that were made to fail, and the last one, for the failure-path acceptance. */
-    private int textureUploadFailures;
-    private String lastTextureUploadFailure = "none";
+    int textureUploadFailures;
+    String lastTextureUploadFailure = "none";
     /** The terrain pipeline of the frame, for its render pass. */
     private VulkanTerrainPipeline terrainPipelineForFrame;
     /** The texture the immediate path most recently bound. */
