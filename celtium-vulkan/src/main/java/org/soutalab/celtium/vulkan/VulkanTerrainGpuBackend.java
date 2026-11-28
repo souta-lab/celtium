@@ -8044,7 +8044,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (name == 0) {
                 continue;
             }
-            int glInternal = org.soutalab.celtium.vulkan.gl.GlsmFrontend
+            int glInternal = VulkanTextureRegistry.captureStore()
                     .textureLevelParameter(name, 0, 0x1003);
             if (slot == 0) {
                 slot0Gl = glInternal;
@@ -9008,7 +9008,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         boolean depthRecorded = this.publishedTextures.identityForDepthTexture(glTextureName) != Long.MIN_VALUE
                 || org.soutalab.celtium.vulkan.gl.GlsmFrontend
                         .celtium$framebufferForDepthTexture(glTextureName) != 0;
-        boolean gamePixels = org.soutalab.celtium.vulkan.gl.GlsmFrontend
+        boolean gamePixels = VulkanTextureRegistry.captureStore()
                 .textureLevelHasGamePixels(glTextureName, 0);
         int width = VulkanTextureRegistry.captureStore().textureLevelParameter(
                 glTextureName, 0, 0x1000);
@@ -15144,7 +15144,7 @@ this.frameBufferOpen = false;
             this.lightmapSuppliedOnDemand++;
             return;
         }
-        long contentSerial = org.soutalab.celtium.vulkan.gl.GlsmFrontend
+        long contentSerial = VulkanTextureRegistry.captureStore()
                 .textureUploadSerial(this.lightmapGlId, 0);
         if (this.lightmapSupplyAttempts.isCurrent(this.lightmapGlId, contentSerial)) {
             // The same answer about the same content. This is what keeps a name nothing can fill from costing a refused
@@ -15189,7 +15189,7 @@ this.frameBufferOpen = false;
                 this.lightmapSupplyAttempts.note(this.lightmapGlId, contentSerial);
                 return;
             }
-            boolean captureHasPixels = org.soutalab.celtium.vulkan.gl.GlsmFrontend
+            boolean captureHasPixels = VulkanTextureRegistry.captureStore()
                     .textureLevelHasGamePixels(this.lightmapGlId, 0);
             if (!captureHasPixels && ownerSide < LightmapExtent.MINIMUM_SIDE) {
                 // No source at all: the stub's level holds only the NULL-data allocation and the owner has no whole

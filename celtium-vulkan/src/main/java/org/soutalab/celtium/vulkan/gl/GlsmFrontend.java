@@ -9338,7 +9338,7 @@ public final class GlsmFrontend implements FunctionProvider {
         int pname = fn.args.length > 1 ? (int) c[1] : 0;
         if (fn.name.startsWith("glGetTextureLevelParameter")) {
             // DSA form: (texture, level, pname, out) - the texture name is given, so no binding lookup is needed.
-            int value = texLevelParamForName((int) c[0], (int) c[1], (int) c[2]);
+            int value = this.textureCaptures.textureLevelParameter((int) c[0], (int) c[1], (int) c[2]);
             if (fn.name.endsWith("fv")) {
                 MemoryUtil.memPutFloat(out, value);
             } else {
@@ -9356,7 +9356,7 @@ public final class GlsmFrontend implements FunctionProvider {
             int paramPname = (int) c[1];
             int value = textureParameterValue(textureName, paramPname);
             celtium$noteTextureParameterQuery(fn.name, textureName, paramPname, value,
-                    textureParameterRecorded(textureName, paramPname));
+                    this.textureCaptures.textureParameterRecorded(textureName, paramPname));
             if (fn.name.endsWith("fv")) {
                 MemoryUtil.memPutFloat(out, value);
             } else {

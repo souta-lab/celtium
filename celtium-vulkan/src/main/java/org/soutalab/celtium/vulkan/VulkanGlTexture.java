@@ -3960,7 +3960,7 @@ public final class VulkanGlTexture {
                 if (mipSurface == null
                         || mipExtent[0] != Math.max(1, extentW >> lvl)
                         || mipExtent[1] != Math.max(1, extentH >> lvl)
-                        || !org.soutalab.celtium.vulkan.gl.GlsmFrontend
+                        || !VulkanTextureRegistry.captureStore()
                                 .textureLevelHasGamePixels(glTextureId, lvl)) {
                     break;
                 }
