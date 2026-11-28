@@ -254,6 +254,7 @@ final class DirectGlRuntime {
     /** Converter -> register: Lane 2 re-reads the state the excursion leaves behind. */
     public void syncToRegister(LightStateRegister register) {
         register.setKey(stateKey());
+        register.setActiveProgramId(this.currentProgram);
         Integer bound = this.boundTextures.get(textureKey(this.activeTextureUnit, GL_TEXTURE_2D));
         register.setBoundTextureId(bound == null ? 0 : bound);
         float[] matrix = new float[16];
