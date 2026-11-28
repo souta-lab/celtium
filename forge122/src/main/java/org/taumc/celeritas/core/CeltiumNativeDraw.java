@@ -3,7 +3,7 @@ package org.taumc.celeritas.core;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.soutalab.celtium.vulkan.NativeDrawSkipCensus;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
-import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
+import org.soutalab.celtium.vulkan.VulkanBackendAdapter;
 
 /** Native Minecraft/Forge draw entry. Raw GL calls made by mods have a separate compatibility adapter. */
 public final class CeltiumNativeDraw {
@@ -29,10 +29,10 @@ public final class CeltiumNativeDraw {
      * kind is possible.
      */
     public static void vertexBuffer(NativeGeometryBuffer geometry, int mode) {
-        if (!(CeltiumBackends.current() instanceof VulkanTerrainGpuBackend)) {
+        if (!(CeltiumBackends.current() instanceof VulkanBackendAdapter)) {
             throw new IllegalStateException("native VertexBuffer draw without an active Vulkan backend");
         }
-        VulkanTerrainGpuBackend backend = (VulkanTerrainGpuBackend) CeltiumBackends.current();
+        VulkanBackendAdapter backend = (VulkanBackendAdapter) CeltiumBackends.current();
         if (!backend.submitRetainedGeometry(geometry, mode)) {
             if (backend.celtium$isGpuStalled()) {
                 // The stall latch is up (issue #425, item 416): the device is gone or stopped, no draw can be

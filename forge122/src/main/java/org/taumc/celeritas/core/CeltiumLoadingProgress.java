@@ -15,7 +15,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.fml.common.ProgressManager;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
-import org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend;
+import org.soutalab.celtium.vulkan.VulkanBackendAdapter;
 
 /**
  * Forge's loading screen on the client thread. Forge's {@code SplashProgress} thread needs a shared GL context, so it
@@ -52,9 +52,9 @@ public final class CeltiumLoadingProgress {
         forge = null;
         font = null;
         Object backend = CeltiumBackends.current();
-        if (backend instanceof VulkanTerrainGpuBackend) {
+        if (backend instanceof VulkanBackendAdapter) {
             try {
-                ((VulkanTerrainGpuBackend) backend).finishLoadingProgress();
+                ((VulkanBackendAdapter) backend).finishLoadingProgress();
             } catch (RuntimeException | LinkageError error) {
                 System.out.println("[Celtium] native loading progress cleanup failed: " + error);
             }
@@ -66,8 +66,8 @@ public final class CeltiumLoadingProgress {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || !mc.isCallingFromMinecraftThread() || mc.world != null) return;
         Object current = CeltiumBackends.current();
-        if (!(current instanceof VulkanTerrainGpuBackend)) return;
-        VulkanTerrainGpuBackend backend = (VulkanTerrainGpuBackend) current;
+        if (!(current instanceof VulkanBackendAdapter)) return;
+        VulkanBackendAdapter backend = (VulkanBackendAdapter) current;
         if (!backend.celtium$isWindowBackend() || mc.displayWidth <= 0 || mc.displayHeight <= 0) return;
         refreshing = true;
         long frameStart = System.nanoTime();
