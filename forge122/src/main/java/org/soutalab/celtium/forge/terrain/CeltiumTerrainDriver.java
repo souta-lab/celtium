@@ -556,7 +556,7 @@ public final class CeltiumTerrainDriver {
                 awaitingLight.remove(k);
             }
             CompletableFuture<MeshBuffers> future =
-                    scheduler.build(snapshot, faceData, MesherOptions.PACK_OFF);
+                    scheduler.build(snapshot, faceData, MesherOptions.packOffFromProperty());
             future.whenComplete((buffers, error) -> scheduler.releaseSnapshot(snapshot));
             pending.put(k, future);
         }

@@ -188,7 +188,17 @@ public final class SectionMesher {
                     }
                     emitSingles(snapshot, data, options, out, dir, layer);
                 }
-                greedyLayer(snapshot, data, options, out, dir, layer);
+                if (options.greedyEnabled()) {
+                    greedyLayer(snapshot, data, options, out, dir, layer);
+                } else {
+                    // K2 diagnostic arm (Gate G2-31): no merging at all - the surviving
+                    // mask (after the pack's noGreedy separation above) goes out face by
+                    // face, so the face set is the greedy arm's, only unmerged.
+                    for (int w = 0; w < WORDS; w++) {
+                        singles[w] = mask[w];
+                    }
+                    emitSingles(snapshot, data, options, out, dir, layer);
+                }
             }
         }
     }
