@@ -16,7 +16,11 @@ import net.minecraft.world.chunk.Chunk;
  * Tint resolution: when the face table says a state takes a tint, the colour is resolved here,
  * once per cell - the client's block colour handlers first (they cover biome grass/foliage/
  * water and every modded handler), with the biome's grass colour as the fallback when a handler
- * answers "no tint" for a state the model marks as tinted.
+ * answers "no tint" for a state the model marks as tinted. Liquid states resolve through
+ * {@link #resolveLiquidTint} instead: vanilla's fluid renderer applies the handlers to fluids
+ * unconditionally (keyed by block, never by model tint index - a liquid's model quads carry
+ * none), so a liquid is resolved whether or not its model marks it, and a handler answering
+ * "no tint" means no tint, not the grass fallback.
  */
 public final class ForgeSectionScanner {
     private ForgeSectionScanner() {
@@ -102,7 +106,10 @@ public final class ForgeSectionScanner {
                     int skyLight = chunk == null ? 15
                             : chunk.getLightFor(net.minecraft.world.EnumSkyBlock.SKY, pos);
                     int tint = WorldSectionSnapshot.NO_TINT;
-                    if (table.stateUsesTint(id)) {
+                    if (table.isLiquid(id)) {
+                        pos.setPos(wx, wy, wz);
+                        tint = resolveLiquidTint(world, pos, state);
+                    } else if (table.stateUsesTint(id)) {
                         pos.setPos(wx, wy, wz);
                         tint = resolveTint(world, pos, state);
                     }
@@ -133,6 +140,28 @@ public final class ForgeSectionScanner {
                 }
             }
         }
+    }
+
+    /**
+     * The tint of a liquid cell: the block colour handlers' answer, taken as-is. Vanilla's
+     * fluid renderer multiplies the fluid texel by the answer's channels, so an answer of
+     * -1 (no handler registered for the block, or the handler declining) renders as white -
+     * which is {@link WorldSectionSnapshot#NO_TINT} here. The grass fallback of
+     * {@link #resolveTint} must never apply to liquids: it would dye handler-less liquids
+     * grass-green.
+     */
+    private static int resolveLiquidTint(IBlockAccess world, BlockPos pos, IBlockState state) {
+        try {
+            return liquidTintFromColor(
+                    Minecraft.getMinecraft().getBlockColors().colorMultiplier(state, world, pos, 0));
+        } catch (Throwable ignored) {
+            return WorldSectionSnapshot.NO_TINT;
+        }
+    }
+
+    /** Maps a {@code BlockColors.colorMultiplier} answer to a liquid cell's snapshot tint. */
+    static int liquidTintFromColor(int color) {
+        return color == -1 ? WorldSectionSnapshot.NO_TINT : color & 0xFFFFFF;
     }
 
     private static int resolveTint(IBlockAccess world, BlockPos pos, IBlockState state) {
