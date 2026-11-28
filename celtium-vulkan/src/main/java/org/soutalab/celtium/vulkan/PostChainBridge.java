@@ -17,17 +17,6 @@ final class PostChainBridge {
 
     private final VulkanTerrainGpuBackend b;
 
-    // The bridge-level refusal census (drawpath audit DP-31): refusals that happen before an executor
-    // exists, or that the executor's own status never sees - the stage gate answering for the frame,
-    // executor creation failing, the one-frame borrow closure, and a chain whose programs fall outside
-    // the executor's supported set. Each was previously visible only as an absence (the GL chain ran,
-    // postChains stayed 0), so a leg could not tell a refused chain from a frame that never asked for
-    // one. Counted here and surfaced beside the executor status in the verify line.
-    private long gateRefusals;
-    private long creationFailures;
-    private long borrowRefusals;
-    private long unsupportedRefusals;
-
     /**
      * The recording token whose first-use commit is deferred (drawpath audit DP-32): set when the
      * frame coordinator answered RECORDED - the unified frame buffer is still open, so the recording
@@ -39,14 +28,6 @@ final class PostChainBridge {
 
     PostChainBridge(VulkanTerrainGpuBackend backend) {
         this.b = backend;
-    }
-
-    /** The bridge-level refusal census, in the verify line's key shape. */
-    String celtium$status() {
-        return "postChainGateRefusals=" + this.gateRefusals
-                + " postChainCreationFailures=" + this.creationFailures
-                + " postChainBorrowRefusals=" + this.borrowRefusals
-                + " postChainUnsupportedRefusals=" + this.unsupportedRefusals;
     }
 
     /**
@@ -80,22 +61,11 @@ final class PostChainBridge {
         if (!b.celtium$postChainAvailable() || passes == null || passes.isEmpty()) {
             return false;
         }
-        // The stage gate (item 327, Vulcanizator V-01/V-02): a switched-off or quarantined post chain answers
-        // false before any work - the caller's GL chain carries the frame, and a quarantined executor is never
-        // retried. The trip itself was recorded once by the gate; per-frame silence is correct here.
-        if (!StageGate.system().enabled(StageGate.Stage.POST_CHAIN)) {
-            this.gateRefusals++;
-            return false;
-        }
         try {
             if (b.postChain == null) {
                 b.postChain = VulkanPostChain.create(b.context, b.frameTarget);
             }
         } catch (RuntimeException | LinkageError error) {
-            // A creation that failed on this context and target fails identically every frame: quarantine the
-            // stage instead of retrying the corpse on every subsequent frame (item 327).
-            StageGate.system().trip(StageGate.Stage.POST_CHAIN, error);
-            this.creationFailures++;
             b.record("post chain executor creation failed: " + b.describe(error));
             return false;
         }
@@ -113,7 +83,6 @@ final class PostChainBridge {
                 boolean readsMain = pass.inIsMain
                         || (pass.auxFbIds.length > 0 && pass.auxFbIds[0] == 0);
                 if (readsMain) {
-                    this.borrowRefusals++;
                     b.record("post chain refused for one frame: the frame holds a borrowed present image"
                             + " (Stage 1 borrow closure; borrows bypass while a chain is live)");
                     return false;
@@ -122,7 +91,6 @@ final class PostChainBridge {
         }
         RenderTargetRegistry.TargetFormatClass chainFormatClass = celtium$chainFormatClass(passes);
         if (!b.postChain.supportsAll(passes, chainFormatClass)) {
-            this.unsupportedRefusals++;
             StringBuilder reason = new StringBuilder("post chain refused:");
             for (VulkanPostChain.Pass pass : passes) {
                 reason.append(' ').append(pass.program).append('(').append(pass.pushBytes).append("B)");
@@ -210,11 +178,7 @@ final class PostChainBridge {
             } else if (submission == FrameCoordinator.Submission.RECORDED) {
                 this.deferredCommitToken = chainRecording;
             }
-            StageGate.system().noteSuccess(StageGate.Stage.POST_CHAIN);
         } catch (RuntimeException | LinkageError error) {
-            // Counted toward the stage's quarantine (item 327): three consecutive submission failures
-            // quarantine the post chain for the session; the GL chain carries those frames meanwhile.
-            StageGate.system().noteFailure(StageGate.Stage.POST_CHAIN, error);
             VulkanGlTexture.abandonLayoutRecording(b.commandBuffer,
                     "post chain submission failed: " + b.describe(error));
             b.record("post chain submission failed: " + b.describe(error));

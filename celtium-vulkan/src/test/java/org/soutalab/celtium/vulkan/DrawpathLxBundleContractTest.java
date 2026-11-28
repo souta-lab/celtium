@@ -97,37 +97,24 @@ class DrawpathLxBundleContractTest {
         String backend = read(BACKEND);
         assertTrue(backend.contains("public void celtium$noteChainInputFlushFailure(Throwable error)"),
                 "the backend counts and bounds-prints the failure");
-        assertTrue(read(DIAGNOSTICS).contains("\" chainInputFlushFailures=\" + b.chainInputFlushFailures"),
+        assertTrue(read(DIAGNOSTICS).contains("\" chainInputFlushFailures=\" + b.frameCoordinator.chainInputFlushFailures()"),
                 "the verify line carries the count");
     }
 
-    // DP-31: bridge-level refusals and the stage gate reach the verify line.
+    // DP-31: the vanilla receiver and the surviving stage gate reach the verify line.
 
     @Test
-    void everyBridgeRefusalSeatCounts() throws IOException {
-        String bridge = read(POST_CHAIN_BRIDGE);
-        assertTrue(bridge.contains("this.gateRefusals++"), "the stage-gate seat counts");
-        assertTrue(bridge.contains("this.creationFailures++"), "the creation seat counts");
-        assertTrue(bridge.contains("this.borrowRefusals++"), "the borrow-closure seat counts");
-        assertTrue(bridge.contains("this.unsupportedRefusals++"), "the supportsAll seat counts");
-        assertTrue(bridge.contains("\"postChainGateRefusals=\" + this.gateRefusals")
-                        && bridge.contains("\" postChainUnsupportedRefusals=\" + this.unsupportedRefusals"),
-                "the census renders in the verify line's key shape");
-    }
-
-    @Test
-    void theVerifyLineCarriesTheBridgeCensusAndTheStageGateSummary() throws IOException {
+    void theVerifyLineCarriesTheVanillaReceiverCensusAndTheStageGateSummary() throws IOException {
         String diagnostics = read(DIAGNOSTICS);
-        assertTrue(diagnostics.contains("b.postChainBridge.celtium$status()"),
-                "the bridge census is in the verify body whether or not an executor exists");
-        assertTrue(diagnostics.contains("StageGate.system().summary()"),
-                "the stage gate's failures and trips are in the verify body");
+        assertTrue(diagnostics.contains("b.frameCoordinator.postChainCreationFailures()"));
+        assertTrue(diagnostics.contains("b.frameCoordinator.postChainUnsupportedRefusals()"));
+        assertTrue(diagnostics.contains("StageGate.system().summary()"));
     }
 
     @Test
     void theStageGateSummaryKeepsItsBracketShape() {
         String summary = StageGate.system().summary();
-        assertTrue(summary.startsWith("stageGate[") && summary.contains("postChain="),
+        assertTrue(summary.startsWith("stageGate[") && summary.contains("terrainPipelines="),
                 "legs parse the gate summary by its bracket shape: " + summary);
     }
 
@@ -161,13 +148,10 @@ class DrawpathLxBundleContractTest {
     @Test
     void everyModFailureSeatCarriesItsCategory() throws IOException {
         String programs = read(MOD_PROGRAMS);
-        assertEquals(16, count(programs, "celtium$modFailure(programId, ModRefusal."),
-                "every refusal seat in celtium$modPrepared names its category"
-                        + " (15 from the L-X bundle plus the blackness fix A borrow-closure seat, aggregated at landing)");
+        assertEquals(13, count(programs, "celtium$modFailure(programId, ModRefusal."),
+                "every remaining refusal seat in celtium$modPrepared names its category");
         assertTrue(programs.contains("celtium$modFailure(int programId, ModRefusal category, String reason)"),
                 "the funnel itself takes the category");
-        assertTrue(programs.contains("celtium$noteModRefusal(ModRefusal.DISABLED)"),
-                "the lab-switch seat counts instead of returning in silence");
         assertTrue(programs.contains("celtium$noteModRefusal(ModRefusal.UNSUPPORTED)"),
                 "the executable query's refusal counts");
         assertTrue(read(DIAGNOSTICS).contains("DirectGlRefusalCensus.refusalSummary()"),

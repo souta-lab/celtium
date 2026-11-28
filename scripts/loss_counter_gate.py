@@ -90,7 +90,7 @@ def _bracket_sum(line: str, name: str) -> int | None:
 _FAIL_SCALARS = (
     # L-X (DP-31/34/35/37): post-chain bridge, flush seats, compositor, mod programs,
     # and the native-pass refusal counts promoted onto the verification line.
-    "postChainGateRefusals", "postChainCreationFailures", "postChainBorrowRefusals",
+    "postChainCreationFailures",
     "postChainUnsupportedRefusals", "chainInputFlushFailures", "framebufferHintFailures",
     "nativeCompositeRefusals", "modRefusals", "nativePassExecRefusals",
     "nativePassCompileRefusals",

@@ -23,13 +23,11 @@ class StageGateTest {
     }
 
     @Test
-    void aSwitchedOffStageIsDisabledAndTheOthersAreNot() {
-        StageGate gate = gateWithRecords(new ArrayList<>(), StageGate.Stage.POST_CHAIN);
+    void aSwitchedOffStageIsDisabled() {
+        StageGate gate = gateWithRecords(new ArrayList<>(), StageGate.Stage.TERRAIN_PIPELINES);
 
-        assertFalse(gate.enabled(StageGate.Stage.POST_CHAIN));
-        assertTrue(gate.switchedOff(StageGate.Stage.POST_CHAIN));
-        assertTrue(gate.enabled(StageGate.Stage.TERRAIN_PIPELINES),
-                "a kill switch is per-stage: terrain is not its neighbour's switch");
+        assertFalse(gate.enabled(StageGate.Stage.TERRAIN_PIPELINES));
+        assertTrue(gate.switchedOff(StageGate.Stage.TERRAIN_PIPELINES));
     }
 
     @Test
@@ -38,33 +36,16 @@ class StageGateTest {
         StageGate gate = gateWithRecords(records);
         RuntimeException failure = new RuntimeException("creation died");
 
-        gate.trip(StageGate.Stage.POST_CHAIN, failure);
-        gate.trip(StageGate.Stage.POST_CHAIN, failure);
+        gate.trip(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        gate.trip(StageGate.Stage.TERRAIN_PIPELINES, failure);
 
-        assertFalse(gate.enabled(StageGate.Stage.POST_CHAIN));
-        assertTrue(gate.quarantined(StageGate.Stage.POST_CHAIN));
-        assertEquals(1, gate.trips(StageGate.Stage.POST_CHAIN), "the corpse is never retried, or re-recorded");
+        assertFalse(gate.enabled(StageGate.Stage.TERRAIN_PIPELINES));
+        assertTrue(gate.quarantined(StageGate.Stage.TERRAIN_PIPELINES));
+        assertEquals(1, gate.trips(StageGate.Stage.TERRAIN_PIPELINES), "the corpse is never retried, or re-recorded");
         assertEquals(1, records.size(), "one record per quarantine: " + records);
         assertTrue(records.get(0).contains("CELTIUM_STAGE_QUARANTINED"));
-        assertTrue(records.get(0).contains("postChain"), "the record names the stage: " + records.get(0));
+        assertTrue(records.get(0).contains("terrainPipelines"), "the record names the stage: " + records.get(0));
         assertTrue(records.get(0).contains("RuntimeException"), "the record names the failure: " + records.get(0));
-    }
-
-    @Test
-    void consecutiveFailuresTripAtTheStageThreshold() {
-        List<String> records = new ArrayList<>();
-        StageGate gate = gateWithRecords(records);
-        RuntimeException failure = new RuntimeException("submission died");
-
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        assertTrue(gate.enabled(StageGate.Stage.POST_CHAIN),
-                "two consecutive failures are still below the post chain's threshold of three");
-
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        assertFalse(gate.enabled(StageGate.Stage.POST_CHAIN));
-        assertEquals(3, gate.failures(StageGate.Stage.POST_CHAIN));
-        assertEquals(1, records.size());
     }
 
     @Test
@@ -72,18 +53,18 @@ class StageGateTest {
         StageGate gate = gateWithRecords(new ArrayList<>());
         RuntimeException failure = new RuntimeException("submission died");
 
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        gate.noteSuccess(StageGate.Stage.POST_CHAIN);
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        gate.noteFailure(StageGate.Stage.POST_CHAIN, failure);
-        assertTrue(gate.enabled(StageGate.Stage.POST_CHAIN),
-                "the success broke the run: two + success + two never reaches three in a row");
-        assertEquals(2, gate.consecutiveFailures(StageGate.Stage.POST_CHAIN));
+        gate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        gate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        gate.noteSuccess(StageGate.Stage.TERRAIN_PIPELINES);
+        gate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        gate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        assertTrue(gate.enabled(StageGate.Stage.TERRAIN_PIPELINES),
+                "terrain failures leave the stage enabled until an explicit trip");
+        assertEquals(2, gate.consecutiveFailures(StageGate.Stage.TERRAIN_PIPELINES));
 
-        gate.trip(StageGate.Stage.POST_CHAIN, failure);
-        gate.noteSuccess(StageGate.Stage.POST_CHAIN);
-        assertFalse(gate.enabled(StageGate.Stage.POST_CHAIN),
+        gate.trip(StageGate.Stage.TERRAIN_PIPELINES, failure);
+        gate.noteSuccess(StageGate.Stage.TERRAIN_PIPELINES);
+        assertFalse(gate.enabled(StageGate.Stage.TERRAIN_PIPELINES),
                 "a quarantine is for the session: a later success does not resurrect the stage");
     }
 
@@ -103,12 +84,13 @@ class StageGateTest {
 
     @Test
     void theSummaryNamesEveryStageAndItsState() {
-        StageGate gate = gateWithRecords(new ArrayList<>(), StageGate.Stage.TERRAIN_PIPELINES);
-        gate.trip(StageGate.Stage.POST_CHAIN, new RuntimeException("creation died"));
+        StageGate switchedOff = gateWithRecords(new ArrayList<>(), StageGate.Stage.TERRAIN_PIPELINES);
+        assertTrue(switchedOff.summary().contains("terrainPipelines=off(kill-switch)"));
 
-        String summary = gate.summary();
-        assertTrue(summary.contains("terrainPipelines=off(kill-switch)"), summary);
-        assertTrue(summary.contains("postChain=off(quarantined)"), summary);
+        StageGate quarantined = gateWithRecords(new ArrayList<>());
+        quarantined.trip(StageGate.Stage.TERRAIN_PIPELINES, new RuntimeException("creation died"));
+        String summary = quarantined.summary();
+        assertTrue(summary.contains("terrainPipelines=off(quarantined)"), summary);
         assertTrue(summary.contains("trips=1"), summary);
     }
 }
