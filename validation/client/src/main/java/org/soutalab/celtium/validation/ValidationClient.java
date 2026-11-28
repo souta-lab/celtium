@@ -4611,7 +4611,7 @@ public final class ValidationClient {
 
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
-        if (!enabled || finished) return;
+        if (!enabled || (finished && !celtium$residentMode)) return;
         if (event.phase == TickEvent.Phase.START) {
             this.celtium$tickStartedNanos = System.nanoTime();
             return;
@@ -8480,6 +8480,27 @@ public final class ValidationClient {
 
     private void fail(Minecraft mc, Throwable error) {
         error.printStackTrace();
+        if (celtium$residentMode) {
+            if (celtium$residentState == RESIDENT_JOB_LAUNCH || celtium$residentState == RESIDENT_JOB_JOIN
+                    || celtium$residentState == RESIDENT_JOB_RUN) {
+                // An execution failure inside a queued job files that one job as failed; the session
+                // itself survives for the rest of the queue.
+                try {
+                    celtium$residentFailCurrentJob(mc, "JOB_FAILED", String.valueOf(error));
+                } catch (Throwable ignored) {
+                    // The supervisor's running/ isolation is the backstop for a filing failure.
+                }
+                return;
+            }
+            if (celtium$residentState != RESIDENT_BOOT) {
+                // Between jobs there is nothing to fail: a late error from the boot job's machinery is
+                // logged, never allowed to end the session.
+                System.out.println("[Celtium] CELTIUM_RESIDENT_FAIL_IGNORED state=" + celtium$residentState
+                        + " " + error);
+                return;
+            }
+            celtium$residentBootFailed = true;
+        }
         report.addProperty("status", "FAILED");
         report.addProperty("error", error.toString());
         finish(mc);
@@ -13656,6 +13677,12 @@ public final class ValidationClient {
     }
 
     private void finish(Minecraft mc) {
+        if (celtium$residentMode && celtium$residentState != RESIDENT_BOOT) {
+            // A resident session files exactly one boot job. Finish requests that arrive after it -
+            // verdict machinery still in flight when the boot job completed - must neither rewrite the
+            // filed report nor end a JVM that now belongs to the queue.
+            return;
+        }
         finished = true;
         celtium$reportWritten = true;
         // The frame-interval windows belong to the run, not to the picture: they used to be written inside the capture
@@ -13807,6 +13834,8 @@ public final class ValidationClient {
 
     private int celtium$residentState = RESIDENT_BOOT;
     private boolean celtium$residentInitDone;
+    /** Set by fail() while the boot job runs: the boot job's execution failed, as opposed to its verdict. */
+    private boolean celtium$residentBootFailed;
     private String celtium$residentSessionId;
     private Path celtium$residentQueueDir;
     private JsonObject celtium$residentBootStartSnapshot;
@@ -14129,8 +14158,10 @@ public final class ValidationClient {
      * the session tainted and lets the JVM exit for the supervisor to restart.
      */
     private void celtium$residentAfterBootFinish(Minecraft mc) {
-        boolean failed = report.has("status") && report.get("status").isJsonPrimitive()
-                && "FAILED".equals(report.get("status").getAsString());
+        // The filing distinction is execution, not verdict: a boot leg whose picture verdict fails has
+        // still executed, and its report (which carries the verdict) is filed under done/. failed/ is
+        // for a boot job whose execution itself failed, which is what fail() records.
+        boolean failed = celtium$residentBootFailed;
         JsonObject endSnapshot = celtium$residentSnapshot();
         long consoleEnd = celtium$residentConsoleSize(mc);
         List<String> newVuids = celtium$residentNewVuids(mc, celtium$residentBootConsoleStart, consoleEnd);
@@ -14192,7 +14223,10 @@ public final class ValidationClient {
             mc.shutdown();
             return;
         }
-        finished = false;
+        // finished stays true, exactly as a normal leg leaves it: every other handler in this fixture
+        // gates on it, so the boot job's capture and verdict machinery can never re-arm inside a later
+        // job's world load. Only tick() runs past this point in a resident session, and only into the
+        // resident hook at its head.
         celtium$residentQuitToTitle(mc);
         celtium$residentState = RESIDENT_JOB_QUIT;
     }
