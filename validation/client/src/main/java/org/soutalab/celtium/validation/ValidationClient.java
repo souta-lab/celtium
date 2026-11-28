@@ -35,7 +35,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.nio.file.StandardCopyOption;
 
 /** Explicitly installed validation fixture; never embedded in the renderer mod. */
 @Mod(modid = "celtium_validation", name = "Celtium validation fixture", version = "0.1.0", clientSideOnly = true)
@@ -888,6 +894,14 @@ public final class ValidationClient {
      * exits call {@link #finish} directly - a broken leg never idles to the hold tick.
      */
     private final int celtium$holdUntilTick = HarnessConfig.integer("holdUntilTick", 0);
+    /**
+     * {@code -Dceltium.validation.resident}: the resident-session switch (LEG-PROTOCOL section 9, Neon ruling
+     * 2026-11-28, plan section 8.3 item 23). A session-invariant knob like the fixed form itself: when on, the
+     * boot-configured job runs exactly as a normal leg, but {@link #finish} hands the JVM to the resident queue
+     * loop instead of shutting down, and further diagnostic jobs are taken from
+     * {@code <gameDir>/resident-queue/pending/}. Off by default, so a normal leg observes no change at all.
+     */
+    private final boolean celtium$residentMode = HarnessConfig.bool("resident", false);
     /**
      * {@code -Dceltium.validation.churnInterval}: every N world ticks a block a few metres ahead of the player is
      * toggled between dirt and stone. A block change marks its render section dirty, so the held window stops
@@ -4643,6 +4657,12 @@ public final class ValidationClient {
                     + " captureStarted=" + celtium$captureStarted
                     + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName())
                     + " world=" + (mc.world != null));
+        }
+        // Resident session (LEG-PROTOCOL section 9): while the boot job runs this only writes the heartbeat;
+        // once the boot job has completed, the resident loop owns every tick and the boot machinery below -
+        // written for exactly one job per JVM - never runs again.
+        if (celtium$residentMode && celtium$residentTick(mc)) {
+            return;
         }
         // The unicode font surface: every string routes through renderUnicodeChar, which a locale like ja_jp selects
         // automatically - and which every isolated leg so far has skipped, because the fresh game dir launches in
@@ -13753,7 +13773,946 @@ public final class ValidationClient {
         } catch (Exception error) {
             error.printStackTrace();
         }
+        if (celtium$residentMode && celtium$residentState == RESIDENT_BOOT) {
+            // Resident session: the boot job's report is complete and on disk, exactly as a normal leg leaves
+            // it. Instead of ending the JVM, file the job into the resident queue and idle at the title
+            // screen for the next one (or shut down here when the job tainted the session).
+            celtium$residentAfterBootFinish(mc);
+            return;
+        }
         mc.shutdown();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Resident sessions (LEG-PROTOCOL section 9; Neon ruling NEON-LEG-RESIDENT-DESIGN-2026-11-28,
+    // plan section 8.3 item 23). Phase 1: fixed form (a) diagnostic jobs only.
+    //
+    // One JVM (a Session) runs the boot-configured job exactly as a normal leg; finish() then files that
+    // job as 0000-boot and the loop below idles at the title screen, taking further jobs from
+    // resident-queue/pending/. Each job is driven on a job-relative clock (jobTick = client ticks since
+    // the job's world was first seen), judged on the counter delta between its start and end snapshots
+    // and on its own slice of the console log (consoleByteRange). A job's completion is only final once
+    // done/<seq>-<jobId>/READY exists; the directory is staged under a .tmp name and renamed into place.
+    // A job that surfaces a VUID outside the session baseline taints the session: it is filed, a
+    // SESSION_TAINTED marker is written, and the JVM exits so the supervisor restarts for the remaining
+    // pending jobs rather than letting broken Vulkan state leak into the next job's evidence.
+    // ---------------------------------------------------------------------------------------------
+
+    private static final int RESIDENT_BOOT = 0;
+    private static final int RESIDENT_IDLE = 1;
+    private static final int RESIDENT_JOB_LAUNCH = 2;
+    private static final int RESIDENT_JOB_JOIN = 3;
+    private static final int RESIDENT_JOB_RUN = 4;
+    private static final int RESIDENT_JOB_QUIT = 5;
+
+    private int celtium$residentState = RESIDENT_BOOT;
+    private boolean celtium$residentInitDone;
+    private String celtium$residentSessionId;
+    private Path celtium$residentQueueDir;
+    private JsonObject celtium$residentBootStartSnapshot;
+    private long celtium$residentBootConsoleStart = -1L;
+    private int celtium$residentHeartbeatLastTick = -1000;
+    /** Queued jobs are numbered from 2; the boot job is sessionJobIndex 1. */
+    private int celtium$residentNextJobIndex = 2;
+    private int celtium$residentJobIndex;
+    private String celtium$residentJobSeq;
+    private String celtium$residentJobId;
+    private String celtium$residentJobManifestText;
+    private JsonObject celtium$residentJobManifest;
+    private Path celtium$residentRunningFile;
+    private JsonObject celtium$residentJobStartSnapshot;
+    private long celtium$residentJobConsoleStart = -1L;
+    private long celtium$residentJobStartWallMs;
+    private int celtium$residentJobWorldClientTick = -1;
+    private CameraPose celtium$residentJobPose;
+    private boolean celtium$residentJobPoseTeleported;
+    private boolean celtium$residentJobScreenshotTaken;
+    private boolean celtium$residentJobDumpRequested;
+
+    /**
+     * The resident loop's slice of the client tick. Returns true when the resident machinery owns this
+     * tick outright (everything except the boot job's run), so the caller skips the single-job machinery.
+     */
+    private boolean celtium$residentTick(Minecraft mc) {
+        try {
+            if (!celtium$residentInitDone) {
+                celtium$residentInit(mc);
+            }
+            celtium$residentHeartbeat(mc);
+            switch (celtium$residentState) {
+                case RESIDENT_BOOT:
+                    return false;
+                case RESIDENT_IDLE:
+                    celtium$residentIdle(mc);
+                    return true;
+                case RESIDENT_JOB_LAUNCH:
+                case RESIDENT_JOB_JOIN:
+                case RESIDENT_JOB_RUN:
+                case RESIDENT_JOB_QUIT:
+                    celtium$residentJobTick(mc);
+                    return true;
+                default:
+                    return true;
+            }
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_RESIDENT_ERROR state=" + celtium$residentState + " " + error);
+            error.printStackTrace();
+            return celtium$residentState != RESIDENT_BOOT;
+        }
+    }
+
+    private void celtium$residentInit(Minecraft mc) throws java.io.IOException {
+        celtium$residentInitDone = true;
+        celtium$residentQueueDir = mc.gameDir.toPath().resolve("resident-queue");
+        Files.createDirectories(celtium$residentQueueDir.resolve("pending"));
+        Files.createDirectories(celtium$residentQueueDir.resolve("running"));
+        Files.createDirectories(celtium$residentQueueDir.resolve("done"));
+        Files.createDirectories(celtium$residentQueueDir.resolve("failed"));
+        celtium$residentSessionId = null;
+        Path manifest = celtium$residentQueueDir.resolve("session-manifest.json");
+        if (Files.exists(manifest)) {
+            try {
+                JsonObject parsed = new JsonParser().parse(
+                        new String(Files.readAllBytes(manifest), StandardCharsets.UTF_8)).getAsJsonObject();
+                if (parsed.has("sessionId")) {
+                    celtium$residentSessionId = parsed.get("sessionId").getAsString();
+                }
+            } catch (Throwable ignored) {
+                // A malformed supervisor manifest must not kill the session; the id falls back below.
+            }
+        }
+        if (celtium$residentSessionId == null) {
+            celtium$residentSessionId = "harness-" + System.currentTimeMillis();
+        }
+        celtium$residentBootStartSnapshot = celtium$residentSnapshot();
+        celtium$residentBootConsoleStart = celtium$residentConsoleSize(mc);
+        System.out.println("[Celtium] CELTIUM_RESIDENT_SESSION sessionId=" + celtium$residentSessionId
+                + " queue=" + celtium$residentQueueDir);
+        celtium$residentHeartbeat(mc);
+    }
+
+    private String celtium$residentStateName(Minecraft mc) {
+        switch (celtium$residentState) {
+            case RESIDENT_BOOT:
+            case RESIDENT_JOB_LAUNCH:
+            case RESIDENT_JOB_JOIN:
+            case RESIDENT_JOB_RUN:
+            case RESIDENT_JOB_QUIT:
+                return "RUNNING_JOB";
+            case RESIDENT_IDLE:
+            default:
+                return mc.world == null ? "IDLE_TITLE" : "IDLE_WORLD";
+        }
+    }
+
+    /** heartbeat.json, atomically replaced at most every 20 client ticks (about one second). */
+    private void celtium$residentHeartbeat(Minecraft mc) {
+        if (celtium$residentQueueDir == null
+                || celtium$clientTicks - celtium$residentHeartbeatLastTick < 20) {
+            return;
+        }
+        celtium$residentHeartbeatLastTick = celtium$clientTicks;
+        try {
+            JsonObject beat = new JsonObject();
+            beat.addProperty("sessionId", celtium$residentSessionId);
+            String runtime = java.lang.management.ManagementFactory.getRuntimeMXBean().getName();
+            long pid = -1L;
+            try {
+                pid = Long.parseLong(runtime.substring(0, runtime.indexOf('@')));
+            } catch (Throwable ignored) {
+                // The name is "pid@host" on every JVM this fixture runs on; -1 records "unread" honestly.
+            }
+            beat.addProperty("pid", Long.valueOf(pid));
+            beat.addProperty("state", celtium$residentStateName(mc));
+            beat.addProperty("jobId", celtium$residentState == RESIDENT_BOOT ? "boot"
+                    : celtium$residentJobId);
+            beat.addProperty("jobTick", Integer.valueOf(celtium$residentJobWorldClientTick < 0 ? 0
+                    : celtium$clientTicks - celtium$residentJobWorldClientTick));
+            beat.addProperty("sessionWorldTicks", Integer.valueOf(worldTicks));
+            beat.addProperty("clientTicks", Integer.valueOf(celtium$clientTicks));
+            beat.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+            celtium$residentWriteAtomic(celtium$residentQueueDir.resolve("heartbeat.json"),
+                    (new GsonBuilder().setPrettyPrinting().create().toJson(beat) + "\n")
+                            .getBytes(StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            // A heartbeat that fails to write must never take the game down with it; the supervisor's
+            // heartbeat-timeout path is exactly the mechanism that notices the silence.
+        }
+    }
+
+    /**
+     * One counter snapshot: the fixture's own counters, the renderer's presented-frame count, the game
+     * loop timing (reflectively, as in {@link #finish}, so a leg without the renderer still snapshots),
+     * and every numeric {@code key=value} pair of the backend's verification summary. Job verdicts read
+     * the delta between two of these, never a session-cumulative value.
+     */
+    private JsonObject celtium$residentSnapshot() {
+        JsonObject snap = new JsonObject();
+        snap.addProperty("clientTicks", Integer.valueOf(celtium$clientTicks));
+        snap.addProperty("worldTicks", Integer.valueOf(worldTicks));
+        snap.addProperty("worldFrames", Integer.valueOf(worldFrames));
+        snap.addProperty("presentedFrames", Integer.valueOf(celtium$presentedFrameCount()));
+        snap.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+        try {
+            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            snap.addProperty("gameTicks",
+                    Long.valueOf(((Number) timing.getMethod("ticks").invoke(null)).longValue()));
+            snap.addProperty("gameTickMillisTotal",
+                    Long.valueOf(((Number) timing.getMethod("totalMillis").invoke(null)).longValue()));
+            snap.addProperty("gameLoops",
+                    Long.valueOf(((Number) timing.getMethod("loops").invoke(null)).longValue()));
+            snap.addProperty("gameLoopMillisTotal",
+                    Long.valueOf(((Number) timing.getMethod("loopTotalMillis").invoke(null)).longValue()));
+        } catch (Throwable absent) {
+            snap.addProperty("gameLoopTiming", "absent: " + absent);
+        }
+        Object summary = celtium$backendCall("verificationSummary", new Class<?>[0]);
+        if (summary instanceof String) {
+            JsonObject verify = new JsonObject();
+            Matcher matcher = Pattern.compile("([A-Za-z][A-Za-z0-9_./-]*)=(-?\\d+)").matcher((String) summary);
+            while (matcher.find()) {
+                try {
+                    verify.addProperty(matcher.group(1), Long.valueOf(Long.parseLong(matcher.group(2))));
+                } catch (NumberFormatException ignored) {
+                    // A pair whose value overflows a long is not a counter this delta can carry.
+                }
+            }
+            snap.add("verify", verify);
+        } else {
+            snap.addProperty("verify", "no Vulkan backend");
+        }
+        return snap;
+    }
+
+    /** counter-delta.json: the two snapshots and the per-key numeric difference between them. */
+    private JsonObject celtium$residentDelta(JsonObject start, JsonObject end) {
+        Map<String, Long> flatStart = new TreeMap<String, Long>();
+        Map<String, Long> flatEnd = new TreeMap<String, Long>();
+        celtium$residentFlatten(start, "", flatStart);
+        celtium$residentFlatten(end, "", flatEnd);
+        JsonObject delta = new JsonObject();
+        for (Map.Entry<String, Long> entry : flatEnd.entrySet()) {
+            Long before = flatStart.get(entry.getKey());
+            if (before != null) {
+                delta.addProperty(entry.getKey(),
+                        Long.valueOf(entry.getValue().longValue() - before.longValue()));
+            }
+        }
+        JsonObject out = new JsonObject();
+        out.add("start", start);
+        out.add("end", end);
+        out.add("delta", delta);
+        return out;
+    }
+
+    private void celtium$residentFlatten(JsonObject object, String prefix, Map<String, Long> out) {
+        for (Map.Entry<String, com.google.gson.JsonElement> entry : object.entrySet()) {
+            String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+            if (entry.getValue().isJsonObject()) {
+                celtium$residentFlatten(entry.getValue().getAsJsonObject(), key, out);
+            } else if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isNumber()) {
+                out.put(key, Long.valueOf(entry.getValue().getAsLong()));
+            }
+        }
+    }
+
+    /** The console log this session is judged from: the driver's capture when present, else the game's. */
+    private Path celtium$residentConsolePath(Minecraft mc) {
+        Path console = mc.gameDir.toPath().resolve("validation-console.log");
+        if (Files.exists(console)) {
+            return console;
+        }
+        return mc.gameDir.toPath().resolve("logs/latest.log");
+    }
+
+    private long celtium$residentConsoleSize(Minecraft mc) {
+        try {
+            Path console = celtium$residentConsolePath(mc);
+            return Files.exists(console) ? Files.size(console) : -1L;
+        } catch (Throwable error) {
+            return -1L;
+        }
+    }
+
+    private String celtium$residentConsoleSlice(Minecraft mc, long start, long end) {
+        try {
+            Path console = celtium$residentConsolePath(mc);
+            if (!Files.exists(console) || start < 0L) {
+                return "";
+            }
+            byte[] all = Files.readAllBytes(console);
+            int from = (int) Math.min(start, all.length);
+            int to = (int) Math.min(end < 0L ? all.length : end, all.length);
+            if (to < from) {
+                to = from;
+            }
+            return new String(all, from, to - from, StandardCharsets.UTF_8);
+        } catch (Throwable error) {
+            return "";
+        }
+    }
+
+    /**
+     * VUID ids in the console slice that are not in the session baseline
+     * ({@code -Dceltium.validation.residentVuidBaseline}, comma-separated numeric ids). A non-empty
+     * result taints the session (LEG-PROTOCOL section 9.3).
+     */
+    private List<String> celtium$residentNewVuids(Minecraft mc, long start, long end) {
+        String slice = celtium$residentConsoleSlice(mc, start, end);
+        List<String> fresh = new ArrayList<String>();
+        if (slice.isEmpty()) {
+            return fresh;
+        }
+        String baseline = HarnessConfig.string("residentVuidBaseline", "");
+        Matcher matcher = Pattern.compile("VUID-(\\d{5})").matcher(slice);
+        while (matcher.find()) {
+            String id = matcher.group(1);
+            if (!fresh.contains(id) && !baseline.contains(id)) {
+                fresh.add(id);
+            }
+        }
+        Collections.sort(fresh);
+        return fresh;
+    }
+
+    /** Writes a file through a sibling temp file, forces it to disk, then renames it into place. */
+    private void celtium$residentWriteAtomic(Path target, byte[] bytes) throws java.io.IOException {
+        Files.createDirectories(target.getParent());
+        Path tmp = target.resolveSibling(target.getFileName().toString() + ".tmp");
+        java.io.FileOutputStream stream = new java.io.FileOutputStream(tmp.toFile());
+        try {
+            stream.write(bytes);
+            stream.getChannel().force(true);
+        } finally {
+            stream.close();
+        }
+        try {
+            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException notAtomic) {
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void celtium$residentWriteJson(Path target, JsonObject object) throws java.io.IOException {
+        celtium$residentWriteAtomic(target,
+                (new GsonBuilder().setPrettyPrinting().create().toJson(object) + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String celtium$residentSha256(Path file) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[1 << 16];
+            java.io.InputStream input = Files.newInputStream(file);
+            try {
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    digest.update(buffer, 0, read);
+                }
+            } finally {
+                input.close();
+            }
+            StringBuilder out = new StringBuilder();
+            for (byte b : digest.digest()) {
+                out.append(String.format(java.util.Locale.ROOT, "%02x", b & 0xFF));
+            }
+            return out.toString();
+        } catch (Throwable error) {
+            return "unreadable: " + error;
+        }
+    }
+
+    /**
+     * finish() for the boot job of a resident session: the report finish() just wrote stays the job's
+     * report; this files it as job 0000-boot with its counter delta and pictures, then either idles at
+     * the title screen (the normal case) or, when the job surfaced a VUID outside the baseline, marks
+     * the session tainted and lets the JVM exit for the supervisor to restart.
+     */
+    private void celtium$residentAfterBootFinish(Minecraft mc) {
+        boolean failed = report.has("status") && report.get("status").isJsonPrimitive()
+                && "FAILED".equals(report.get("status").getAsString());
+        JsonObject endSnapshot = celtium$residentSnapshot();
+        long consoleEnd = celtium$residentConsoleSize(mc);
+        List<String> newVuids = celtium$residentNewVuids(mc, celtium$residentBootConsoleStart, consoleEnd);
+        boolean tainted = !newVuids.isEmpty();
+        try {
+            JsonObject manifest = new JsonObject();
+            manifest.addProperty("jobId", "boot");
+            manifest.addProperty("kind", "diag");
+            manifest.addProperty("source", "bootKnobs");
+            manifest.addProperty("scene", celtium$scene.name);
+            manifest.addProperty("screenshotAtTick",
+                    Integer.valueOf(HarnessConfig.integer("screenshotAtTick", 200, -1)));
+            manifest.addProperty("holdUntilTick", Integer.valueOf(celtium$holdUntilTick));
+            manifest.addProperty("sessionJobIndex", Integer.valueOf(1));
+            JsonObject delta = celtium$residentDelta(celtium$residentBootStartSnapshot, endSnapshot);
+            if (failed) {
+                Path dir = celtium$residentQueueDir.resolve("failed").resolve("0000-boot");
+                Files.createDirectories(dir);
+                celtium$residentWriteJson(dir.resolve("job-manifest.json"), manifest);
+                celtium$residentWriteJson(dir.resolve("counter-delta.json"), delta);
+                JsonObject record = new JsonObject();
+                record.addProperty("jobId", "boot");
+                record.addProperty("sessionId", celtium$residentSessionId);
+                record.addProperty("failureKind", "JOB_FAILED");
+                if (report.has("error")) {
+                    record.addProperty("error", report.get("error").getAsString());
+                }
+                record.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+                celtium$residentWriteJson(dir.resolve("failure-record.json"), record);
+            } else {
+                Path doneRoot = celtium$residentQueueDir.resolve("done");
+                Path tmp = doneRoot.resolve(".tmp-0000-boot");
+                celtium$residentDeleteTree(tmp);
+                Files.createDirectories(tmp);
+                celtium$residentWriteJson(tmp.resolve("job-manifest.json"), manifest);
+                Path reportFile = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
+                if (Files.exists(reportFile)) {
+                    Files.copy(reportFile, tmp.resolve("celtium-validation.json"),
+                            StandardCopyOption.REPLACE_EXISTING);
+                }
+                celtium$residentWriteJson(tmp.resolve("counter-delta.json"), delta);
+                celtium$residentCopyTree(mc.gameDir.toPath().resolve("screenshots"),
+                        tmp.resolve("screenshots"), 0L);
+                celtium$residentCopyTree(mc.gameDir.toPath().resolve("framedump"),
+                        tmp.resolve("framedump"), 0L);
+                celtium$residentWriteAtomic(tmp.resolve("READY"), new byte[0]);
+                Path target = doneRoot.resolve("0000-boot");
+                celtium$residentDeleteTree(target);
+                Files.move(tmp, target);
+            }
+            System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_DONE job=boot failed=" + failed
+                    + " tainted=" + tainted + " newVuids=" + newVuids);
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_RESIDENT_ERROR filing boot job: " + error);
+            error.printStackTrace();
+        }
+        if (tainted) {
+            celtium$residentWriteTainted("boot", newVuids);
+            mc.shutdown();
+            return;
+        }
+        finished = false;
+        celtium$residentQuitToTitle(mc);
+        celtium$residentState = RESIDENT_JOB_QUIT;
+    }
+
+    private void celtium$residentWriteTainted(String jobId, List<String> newVuids) {
+        try {
+            JsonObject taint = new JsonObject();
+            taint.addProperty("sessionId", celtium$residentSessionId);
+            taint.addProperty("jobId", jobId);
+            com.google.gson.JsonArray ids = new com.google.gson.JsonArray();
+            for (String id : newVuids) {
+                ids.add(id);
+            }
+            taint.add("newVuids", ids);
+            taint.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+            celtium$residentWriteJson(celtium$residentQueueDir.resolve("SESSION_TAINTED"), taint);
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_RESIDENT_ERROR writing SESSION_TAINTED: " + error);
+        }
+    }
+
+    /** The same three calls the worldSwitch path makes, in the same order, back to the title screen. */
+    private void celtium$residentQuitToTitle(Minecraft mc) {
+        try {
+            if (mc.world != null) {
+                mc.world.sendQuittingDisconnectingPacket();
+                mc.loadWorld((net.minecraft.client.multiplayer.WorldClient) null);
+            }
+            mc.displayGuiScreen(new GuiMainMenu());
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_RESIDENT_ERROR quitting to title: " + error);
+        }
+    }
+
+    /** IDLE_TITLE: take the first pending job in name order, or consume the shutdown sentinel. */
+    private void celtium$residentIdle(Minecraft mc) throws java.io.IOException {
+        if (mc.world != null || !celtium$isTitleScreen(mc.currentScreen)) {
+            return;
+        }
+        java.io.File[] listed = celtium$residentQueueDir.resolve("pending").toFile().listFiles();
+        if (listed == null) {
+            return;
+        }
+        List<java.io.File> jobs = new ArrayList<java.io.File>();
+        for (java.io.File file : listed) {
+            if (file.isFile() && file.getName().endsWith(".json")) {
+                jobs.add(file);
+            }
+        }
+        if (jobs.isEmpty()) {
+            return;
+        }
+        Collections.sort(jobs, new Comparator<java.io.File>() {
+            @Override
+            public int compare(java.io.File a, java.io.File b) {
+                return a.getName().compareTo(b.getName());
+            }
+        });
+        java.io.File next = jobs.get(0);
+        String base = next.getName().substring(0, next.getName().length() - ".json".length());
+        String text = new String(Files.readAllBytes(next.toPath()), StandardCharsets.UTF_8);
+        JsonObject parsed;
+        try {
+            parsed = new JsonParser().parse(text).getAsJsonObject();
+        } catch (Throwable unreadable) {
+            Path dir = celtium$residentQueueDir.resolve("failed").resolve(base);
+            Files.createDirectories(dir);
+            celtium$residentWriteAtomic(dir.resolve("job-manifest.json"), text.getBytes(StandardCharsets.UTF_8));
+            JsonObject record = new JsonObject();
+            record.addProperty("jobId", base);
+            record.addProperty("sessionId", celtium$residentSessionId);
+            record.addProperty("failureKind", "MANIFEST_UNREADABLE");
+            record.addProperty("detail", String.valueOf(unreadable));
+            record.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+            celtium$residentWriteJson(dir.resolve("failure-record.json"), record);
+            Files.deleteIfExists(next.toPath());
+            return;
+        }
+        String kind = parsed.has("kind") ? parsed.get("kind").getAsString() : "diag";
+        String jobId = parsed.has("jobId") ? parsed.get("jobId").getAsString() : base;
+        if ("shutdown".equals(kind) || base.contains("SHUTDOWN")) {
+            Path doneRoot = celtium$residentQueueDir.resolve("done");
+            Path tmp = doneRoot.resolve(".tmp-" + base);
+            celtium$residentDeleteTree(tmp);
+            Files.createDirectories(tmp);
+            celtium$residentWriteAtomic(tmp.resolve("job-manifest.json"), text.getBytes(StandardCharsets.UTF_8));
+            JsonObject record = new JsonObject();
+            record.addProperty("jobId", jobId);
+            record.addProperty("kind", "shutdown");
+            record.addProperty("status", "COMPLETED");
+            record.addProperty("sessionId", celtium$residentSessionId);
+            celtium$residentWriteJson(tmp.resolve("celtium-validation.json"), record);
+            celtium$residentWriteAtomic(tmp.resolve("READY"), new byte[0]);
+            Path target = doneRoot.resolve(base);
+            celtium$residentDeleteTree(target);
+            Files.move(tmp, target);
+            Files.deleteIfExists(next.toPath());
+            System.out.println("[Celtium] CELTIUM_RESIDENT_SHUTDOWN sessionId=" + celtium$residentSessionId);
+            mc.shutdown();
+            return;
+        }
+        Path runningFile = celtium$residentQueueDir.resolve("running").resolve(next.getName());
+        Files.move(next.toPath(), runningFile, StandardCopyOption.REPLACE_EXISTING);
+        if (!"diag".equals(kind)) {
+            // A job whose kind contradicts the session's fixed form is refused, never run (design 2.2).
+            Path dir = celtium$residentQueueDir.resolve("failed").resolve(base);
+            Files.createDirectories(dir);
+            celtium$residentWriteAtomic(dir.resolve("job-manifest.json"), text.getBytes(StandardCharsets.UTF_8));
+            JsonObject record = new JsonObject();
+            record.addProperty("jobId", jobId);
+            record.addProperty("sessionId", celtium$residentSessionId);
+            record.addProperty("failureKind", "VERDICT_REFUSAL");
+            record.addProperty("detail", "kind=" + kind + " in a fixed-form (a) diag session");
+            record.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+            celtium$residentWriteJson(dir.resolve("failure-record.json"), record);
+            Files.deleteIfExists(runningFile);
+            return;
+        }
+        celtium$residentJobIndex = celtium$residentNextJobIndex++;
+        celtium$residentJobSeq = base;
+        celtium$residentJobId = jobId;
+        celtium$residentJobManifestText = text;
+        celtium$residentJobManifest = parsed;
+        celtium$residentRunningFile = runningFile;
+        celtium$residentJobStartSnapshot = celtium$residentSnapshot();
+        celtium$residentJobConsoleStart = celtium$residentConsoleSize(mc);
+        celtium$residentJobStartWallMs = System.currentTimeMillis();
+        celtium$residentJobWorldClientTick = -1;
+        celtium$residentJobPoseTeleported = false;
+        celtium$residentJobScreenshotTaken = false;
+        celtium$residentJobDumpRequested = false;
+        celtium$residentJobPose = celtium$residentManifestPose(parsed);
+        celtium$residentState = RESIDENT_JOB_LAUNCH;
+        System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_START job=" + jobId + " seq=" + base
+                + " sessionJobIndex=" + celtium$residentJobIndex);
+    }
+
+    private CameraPose celtium$residentManifestPose(JsonObject manifest) {
+        if (manifest.has("cameraPose") && manifest.get("cameraPose").isJsonObject()) {
+            JsonObject pose = manifest.get("cameraPose").getAsJsonObject();
+            return new CameraPose(
+                    pose.has("x") ? pose.get("x").getAsDouble() : celtium$pose.x,
+                    pose.has("y") ? pose.get("y").getAsDouble() : celtium$pose.y,
+                    pose.has("z") ? pose.get("z").getAsDouble() : celtium$pose.z,
+                    pose.has("yaw") ? pose.get("yaw").getAsFloat() : celtium$pose.yaw,
+                    pose.has("pitch") ? pose.get("pitch").getAsFloat() : celtium$pose.pitch);
+        }
+        return celtium$pose;
+    }
+
+    private int celtium$residentJobInt(String key, int fallback) {
+        try {
+            return celtium$residentJobManifest.has(key)
+                    ? celtium$residentJobManifest.get(key).getAsInt() : fallback;
+        } catch (Throwable notANumber) {
+            return fallback;
+        }
+    }
+
+    private boolean celtium$residentJobBool(String key, boolean fallback) {
+        try {
+            return celtium$residentJobManifest.has(key)
+                    ? celtium$residentJobManifest.get(key).getAsBoolean() : fallback;
+        } catch (Throwable notABoolean) {
+            return fallback;
+        }
+    }
+
+    private String celtium$residentJobString(String key, String fallback) {
+        try {
+            return celtium$residentJobManifest.has(key)
+                    ? celtium$residentJobManifest.get(key).getAsString() : fallback;
+        } catch (Throwable notAString) {
+            return fallback;
+        }
+    }
+
+    private void celtium$residentJobTick(Minecraft mc) throws java.io.IOException {
+        switch (celtium$residentState) {
+            case RESIDENT_JOB_QUIT:
+                if (mc.world == null && celtium$isTitleScreen(mc.currentScreen)) {
+                    celtium$residentState = RESIDENT_IDLE;
+                }
+                return;
+            case RESIDENT_JOB_LAUNCH:
+                mc.gameSettings.pauseOnLostFocus = false;
+                if (mc.world == null && celtium$isTitleScreen(mc.currentScreen)) {
+                    String slot = celtium$residentJobString("saveSlot", null);
+                    if (slot != null && !slot.isEmpty()) {
+                        mc.launchIntegratedServer(slot, slot, null);
+                    } else {
+                        boolean generated = "default".equalsIgnoreCase(
+                                celtium$residentJobString("worldType", "flat"));
+                        WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false,
+                                generated ? WorldType.DEFAULT : WorldType.FLAT);
+                        if (!generated) {
+                            settings.setGeneratorOptions(celtium$worldLayers);
+                        }
+                        mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+                    }
+                    celtium$residentState = RESIDENT_JOB_JOIN;
+                }
+                celtium$residentJobTimeoutCheck(mc);
+                return;
+            case RESIDENT_JOB_JOIN:
+                if (mc.world != null && mc.player != null) {
+                    celtium$residentJobWorldClientTick = celtium$clientTicks;
+                    if (mc.currentScreen != null) {
+                        mc.displayGuiScreen(null);
+                    }
+                    int time = celtium$residentJobInt("worldTime", -1);
+                    if (time >= 0) {
+                        celtium$residentApplyWorldTime(mc, time);
+                    }
+                    celtium$residentState = RESIDENT_JOB_RUN;
+                }
+                celtium$residentJobTimeoutCheck(mc);
+                return;
+            case RESIDENT_JOB_RUN:
+                if (mc.world == null || mc.player == null) {
+                    celtium$residentFailCurrentJob(mc, "WORLD_LOST", "world or player vanished mid-job");
+                    return;
+                }
+                if (celtium$residentJobTimeoutCheck(mc)) {
+                    return;
+                }
+                int jobTick = celtium$clientTicks - celtium$residentJobWorldClientTick;
+                if (jobTick >= 3 && !celtium$residentJobPoseTeleported) {
+                    celtium$residentJobPoseTeleported = true;
+                    celtium$residentTeleportPose(mc);
+                }
+                celtium$residentApplyPose(mc);
+                int shotTick = celtium$residentJobInt("screenshotAtJobTick", 300);
+                if (!celtium$residentJobScreenshotTaken && jobTick >= shotTick) {
+                    celtium$residentJobScreenshotTaken = true;
+                    celtium$captureGlScreenshot(mc, "celtium-job-" + celtium$residentJobSeq + ".png",
+                            "job" + celtium$residentJobIndex);
+                    if (celtium$residentJobBool("dumpPresentedImage", false)
+                            && !celtium$residentJobDumpRequested) {
+                        celtium$residentJobDumpRequested = true;
+                        celtium$requestPresentedDump(mc, "job" + celtium$residentJobIndex);
+                    }
+                }
+                int holdTick = celtium$residentJobInt("holdUntilJobTick", shotTick + 120);
+                if (jobTick >= holdTick) {
+                    celtium$residentCompleteJob(mc);
+                }
+                return;
+            default:
+                return;
+        }
+    }
+
+    /** True when the job exceeded its manifest timeout and has been filed as failed. */
+    private boolean celtium$residentJobTimeoutCheck(Minecraft mc) throws java.io.IOException {
+        int timeoutSec = celtium$residentJobInt("timeoutSec", 300);
+        if (timeoutSec > 0
+                && System.currentTimeMillis() - celtium$residentJobStartWallMs > timeoutSec * 1000L) {
+            celtium$residentFailCurrentJob(mc, "JOB_TIMEOUT",
+                    "exceeded timeoutSec=" + timeoutSec + " in resident state " + celtium$residentState);
+            return true;
+        }
+        return false;
+    }
+
+    /** Pins the job's time of day on the integrated server and stops the daylight cycle from moving it. */
+    private void celtium$residentApplyWorldTime(Minecraft mc, final int time) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null) {
+            return;
+        }
+        server.addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                for (net.minecraft.world.WorldServer world : server.worlds) {
+                    world.setWorldTime(time);
+                    world.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
+                }
+            }
+        });
+    }
+
+    /** The boot job's server-side pose teleport, with the job manifest's pose in place of the scene's. */
+    private void celtium$residentTeleportPose(final Minecraft mc) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.player == null) {
+            return;
+        }
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        final CameraPose pose = celtium$residentJobPose;
+        server.addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    net.minecraft.entity.player.EntityPlayerMP player =
+                            server.getPlayerList().getPlayerByUUID(playerId);
+                    if (player == null) {
+                        return;
+                    }
+                    player.capabilities.allowFlying = true;
+                    player.capabilities.isFlying = true;
+                    player.sendPlayerAbilities();
+                    player.rotationYaw = pose.yaw;
+                    player.rotationPitch = pose.pitch;
+                    player.prevRotationYaw = pose.yaw;
+                    player.prevRotationPitch = pose.pitch;
+                    player.setPositionAndUpdate(pose.x, pose.y, pose.z);
+                    player.motionX = 0.0D;
+                    player.motionY = 0.0D;
+                    player.motionZ = 0.0D;
+                    player.fallDistance = 0.0F;
+                } catch (Throwable ignored) {
+                    // The client-side hold below still pins the camera; a failed server teleport shows up
+                    // as the job screenshot's pose, which the job report names.
+                }
+            }
+        });
+    }
+
+    /** The boot job's client-side pose hold, with the job manifest's pose in place of the scene's. */
+    private void celtium$residentApplyPose(Minecraft mc) {
+        if (mc.player == null) {
+            return;
+        }
+        mc.player.capabilities.allowFlying = true;
+        mc.player.capabilities.isFlying = true;
+        celtium$residentSetPoseOn(mc.player);
+        net.minecraft.entity.Entity view = mc.getRenderViewEntity();
+        if (view != null && view != mc.player) {
+            celtium$residentSetPoseOn(view);
+        }
+    }
+
+    private void celtium$residentSetPoseOn(net.minecraft.entity.Entity entity) {
+        CameraPose pose = celtium$residentJobPose;
+        entity.motionX = 0.0D;
+        entity.motionY = 0.0D;
+        entity.motionZ = 0.0D;
+        entity.fallDistance = 0.0F;
+        entity.setPositionAndRotation(pose.x, pose.y, pose.z, pose.yaw, pose.pitch);
+        entity.prevPosX = entity.lastTickPosX = pose.x;
+        entity.prevPosY = entity.lastTickPosY = pose.y;
+        entity.prevPosZ = entity.lastTickPosZ = pose.z;
+        entity.prevRotationYaw = entity.rotationYaw;
+        entity.prevRotationPitch = entity.rotationPitch;
+        if (entity instanceof net.minecraft.entity.EntityLivingBase) {
+            net.minecraft.entity.EntityLivingBase living = (net.minecraft.entity.EntityLivingBase) entity;
+            living.rotationYawHead = pose.yaw;
+            living.prevRotationYawHead = pose.yaw;
+            living.renderYawOffset = pose.yaw;
+            living.prevRenderYawOffset = pose.yaw;
+        }
+    }
+
+    /** Files the running job into done/, with READY as the last write before the atomic rename. */
+    private void celtium$residentCompleteJob(Minecraft mc) throws java.io.IOException {
+        JsonObject endSnapshot = celtium$residentSnapshot();
+        long consoleEnd = celtium$residentConsoleSize(mc);
+        List<String> newVuids = celtium$residentNewVuids(mc, celtium$residentJobConsoleStart, consoleEnd);
+        boolean tainted = !newVuids.isEmpty();
+        String stage = "job" + celtium$residentJobIndex;
+        JsonObject jobReport = new JsonObject();
+        jobReport.addProperty("jobId", celtium$residentJobId);
+        jobReport.addProperty("seq", celtium$residentJobSeq);
+        jobReport.addProperty("sessionId", celtium$residentSessionId);
+        jobReport.addProperty("sessionJobIndex", Integer.valueOf(celtium$residentJobIndex));
+        jobReport.addProperty("kind", "diag");
+        jobReport.addProperty("status", "COMPLETED");
+        jobReport.addProperty("jobWorldClientTick", Integer.valueOf(celtium$residentJobWorldClientTick));
+        jobReport.addProperty("jobEndClientTick", Integer.valueOf(celtium$clientTicks));
+        jobReport.addProperty("jobTicksElapsed",
+                Integer.valueOf(celtium$clientTicks - celtium$residentJobWorldClientTick));
+        com.google.gson.JsonArray range = new com.google.gson.JsonArray();
+        range.add(Long.valueOf(celtium$residentJobConsoleStart));
+        range.add(Long.valueOf(consoleEnd));
+        jobReport.add("consoleByteRange", range);
+        jobReport.addProperty("cameraPose", celtium$residentJobPose.describe());
+        jobReport.addProperty("mutatesWorld", Boolean.valueOf(celtium$residentJobBool("mutatesWorld", true)));
+        String shotName = "celtium-job-" + celtium$residentJobSeq + ".png";
+        Path shot = mc.gameDir.toPath().resolve("screenshots").resolve(shotName);
+        if (Files.exists(shot)) {
+            jobReport.addProperty("screenshot", "screenshots/" + shotName);
+            jobReport.addProperty("screenshotSha256", celtium$residentSha256(shot));
+        }
+        if (report.has("pictureScreenshotNonBlackFraction_" + stage)) {
+            jobReport.addProperty("screenshotNonBlackFraction",
+                    report.get("pictureScreenshotNonBlackFraction_" + stage).getAsString());
+        }
+        if (report.has("pictureScreenshotMean_" + stage)) {
+            jobReport.addProperty("screenshotMean", report.get("pictureScreenshotMean_" + stage).getAsString());
+        }
+        if (tainted) {
+            jobReport.addProperty("tainted", Boolean.TRUE);
+            com.google.gson.JsonArray ids = new com.google.gson.JsonArray();
+            for (String id : newVuids) {
+                ids.add(id);
+            }
+            jobReport.add("newVuids", ids);
+        }
+        jobReport.addProperty("wallMillis",
+                Long.valueOf(System.currentTimeMillis() - celtium$residentJobStartWallMs));
+
+        Path doneRoot = celtium$residentQueueDir.resolve("done");
+        Path tmp = doneRoot.resolve(".tmp-" + celtium$residentJobSeq);
+        celtium$residentDeleteTree(tmp);
+        Files.createDirectories(tmp);
+        celtium$residentWriteAtomic(tmp.resolve("job-manifest.json"),
+                celtium$residentJobManifestText.getBytes(StandardCharsets.UTF_8));
+        celtium$residentWriteJson(tmp.resolve("celtium-validation.json"), jobReport);
+        celtium$residentWriteJson(tmp.resolve("counter-delta.json"),
+                celtium$residentDelta(celtium$residentJobStartSnapshot, endSnapshot));
+        if (Files.exists(shot)) {
+            Path shotsDir = tmp.resolve("screenshots");
+            Files.createDirectories(shotsDir);
+            Files.copy(shot, shotsDir.resolve(shotName), StandardCopyOption.REPLACE_EXISTING);
+        }
+        if (celtium$residentJobDumpRequested) {
+            celtium$residentCopyTree(mc.gameDir.toPath().resolve("framedump"), tmp.resolve("framedump"),
+                    celtium$residentJobStartWallMs);
+        }
+        celtium$residentWriteAtomic(tmp.resolve("READY"), new byte[0]);
+        Path target = doneRoot.resolve(celtium$residentJobSeq);
+        celtium$residentDeleteTree(target);
+        Files.move(tmp, target);
+        if (celtium$residentRunningFile != null) {
+            Files.deleteIfExists(celtium$residentRunningFile);
+        }
+        System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_DONE job=" + celtium$residentJobId
+                + " seq=" + celtium$residentJobSeq + " tainted=" + tainted
+                + " wallMs=" + (System.currentTimeMillis() - celtium$residentJobStartWallMs));
+        String doneJobId = celtium$residentJobId;
+        celtium$residentJobId = null;
+        celtium$residentRunningFile = null;
+        celtium$residentJobWorldClientTick = -1;
+        if (tainted) {
+            celtium$residentWriteTainted(doneJobId, newVuids);
+            mc.shutdown();
+            return;
+        }
+        celtium$residentQuitToTitle(mc);
+        celtium$residentState = RESIDENT_JOB_QUIT;
+    }
+
+    /** Files the running job into failed/ and returns the session to the title screen. */
+    private void celtium$residentFailCurrentJob(Minecraft mc, String failureKind, String detail)
+            throws java.io.IOException {
+        Path dir = celtium$residentQueueDir.resolve("failed").resolve(celtium$residentJobSeq);
+        Files.createDirectories(dir);
+        celtium$residentWriteAtomic(dir.resolve("job-manifest.json"),
+                celtium$residentJobManifestText.getBytes(StandardCharsets.UTF_8));
+        JsonObject record = new JsonObject();
+        record.addProperty("jobId", celtium$residentJobId);
+        record.addProperty("sessionId", celtium$residentSessionId);
+        record.addProperty("sessionJobIndex", Integer.valueOf(celtium$residentJobIndex));
+        record.addProperty("failureKind", failureKind);
+        record.addProperty("detail", detail);
+        com.google.gson.JsonArray range = new com.google.gson.JsonArray();
+        range.add(Long.valueOf(celtium$residentJobConsoleStart));
+        range.add(Long.valueOf(celtium$residentConsoleSize(mc)));
+        record.add("consoleByteRange", range);
+        record.addProperty("wallEpochMs", Long.valueOf(System.currentTimeMillis()));
+        celtium$residentWriteJson(dir.resolve("failure-record.json"), record);
+        if (celtium$residentRunningFile != null) {
+            Files.deleteIfExists(celtium$residentRunningFile);
+        }
+        System.out.println("[Celtium] CELTIUM_RESIDENT_JOB_FAILED job=" + celtium$residentJobId
+                + " seq=" + celtium$residentJobSeq + " kind=" + failureKind + " " + detail);
+        celtium$residentJobId = null;
+        celtium$residentRunningFile = null;
+        celtium$residentJobWorldClientTick = -1;
+        celtium$residentQuitToTitle(mc);
+        celtium$residentState = RESIDENT_JOB_QUIT;
+    }
+
+    private void celtium$residentCopyTree(Path from, Path to, long modifiedAtOrAfterMs)
+            throws java.io.IOException {
+        if (!Files.exists(from)) {
+            return;
+        }
+        List<Path> files = new ArrayList<Path>();
+        java.util.stream.Stream<Path> walk = Files.walk(from);
+        try {
+            walk.forEach(files::add);
+        } finally {
+            walk.close();
+        }
+        for (Path file : files) {
+            if (!Files.isRegularFile(file)) {
+                continue;
+            }
+            if (modifiedAtOrAfterMs > 0L
+                    && Files.getLastModifiedTime(file).toMillis() < modifiedAtOrAfterMs) {
+                continue;
+            }
+            Path target = to.resolve(from.relativize(file).toString());
+            Files.createDirectories(target.getParent());
+            Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void celtium$residentDeleteTree(Path root) throws java.io.IOException {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        List<Path> all = new ArrayList<Path>();
+        java.util.stream.Stream<Path> walk = Files.walk(root);
+        try {
+            walk.forEach(all::add);
+        } finally {
+            walk.close();
+        }
+        Collections.sort(all, new Comparator<Path>() {
+            @Override
+            public int compare(Path a, Path b) {
+                return b.getNameCount() - a.getNameCount();
+            }
+        });
+        for (Path path : all) {
+            Files.deleteIfExists(path);
+        }
     }
 
     /**
