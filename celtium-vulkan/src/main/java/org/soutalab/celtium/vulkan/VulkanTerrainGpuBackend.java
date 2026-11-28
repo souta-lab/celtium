@@ -1415,6 +1415,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     @Override
     public void celtium$lane1DrawLayer(int layerOrdinal, float[] projection, float[] modelView,
                                        double cameraX, double cameraY, double cameraZ) {
+        // S2 of the fixed template: a terrain layer records into the frame's main stage.
+        this.frameCoordinator.markStage(FrameCoordinator.Stage.MAIN_RENDER);
         this.lane1DrawCalls++;
         if (this.commandBuffer == null) {
             this.lane1GuardCmd++;
@@ -1479,6 +1481,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private void celtium$lane1PrepareFrame(
             org.soutalab.celtium.vulkan.terrain.lane1.Lane1TerrainFrontend frontend,
             float[] projection, float[] modelView, double cameraX, double cameraY, double cameraZ) {
+        // S1 of the fixed template: this publication is the frame's cull + light-grid
+        // state (frustum, view, dynamic-light grid) the terrain stages consume.
+        this.frameCoordinator.markStage(FrameCoordinator.Stage.CULL_LIGHTGRID);
         // The shadow JOML's buffer read goes through Unsafe and needs a direct buffer; the
         // driver's matrices arrive as heap float[], so they are set element-wise instead
         // (column-major, the same order the array carries). FloatBuffer.wrap on a heap
@@ -14023,6 +14028,9 @@ this.frameBufferOpen = false;
                             }
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
+                            // S2 of the fixed template: the window's immediate groups
+                            // record into the frame's main stage.
+                            this.frameCoordinator.markStage(FrameCoordinator.Stage.MAIN_RENDER);
                             long windowRecordStarted = System.nanoTime();
                             recordImmediateOnlyPass(stack, terrain);
                             long windowRecordTook = System.nanoTime() - windowRecordStarted;
@@ -20670,6 +20678,13 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
                     this.context, this.commandBuffer, null,
                     ctx -> celtium$lane1().terrainDriver(), this.frameId);
+            // The coordinator's frame opens at the same point (plan 2.2 template pick).
+            // A frame recorded through this backend runs the fixed four-stage template:
+            // the pack executor, when a pack is active, records through the seat above
+            // rather than through this frame path, so the pick's inputs are stated as
+            // the fixed template's here and the executor's frames are picked on its own
+            // entry when the world-pass hook is wired (S3-b D7-c).
+            this.frameCoordinator.beginFrame(false, false);
             // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.

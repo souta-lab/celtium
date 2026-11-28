@@ -93,6 +93,91 @@ public final class FrameCoordinator {
         this.host = host;
     }
 
+    // -- fixed stage template (plan section 2.2, S3-b seating) ------------------
+
+    /**
+     * The frame's static execution template. The generic dynamic frame-graph compiler the
+     * plan rejects does not exist here: at the frame head the coordinator picks one of two
+     * static templates in O(1), and the frame runs it with no dynamic reconfiguration.
+     */
+    enum FrameTemplate {
+        /** Pack OFF: the V2-2 fixed four stages, zero pack tax. */
+        FIXED_FOUR_STAGE,
+        /** Pack ON: the isolated D+ executor ({@code PackFrameExecutor}) owns the frame. */
+        PACK_EXECUTOR
+    }
+
+    /** The fixed stages of the pack-OFF template, in their only order. */
+    enum Stage {
+        UPLOAD, CULL_LIGHTGRID, MAIN_RENDER, HIZ_BUILD
+    }
+
+    /**
+     * The O(1) template pick of plan section 2.2: a pack frame goes to the isolated
+     * executor; everything else runs the fixed four stages. A mod custom-FBO request does
+     * not switch the template - inside the fixed template it is absorbed by the main
+     * stage (same dynamic-rendering target, or an isolated side FBO), so the frame's
+     * skeleton does not break; the flag is accepted here so the frame head states both
+     * judgements the plan names, and the main stage can read the recorded value.
+     */
+    static FrameTemplate selectTemplate(boolean packActive, boolean modFboRequested) {
+        return packActive ? FrameTemplate.PACK_EXECUTOR : FrameTemplate.FIXED_FOUR_STAGE;
+    }
+
+    private FrameTemplate frameTemplate = FrameTemplate.FIXED_FOUR_STAGE;
+    private boolean frameModFboRequested;
+    private final boolean[] stageEntered = new boolean[Stage.values().length];
+    private Stage lastStage;
+
+    /**
+     * Opens the coordinator's frame: records the template pick and clears the stage
+     * record. Called by the host at the frame's begin, the same point the native pack
+     * seat opens. A frame the pack executor records (through the seat) does not run the
+     * host's stage marks; the pick is recorded so the frame's shape is stated either way.
+     */
+    void beginFrame(boolean packActive, boolean modFboRequested) {
+        this.frameTemplate = selectTemplate(packActive, modFboRequested);
+        this.frameModFboRequested = modFboRequested;
+        java.util.Arrays.fill(this.stageEntered, false);
+        this.lastStage = null;
+    }
+
+    /**
+     * Records a stage's entry for this frame. Marks are a record, not a gate: the
+     * segmented recording revisits stages (several windows record inside MAIN_RENDER,
+     * uploads flush at several points), and the fixed order is a property of the final
+     * single-pass main stage, not of a state machine bolted onto the segments. What the
+     * record gives the legs and the instruments is the frame's actual stage structure:
+     * which stages ran, and in which first-entry order.
+     */
+    void markStage(Stage stage) {
+        this.stageEntered[stage.ordinal()] = true;
+        this.lastStage = stage;
+    }
+
+    FrameTemplate frameTemplate() {
+        return this.frameTemplate;
+    }
+
+    boolean frameModFboRequested() {
+        return this.frameModFboRequested;
+    }
+
+    boolean stageEntered(Stage stage) {
+        return this.stageEntered[stage.ordinal()];
+    }
+
+    /** One line naming the template and the stages this frame entered, for diagnostics. */
+    String stageSummary() {
+        StringBuilder out = new StringBuilder("template=").append(this.frameTemplate);
+        for (Stage stage : Stage.values()) {
+            if (this.stageEntered[stage.ordinal()]) {
+                out.append(' ').append(stage);
+            }
+        }
+        return out.toString();
+    }
+
     /** Recording acceptance is not queue submission, and neither means GPU completion. */
     enum Submission {
         SKIPPED, RECORDED, QUEUED;
@@ -135,6 +220,7 @@ public final class FrameCoordinator {
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
         // The frame's own flush attributes to the frame's own budget window (upload budget layer 2):
         // supply the exact frame key before flushing.
+        markStage(Stage.UPLOAD);
         this.host.context().celtium$supplyUploadBudgetFrameKey(this.host.frameId());
         this.host.context().flushUploads();
         if (this.host.frameBufferOpen()) {
@@ -216,8 +302,14 @@ public final class FrameCoordinator {
             this.host.commandState().reset();
             return;
         }
+        markStage(Stage.UPLOAD);
         this.host.context().celtium$supplyUploadBudgetFrameKey(this.host.frameId());
         this.host.context().flushUploads();
+        // S3 HiZBuild's seat: the fixed template's last stage records here, after the main
+        // stage's depth exists and before the buffer ends. D8 wires the actual half-res
+        // MAX-reduction record into this bracket; until then the mark states the stage's
+        // place in the frame so the stage record is complete.
+        markStage(Stage.HIZ_BUILD);
         // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
         this.host.recordFrameEndTimestamp();
         // Direct present path: when the frame renders into a borrowed swapchain image, the first
