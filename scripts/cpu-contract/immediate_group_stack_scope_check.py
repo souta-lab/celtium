@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
+BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java'
 MESH = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDynamicMesh.java'
 
 
@@ -57,8 +57,8 @@ def brace_body(src, start):
 
 def main():
     src = BACKEND.read_text(encoding='utf-8')
-    begin = src.index('private void drawPendingImmediate(Long onlyTarget)')
-    end = src.index('private boolean groupViewportNarrowed', begin)
+    begin = src.index('void drawPendingImmediate(Long onlyTarget)')
+    end = src.index('boolean groupViewportNarrowed', begin)
     method = src[begin:end]
     checks = []
 

@@ -33,7 +33,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
-BACKEND = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"
+BACKEND = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java"
 PRESENT = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java"
 SWAPCHAIN = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java"
 FIXTURE = ROOT / "validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java"
@@ -56,7 +56,11 @@ def check(condition, label):
 
 
 def main():
-    backend = BACKEND.read_text()
+    # E7 (S3-b): the former monolith is three seats; the checks below span the adapter
+    # (the presentFrame delegation) and the funnel (the presented-dump stamps), so the
+    # backend surface is their union.
+    backend = (BACKEND.read_text()
+               + (ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java").read_text())
     present_source = PRESENT.read_text()
     swapchain = SWAPCHAIN.read_text()
     fixture = FIXTURE.read_text()
@@ -66,7 +70,8 @@ def main():
     # The chain itself was extracted from the backend into PresentSwapchain (refactoring plan R10, item 704);
     # the backend's celtium$presentFrame() is now a one-line delegation to it, and the state the chain gates on
     # (lastFrameReachedQueue, presentFlushFailures, the immediate flush) stayed backend-owned, so inside the
-    # extracted class those reads are spelled backend.<field>, not this.<field>.
+    # extracted class those reads are spelled through its seat references (frame.<field> /
+    # funnel.<field>), not this.<field>.
     check("presentSwapchain.celtium$presentFrame()" in backend,
           "the backend's presentFrame must delegate to the extracted PresentSwapchain chain")
     present = (method(present_source, "public boolean celtium$presentFrame()")
@@ -85,7 +90,7 @@ def main():
           "the drain must keep an opt-out switch for comparison legs")
     drain = present.index("flushPendingBeforeGlDraw()")
     swap = present.index("ensureSwapchainForPresent()")
-    gate = present.index("if (!backend.lastFrameReachedQueue)")
+    gate = present.index("if (!frame.lastFrameReachedQueue)")
     check(swap < drain < gate,
           "the drain must run after ensureSwapchainForPresent() and before the completed-frame gate "
           "- a drain placed after the gate still presents a frame behind")
@@ -94,8 +99,8 @@ def main():
     # presentImage for the composite fallback; the consumption follows both. The tokens carry the
     # backend.swapchain receiver because the drain block's comment names presentDirect() in prose,
     # ahead of the gate.
-    attempt = min(present.index("backend.swapchain.presentDirect("),
-                  present.index("backend.swapchain.presentImage("))
+    attempt = min(present.index("funnel.swapchain.presentDirect("),
+                  present.index("funnel.swapchain.presentImage("))
     consume = present.index("consumeSwapchainRebuild()")
     check(gate < attempt < consume,
           "the swapchain rebuild must be consumed after the present attempt - consuming it before the "

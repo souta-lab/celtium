@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT=$PWD
 NAME=${1:-particles}
 GD="$ROOT/.celtium-work/runtime/$NAME"
-BACKEND="celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"
+BACKEND="celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java"
 MOD_JAR="build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar"
 CLIENT_JAR="forge122/build/libs/celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar"
 

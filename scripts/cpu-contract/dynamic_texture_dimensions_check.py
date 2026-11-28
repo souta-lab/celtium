@@ -10,7 +10,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 MIXIN = ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/DynamicTextureMixin.java'
-BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
+BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java'
 
 
 def main():

@@ -22,7 +22,7 @@ DEVICE = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Vulkan
 COMMAND = ROOT / 'forge122/src/main/java/org/soutalab/celtium/forge/CeltiumCommand.java'
 STATUS = ROOT / 'forge122/src/main/java/org/soutalab/celtium/forge/TerrainBackendStatus.java'
 FIXTURE = ROOT / 'validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java'
-RENDERER_CLASS = 'org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend'
+RENDERER_CLASS = 'org.soutalab.celtium.vulkan.VulkanBackendAdapter'
 
 
 def main():

@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
+BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java'
 ENTRY = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java'
 GLSM_BLEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/GLSMBlend.java'
 GLSM_RASTERIZER = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/GLSMRasterizer.java'
