@@ -1,5 +1,6 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.shader.ModPushConstantLimit;
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 
 import org.junit.jupiter.api.Test;

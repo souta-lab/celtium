@@ -1,7 +1,6 @@
 package org.soutalab.celtium.vulkan.shader;
 
 import org.soutalab.celtium.vulkan.gl.GlsmPackState;
-import org.soutalab.celtium.vulkan.gl.ModPushConstantLimit;
 
 import java.util.ArrayList;
 import java.util.Arrays;

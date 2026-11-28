@@ -3950,7 +3950,7 @@ public final class VulkanContext {
                 // registry with no context in scope, and the translator used to refuse every block above the 128-byte
                 // Vulkan minimum - including the 192-byte fixed-function emulation program GLSM generates. The device
                 // that got this far carries at least PUSH_CONSTANT_BYTES_USED, so its own limit is the honest ceiling.
-                org.soutalab.celtium.vulkan.gl.ModPushConstantLimit.noteDevice(candidatePushLimit);
+                org.soutalab.celtium.vulkan.shader.ModPushConstantLimit.noteDevice(candidatePushLimit);
                 this.deviceName = properties.properties().deviceNameString();
                 this.deviceUuid = uuid;
                 this.deviceApiVersion = apiVersion;
