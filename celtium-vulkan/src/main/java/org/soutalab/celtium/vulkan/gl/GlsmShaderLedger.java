@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.shader.GlsmPackState;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;

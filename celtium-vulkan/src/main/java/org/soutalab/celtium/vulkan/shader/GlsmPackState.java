@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan.shader;
 
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 
@@ -26,11 +26,7 @@ import java.util.Set;
  * <li>{@code PER_FRAME} members - only the interface/Iris standard names whose cross-program
  * equality is contractual - leave the program block for one shared block
  * ({@link #PER_FRAME_MEMBERS}, a fixed std140 layout every program declares identically, the
- * Angelica PerFrameUniformBlock contract). The harvester below packs that block once per epoch
- * from the first program that claims it; a later program in the same epoch whose value for a
- * harvested member differs is counted as a divergence, never silently mixed - the merge-phase
- * census reads {@link #divergences()} to decide whether the first-writer rule is ever exercised
- * by a real pack.</li>
+ * Angelica PerFrameUniformBlock contract).</li>
  * <li>{@code PER_PASS} / {@code PER_TICK} members stay in the program block in this stage, but the
  * registry tracks a version per bucket, so their writes no longer invalidate the {@code DYNAMIC}
  * members' pack (and vice versa). {@code ONCE} is emergent rather than classified: a member no
@@ -70,7 +66,7 @@ public final class GlsmPackState {
 
     /**
      * The PER_FRAME standard members and their contractual types, in shared-block order. Only a
-     * member whose lowered type matches the type here is harvested; a same-named member of another
+     * member whose lowered type matches the type here is shared; a same-named member of another
      * type (a pack-defined custom uniform shadowing a standard name) stays DYNAMIC, as does any
      * member not listed. The list is the Iris/interface standard set the guest supplies identically
      * to every program each frame: the view/projection matrices, the camera position and the
@@ -158,97 +154,12 @@ public final class GlsmPackState {
         return PER_FRAME_LAYOUT.get(name);
     }
 
-    // ---- Harvest state: the shared per-frame block's values for one epoch ----------------------
-
-    private static long harvestEpoch = Long.MIN_VALUE;
-    /** The harvested value bits per PER_FRAME member for {@link #harvestEpoch}; null until claimed. */
-    private static Map<String, float[]> harvestedValues;
-    /** How many times the shared block was harvested (once per epoch, by construction). */
-    private static long harvests;
-    /**
-     * Writes a program offered for a member the epoch already harvested with different bits: the
-     * cross-program equality contract was broken by the guest, the first writer's value stands for
-     * the epoch, and the break is counted here instead of silently mixing two programs' frames.
-     */
-    private static long divergences;
-    /** Programs whose lowering extracted a REGION member into the SSBO table. */
-    private static long regionExtracted;
-    /** REGION-named members whose shape refused extraction (array / matrix / struct part). */
-    private static long regionUnextractable;
-
-    /**
-     * Offers {@code program}'s current values to the shared block for {@code epoch} and returns the
-     * harvested values to pack from: on the epoch's first offer, the program's own values become
-     * the harvest; on later offers, a member whose bits differ from the harvest counts a divergence
-     * and the harvest stands. A member the offering program never wrote contributes nothing (the
-     * shared block keeps the harvest's value, or zero when nobody wrote it - as in GL).
-     */
-    public static synchronized Map<String, float[]> harvest(ModProgramRegistry.Program program, long epoch) {
-        if (epoch != harvestEpoch) {
-            harvestEpoch = epoch;
-            harvestedValues = null;
-        }
-        if (harvestedValues == null) {
-            harvestedValues = new LinkedHashMap<>();
-            for (String name : PER_FRAME_MEMBERS.keySet()) {
-                float[] value = program.floats(name);
-                if (value == null) {
-                    int[] ints = program.ints(name);
-                    if (ints != null) {
-                        value = new float[ints.length];
-                        for (int i = 0; i < ints.length; i++) {
-                            value[i] = ints[i];
-                        }
-                    }
-                }
-                if (value != null) {
-                    harvestedValues.put(name, value.clone());
-                }
-            }
-            harvests++;
-            return harvestedValues;
-        }
-        for (String name : PER_FRAME_MEMBERS.keySet()) {
-            float[] offered = program.floats(name);
-            if (offered == null) {
-                continue;
-            }
-            float[] held = harvestedValues.get(name);
-            if (held == null) {
-                harvestedValues.put(name, offered.clone());
-            } else if (!sameBits(held, offered)) {
-                divergences++;
-            }
-        }
-        return harvestedValues;
-    }
-
-    private static boolean sameBits(float[] a, float[] b) {
-        if (a.length != b.length) {
-            return false;
-        }
-        for (int i = 0; i < a.length; i++) {
-            if (Float.floatToRawIntBits(a[i]) != Float.floatToRawIntBits(b[i])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static synchronized void noteRegionExtracted() {
         regionExtracted++;
     }
 
     public static synchronized void noteRegionUnextractable() {
         regionUnextractable++;
-    }
-
-    public static long harvests() {
-        return harvests;
-    }
-
-    public static long divergences() {
-        return divergences;
     }
 
     public static long regionExtracted() {
@@ -259,12 +170,8 @@ public final class GlsmPackState {
         return regionUnextractable;
     }
 
-    /** Test support: forget the harvest and the counters. */
-    static synchronized void clear() {
-        harvestEpoch = Long.MIN_VALUE;
-        harvestedValues = null;
-        harvests = 0;
-        divergences = 0;
+    /** Test support: forget the counters. Public while the legacy registry still resets it. */
+    public static synchronized void clear() {
         regionExtracted = 0;
         regionUnextractable = 0;
     }

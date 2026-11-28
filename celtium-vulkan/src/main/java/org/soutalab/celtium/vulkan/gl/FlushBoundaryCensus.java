@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.shader.GlsmPackState;
+
 /**
  * GLSM stage 3, GAP-FL-1 (census F-1..F-11): the single flush-boundary census.
  * <p>

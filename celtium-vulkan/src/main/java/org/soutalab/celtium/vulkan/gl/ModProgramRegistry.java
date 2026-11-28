@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.shader.GlsmPackState;
+
 import org.soutalab.celtium.vulkan.shader.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
@@ -462,7 +464,6 @@ public final class ModProgramRegistry {
                     + " region=" + p.lowered.regionOffsetMember()
                     + " shared=" + p.lowered.sharedPerFrameMembers()
                     + " extracted=" + p.lowered.extractedUniforms().size()
-                    + " divergences=" + GlsmPackState.divergences()
                     + " regionExtracted=" + GlsmPackState.regionExtracted()
                     + " regionUnextractable=" + GlsmPackState.regionUnextractable());
         }
