@@ -146,8 +146,7 @@ public final class CeltiumGllessHint {
      * Before provider installation, reserve from the same native identity allocator to avoid an early-name collision.
      */
     public static int glGenNames(int range) {
-        int reserved = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$reserveNames(range);
-        return reserved >= 0 ? reserved : org.soutalab.celtium.vulkan.RenderObjectIds.reserve(range);
+        return org.soutalab.celtium.vulkan.RenderObjectIds.reserve(range);
     }
 
     /** The maximum texture size this renderer claims, in one place for every surface that has to answer it. */
@@ -232,8 +231,8 @@ public final class CeltiumGllessHint {
     public static void glGetShaderInfoLog(int object, int maxLength, long lengthPtr, long logPtr) {
         int written = 0;
         if (logPtr != 0L) {
-            written = org.soutalab.celtium.vulkan.gl.GlsmFrontend
-                    .celtium$writeInfoLog(object, maxLength, logPtr);
+            written = org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry
+                    .writeInfoLog(object, maxLength, logPtr);
         }
         if (lengthPtr != 0L) {
             org.lwjgl.system.MemoryUtil.memPutInt(lengthPtr, written);
@@ -254,7 +253,7 @@ public final class CeltiumGllessHint {
      * drawn with the world transform instead.
      */
     public static void glUseProgram(int program) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$useProgram(program);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.useProgram(program);
     }
 
     /**
@@ -264,9 +263,7 @@ public final class CeltiumGllessHint {
      * nothing and makes the classification the caller's own statement.
      */
     public static int glCreateShader(int type) {
-        int shader = glGenName();
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.shaderStage(shader, type);
-        return shader;
+        return org.soutalab.celtium.glcompat.GLSMPrograms.glCreateShader(type);
     }
 
     /**
@@ -289,56 +286,56 @@ public final class CeltiumGllessHint {
                     ? org.lwjgl.system.MemoryUtil.memUTF8(text)
                     : org.lwjgl.system.MemoryUtil.memUTF8(text, length));
         }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.shaderSource(shader, source.toString());
+        org.soutalab.celtium.glcompat.GLSMPrograms.glShaderSource(shader, source.toString());
     }
 
     public static void glAttachShader(int program, int shader) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.attach(program, shader);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glAttachShader(program, shader);
     }
 
     public static void glLinkProgram(int program) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.link(program);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glLinkProgram(program);
     }
 
     public static void glDeleteProgram(int program) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.deleteProgram(program);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glDeleteProgram(program);
     }
 
     private static int boundProgram() {
-        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$currentProgram();
+        return org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().activeProgramId();
     }
 
     /** The scalar uniform setters: the values belong to the program currently bound, as in GL. */
     public static void glUniform1f(int location, float x) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat1(boundProgram(), location, x);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform1f(location, x);
     }
 
     public static void glUniform2f(int location, float x, float y) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat2(boundProgram(), location, x, y);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2f(location, x, y);
     }
 
     public static void glUniform3f(int location, float x, float y, float z) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat3(boundProgram(), location, x, y, z);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform3f(location, x, y, z);
     }
 
     public static void glUniform4f(int location, float x, float y, float z, float w) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat4(boundProgram(), location, x, y, z, w);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform4f(location, x, y, z, w);
     }
 
     public static void glUniform1i(int location, int x) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt1(boundProgram(), location, x);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform1i(location, x);
     }
 
     public static void glUniform2i(int location, int x, int y) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt2(boundProgram(), location, x, y);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2i(location, x, y);
     }
 
     public static void glUniform3i(int location, int x, int y, int z) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt3(boundProgram(), location, x, y, z);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform3i(location, x, y, z);
     }
 
     public static void glUniform4i(int location, int x, int y, int z, int w) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt4(boundProgram(), location, x, y, z, w);
+        org.soutalab.celtium.glcompat.GLSMPrograms.glUniform4i(location, x, y, z, w);
     }
 
     /**
@@ -351,8 +348,23 @@ public final class CeltiumGllessHint {
         if (values == 0L || count <= 0) {
             return;
         }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloatPtr(boundProgram(), location, count, values,
-                components, transpose, matrixSide);
+        java.nio.FloatBuffer buffer = org.lwjgl.system.MemoryUtil.memFloatBuffer(values, count * components);
+        if (matrixSide > 0) {
+            switch (matrixSide) {
+                case 2: org.soutalab.celtium.glcompat.GLSMPrograms.glUniformMatrix2(location, transpose, buffer); break;
+                case 3: org.soutalab.celtium.glcompat.GLSMPrograms.glUniformMatrix3(location, transpose, buffer); break;
+                default: org.soutalab.celtium.glcompat.GLSMPrograms.glUniformMatrix4(location, transpose, buffer); break;
+            }
+            return;
+        }
+        float[] flat = new float[count * components];
+        buffer.get(flat);
+        switch (components) {
+            case 1: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform1(location, flat); break;
+            case 2: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2(location, flat); break;
+            case 3: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform3(location, flat); break;
+            default: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform4(location, flat); break;
+        }
     }
 
     /** {@code nglUniform{1..4}iv}. */
@@ -360,8 +372,13 @@ public final class CeltiumGllessHint {
         if (values == 0L || count <= 0) {
             return;
         }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformIntPtr(boundProgram(), location, count, values,
-                components);
+        java.nio.IntBuffer buffer = org.lwjgl.system.MemoryUtil.memIntBuffer(values, count * components);
+        switch (components) {
+            case 1: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform1(location, buffer); break;
+            case 2: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform2(location, buffer); break;
+            case 3: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform3(location, buffer); break;
+            default: org.soutalab.celtium.glcompat.GLSMPrograms.glUniform4(location, buffer); break;
+        }
     }
 
     /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */
@@ -581,48 +598,49 @@ public final class CeltiumGllessHint {
 
     /** Raw {@code glPointSize}: recorded for the point-size query. */
     public static void glPointSize(float size) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pointSize(size);
+        org.soutalab.celtium.vulkan.GlsmImmediateState.current().pointSize(size);
     }
 
     /** Raw {@code glLineWidth}: recorded so the narrowing report knows what the caller asked for. */
     public static void glLineWidth(float width) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$lineWidth(width);
+        org.soutalab.celtium.vulkan.GlsmImmediateState.current().lineWidth(width);
     }
 
     /** Indexed blend/colour-mask state: index 0 is the single target this renderer has. */
     public static void glBlendFuncSeparateIndexed(int index, int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha);
+            org.soutalab.celtium.vulkan.NativeRasterState.current().blendFunc(srcRgb, dstRgb, srcAlpha, dstAlpha);
         }
     }
 
     public static void glBlendEquationIndexed(int index, int mode) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendEquation(mode);
+            org.soutalab.celtium.vulkan.NativeRasterState.current().blendEquation(mode, mode);
         }
     }
 
     public static void glBlendEquationSeparateIndexed(int index, int modeRgb, int modeAlpha) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glBlendEquationSeparate(modeRgb, modeAlpha);
+            org.soutalab.celtium.vulkan.NativeRasterState.current().blendEquation(modeRgb, modeAlpha);
         }
     }
 
     public static void glColorMaskIndexed(int index, boolean red, boolean green, boolean blue, boolean alpha) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.NativeRasterAdapter.glColorMask(red, green, blue, alpha);
+            org.soutalab.celtium.vulkan.NativeRasterState.current().colorMask(
+                    (red ? 1 : 0) | (green ? 2 : 0) | (blue ? 4 : 0) | (alpha ? 8 : 0));
         }
     }
 
     /** Indexed enables: this renderer has one target, so index 0 is the same as the unindexed call. */
     public static void glEnableIndexed(int capability, int index, boolean enabled) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, enabled);
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.setCapability(capability, enabled);
         }
     }
 
     public static boolean glIsEnabledIndexed(int capability, int index) {
-        return index == 0 && org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isEnabled(capability);
+        return index == 0 && org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.sharedEnabled(capability);
     }
 
     /** Raw {@code glGetLightiv}: the light record in integer components, the shape GL's int query writes. */
@@ -774,40 +792,40 @@ public final class CeltiumGllessHint {
 
     /** LWJGL3's buffer-parameter query natives: GL_BUFFER_SIZE comes from the recorded or native buffer. */
     public static void glGetBufferParameteriv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBufferParameter("glGetBufferParameteriv",
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getBufferParameter("glGetBufferParameteriv",
                 target, pname, params);
     }
 
     public static void glGetBufferParameteri64v(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBufferParameter("glGetBufferParameteri64v",
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getBufferParameter("glGetBufferParameteri64v",
                 target, pname, params);
     }
 
     /** LWJGL3's tex-parameter query natives: the bind state the stub records answers them. */
     public static void glGetTexParameteriv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameteriv", target, pname, params);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getTexParameter("glGetTexParameteriv", target, pname, params);
     }
 
     public static void glGetTexParameterfv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterfv", target, pname, params);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getTexParameter("glGetTexParameterfv", target, pname, params);
     }
 
     public static void glGetTexParameterIiv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterIiv", target, pname, params);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getTexParameter("glGetTexParameterIiv", target, pname, params);
     }
 
     public static void glGetTexParameterIuiv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterIuiv", target, pname, params);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getTexParameter("glGetTexParameterIuiv", target, pname, params);
     }
 
     /** LWJGL3's {@code nglGetBooleanv}: the query family's boolean side. */
     public static void glGetBooleanv(int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBooleans(pname, params);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getBooleans(pname, params);
     }
 
     /** A raw {@code glIsEnabled}: answered by the same capability record the stub's queries use. */
     public static boolean glIsEnabled(int capability) {
-        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isEnabled(capability);
+        return org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.sharedEnabled(capability);
     }
 
     /**
@@ -833,13 +851,13 @@ public final class CeltiumGllessHint {
         }
         // ActiveRenderInfo unprojects through a four-component viewport. The native replacement must use
         // the same live rectangles/bindings as the callback path, not write one zero into that array.
-        if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getIntegers(pname, params)) {
+        if (org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getIntegers(pname, params)) {
             return;
         }
         int value;
         switch (pname) {
             case 0x0D33: // GL_MAX_TEXTURE_SIZE - the device limit, from the scalar the stub answers
-                value = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(pname);
+                value = org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.getInteger(pname);
                 break;
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the stub's TEXTURE_UNITS_PER_STAGE, for the
                 // window before the stub provider is installed (TEXUNIT-DESIGN-2026-11-17)
@@ -915,7 +933,7 @@ public final class CeltiumGllessHint {
                 value = 0;
                 break;
         }
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.noteTextureUnitAnswer(pname, value);
+        org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.noteTextureUnitAnswer(pname, value);
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
@@ -1042,7 +1060,7 @@ public final class CeltiumGllessHint {
         noteDisplayListCall();
         CALL_LIST_CALLS.incrementAndGet();
         lastCalledList = list;
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityCallList(list);
+        org.soutalab.celtium.glcompat.DisplayListManager.glCallList(list);
     }
 
     /**
@@ -1053,32 +1071,58 @@ public final class CeltiumGllessHint {
      * untinted and the stub recorded zero COMBINE writes.
      */
     public static void glTexEnvi(int target, int pname, int param) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvi(target, pname, param);
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, param);
     }
 
     /** {@code nglTexEnvf}: the float form of the same write. */
     public static void glTexEnvf(int target, int pname, float param) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvf(target, pname, param);
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().parameter(target, pname, Math.round(param));
     }
 
     /** {@code nglTexEnviv}/{@code nglTexEnvfv}: the pointer forms of the same write. */
     public static void glTexEnvPtr(int target, int pname, long values) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvPtr(target, pname, values);
+        if (values == 0L || target != 0x2300) { // GL_TEXTURE_ENV
+            return;
+        }
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        if (pname == 0x2201) { // GL_TEXTURE_ENV_COLOR
+            env.color(target, pname, org.lwjgl.system.MemoryUtil.memGetFloat(values),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(values + 4L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(values + 8L),
+                    org.lwjgl.system.MemoryUtil.memGetFloat(values + 12L));
+        } else {
+            env.parameter(target, pname, Math.round(org.lwjgl.system.MemoryUtil.memGetFloat(values)));
+        }
     }
 
     /** {@code nglGetTexEnvi(II)I}: the int-returning form of the same read. */
     public static int glGetTexEnvI(int target, int pname) {
-        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvI(target, pname);
+        return org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().activeParameter(target, pname);
     }
 
     /** {@code nglGetTexEnvi}/{@code nglGetTexEnviv}: the int read-back, through the out pointer. */
     public static void glGetTexEnvInt(int target, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvInt(target, pname, out);
+        if (out != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(out,
+                    org.soutalab.celtium.vulkan.NativeTextureEnvironment.current().activeParameter(target, pname));
+        }
     }
 
     /** {@code nglGetTexEnvfv}: the float read-back, four floats through the out pointer. */
     public static void glGetTexEnvFloats(int target, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvFloats(target, pname, out);
+        if (out == 0L || target != 0x2300) { // GL_TEXTURE_ENV
+            return;
+        }
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        if (pname == 0x2201) { // GL_TEXTURE_ENV_COLOR
+            for (int i = 0; i < 4; i++) {
+                org.lwjgl.system.MemoryUtil.memPutFloat(out + (long) i * 4L, env.colorComponent(i));
+            }
+        } else {
+            org.lwjgl.system.MemoryUtil.memPutFloat(out, env.activeParameter(target, pname));
+        }
     }
 
     /**

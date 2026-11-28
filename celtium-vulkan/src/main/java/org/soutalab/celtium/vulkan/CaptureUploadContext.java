@@ -117,7 +117,7 @@ public final class CaptureUploadContext implements TextureUploadContext {
         }
     }
 
-    private static boolean isDepthInternalFormat(int internalFormat) {
+    public static boolean isDepthInternalFormat(int internalFormat) {
         return switch (internalFormat) {
             case 0x1902, 0x81A5, 0x81A6, 0x81A7, 0x8CAC, 0x88F0, 0x8CAD, 0x84F9 -> true;
             default -> false;
@@ -229,5 +229,191 @@ public final class CaptureUploadContext implements TextureUploadContext {
         GlsmNameLedger.current().removeNullAllocated(name);
         NativeTextureBindings.current().forgetBoundTexture(name);
         forgetTextureRecords(name);
+    }
+
+    // ---- texture copies and parameter records, ported from the monolith (E4-b2) --------------
+
+    private int textureCopyRequests;
+    private int copyImageServed;
+    private static final java.util.Set<String> COPY_IMAGE_SHAPES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private int copyImageRequests;
+    private int depthCopiesSkipped;
+    private static final java.util.Set<String> TEXTURE_COPY_SHAPES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Counts one skipped depth copy (the dispatch's copy-image depth branch). */
+    public void noteDepthCopySkipped() { this.depthCopiesSkipped++; }
+    /** {@return how many depth copies were skipped}. */
+    public int depthCopiesSkipped() { return this.depthCopiesSkipped; }
+
+    public void setTextureParameterBound(int target, int pname, int value, String site) {
+        if ((target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B)) {
+            // A proxy target carries no image and binds to nothing; GL accepts the call and it means nothing.
+            return;
+        }
+        int bound = NativeTextureBindings.current().boundTexture(target);
+        if (bound < 0) {
+            // Under GL-less the per-unit map is empty by design: the bind is rewritten before any trampoline sees it
+            // (see celtium$noteBoundTexture), so the record is asked for the name the manager last bound. Without this
+            // the parameter was filed against texture 0 and the registry never saw a filter - measured as the blurred
+            // item: it falls back to inferring LINEAR from the upload's shape when nothing is recorded.
+            bound = NativeTextureBindings.current().lastBoundTexture();
+        }
+        VulkanTextureRegistry.captureStore().parameters().set(bound < 0 ? 0 : bound, pname, value, site);
+    }
+
+    public void noteTextureCopy(String name, int target, int level, int xoffset, int yoffset,
+                                          int x, int y, int width, int height) {
+        this.textureCopyRequests++;
+        int dest = NativeTextureBindings.current().boundTexture(target);
+        if (dest < 0) {
+            // The per-unit map is empty under GL-less by design (the bind is rewritten before any trampoline sees it),
+            // so the destination is asked for the name the manager last bound - the same fallback the texture
+            // parameters use. Without it the copy was filed against texture 0 and the panorama stayed content-less.
+            dest = NativeTextureBindings.current().lastBoundTexture();
+        }
+        int destName = dest < 0 ? 0 : dest;
+        // The source side lives with the frame target, which owns the image the read framebuffer names: ask it for the
+        // rectangle, and only a "served" answer skips the refusal below. Both copy entry points funnel through here, so
+        // this one call covers glCopyTexImage2D and glCopyTexSubImage2D alike; a foreign framebuffer, a non-zero level
+        // or a stalled device comes back as a reason and is printed on the same line as before.
+        String servedFrom;
+        try {
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+            servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    ? vulkan.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+                            FramebufferBindings.current().readFramebuffer())
+                    : "refused-no-vulkan-backend";
+        } catch (RuntimeException | LinkageError error) {
+            servedFrom = "refused-serve-failed: " + error;
+        }
+        if ("served".equals(servedFrom)) {
+            return;
+        }
+        String key = name + "/" + target + "/" + width + "x" + height + "/readFbo=" + FramebufferBindings.current().readFramebuffer();
+        if (TEXTURE_COPY_SHAPES.size() < 8 && TEXTURE_COPY_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_TEX_COPY " + name
+                    + " target=0x" + Integer.toHexString(target) + " level=" + level
+                    + " dest=" + destName
+                    + " destOffset=" + xoffset + "," + yoffset
+                    + " source=" + x + "," + y + " " + width + "x" + height
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                    + " servedFrom=" + servedFrom + " requests=" + this.textureCopyRequests
+                    + " site=[" + callSite(8) + "]");
+        }
+    }
+
+    public void copyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY, int srcZ,
+            int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ,
+            int width, int height, int depth) {
+        this.copyImageRequests++;
+        String refusal = null;
+        if (srcTarget != 0x0DE1 || dstTarget != 0x0DE1 || depth != 1 || srcZ != 0 || dstZ != 0
+                || width <= 0 || height <= 0) {
+            refusal = "refused-shape: srcTarget=0x" + Integer.toHexString(srcTarget)
+                    + " dstTarget=0x" + Integer.toHexString(dstTarget)
+                    + " depth=" + depth + " srcZ=" + srcZ + " dstZ=" + dstZ
+                    + " size=" + width + "x" + height
+                    + " (only a 2D level-to-level copy is served)";
+        }
+        TextureCaptureStore.TexCapture source = refusal == null
+                ? VulkanTextureRegistry.captureStore().capture(srcName, srcLevel)
+                : null;
+        // A capture filed as a patch covers its level from the record's own (x, y), so the rectangle this copy
+        // names in level coordinates is read at the level position minus the record's origin.
+        int srcRecX = source == null ? 0 : srcX - source.x;
+        int srcRecY = source == null ? 0 : srcY - source.y;
+        if (refusal == null && (source == null || !source.gamePixels)) {
+            refusal = "refused-source-unrecorded: src=" + srcName + " level=" + srcLevel
+                    + " (the stub captured no game pixels for the source level)";
+        } else if (refusal == null && (srcRecX < 0 || srcRecY < 0
+                || srcRecX + width > source.width || srcRecY + height > source.height)) {
+            refusal = "refused-source-outside: src=" + srcName + " level=" + srcLevel
+                    + " rect=" + srcX + "," + srcY + " " + width + "x" + height
+                    + " record=" + source.width + "x" + source.height + " at " + source.x + "," + source.y;
+        }
+        if (refusal != null) {
+            String key = refusal.substring(0, refusal.indexOf(':')) + "/" + width + "x" + height;
+            if (COPY_IMAGE_SHAPES.size() < 8 && COPY_IMAGE_SHAPES.add(key)) {
+                System.out.println("[Celtium] CELTIUM_COPY_IMAGE glCopyImageSubData src=" + srcName
+                        + " dst=" + dstName + " " + refusal + " requests=" + this.copyImageRequests
+                        + " site=[" + callSite(8) + "]");
+            }
+            return;
+        }
+        // Snapshot the rectangle before filing it: the destination may be the source's own level, where GL
+        // leaves an overlapping copy undefined - a snapshot at least makes it one whole older image rather
+        // than a row-by-row smear.
+        ByteBuffer patch = ByteBuffer.allocateDirect(width * height * 4);
+        int rowBytes = width * 4;
+        int sourceStride = source.width * 4;
+        for (int row = 0; row < height; row++) {
+            patch.put(row * rowBytes, source.data, (srcRecY + row) * sourceStride + srcRecX * 4, rowBytes);
+        }
+        // A patch the mirror has not consumed yet is a newer write to the source level than the record it
+        // sits beside: where one overlaps the rectangle it wins, in the order the game wrote them.
+        java.util.List<TextureCaptureStore.TexCapture> pending = VulkanTextureRegistry.captureStore().backlog(srcName, srcLevel);
+        if (pending != null) {
+            for (TextureCaptureStore.TexCapture newer : pending) {
+                int ix0 = Math.max(srcX, newer.x);
+                int iy0 = Math.max(srcY, newer.y);
+                int ix1 = Math.min(srcX + width, newer.x + newer.width);
+                int iy1 = Math.min(srcY + height, newer.y + newer.height);
+                if (ix0 >= ix1 || iy0 >= iy1) {
+                    continue;
+                }
+                int span = (ix1 - ix0) * 4;
+                for (int row = iy0; row < iy1; row++) {
+                    patch.put((row - srcY) * rowBytes + (ix0 - srcX) * 4, newer.data,
+                            (row - newer.y) * newer.width * 4 + (ix0 - newer.x) * 4, span);
+                }
+            }
+        }
+        VulkanTextureRegistry.captureStore().fileTexturePatch(this, dstName, dstLevel, dstX, dstY, width, height, patch);
+        this.copyImageServed++;
+        if (this.copyImageServed == 1) {
+            System.out.println("[Celtium] CELTIUM_COPY_IMAGE glCopyImageSubData src=" + srcName
+                    + " level=" + srcLevel + " rect=" + srcX + "," + srcY + " " + width + "x" + height
+                    + " -> dst=" + dstName + " level=" + dstLevel + " at=" + dstX + "," + dstY
+                    + " servedFrom=captured-level requests=" + this.copyImageRequests
+                    + " site=[" + callSite(8) + "]");
+        }
+    }
+
+    /** Records one texture parameter on the named texture; see {@link TextureParameterRecord#set}. */
+    public void setTextureParameter(int textureName, int pname, int value, String site) {
+        VulkanTextureRegistry.captureStore().parameters().set(textureName, pname, value, site);
+    }
+
+    static String callSite(int limit) {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int taken = 0;
+        for (StackTraceElement frame : stack) {
+            String name = frame.getClassName();
+            if (name.startsWith("org.soutalab.celtium") || name.startsWith("org.taumc.celeritas")
+                    || name.startsWith("org.spongepowered") || name.contains("$celtium$")) {
+                continue;
+            }
+            if (taken > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(shortSiteName(name)).append('.').append(frame.getMethodName()).append(':')
+                    .append(frame.getLineNumber());
+            if (++taken >= limit) {
+                break;
+            }
+        }
+        return frames.toString();
+    }
+
+    private static String shortSiteName(String className) {
+        String shortened = className;
+        for (String prefix : new String[] { "org.lwjgl.opengl.", "org.lwjgl.util.", "org.lwjgl.", "org.lwjglx.",
+                "net.minecraftforge.", "net.minecraft." }) {
+            if (shortened.startsWith(prefix)) {
+                shortened = shortened.substring(prefix.length());
+            }
+        }
+        return shortened;
     }
 }

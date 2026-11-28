@@ -33,6 +33,7 @@ import org.soutalab.celtium.vulkan.BackendCallCounters;
 import org.soutalab.celtium.vulkan.BufferStorageRecord;
 import org.soutalab.celtium.vulkan.CaptureUploadContext;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
+import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
 import org.soutalab.celtium.vulkan.FramebufferBindings;
 import org.soutalab.celtium.vulkan.FramebufferClearState;
 import org.soutalab.celtium.vulkan.FramebufferViewportState;
@@ -783,7 +784,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 FramebufferClearState.current().clearColor(f(c[0]), f(c[1]), f(c[2]), f(c[3]));
                 return 0L;
             case SEM_CLEAR_DEPTH:
-                FramebufferClearState.current().clearDepth("glClearDepth".equals(fn.name) ? d(c[0]) : (double) f(c[0]));
+                double depth = "glClearDepth".equals(fn.name) ? d(c[0]) : (double) f(c[0]);
+                FramebufferClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
                 return 0L;
             case SEM_LINE_WIDTH:
                 GlsmImmediateState.current().lineWidth(f(c[0]));
@@ -815,52 +817,52 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMFramebuffer.glBindFramebuffer((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_BLIT_FRAMEBUFFER:
-                GLSMFramebuffer.glBlitFramebuffer((int) c[0], (int) c[1], (int) c[2], (int) c[3],
-                        (int) c[4], (int) c[5], (int) c[6], (int) c[7], (int) c[8], (int) c[9]);
+                noteBlitFramebuffer((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
+                        (int) c[5], (int) c[6], (int) c[7], (int) c[8], (int) c[9]);
                 return 0L;
             case SEM_COPY_TEX_IMAGE:
-                GLSMTextures.glCopyTexImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                        (int) c[5], (int) c[6], (int) c[7]);
+                if (CaptureUploadContext.isDepthInternalFormat((int) c[2])) {
+                    // Same refusal as the transformer's route: a depth copy is not read back.
+                    CaptureUploadContext.current().recordExtent((int) c[0], (int) c[1], (int) c[2],
+                            (int) c[5], (int) c[6]);
+                    CaptureUploadContext.current().noteDepthCopySkipped();
+                    return 0L;
+                }
+                CaptureUploadContext.current().noteTextureCopy(fn.name, (int) c[0], (int) c[1], 0, 0,
+                        (int) c[3], (int) c[4], (int) c[5], (int) c[6]);
                 return 0L;
             case SEM_COPY_TEX_SUB_IMAGE:
-                GLSMTextures.glCopyTexSubImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3],
-                        (int) c[4], (int) c[5], (int) c[6], (int) c[7]);
+                CaptureUploadContext.current().noteTextureCopy(fn.name, (int) c[0], (int) c[1],
+                        (int) c[2], (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7]);
                 return 0L;
             case SEM_COPY_IMAGE_SUB_DATA:
-                GLSMTextures.glCopyImageSubData((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
-                        (int) c[5], (int) c[6], (int) c[7], (int) c[8], (int) c[9], (int) c[10], (int) c[11],
-                        (int) 0, (int) 0, (int) 0);
+                // The trampoline carries 12 of the call's 15 slots; the z/depth tail is 0, which
+                // is the only shape the copy producer serves (2D level-to-level).
+                CaptureUploadContext.current().copyImageSubData((int) c[0], (int) c[1], (int) c[2],
+                        (int) c[3], (int) c[4], (int) c[5], (int) c[6], (int) c[7], (int) c[8],
+                        (int) c[9], (int) c[10], (int) c[11], 0, 0, 0);
                 return 0L;
             case SEM_TEX_PARAM_I:
-                GLSMTextures.glTexParameteri((int) c[0], (int) c[1], (int) c[2]);
+                CaptureUploadContext.current().setTextureParameterBound((int) c[0], (int) c[1],
+                        "glTexParameterf".equals(fn.name) ? Math.round(Float.intBitsToFloat((int) c[2])) : (int) c[2],
+                        paramSite());
                 return 0L;
             case SEM_TEX_PARAM_IV:
-                if (fn.name.indexOf('f') >= 0) {
-                    GLSMTextures.glTexParameter((int) c[0], (int) c[1],
-                            MemoryUtil.memFloatBuffer(c[2], 4));
-                } else {
-                    GLSMTextures.glTexParameter((int) c[0], (int) c[1],
-                            MemoryUtil.memIntBuffer(c[2], 4));
-                }
+                CaptureUploadContext.current().setTextureParameterBound((int) c[0], (int) c[1],
+                        firstParamValue(fn, c[2]), paramSite());
                 return 0L;
             case SEM_TEX_PARAM_I_DSA:
-                GLStateManager.glTextureParameteri((int) c[0], (int) c[1], (int) c[2]);
+                CaptureUploadContext.current().setTextureParameter((int) c[0], (int) c[1],
+                        "glTextureParameterf".equals(fn.name)
+                                ? Math.round(Float.intBitsToFloat((int) c[2])) : (int) c[2],
+                        paramSite());
                 return 0L;
             case SEM_TEX_PARAM_IV_DSA:
-                if (c[2] != 0L) {
-                    int[] params = new int[4];
-                    for (int i = 0; i < 4; i++) {
-                        params[i] = MemoryUtil.memGetInt(c[2] + (long) i * 4L);
-                    }
-                    GLStateManager.glTextureParameteriv((int) c[0], (int) c[1], params);
-                }
+                CaptureUploadContext.current().setTextureParameter((int) c[0], (int) c[1],
+                        firstParamValue(fn, c[2]), paramSite());
                 return 0L;
             case SEM_MULT_MATRIX:
-                if (fn.name.endsWith("f")) {
-                    GLSMMatrices.glMultMatrix(MemoryUtil.memFloatBuffer(c[0], 16));
-                } else {
-                    GLSMMatrices.glMultMatrix(MemoryUtil.memDoubleBuffer(c[0], 16));
-                }
+                noteMatrixMultiplyArrival(fn);
                 return 0L;
             case SEM_MATRIX_MODE:
                 GlsmMatrixMode.current().set((int) c[0]);
@@ -897,7 +899,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMDraws.glEnd();
                 return 0L;
             case SEM_READ_PIXELS:
-                readPixels(c);
+                serveReadPixels((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
+                        (int) c[5], c[6]);
                 return 0L;
             case SEM_FOG_I:
                 GLSMFog.glFogi((int) c[0], (int) c[1]);
@@ -912,23 +915,26 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMFog.glFog((int) c[0], MemoryUtil.memIntBuffer(c[1], 4));
                 return 0L;
             case SEM_TEX_ENV_I:
-                GLSMTexEnvGen.glTexEnvi((int) c[0], (int) c[1], (int) c[2]);
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current()
+                        .parameter((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
             case SEM_TEX_ENV_F:
-                GLSMTexEnvGen.glTexEnvf((int) c[0], (int) c[1], f(c[2]));
+                // An A_FLOAT slot carries the raw IEEE-754 bits; decode it the way the int form
+                // records, so both spellings land on the same value (the monolith's BH-34 note).
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current()
+                        .parameter((int) c[0], (int) c[1], Math.round(Float.intBitsToFloat((int) c[2])));
                 return 0L;
             case SEM_TEX_ENV_FV:
-                GLSMTexEnvGen.glTexEnv((int) c[0], (int) c[1], MemoryUtil.memFloatBuffer(c[2], 4));
+                texEnvFloats((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case SEM_GET_TEX_ENV_I:
                 if (c[2] != 0L) {
-                    MemoryUtil.memPutInt(c[2], GLSMTexEnvGen.glGetTexEnvi((int) c[0], (int) c[1]));
+                    MemoryUtil.memPutInt(c[2], org.soutalab.celtium.vulkan.NativeTextureEnvironment
+                            .current().activeParameter((int) c[0], (int) c[1]));
                 }
                 return 0L;
             case SEM_GET_TEX_ENV_FV:
-                if (c[2] != 0L) {
-                    GLSMTexEnvGen.glGetTexEnv((int) c[0], (int) c[1], MemoryUtil.memFloatBuffer(c[2], 4));
-                }
+                getTexEnvFloats((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case SEM_VERTEX_POINTER:
                 vertexPointer(fn, c);
@@ -1153,6 +1159,45 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
     }
 
+    /**
+     * Writes an object's info log for the transformer's LWJGL3 route: a program whose recorded
+     * link failed carries that failure as its log; anything else carries the empty log.
+     *
+     * @return the number of bytes written, excluding any terminator
+     */
+    public static int writeInfoLog(int object, int maxLength, long log) {
+        if (log == 0L || maxLength <= 0) {
+            return 0;
+        }
+        String text = GLSMPrograms.glIsProgram(object)
+                ? GLSMPrograms.glGetProgramInfoLog(object)
+                : GLSMPrograms.glIsShader(object) ? GLSMPrograms.glGetShaderInfoLog(object) : "";
+        if (text == null) {
+            text = "";
+        }
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int count = Math.min(bytes.length, maxLength);
+        for (int i = 0; i < count; i++) {
+            MemoryUtil.memPutByte(log + i, bytes[i]);
+        }
+        return count;
+    }
+
+    /**
+     * The transformer's {@code glUseProgram} route: the converter applies the program (family
+     * 5's seat) and the register publishes it, which is the read the backend's refusal gate and
+     * the bound-texture dual route key on.
+     */
+    public static void useProgram(int program) {
+        DirectGlDispatcher.enterLane3();
+        try {
+            GLSMPrograms.glUseProgram(program);
+        } finally {
+            DirectGlDispatcher.exitLane3();
+        }
+        Lane2StateMirror.current().register().setActiveProgramId(program);
+    }
+
     // Texture-unit query census: one line per pname for the life of this JVM.
     private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -1174,6 +1219,255 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
     static void noteImageUnitAnswer(int pname, int value) {
         if (pname == 0x8F38 && IMGUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname))) {
             System.out.println("[Celtium] CELTIUM_IMGUNIT_ANSWER pname=0x8f38 value=" + value);
+        }
+    }
+
+
+    // ---- framebuffer blit / readback notes, ported from the monolith (E4-b2) -----------------
+    private int blitDepthRequests;
+    private int blitUnservedRequests;
+    private int readPixelsEntries;
+    private int readPixelsCalls;
+    private int pixelBufferRefusals;
+    private static int readPixelsRefusals;
+    private static final java.util.Set<String> BLIT_DEPTH_SHAPES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> BLIT_UNSERVED_SHAPES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_ARRIVALS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_APPLIED = new java.util.concurrent.atomic.AtomicLong();
+
+    private void noteUnservedBlit(int srcX0, int srcY0, int srcX1, int srcY1,
+            int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter) {
+        this.blitUnservedRequests++;
+        String bits = (mask & 0x00004000) != 0
+                ? ((mask & 0x00000400) != 0 ? "color+stencil" : "color")
+                : "stencil";
+        String key = bits + "/" + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
+                + "->" + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
+                + "/filter=0x" + Integer.toHexString(filter)
+                + "/readFbo=" + FramebufferBindings.current().readFramebuffer() + "/drawFbo=" + FramebufferBindings.current().drawFramebuffer();
+        if (BLIT_UNSERVED_SHAPES.size() < 8 && BLIT_UNSERVED_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_BLIT_UNSERVED glBlitFramebuffer bits=" + bits
+                    + " source=" + srcX0 + "," + srcY0 + " " + (srcX1 - srcX0) + "x" + (srcY1 - srcY0)
+                    + " dest=" + dstX0 + "," + dstY0 + " " + (dstX1 - dstX0) + "x" + (dstY1 - dstY0)
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                    + " requests=" + this.blitUnservedRequests
+                    + " site=[" + callSite(8) + "]");
+        }
+    }
+
+    private void noteBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
+            int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter) {
+        if ((mask & (0x00004000 | 0x00000400)) != 0) {
+            noteUnservedBlit(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        }
+        if ((mask & 0x00000100) == 0) {
+            return;
+        }
+        this.blitDepthRequests++;
+        int sourceTexture = FramebufferAttachmentTable.current().depthTexture(FramebufferBindings.current().readFramebuffer());
+        int destTexture = FramebufferAttachmentTable.current().depthTexture(FramebufferBindings.current().drawFramebuffer());
+        int width = srcX1 - srcX0;
+        int height = srcY1 - srcY0;
+        String servedFrom;
+        if (sourceTexture == 0 || destTexture == 0) {
+            servedFrom = "refused-depth-unrecorded: readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                    + " sourceTexture=" + sourceTexture + " destTexture=" + destTexture;
+        } else if (width <= 0 || height <= 0 || dstX1 - dstX0 != width || dstY1 - dstY0 != height
+                || filter != 0x2600) {
+            servedFrom = "refused-depth-shape: src=" + width + "x" + height + " dst=" + (dstX1 - dstX0) + "x"
+                    + (dstY1 - dstY0) + " filter=0x" + Integer.toHexString(filter)
+                    + " (only an equal-extent NEAREST depth blit is a copy)";
+        } else {
+            try {
+                Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+                servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$serveDepthCopy(sourceTexture, destTexture, srcX0, srcY0, width, height,
+                                dstX0, dstY0)
+                        : "refused-no-vulkan-backend";
+            } catch (RuntimeException | LinkageError error) {
+                servedFrom = "refused-serve-failed: " + error;
+            }
+            if ("served".equals(servedFrom)) {
+                servedFrom = "native-depth";
+            }
+        }
+        String key = width + "x" + height + "/readFbo=" + FramebufferBindings.current().readFramebuffer() + "/drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                + "/" + servedFrom;
+        if (BLIT_DEPTH_SHAPES.size() < 8 && BLIT_DEPTH_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_BLIT_DEPTH glBlitFramebuffer"
+                    + " source=" + srcX0 + "," + srcY0 + " " + width + "x" + height
+                    + " dest=" + dstX0 + "," + dstY0
+                    + " readFbo=" + FramebufferBindings.current().readFramebuffer() + " drawFbo=" + FramebufferBindings.current().drawFramebuffer()
+                    + " servedFrom=" + servedFrom + " requests=" + this.blitDepthRequests
+                    + " site=[" + callSite(8) + "]");
+        }
+    }
+
+    private void serveReadPixels(int x, int y, int width, int height, int format, int type, long address) {
+        if (this.readPixelsEntries < 6) {
+            this.readPixelsEntries++;
+            System.out.println("[Celtium] CELTIUM_READ_PIXELS_ENTRY readFbo=" + FramebufferBindings.current().readFramebuffer()
+                    + " rect=" + x + "," + y + " " + width + "x" + height
+                    + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type));
+        }
+        String pboRefusal = TextureCaptureStore.pixelBufferRefusal(this.pixelPackBuffer, address, "glReadPixels");
+        if (pboRefusal != null) {
+            if (this.pixelBufferRefusals < 8) {
+                this.pixelBufferRefusals++;
+                System.out.println("[Celtium] CELTIUM_PBO_REFUSED " + pboRefusal);
+            }
+            this.readPixelsCalls++;
+            return;
+        }
+        try {
+            Object backend = org.soutalab.celtium.vulkan.CeltiumBackends.current();
+            boolean served = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && vulkan.celtium$readPixels(FramebufferBindings.current().readFramebuffer(), x, y, width, height, format, type, address);
+            if (!served && readPixelsRefusals < 8) {
+                readPixelsRefusals++;
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS refused readFbo=" + FramebufferBindings.current().readFramebuffer()
+                        + " rect=" + x + "," + y + " " + width + "x" + height
+                        + " format=0x" + Integer.toHexString(format) + " type=0x" + Integer.toHexString(type)
+                        + " backend=" + (backend == null ? "none" : backend.getClass().getSimpleName()));
+            }
+            this.readPixelsCalls++;
+        } catch (RuntimeException | LinkageError error) {
+            if (readPixelsRefusals < 8) {
+                readPixelsRefusals++;
+                System.out.println("[Celtium] CELTIUM_READ_PIXELS failed: " + error);
+            }
+        }
+    }
+
+    static String callSite(int limit) {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int taken = 0;
+        for (StackTraceElement frame : stack) {
+            String name = frame.getClassName();
+            if (name.startsWith("org.soutalab.celtium") || name.startsWith("org.taumc.celeritas")
+                    || name.startsWith("org.spongepowered") || name.contains("$celtium$")) {
+                continue;
+            }
+            if (taken > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(shortSiteName(name)).append('.').append(frame.getMethodName()).append(':')
+                    .append(frame.getLineNumber());
+            if (++taken >= limit) {
+                break;
+            }
+        }
+        return frames.toString();
+    }
+
+    private static String shortSiteName(String className) {
+        String shortened = className;
+        for (String prefix : new String[] { "org.lwjgl.opengl.", "org.lwjgl.util.", "org.lwjgl.", "org.lwjglx.",
+                "net.minecraftforge.", "net.minecraft." }) {
+            if (shortened.startsWith(prefix)) {
+                shortened = shortened.substring(prefix.length());
+            }
+        }
+        return shortened;
+    }
+
+    /** The pointer form of the tex-env write: the colour pname reads four floats, the rest one. */
+    private static void texEnvFloats(int target, int pname, long values) {
+        if (values == 0L || target != 0x2300) { // GL_TEXTURE_ENV
+            return;
+        }
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        if (pname == 0x2201) { // GL_TEXTURE_ENV_COLOR
+            env.color(target, pname, MemoryUtil.memGetFloat(values), MemoryUtil.memGetFloat(values + 4L),
+                    MemoryUtil.memGetFloat(values + 8L), MemoryUtil.memGetFloat(values + 12L));
+        } else {
+            env.parameter(target, pname, Math.round(MemoryUtil.memGetFloat(values)));
+        }
+    }
+
+    /** The float form of the tex-env read. */
+    private static void getTexEnvFloats(int target, int pname, long out) {
+        if (out == 0L || target != 0x2300) { // GL_TEXTURE_ENV
+            return;
+        }
+        org.soutalab.celtium.vulkan.NativeTextureEnvironment env =
+                org.soutalab.celtium.vulkan.NativeTextureEnvironment.current();
+        if (pname == 0x2201) { // GL_TEXTURE_ENV_COLOR
+            for (int i = 0; i < 4; i++) {
+                MemoryUtil.memPutFloat(out + (long) i * 4L, env.colorComponent(i));
+            }
+        } else {
+            MemoryUtil.memPutFloat(out, env.activeParameter(target, pname));
+        }
+    }
+
+    /** The transformer's {@code glReadPixels} route. */
+    public static void readPixels(int x, int y, int width, int height, int format, int type, long address) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.serveReadPixels(x, y, width, height, format, type, address);
+        }
+    }
+
+    /** The transformer's {@code glGetTexImage} route. */
+    public static void getTexImage(int target, int level, int format, int type, long address) {
+        DirectGlCaptureEntry entry = installed;
+        if (entry != null) {
+            entry.serveGetTexImage(target, level, format, type, address);
+        }
+    }
+
+    /** The texture-parameter record's call-site label (bounded by the record's shape census). */
+    static String paramSite() {
+        return org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(
+                org.soutalab.celtium.vulkan.TextureParameterRecord.paramShapeCount(), 24)
+                ? callSite(5) : "";
+    }
+
+    /** The first element of an array-valued texture parameter: every scalar pname this record carries is one wide. */
+    static int firstParamValue(GlFn fn, long values) {
+        if (values == 0L) {
+            return 0;
+        }
+        return fn.name.endsWith("fv") ? Math.round(MemoryUtil.memGetFloat(values)) : MemoryUtil.memGetInt(values);
+    }
+
+    /** The matrix-multiply arrival note: the mirror hooks apply matrices; this counts the raw arrivals. */
+    private void noteMatrixMultiplyArrival(GlFn fn) {
+        MATRIX_MULTIPLY_ARRIVALS.incrementAndGet();
+        if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
+                && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
+            System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
+                    + " mode=" + GlsmMatrixMode.current().get()
+                    + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
+                    + " site=[" + callSite(8) + "]");
+        }
+    }
+
+    /**
+     * A {@code glGetTexImage} of the bound texture, answered from that texture's mirror by the backend.
+     */
+    void serveGetTexImage(int target, int level, int format, int type, long address) {
+        if (target != 0x0DE1) {
+            return;
+        }
+        long capacity = Long.MAX_VALUE;
+        if (this.pixelPackBuffer > 0) {
+            ByteBuffer storage = GlsmBufferState.current().storage(this.pixelPackBuffer);
+            int logicalSize = storage == null ? 0
+                    : BufferStorageRecord.current().logicalSizeOf(this.pixelPackBuffer, storage.capacity());
+            if (storage == null || address < 0L || address >= logicalSize) {
+                return;
+            }
+            capacity = logicalSize - address;
+            address = MemoryUtil.memAddress(storage) + address;
+        }
+        VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        if (vulkan != null) {
+            vulkan.celtium$getTexImage(NativeTextureBindings.current().texture2d(), level, format, type,
+                    address, capacity);
         }
     }
 
@@ -1645,6 +1939,57 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         }
         entry.routeBooleans(pname, out);
         return true;
+    }
+
+    /** {@return the value a texture parameter query answers}: the record, or GL's initial state. */
+    public static int textureParameterValue(int textureName, int pname) {
+        return VulkanTextureRegistry.captureStore().parameters().valueOrDefault(textureName, pname);
+    }
+
+    /** The buffer-object query for the transformer's natives: GL_BUFFER_SIZE, everything else 0. */
+    public static void getBufferParameter(String name, int target, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
+            DirectGlCaptureEntry entry = installed;
+            int bound = entry == null ? 0 : entry.boundBuffer(target);
+            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
+            ByteBuffer storage = bound == 0 ? null : GlsmBufferState.current().storage(bound);
+            int size = nativeBuffer != null ? nativeBuffer.byteSize()
+                    : BufferStorageRecord.current().logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
+            if ("glGetBufferParameteri64v".equals(name)) {
+                MemoryUtil.memPutLong(out, size);
+            } else {
+                MemoryUtil.memPutInt(out, size);
+            }
+            return;
+        }
+        MemoryUtil.memPutInt(out, 0);
+    }
+
+    /** The non-DSA tex-parameter query for the transformer's natives: (target, pname, out). */
+    public static void getTexParameter(String name, int target, int paramPname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int textureName = 0;
+        if (target != 0x8063 && target != 0x8064 && target != 0x8070 && target != 0x851B) {
+            int bound = NativeTextureBindings.current().boundTexture(target);
+            textureName = bound < 0 ? 0 : bound;
+        }
+        int value = textureParameterValue(textureName, paramPname);
+        if (name.endsWith("fv")) {
+            if (paramPname == 0x1004) { // GL_TEXTURE_BORDER_COLOR - four components, GL's initial zero
+                for (int i = 0; i < 4; i++) {
+                    MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
+                }
+                return;
+            }
+            MemoryUtil.memPutFloat(out, value);
+        } else {
+            MemoryUtil.memPutInt(out, value);
+        }
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
@@ -2209,24 +2554,6 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         VulkanTextureRegistry.captureStore().texImagePixels(CaptureUploadContext.current(), fn.name, c);
     }
 
-    private void readPixels(long[] c) {
-        int width = (int) c[2];
-        int height = (int) c[3];
-        int format = (int) c[4];
-        int type = (int) c[5];
-        long pixels = c[6];
-        if (pixels == 0L) {
-            return;
-        }
-        if (pixels < 0x100000L) {
-            // A small value is a pixel-pack buffer offset, not an address.
-            GLSMFramebuffer.glReadPixels((int) c[0], (int) c[1], width, height, format, type, pixels);
-        } else {
-            GLSMFramebuffer.glReadPixels((int) c[0], (int) c[1], width, height, format, type,
-                    bytes(pixels, texBytes(format, type, width, height)));
-        }
-    }
-
     private void callLists(long[] c) {
         int n = (int) c[0];
         int type = (int) c[1];
@@ -2477,12 +2804,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMTextures.glBindTextureUnit((int) c[0], (int) c[1]);
                 return 0L;
             case "glGetTexImage":
-                if (c[4] != 0L) {
-                    int w = GLSMTextures.glGetTexLevelParameteri((int) c[0], (int) c[1], 0x1000);
-                    int h = GLSMTextures.glGetTexLevelParameteri((int) c[0], (int) c[1], 0x1001);
-                    GLSMTextures.glGetTexImage((int) c[0], (int) c[1], (int) c[2], (int) c[3],
-                            bytes(c[4], texBytes((int) c[2], (int) c[3], Math.max(w, 1), Math.max(h, 1))));
-                }
+                serveGetTexImage((int) c[0], (int) c[1], (int) c[2], (int) c[3], c[4]);
                 return 0L;
             // fixed-function state with integer payloads
             case "glDepthMask":
