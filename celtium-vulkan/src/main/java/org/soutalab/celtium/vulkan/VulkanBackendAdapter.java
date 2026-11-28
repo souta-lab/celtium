@@ -1720,6 +1720,30 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.funnel.getTransferQueueDebugString();
     }
 
+    public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height, int readFbo) {
+        return this.funnel.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height, readFbo);
+    }
+
+    public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
+            int x, int y, int width, int height, int xoffset, int yoffset) {
+        return this.funnel.celtium$serveDepthCopy(sourceDepthTexture, destDepthTexture, x, y, width, height, xoffset, yoffset);
+    }
+
+    public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
+            int format, int type, long address) {
+        return this.funnel.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
+    }
+
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
+        return this.funnel.celtium$getTexImage(textureName, level, format, type, address);
+    }
+
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address,
+            long capacity) {
+        return this.funnel.celtium$getTexImage(textureName, level, format, type, address, capacity);
+    }
+
     @Override
     public void updateTimings() {
         this.frameCoordinator.updateTimings();
