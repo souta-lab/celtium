@@ -1325,9 +1325,9 @@ public final class TextureCopyService {
         int width = this.host.targetWidth();
         int height = this.host.targetHeight();
         if (identity != 0L && identity != this.host.mainTargetIdentity()) {
-            int recordedWidth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelParameter(textureName, 0,
+            int recordedWidth = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(textureName, 0,
                     0x1000);
-            int recordedHeight = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelParameter(textureName, 0,
+            int recordedHeight = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(textureName, 0,
                     0x1001);
             if (recordedWidth > 0 && recordedHeight > 0) {
                 width = recordedWidth;

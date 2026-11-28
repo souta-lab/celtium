@@ -1392,12 +1392,12 @@ public final class VulkanTextureRegistry {
 
     /** Named texture size/format query: the GL-less recording owns it, so never call GL45C under the stub. */
     private static int textureLevelParameter(int glTextureId, int level, int pname) {
-        return GlsmFrontend.textureLevelParameter(glTextureId, level, pname);
+        return captureStore().textureLevelParameter(glTextureId, level, pname);
     }
 
     /** Named texture sampler query: prefer the recorded GL-less state, not the missing native GL context. */
     private static int textureParameter(int glTextureId, int pname) {
-        return GlsmFrontend.textureParameter(glTextureId, pname);
+        return captureStore().textureParameter(glTextureId, pname);
     }
 
     /** {@return whether the texture's magnification filter is nearest}, asked of the texture itself, not of a binding. */
@@ -1416,7 +1416,7 @@ public final class VulkanTextureRegistry {
      * the bridge the texture's own answer is the real one and is asked exactly as before.
      */
     private static boolean nearestFilterFor(int glTextureId, int x, int y, int width, int height) {
-        if (GlsmFrontend.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
+        if (captureStore().textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
             // The stub records glTexParameteri, so the texture's own answer is real. The record wins over the
             // write-shape inference below: the inference is a guess about which writes are the dynamic ones, and it is
             // kept only for a texture whose MAG_FILTER the game never set.
@@ -1437,7 +1437,7 @@ public final class VulkanTextureRegistry {
      * @return a read-only RGBA8 buffer positioned at 0, or null when the stub captured nothing for this name
      */
     private static java.nio.ByteBuffer capturedRgbaOf(int glTextureId, int[] outWidthHeight) {
-        java.nio.ByteBuffer captured = GlsmFrontend.textureUploadRgba8(glTextureId, 0, outWidthHeight);
+        java.nio.ByteBuffer captured = captureStore().textureUploadRgba8(glTextureId, 0, outWidthHeight);
         int width = outWidthHeight[0];
         int height = outWidthHeight[1];
         if (captured == null || width <= 0 || height <= 0 || captured.remaining() < width * height * 4) {
@@ -1476,10 +1476,10 @@ public final class VulkanTextureRegistry {
             int expectedWidth = Math.max(1, baseWidth >> level);
             int expectedHeight = Math.max(1, baseHeight >> level);
             int[] extent = new int[2];
-            java.nio.ByteBuffer captured = GlsmFrontend.textureUploadRgba8(glTextureId, level, extent);
+            java.nio.ByteBuffer captured = captureStore().textureUploadRgba8(glTextureId, level, extent);
             if (captured == null || extent[0] != expectedWidth || extent[1] != expectedHeight
                     || captured.remaining() < expectedWidth * expectedHeight * 4
-                    || !GlsmFrontend.textureLevelHasGamePixels(glTextureId, level)) {
+                    || !captureStore().textureLevelHasGamePixels(glTextureId, level)) {
                 break;
             }
             found[level] = captured;
@@ -1534,15 +1534,15 @@ public final class VulkanTextureRegistry {
         if (rgba == null) {
             return false;
         }
-        if (!gameWritesThisLevel && !GlsmFrontend.textureLevelHasGamePixels(glTextureId, 0)) {
+        if (!gameWritesThisLevel && !captureStore().textureLevelHasGamePixels(glTextureId, 0)) {
             // A surface exists but the game never wrote a pixel into it: it is the zero fill an allocation with a NULL
             // data pointer leaves so that later sub-image writes have somewhere to land. Copying it would mark a mirror
             // whole over an image no upload ever filled, and the sampling side would draw those zeros as content. Two
             // frame-sized colour textures and the light map's first read arrived exactly this way. Refused and counted:
             // the mirror keeps whatever it had, and the announcement carrying the real pixels fills it as before.
             this.capturesRefusedWithoutGamePixels++;
-            if (GlsmFrontend.textureAllocatedWithoutData(glTextureId)
-                    || GlsmFrontend.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
+            if (captureStore().textureAllocatedWithoutData(glTextureId)
+                    || captureStore().textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
                 // The render-target idiom: GL reserves the level with NULL data and a framebuffer renders into it. The
                 // content is not late, it never comes through an upload, so this is a deferred fill rather than a miss.
                 this.noteMirrorDeferred(glTextureId, extent[0], extent[1],
@@ -1850,7 +1850,7 @@ public final class VulkanTextureRegistry {
             // nobody sized. Accepting it is also the only way the coverage rule above can ever reach "full" for an
             // atlas that is uploaded one sprite at a time and never announced whole: refusing here deadlocked the
             // 8192x8192 block atlas at 35,389 refused patches and a 43%-black frame.
-            boolean extentRecorded = GlsmFrontend.textureLevelParameter(glTextureId, 0,
+            boolean extentRecorded = captureStore().textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0;
             if (!extentRecorded) {
                 // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
@@ -2829,7 +2829,7 @@ public final class VulkanTextureRegistry {
         // 1920x1080 name that every group of a window samples. The serial moves with the stub's next write to the
         // level, so a late upload is still seen: what is remembered is an answer about content, not a refusal. The
         // backend's lazy supply records the same serial for the same reason.
-        long contentSerial = GlsmFrontend.textureUploadSerial(glTextureId, 0);
+        long contentSerial = captureStore().textureUploadSerial(glTextureId, 0);
         if (this.deferrals.isCurrent(glTextureId, contentSerial)) {
             // The same answer to the same question: counted apart from the content-less decision below, so that
             // counter keeps meaning "lookups that had to decide this", not "lookups that asked".
@@ -2985,7 +2985,7 @@ public final class VulkanTextureRegistry {
      */
     private static boolean wrapRepeats(int glTextureId, int pname) {
         try {
-            if (!GlsmFrontend.textureParameterRecorded(glTextureId, pname)) {
+            if (!captureStore().textureParameterRecorded(glTextureId, pname)) {
                 // Nothing was recorded for this pname, so the answer is GL's context default - which for WRAP_S/T is
                 // GL_REPEAT (GlStateManager.Profile.DEFAULT re-asserts it), not the CLAMP the stub used to hardcode.
                 // Counted so a texture that relied on the default is distinguishable from one set to REPEAT.

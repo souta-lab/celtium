@@ -119,6 +119,75 @@ public final class TextureCaptureStore {
         return ((long) name << 16) | (level & 0xFFL);
     }
 
+    /** The pname's recorded value for a named texture's level - the DSA form of the level answers. */
+    public int textureLevelParameter(int name, int level, int pname) {
+        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        if (dims == null) {
+            return 0;
+        }
+        switch (pname) {
+            case 0x1000: // GL_TEXTURE_WIDTH
+                return dims[0];
+            case 0x1001: // GL_TEXTURE_HEIGHT
+                return dims[1];
+            case 0x1003: // GL_TEXTURE_INTERNAL_FORMAT
+                return dims[2];
+            default:
+                return 8; // the component sizes the announced formats describe themselves with
+        }
+    }
+
+    /**
+     * The recorded extent of a named texture's level, in one lookup: {@code out[0]} is the width and
+     * {@code out[1]} the height. One hash for the pair the accept path asks for on every offer.
+     */
+    public boolean textureLevelExtent(int name, int level, int[] out) {
+        int[] dims = this.texLevels.get(texLevelKey(name, level));
+        if (dims == null) {
+            return false;
+        }
+        out[0] = dims[0];
+        out[1] = dims[1];
+        return true;
+    }
+
+    /** Shared scratch for {@link #textureExtent(int)}; callers must not retain the returned array. */
+    private final int[] extentScratch = new int[2];
+
+    /** The recorded level-0 extent of a texture, or null when the name has no record. */
+    public int[] textureExtent(int glTextureName) {
+        if (glTextureName == 0) {
+            return null;
+        }
+        int[] level = this.texLevels.get(texLevelKey(glTextureName, 0));
+        if (level == null) {
+            return null;
+        }
+        this.extentScratch[0] = level[0];
+        this.extentScratch[1] = level[1];
+        return this.extentScratch;
+    }
+
+    /** {@return the value GL would answer for this texture's pname} - the recorded value or GL's default. */
+    public int textureParameter(int textureName, int pname) {
+        return this.parameters.valueOrDefault(textureName, pname);
+    }
+
+    /** {@return the recorded value for this texture and pname, or -1 when the game never set it}. */
+    public int recordedTextureParameter(int textureName, int pname) {
+        return this.parameters.recordedValue(textureName, pname);
+    }
+
+    /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
+    public boolean textureParameterRecorded(int textureName, int pname) {
+        return this.parameters.isRecorded(textureName, pname);
+    }
+
+    /** The parameter record's version for one texture; the mirror's change detector reads it. */
+    public int textureParameterVersion(int textureName) {
+        return this.parameters.version(textureName);
+    }
+
     /** The filed capture for one level, or null; the copy-image path reads beside the store. */
     public TexCapture capture(int textureName, int level) {
         return this.texCaptures.get(texLevelKey(textureName, level));

@@ -3281,7 +3281,7 @@ public final class GlsmFrontend implements FunctionProvider {
         if (stub == null || target != GL_TEXTURE_2D || level != 0) {
             return 0;
         }
-        int[] extent = celtium$textureExtent(stub.textures.texture2d());
+        int[] extent = stub.textureCaptures.textureExtent(stub.textures.texture2d());
         return extent == null ? 0 : celtium$texLevelAnswer(extent[0], extent[1], pname);
     }
 

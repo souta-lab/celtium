@@ -1675,7 +1675,7 @@ public final class VulkanGlTexture {
             capturedUploadMisses++;
             if (capturedUploadMissIdsLogged.size() < CAPTURE_LOG_IDS
                     && capturedUploadMissIdsLogged.add(Integer.valueOf(glTextureId))
-                    && !org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelAllocatedWithoutPixels(glTextureId, level)) {
+                    && !org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelAllocatedWithoutPixels(glTextureId, level)) {
                 System.out.println("[Celtium] CELTIUM_CAPTURE_MISS glTexture=" + glTextureId + " level=" + level
                         + " misses=" + capturedUploadMisses + " reason=" + reason);
             }
@@ -1723,7 +1723,7 @@ public final class VulkanGlTexture {
         // means identical bytes, and the read of the captured surface plus the FNV pass over it - which is what this
         // method used to spend on every unchanged texture - are both skipped. A level with no record answers
         // MIN_VALUE, which matches no lastUploadSerial, so the first ask always proceeds.
-        final long uploadSerial = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadSerial(glTextureId, 0);
+        final long uploadSerial = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(glTextureId, 0);
         if (uploadSerial != Long.MIN_VALUE && uploadSerial == this.lastUploadSerial) {
             return;
         }
@@ -1732,10 +1732,10 @@ public final class VulkanGlTexture {
         // only honest when neither answers.
         GlLevel level = null;
         boolean stubCaptureMissing =
-                org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadRgba8(glTextureId, 0, null) == null;
+                org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadRgba8(glTextureId, 0, null) == null;
         java.util.List<TextureCaptureStore.PendingPatch> pendingPatches =
                 stubCaptureMissing
-                        ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.texturePendingPatches(glTextureId, 0)
+                        ? org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().texturePendingPatches(glTextureId, 0)
                         : java.util.Collections.<TextureCaptureStore.PendingPatch>emptyList();
         if (stubCaptureMissing && !pendingPatches.isEmpty()) {
             level = null;
@@ -1752,9 +1752,9 @@ public final class VulkanGlTexture {
             // as a region - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
             // refused every later patch "outside the mirror", and the backlog case where 37,713 sprite
             // uploads covered only the announced fraction of the level.
-            int extentW = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelParameter(glTextureId, 0,
+            int extentW = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureId, 0,
                     GL_TEXTURE_WIDTH);
-            int extentH = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelParameter(glTextureId, 0,
+            int extentH = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelParameter(glTextureId, 0,
                     GL_TEXTURE_HEIGHT);
             if (extentW > 0 && extentH > 0
                     && (level == null || level.width != extentW || level.height != extentH)) {
@@ -1780,13 +1780,13 @@ public final class VulkanGlTexture {
                 try {
                 if (level != null) {
                     int[] offset = this.patchOffsetScratch;
-                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadOffset(glTextureId, 0, offset);
+                    org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadOffset(glTextureId, 0, offset);
                     uploadPatchedLevels(level.width, level.height, offset[0], offset[1],
                             singleSurface(level.pixels), 1, glTextureId);
                 }
                 java.util.List<TextureCaptureStore.PendingPatch> pending =
                         pendingPatches.isEmpty()
-                                ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.texturePendingPatches(
+                                ? org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().texturePendingPatches(
                                         glTextureId, 0)
                                 : pendingPatches;
                 for (TextureCaptureStore.PendingPatch patch : pending) {
@@ -1803,7 +1803,7 @@ public final class VulkanGlTexture {
                 }
                 if (applied != this.lastAppliedPatchSerial) {
                     this.lastAppliedPatchSerial = applied;
-                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.texturePatchesConsumed(glTextureId, 0,
+                    org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().texturePatchesConsumed(glTextureId, 0,
                             applied);
                 }
                 // The mip chain: the game's own per-level surfaces - the atlas's levels are uploaded level by
@@ -2749,7 +2749,7 @@ public final class VulkanGlTexture {
         // Nothing has changed in this texture's recorded parameters since the last confirmation, so the four to six
         // lookups below (and the sampler rebuild they gate) cannot find anything new. The version is bumped by the
         // stub where the record is written, which is the only way these values move - so BH-23's requirement holds.
-        int parameterVersion = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameterVersion(glTextureId);
+        int parameterVersion = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameterVersion(glTextureId);
         if (parameterVersion == this.confirmedParameterVersion) {
             return;
         }
@@ -2765,28 +2765,28 @@ public final class VulkanGlTexture {
         if (!this.wrapConfirmed) {
             this.wrapConfirmed = true;
         }
-        boolean repeatU = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(glTextureId,
+        boolean repeatU = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S) == org.lwjgl.opengl.GL11.GL_REPEAT;
-        boolean repeatV = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(glTextureId,
+        boolean repeatV = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T) == org.lwjgl.opengl.GL11.GL_REPEAT;
         // The filters, which this method did not consult when it was written for the wrap alone. The ordering that
         // hid them is the same one: a texture's parameters are set after the upload that creates its mirror, and
         // nearestFilterFor falls back to the write-shape inference when nothing is recorded yet - which answers
         // LINEAR for a whole-image upload, and the block atlas is uploaded exactly that way. A GUI item at scale 3-4
         // is magnified, so LINEAR magnification is what "the icons are the right shape but low resolution" is.
-        boolean magRecorded = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameterRecorded(glTextureId,
+        boolean magRecorded = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameterRecorded(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER);
-        boolean minRecorded = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameterRecorded(glTextureId,
+        boolean minRecorded = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameterRecorded(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
         boolean magNearest = this.nearestFilter;
         boolean minNearest = this.nearestMinFilter;
         if (magRecorded) {
-            magNearest = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(glTextureId,
+            magNearest = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(glTextureId,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER) == org.lwjgl.opengl.GL11.GL_NEAREST;
         }
         boolean mipmapNearest = this.mipmapNearest;
         if (minRecorded) {
-            int min = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(glTextureId,
+            int min = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(glTextureId,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
             minNearest = min == org.lwjgl.opengl.GL11.GL_NEAREST
                     || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
@@ -2808,10 +2808,10 @@ public final class VulkanGlTexture {
         // mirror's generated level 1 is a blur GL does not have. The record is authoritative here and may lower the
         // reach (unlike setSamplerReach, which only raises it for content the game wrote); the block atlas records 4,
         // which is the reach its own per-level content already justified, so the terrain measurement is unchanged.
-        boolean maxLevelRecorded = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameterRecorded(glTextureId,
+        boolean maxLevelRecorded = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameterRecorded(glTextureId,
                 GL_TEXTURE_MAX_LEVEL);
         int recordedMaxLevel = maxLevelRecorded
-                ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(glTextureId, GL_TEXTURE_MAX_LEVEL) : -1;
+                ? org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureParameter(glTextureId, GL_TEXTURE_MAX_LEVEL) : -1;
         boolean reachChanges = maxLevelRecorded && recordedMaxLevel >= 0
                 && recordedMaxLevel != this.samplerMaxLod;
         if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV
@@ -3948,7 +3948,7 @@ public final class VulkanGlTexture {
         // Bounded by the image's own levels too: a captured chain deeper than the mirror has no level to go into.
         for (int lvl = 1; lvl < this.appliedMipSerials.length && lvl < this.mipLevels
                 && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
-            long mipSerial = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadSerial(glTextureId, lvl);
+            long mipSerial = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadSerial(glTextureId, lvl);
             if (mipSerial == Long.MIN_VALUE) {
                 contiguous = false;
                 continue;
@@ -3956,7 +3956,7 @@ public final class VulkanGlTexture {
             if (mipSerial != this.appliedMipSerials[lvl]) {
                 int[] mipExtent = this.mipExtentScratch;
                 java.nio.ByteBuffer mipSurface =
-                        org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadRgba8(glTextureId, lvl, mipExtent);
+                        org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadRgba8(glTextureId, lvl, mipExtent);
                 if (mipSurface == null
                         || mipExtent[0] != Math.max(1, extentW >> lvl)
                         || mipExtent[1] != Math.max(1, extentH >> lvl)
@@ -5013,12 +5013,12 @@ public final class VulkanGlTexture {
         // The one size source for this path: the capture reports the extent it was uploaded with, and the pixels and
         // that extent come from the same call, so no second query can disagree with them.
         int[] capturedSize = new int[2];
-        ByteBuffer captured = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureUploadRgba8(glTextureId, level,
+        ByteBuffer captured = org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureUploadRgba8(glTextureId, level,
                 capturedSize);
         if (captured == null) {
             throw captureMiss(glTextureId, level, "the stub captured no upload for this texture level");
         }
-        if (!org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelHasGamePixels(glTextureId, level)) {
+        if (!org.soutalab.celtium.vulkan.gl.VulkanTextureRegistry.captureStore().textureLevelHasGamePixels(glTextureId, level)) {
             // A surface exists but the game never wrote a pixel into it: the zero fill an allocation with a NULL data
             // pointer leaves. There is nothing to read, which is the same condition as a missing capture - and copying
             // the zeros would put them into a mirror that then samples as transparent content.

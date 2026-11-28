@@ -146,7 +146,7 @@ public final class CeltiumFrameRelease {
                 }
             }
         }
-        long captureBytes = GlsmFrontend.textureCaptureBytes();
+        long captureBytes = org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore().textureCaptureBytes();
         System.out.println("[Celtium] CELTIUM_FRAME_CENSUS pass=" + passes
                 + " sprites=" + sprites
                 + " animated=" + animated + " animatedBytes=" + animatedBytes
@@ -172,7 +172,7 @@ public final class CeltiumFrameRelease {
             sprite.clearFramesTextureData();
             releasedSprites++;
         }
-        long[] captures = GlsmFrontend.releaseSettledTextureCaptures();
+        long[] captures = org.soutalab.celtium.vulkan.VulkanTextureRegistry.captureStore().releaseSettledTextureCaptures();
         System.out.println("[Celtium] CELTIUM_FRAME_RELEASE pass=" + passes
                 + " spritesReleased=" + releasedSprites + " spriteBytesFreed=" + releasedBytes
                 + " excluded=" + excludedSprites
