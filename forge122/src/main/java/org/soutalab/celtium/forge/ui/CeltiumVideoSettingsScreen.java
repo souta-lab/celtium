@@ -262,7 +262,7 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
 
         OptionEntry<?> hoveredEntry = null;
         if (page.isPlaceholder()) {
-            drawPlaceholderPage(page, left, top, width);
+            drawPlaceholderPage(page, left, top, width, mouseX, mouseY);
         } else {
             hoveredEntry = drawOptionPage(page, left, top, bottom, width, mouseX, mouseY);
         }
@@ -357,30 +357,61 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
         }
     }
 
-    private void drawPlaceholderPage(OptionPage page, int left, int top, int width) {
-        int textX = left + 14;
-        int y = top + 18;
-        String heading = page.getTitle();
-        this.fontRenderer.drawStringWithShadow(heading, textX, y, ACCENT);
-        y += 16;
-        List<String> lines = this.fontRenderer.listFormattedStringToWidth(page.getPlaceholderNotice(), width - 28);
+    /**
+     * Geometry of a placeholder page (currently only Shaders), expressed on the same grid as
+     * the option pages: the content box is the option rows' box, the heading is a group header
+     * (accent title over a divider spanning that box) and the action button is a full-width
+     * row of the same box, so the divider and the button can never drift to different widths
+     * or insets again.
+     */
+    record PlaceholderLayout(int contentX, int contentW, int headingTextY, int dividerLeft,
+                             int dividerRight, int dividerY, int noticeX, int noticeY,
+                             int buttonX, int buttonY, int buttonW, int buttonH) {
+    }
+
+    static PlaceholderLayout placeholderLayout(int left, int top, int width, int noticeLines) {
+        int contentX = left + 4;
+        int contentW = width - 8;
+        int headerY = top + 4;
+        int noticeY = headerY + GROUP_HEADER_HEIGHT + 4;
+        int buttonY = noticeY + noticeLines * 11 + 10;
+        return new PlaceholderLayout(
+                contentX, contentW,
+                headerY + 5,
+                contentX + 2, contentX + contentW - 2, headerY + GROUP_HEADER_HEIGHT - 2,
+                contentX + 4, noticeY,
+                contentX, buttonY, contentW, ROW_HEIGHT);
+    }
+
+    private void drawPlaceholderPage(OptionPage page, int left, int top, int width, int mouseX, int mouseY) {
+        List<String> lines = this.fontRenderer.listFormattedStringToWidth(page.getPlaceholderNotice(), width - 16);
+        PlaceholderLayout layout = placeholderLayout(left, top, width, lines.size());
+
+        this.fontRenderer.drawStringWithShadow(page.getTitle(), layout.contentX() + 4, layout.headingTextY(), ACCENT);
+        Gui.drawRect(layout.dividerLeft(), layout.dividerY(), layout.dividerRight(), layout.dividerY() + 1, BORDER);
+
+        int y = layout.noticeY();
         for (String line : lines) {
-            this.fontRenderer.drawStringWithShadow(line, textX, y, TEXT_MUTED);
+            this.fontRenderer.drawStringWithShadow(line, layout.noticeX(), y, TEXT_MUTED);
             y += 11;
         }
         if ("shaders".equals(page.getId())) {
             // The pack screen lives behind this button (S5-b wiring).
-            y += 10;
-            this.shadersButtonX = textX;
-            this.shadersButtonY = y;
-            this.shadersButtonW = 200;
-            this.shadersButtonH = 20;
-            Gui.drawRect(textX, y, textX + this.shadersButtonW, y + this.shadersButtonH, BG_ROW);
-            Gui.drawRect(textX, y, textX + this.shadersButtonW, y + 1, BORDER);
-            String label = net.minecraft.client.resources.I18n.format("celtium.options.shaders.openPacks");
+            this.shadersButtonX = layout.buttonX();
+            this.shadersButtonY = layout.buttonY();
+            this.shadersButtonW = layout.buttonW();
+            this.shadersButtonH = layout.buttonH();
+            boolean hovered = mouseX >= layout.buttonX() && mouseX < layout.buttonX() + layout.buttonW()
+                    && mouseY >= layout.buttonY() && mouseY < layout.buttonY() + layout.buttonH();
+            Gui.drawRect(layout.buttonX(), layout.buttonY(),
+                    layout.buttonX() + layout.buttonW(), layout.buttonY() + layout.buttonH(), BORDER);
+            Gui.drawRect(layout.buttonX() + 1, layout.buttonY() + 1,
+                    layout.buttonX() + layout.buttonW() - 1, layout.buttonY() + layout.buttonH() - 1,
+                    hovered ? BG_TAB_ACTIVE : BG_TAB);
+            String label = I18n.format("celtium.options.shaders.openPacks");
             this.fontRenderer.drawStringWithShadow(label,
-                    textX + (this.shadersButtonW - this.fontRenderer.getStringWidth(label)) / 2,
-                    y + 6, TEXT_PRIMARY);
+                    layout.buttonX() + (layout.buttonW() - this.fontRenderer.getStringWidth(label)) / 2,
+                    layout.buttonY() + (layout.buttonH() - this.fontRenderer.FONT_HEIGHT) / 2, TEXT_PRIMARY);
         }
     }
 
@@ -520,8 +551,25 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
         this.fontRenderer.drawStringWithShadow(label, textX, textY, enabled ? TEXT_PRIMARY : TEXT_DISABLED);
     }
 
+    // Widest a tooltip may grow; longer text wraps instead of covering the list.
+    static final int TOOLTIP_MAX_WIDTH = 230;
+
+    /**
+     * Vertical placement of a tooltip box: below the cursor when it fits, above the cursor
+     * when it would run off the bottom of the screen, but never above the list panel's top
+     * edge — a tall tooltip flipped above a low row used to slide over the tab bar.
+     */
+    static int tooltipBoxY(int mouseY, int boxH, int screenHeight, int listTop) {
+        int minY = listTop - 2;
+        int by = mouseY + 12;
+        if (by + boxH > screenHeight - 6) {
+            by = mouseY - boxH - 8;
+        }
+        return Math.max(minY, Math.min(by, screenHeight - 6 - boxH));
+    }
+
     private void drawOptionTooltip(OptionEntry<?> entry, int mouseX, int mouseY) {
-        int maxW = Math.min(260, this.width - 24);
+        int maxW = Math.min(TOOLTIP_MAX_WIDTH, this.width - 24);
         List<String> lines = new ArrayList<>();
         for (String paragraph : entry.getTooltip().split("\n")) {
             if (paragraph.isEmpty()) {
@@ -543,10 +591,7 @@ public class CeltiumVideoSettingsScreen extends GuiScreen {
         int boxH = lines.size() * 10 + 10;
 
         int bx = Math.min(mouseX + 10, this.width - boxW - 6);
-        int by = mouseY + 12;
-        if (by + boxH > this.height - 6) {
-            by = Math.max(6, mouseY - boxH - 8);
-        }
+        int by = tooltipBoxY(mouseY, boxH, this.height, listTop());
         bx = Math.max(6, bx);
 
         Gui.drawRect(bx - 1, by - 1, bx + boxW + 1, by + boxH + 1, ACCENT);
