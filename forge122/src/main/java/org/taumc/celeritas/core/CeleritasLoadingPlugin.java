@@ -30,7 +30,7 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
     @Override
     public @Nullable String[] getASMTransformerClass() {
         try {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.install();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.install();
             // The recorded-list probe boundary (E5 seat C, Neon E4 ruling 2026-11-28): the model path asks whether a
             // list holds recorded commands, and which list a replay is executing, through this read-only predicate
             // instead of reaching into the capture package. The backing store is the converter's display-list
@@ -53,7 +53,7 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
             // so the stub never sees it and every lightmapped batch was refused with id=-1. The object that owns
             // the name answers instead.
             org.taumc.celeritas.core.CeltiumLightmapIdInstaller.install();
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.installFirstCapabilities();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.installFirstCapabilities();
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
                     "CELTIUM_GLSTUB early capabilities install failed: {}", error.toString());

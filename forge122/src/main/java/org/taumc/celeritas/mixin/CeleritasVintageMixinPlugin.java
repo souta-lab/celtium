@@ -49,7 +49,7 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
      */
     private static void celtium$installGllessEarly() {
         try {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.install();
+            org.soutalab.celtium.glcompat.capture.DirectGlCaptureEntry.install();
             LOGGER.info("CELTIUM_GLSTUB stub GL provider installed early (from the mixin plugin)");
         } catch (RuntimeException | LinkageError error) {
             LOGGER.warn("CELTIUM_GLSTUB early stub install failed: {}", error.toString());

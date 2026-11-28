@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import org.soutalab.celtium.vulkan.FramebufferViewportState;
+import org.soutalab.celtium.vulkan.GlsmNameLedger;
 
 import org.soutalab.celtium.vulkan.FramebufferAttachmentTable;
 
