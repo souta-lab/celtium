@@ -860,11 +860,11 @@ public final class TextureCaptureStore {
                     && mapRangeOffset(pixels, (long) width * (long) height * 4L, logicalSize) >= 0L) {
                 pixels = memAddress(storage) + pixels;
                 int bound = stub.pixelUnpackBuffer();
-                stub.pixelUnpackBuffer()(0);
+                stub.pixelUnpackBuffer(0);
                 try {
                     return this.uploadToRgba8(stub, width, height, format, type, pixels);
                 } finally {
-                    stub.pixelUnpackBuffer()(bound);
+                    stub.pixelUnpackBuffer(bound);
                 }
             }
         }
