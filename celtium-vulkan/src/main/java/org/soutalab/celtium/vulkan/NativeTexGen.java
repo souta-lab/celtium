@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * Texture-coordinate generation (GL's {@code glTexGen}) owned by the Vulkan frontend, mirrored at
  * {@code GlStateManager}'s texgen entry points.
@@ -13,7 +15,7 @@ package org.soutalab.celtium.vulkan;
  * Only {@code GL_EYE_LINEAR} is modelled, which is what vanilla uses. A coordinate whose generation is disabled takes
  * the current texture coordinate, which for a layout without one is GL's initial {@code (0, 0, 0, 1)}.
  * <p>
- * Matrices are column-major, as GL and {@link VulkanGlState} store them. Threading: render thread only.
+ * Matrices are column-major, as GL and {@link Lane2ImmediateState} store them. Threading: render thread only.
  */
 public final class NativeTexGen {
     private static final NativeTexGen CURRENT = new NativeTexGen();
@@ -36,17 +38,17 @@ public final class NativeTexGen {
     private final float[] inverseScratch = new float[16];
 
     /** The matrix mirror whose model view an eye plane is fixed under; set by the backend that owns the mirror. */
-    private VulkanGlState matrices;
+    private Lane2ImmediateState matrices;
 
-    public void bindMatrices(VulkanGlState state) {
+    public void bindMatrices(Lane2ImmediateState state) {
         this.matrices = state;
     }
 
     /** {@link #setPlane(int, int, float, float, float, float, float[])} under the bound mirror's live model view. */
     public void setPlane(int coord, int pname, float a, float b, float c, float d) {
-        VulkanGlState state = this.matrices;
+        Lane2ImmediateState state = this.matrices;
         setPlane(coord, pname, a, b, c, d,
-                state == null ? null : state.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW));
+                state == null ? null : state.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW));
     }
 
     public void setEnabled(int coord, boolean on) {

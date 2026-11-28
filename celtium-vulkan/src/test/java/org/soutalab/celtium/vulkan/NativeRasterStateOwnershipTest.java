@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
@@ -14,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class NativeRasterStateOwnershipTest {
     private final NativeRasterState raster = new NativeRasterState();
     private final NativeTextureBindings textures = new NativeTextureBindings(this.raster);
-    private final VulkanGlState nativeState = new VulkanGlState(this.raster, this.textures);
+    private final Lane2ImmediateState nativeState = new Lane2ImmediateState(this.raster, this.textures);
     private final GlsmFrontend adapter;
     private final Method dispatch;
     private final Map<?, ?> ids;
@@ -80,7 +82,7 @@ class NativeRasterStateOwnershipTest {
     /**
      * The cull mode starts at GL's own enum, not at an internal index.
      *
-     * <p>The owner used to start at {@code VulkanGlState.CULL_BACK}, an internal {@code 1}, while every writer - the raw
+     * <p>The owner used to start at {@code Lane2ImmediateState.CULL_BACK}, an internal {@code 1}, while every writer - the raw
      * {@code glCullFace} adapter, the managed setter and the stub - stored GL's enum. A save/restore that read the mode
      * before vanilla had set one got {@code 1}, which is not a GL enum at all: the display-list leg measured
      * {@code cf=1} against a Celeritas reference answering {@code 1029} (GL_BACK). One encoding for a value the GL
@@ -89,9 +91,9 @@ class NativeRasterStateOwnershipTest {
     @Test
     void theCullModeStartsAtGlBackAndTheConstantsAreGlEnums() throws Exception {
         assertEquals(0x0405, this.raster.cullFace(), "GL's initial cull mode is GL_BACK");
-        assertEquals(0x0404, VulkanGlState.CULL_FRONT);
-        assertEquals(0x0405, VulkanGlState.CULL_BACK);
-        assertEquals(0x0408, VulkanGlState.CULL_BOTH);
+        assertEquals(0x0404, Lane2ImmediateState.CULL_FRONT);
+        assertEquals(0x0405, Lane2ImmediateState.CULL_BACK);
+        assertEquals(0x0408, Lane2ImmediateState.CULL_BOTH);
         var out = MemoryUtil.memAlloc(16);
         try {
             call("glGetIntegerv", 0x0B45, MemoryUtil.memAddress(out));
@@ -194,8 +196,8 @@ class NativeRasterStateOwnershipTest {
     void boundaryFailureDoesNotPartiallyApplyTheNewState() {
         this.raster.beforeChange(() -> { throw new IllegalStateException("cannot submit old glyphs"); });
         assertThrows(IllegalStateException.class, () -> this.nativeState.blendFunc(1, 0, 1, 0));
-        assertEquals(VulkanGlState.BLEND_SRC_ALPHA, this.nativeState.blendSrcRgb());
-        assertEquals(VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA, this.nativeState.blendDstRgb());
+        assertEquals(Lane2ImmediateState.BLEND_SRC_ALPHA, this.nativeState.blendSrcRgb());
+        assertEquals(Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA, this.nativeState.blendDstRgb());
     }
     @Test
     void rawModFogAndNativeTerrainShareStateWhileQueuedDrawsKeepTheirSnapshot() throws Exception {

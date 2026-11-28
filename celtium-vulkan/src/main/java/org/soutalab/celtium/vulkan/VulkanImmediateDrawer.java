@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.lwjgl.opengl.GL11;
 
 /**
@@ -7,7 +9,7 @@ import org.lwjgl.opengl.GL11;
  * <p>
  * This is the draw half of the Forge API swap described in {@code docs/history/forge-api-vulkan-inventory.md}: the mod-side
  * Mixin on {@code WorldVertexBufferUploader.func_181679_a(BufferBuilder)} hands over the finished buffer, and this
- * class turns it into one batch of {@link VulkanDynamicMesh} plus the pipeline selected from {@link VulkanGlState}.
+ * class turns it into one batch of {@link VulkanDynamicMesh} plus the pipeline selected from {@link Lane2ImmediateState}.
  * <p>
  * The first thing that has to happen is topology conversion. Minecraft draws with {@code GL_QUADS} and the triangle
  * modes; Vulkan has no quads, so a quad becomes two triangles and the index list is generated while the batch is

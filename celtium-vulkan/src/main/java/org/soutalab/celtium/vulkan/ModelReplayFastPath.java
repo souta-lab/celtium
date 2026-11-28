@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * The last model replay's whole resolved tuple, so a replay that repeats it can skip resolving it again.
  * <p>
@@ -345,7 +347,7 @@ final class ModelReplayFastPath {
     /**
      * {@return whether the four versions say the tuple's non-matrix values are the live ones}.
      * <p>
-     * Each version is bumped by every mutator of the state it names - see {@link VulkanGlState#stateVersion()} and
+     * Each version is bumped by every mutator of the state it names - see {@link Lane2ImmediateState#stateVersion()} and
      * {@link NativeTextureEnvironment#version()} - so equality means every byte the version covers is unchanged. It is
      * an over-approximation on purpose: a coarse version refuses replays it could have served, and no version can serve
      * one it should have refused. The modelview is not one of them: it is the replay's own matrix, and the tuple

@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -13,28 +15,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins the stage-7 key form (S5-5): the packed {@link PipelineStateKey} must agree with
- * {@link VulkanGlState#pipelineKey(int)} on which states are the same pipeline and which
+ * {@link Lane2ImmediateState#pipelineKey(int)} on which states are the same pipeline and which
  * are different ones, decode back the fields it packs, and keep the erasure rules the mix
  * hash applied (a disabled blend or test contributes nothing).
  */
 class PipelineStateKeyTest {
 
-    private static VulkanGlState fresh() {
-        return new VulkanGlState();
+    private static Lane2ImmediateState fresh() {
+        return new Lane2ImmediateState();
     }
 
     @Test
     void roundTripDecodesEveryPackedField() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         state.blendEnabled(true);
         state.blendFunc(770, 771, 1, 0);
-        state.blendEquation(VulkanGlState.BLEND_FUNC_ADD, VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT);
+        state.blendEquation(Lane2ImmediateState.BLEND_FUNC_ADD, Lane2ImmediateState.BLEND_FUNC_REVERSE_SUBTRACT);
         state.colorMask(0x5);
         state.depthFunc(515);
         state.alphaTestEnabled(true);
         state.alphaFunc(516, 0.5f);
         state.lightingEnabled(true);
-        state.shadeModel(VulkanGlState.SHADE_FLAT);
+        state.shadeModel(Lane2ImmediateState.SHADE_FLAT);
         state.cullEnabled(true);
         state.cullFace(VulkanCullState.GL_FRONT);
         state.frontFace(VulkanCullState.GL_CW);
@@ -47,25 +49,25 @@ class PipelineStateKeyTest {
         assertTrue(key.alphaTestEnabled());
         assertEquals(516, key.alphaFunc());
         assertTrue(key.lightingEnabled());
-        assertEquals(VulkanGlState.SHADE_FLAT, key.shadeModel());
+        assertEquals(Lane2ImmediateState.SHADE_FLAT, key.shadeModel());
         assertEquals(VulkanCullState.FRONT | VulkanCullState.FRONT_FACE_CW, key.cullState());
         assertTrue(key.blendEnabled());
         assertEquals(770, key.blendSrcRgb());
         assertEquals(771, key.blendDstRgb());
         assertEquals(1, key.blendSrcAlpha());
         assertEquals(0, key.blendDstAlpha());
-        assertEquals(VulkanGlState.BLEND_FUNC_ADD, key.blendEquationRgb());
-        assertEquals(VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT, key.blendEquationAlpha());
+        assertEquals(Lane2ImmediateState.BLEND_FUNC_ADD, key.blendEquationRgb());
+        assertEquals(Lane2ImmediateState.BLEND_FUNC_REVERSE_SUBTRACT, key.blendEquationAlpha());
         assertEquals(key, PipelineStateKey.fromValue(key.value()));
         assertEquals(key.value(), PipelineStateKey.of(state, 42).value());
     }
 
     /**
-     * The pre-stage-7 {@code *31} mix of {@link VulkanGlState#pipelineKey(int)}, replicated
+     * The pre-stage-7 {@code *31} mix of {@link Lane2ImmediateState#pipelineKey(int)}, replicated
      * from the accessors it read so the equivalence below stays pinned after the switch:
      * the packed key must never merge two states the shipped mix told apart.
      */
-    private static long legacyMixKey(VulkanGlState state, int vertexFormatHash) {
+    private static long legacyMixKey(Lane2ImmediateState state, int vertexFormatHash) {
         long key = vertexFormatHash;
         boolean blend = state.blendEnabled();
         key = (key * 31) + (blend ? 1 : 0);
@@ -91,7 +93,7 @@ class PipelineStateKeyTest {
         // tell apart from every other. The corpus premise - the legacy mix hash also tells
         // them all apart - is asserted as part of the test, so the equivalence below is a
         // measured fact about this corpus, not an assumption about hashes in general.
-        List<Consumer<VulkanGlState>> scripts = new ArrayList<>();
+        List<Consumer<Lane2ImmediateState>> scripts = new ArrayList<>();
         scripts.add(state -> { });
         scripts.add(state -> state.blendEnabled(true));
         scripts.add(state -> {
@@ -100,12 +102,12 @@ class PipelineStateKeyTest {
         });
         scripts.add(state -> {
             state.blendEnabled(true);
-            state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO,
-                    VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO);
+            state.blendFunc(Lane2ImmediateState.BLEND_ONE, Lane2ImmediateState.BLEND_ZERO,
+                    Lane2ImmediateState.BLEND_ONE, Lane2ImmediateState.BLEND_ZERO);
         });
         scripts.add(state -> {
             state.blendEnabled(true);
-            state.blendEquation(VulkanGlState.BLEND_FUNC_SUBTRACT, VulkanGlState.BLEND_MIN);
+            state.blendEquation(Lane2ImmediateState.BLEND_FUNC_SUBTRACT, Lane2ImmediateState.BLEND_MIN);
         });
         scripts.add(state -> {
             state.blendEnabled(true);
@@ -138,13 +140,13 @@ class PipelineStateKeyTest {
             state.alphaFunc(4, 0.1f);
         });
         scripts.add(state -> state.lightingEnabled(true));
-        scripts.add(state -> state.shadeModel(VulkanGlState.SHADE_FLAT));
+        scripts.add(state -> state.shadeModel(Lane2ImmediateState.SHADE_FLAT));
 
         int n = scripts.size();
         long[] mixed = new long[n];
         long[] packed = new long[n];
         for (int i = 0; i < n; i++) {
-            VulkanGlState state = fresh();
+            Lane2ImmediateState state = fresh();
             scripts.get(i).accept(state);
             mixed[i] = legacyMixKey(state, 42);
             packed[i] = PipelineStateKey.of(state, 42).value();
@@ -160,7 +162,7 @@ class PipelineStateKeyTest {
         }
         // Rebuilding the same state reproduces the same key under both forms.
         for (int i = 0; i < n; i++) {
-            VulkanGlState state = fresh();
+            Lane2ImmediateState state = fresh();
             scripts.get(i).accept(state);
             assertEquals(mixed[i], legacyMixKey(state, 42));
             assertEquals(packed[i], PipelineStateKey.of(state, 42).value());
@@ -169,10 +171,10 @@ class PipelineStateKeyTest {
 
     @Test
     void disabledBlendErasesFactorsAndEquations() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         long base = PipelineStateKey.of(state, 42).value();
         state.blendFunc(770, 771, 1, 0);
-        state.blendEquation(VulkanGlState.BLEND_FUNC_SUBTRACT, VulkanGlState.BLEND_MIN);
+        state.blendEquation(Lane2ImmediateState.BLEND_FUNC_SUBTRACT, Lane2ImmediateState.BLEND_MIN);
         assertEquals(base, PipelineStateKey.of(state, 42).value(),
                 "with blending off the factors and equations are not pipeline state");
         state.blendEnabled(true);
@@ -184,7 +186,7 @@ class PipelineStateKeyTest {
 
     @Test
     void disabledTestsEraseTheirFunctions() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         state.depthTestEnabled(false);
         long noDepthTest = PipelineStateKey.of(state, 42).value();
         state.depthFunc(513);
@@ -193,7 +195,7 @@ class PipelineStateKeyTest {
         state.depthTestEnabled(true);
         assertNotEquals(noDepthTest, PipelineStateKey.of(state, 42).value());
 
-        VulkanGlState alpha = fresh();
+        Lane2ImmediateState alpha = fresh();
         long alphaOff = PipelineStateKey.of(alpha, 42).value();
         alpha.alphaFunc(513, 0.25f);
         assertEquals(alphaOff, PipelineStateKey.of(alpha, 42).value(),
@@ -202,7 +204,7 @@ class PipelineStateKeyTest {
 
     @Test
     void pushConstantStateDoesNotMoveTheKey() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         long base = PipelineStateKey.of(state, 42).value();
         state.color(0.25f, 0.5f, 0.75f, 1.0f);
         state.bindTexture(1234);
@@ -213,23 +215,23 @@ class PipelineStateKeyTest {
 
     @Test
     void outOfDomainValuesTakeTheEscapeSlots() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         state.depthFunc(999);
         PipelineStateKey key = PipelineStateKey.of(state, 42);
         assertTrue(key.depthTestEnabled());
         assertEquals(-1, key.depthFunc(), "an out-of-domain depth function decodes as the escape");
 
-        VulkanGlState blended = fresh();
+        Lane2ImmediateState blended = fresh();
         blended.blendEnabled(true);
         blended.blendFunc(999, 1, 1, 1);
         assertEquals(-1, PipelineStateKey.of(blended, 42).blendSrcRgb());
 
-        VulkanGlState shaded = fresh();
+        Lane2ImmediateState shaded = fresh();
         shaded.shadeModel(7);
         assertEquals(-1, PipelineStateKey.of(shaded, 42).shadeModel());
 
         // The escapes still discriminate against the in-domain values they are not.
-        VulkanGlState inDomain = fresh();
+        Lane2ImmediateState inDomain = fresh();
         inDomain.depthFunc(519);
         assertNotEquals(key.value(), PipelineStateKey.of(inDomain, 42).value());
     }
@@ -243,7 +245,7 @@ class PipelineStateKeyTest {
                 0x8001, 0x8002, 0x8003, 0x8004};
         long[] keys = new long[domain.length];
         for (int i = 0; i < domain.length; i++) {
-            VulkanGlState state = fresh();
+            Lane2ImmediateState state = fresh();
             state.blendEnabled(true);
             state.blendFunc(domain[i], 1, 1, 1);
             keys[i] = PipelineStateKey.of(state, 42).value();
@@ -260,7 +262,7 @@ class PipelineStateKeyTest {
 
     @Test
     void everyFormatHashBitMovesTheFold() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         long base = PipelineStateKey.of(state, 0).value();
         for (int bit = 0; bit < 32; bit++) {
             assertNotEquals(base, PipelineStateKey.of(state, 1 << bit).value(),
@@ -272,7 +274,7 @@ class PipelineStateKeyTest {
 
     @Test
     void cullOffErasesFaceAndWinding() {
-        VulkanGlState state = fresh();
+        Lane2ImmediateState state = fresh();
         long off = PipelineStateKey.of(state, 42).value();
         state.cullFace(VulkanCullState.GL_FRONT);
         state.frontFace(VulkanCullState.GL_CW);

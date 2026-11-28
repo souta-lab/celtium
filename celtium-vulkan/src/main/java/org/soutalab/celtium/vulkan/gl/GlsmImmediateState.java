@@ -14,7 +14,7 @@ package org.soutalab.celtium.vulkan.gl;
  * M-9 (superset proof S-9 remainder): this owner also holds GL's initial light-model
  * ambient, the fallback {@code GL_LIGHT_MODEL_AMBIENT} answer when no backend mirror
  * exists. It has no writer: a guest's light-model ambient write goes to the backend
- * mirror ({@code VulkanGlState.setLightAmbient}), so the value here stays at GL's
+ * mirror ({@code Lane2ImmediateState.setLightAmbient}), so the value here stays at GL's
  * initial (0.2, 0.2, 0.2, 1) for the owner's whole life, exactly as the stub's field did.
  */
 public final class GlsmImmediateState {

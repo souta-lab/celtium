@@ -67,11 +67,20 @@ public final class Lane2StateMirror {
     private float colorBlue = 1.0f;
     private float colorAlpha = 1.0f;
 
-    // Matrix state: modelview rides the register's stack; projection rides this small stack.
-    private int matrixMode = GL_MODELVIEW;
+    // Matrix state: modelview rides the register's stack; projection rides this small stack. The
+    // matrix mode itself is owned by the immediate state (E5 seat A, Neon E4 ruling 2026-11-28):
+    // the accessors below delegate to it, so the mode the funnel's stack machinery selects by and
+    // the mode this mirror's own stack ops select by are one field.
     private final float[][] projectionStack = new float[PROJECTION_STACK_DEPTH][16];
     private int projectionDepth;
     private long textureModeMatrixOps;
+
+    // The immediate funnel's working state (the former VulkanGlState), owned here since the E5
+    // seat A move: one production instance, reached through immediate(). Its raster and texture
+    // bindings are the shared singletons the backend's own field used to inject.
+    private final Lane2ImmediateState immediate = new Lane2ImmediateState(
+            org.soutalab.celtium.vulkan.NativeRasterState.current(),
+            org.soutalab.celtium.vulkan.NativeTextureBindings.current());
 
     private Lane2StateMirror() {
         writeIdentity(this.projectionStack[0]);
@@ -260,15 +269,20 @@ public final class Lane2StateMirror {
         if (glMode != GL_MODELVIEW && glMode != GL_PROJECTION && glMode != GL_TEXTURE) {
             throw new IllegalArgumentException("not a matrix mode: " + glMode);
         }
-        this.matrixMode = glMode;
+        this.immediate.matrixModeGl(glMode);
     }
 
     public int matrixMode() {
-        return this.matrixMode;
+        return this.immediate.matrixModeGl();
+    }
+
+    /** {@return the immediate funnel's working state}, owned by this mirror (E5 seat A). */
+    public Lane2ImmediateState immediate() {
+        return this.immediate;
     }
 
     public void pushMatrix() {
-        switch (this.matrixMode) {
+        switch (matrixMode()) {
             case GL_MODELVIEW:
                 this.register.pushMatrix();
                 break;
@@ -286,7 +300,7 @@ public final class Lane2StateMirror {
     }
 
     public void popMatrix() {
-        switch (this.matrixMode) {
+        switch (matrixMode()) {
             case GL_MODELVIEW:
                 this.register.popMatrix();
                 break;
@@ -302,7 +316,7 @@ public final class Lane2StateMirror {
     }
 
     public void loadIdentity() {
-        switch (this.matrixMode) {
+        switch (matrixMode()) {
             case GL_MODELVIEW:
                 this.register.loadIdentity();
                 break;
@@ -319,7 +333,7 @@ public final class Lane2StateMirror {
         if (matrix == null || matrix.length != 16) {
             throw new IllegalArgumentException("a matrix is exactly 16 floats");
         }
-        switch (this.matrixMode) {
+        switch (matrixMode()) {
             case GL_MODELVIEW: {
                 float[] top = new float[16];
                 this.register.currentMatrix(top);
@@ -392,7 +406,7 @@ public final class Lane2StateMirror {
         m[13] = (float) (-(top + bottom) / (top - bottom));
         m[14] = (float) (-(far + near) / (far - near));
         m[15] = 1.0f;
-        switch (this.matrixMode) {
+        switch (matrixMode()) {
             case GL_MODELVIEW:
                 this.register.setCurrentMatrix(m);
                 break;
@@ -442,7 +456,7 @@ public final class Lane2StateMirror {
         this.colorGreen = 1.0f;
         this.colorBlue = 1.0f;
         this.colorAlpha = 1.0f;
-        this.matrixMode = GL_MODELVIEW;
+        setMatrixMode(GL_MODELVIEW);
         while (this.register.matrixDepth() > 1) {
             this.register.popMatrix();
         }

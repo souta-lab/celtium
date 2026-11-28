@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 /**
@@ -59,7 +61,7 @@ final class PackStageStateGuard {
     private long viewportPacked = -1L;
 
     /** Records the mirror state a pack execution is about to be allowed to disturb. */
-    void capture(VulkanGlState state) {
+    void capture(Lane2ImmediateState state) {
         this.cullEnabled = state.cullEnabled();
         this.cullFace = state.cullFace();
         this.frontFace = state.frontFace();
@@ -105,7 +107,7 @@ final class PackStageStateGuard {
      * submits pending glyph geometry under the old state before the value moves. The framebuffer and viewport
      * are re-issued through the stub's own entries, the routes any bind takes.
      */
-    void restore(VulkanGlState state, DepthAlphaSink sink) {
+    void restore(Lane2ImmediateState state, DepthAlphaSink sink) {
         if (state.cullEnabled() != this.cullEnabled) {
             state.cullEnabled(this.cullEnabled);
         }

@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -9,19 +11,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * scale and rotate a tile entity renderer makes per part. These pin that the values are still what GL would produce and
  * that the reusable scratch cannot leak one call into the next.
  */
-class VulkanGlStateTransformTest {
+class Lane2ImmediateStateTransformTest {
 
-    private static VulkanGlState state() {
-        return new VulkanGlState();
+    private static Lane2ImmediateState state() {
+        return new Lane2ImmediateState();
     }
 
-    private static float[] topModelView(VulkanGlState state) {
-        return state.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+    private static float[] topModelView(Lane2ImmediateState state) {
+        return state.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
     }
 
     @Test
     void loadIdentityReplacesTheActiveMatrixWithTheIdentity() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.translate(3, 4, 5);
         state.loadIdentity();
         float[] m = topModelView(state);
@@ -36,7 +38,7 @@ class VulkanGlStateTransformTest {
 
     @Test
     void twoTransformsInARowComposeInsteadOfReusingTheFirstOne() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.translate(1, 0, 0);
         state.translate(2, 0, 0);
         float[] m = topModelView(state);
@@ -48,7 +50,7 @@ class VulkanGlStateTransformTest {
 
     @Test
     void scaleAndRotateStartFromTheIdentityScratchNotThePreviousMatrix() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.scale(2, 3, 4);
         state.loadIdentity();
         state.scale(1, 1, 1);
@@ -62,8 +64,8 @@ class VulkanGlStateTransformTest {
     void theSpecialisedTranslateAndScaleAgreeWithTheGeneralMultiply() {
         // The specialised paths exist to skip the 4x4 multiply. They have to produce exactly what multiplying by the
         // constructed transform matrix would, including when the matrix already holds a transform.
-        VulkanGlState specialised = state();
-        VulkanGlState general = state();
+        Lane2ImmediateState specialised = state();
+        Lane2ImmediateState general = state();
         specialised.translate(1.5f, -2.0f, 0.25f);
         general.loadMatrix(new float[] {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1.5f, -2.0f, 0.25f, 1});
         for (int i = 0; i < 16; i++) {
@@ -83,8 +85,8 @@ class VulkanGlStateTransformTest {
     void theInPlaceRotateAgreesWithTheGeneralMultiply() {
         // The specialised rotate touches only the first three columns. Compared against the same rotation built as a
         // matrix and applied through the general product, element by element, after a non-trivial first transform.
-        VulkanGlState specialised = state();
-        VulkanGlState general = state();
+        Lane2ImmediateState specialised = state();
+        Lane2ImmediateState general = state();
         specialised.translate(2, 3, 4);
         general.translate(2, 3, 4);
         specialised.rotate(37, 0.3f, 0.5f, 0.8f);
@@ -102,7 +104,7 @@ class VulkanGlStateTransformTest {
 
     @Test
     void twoRotationsCompose() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.rotate(90, 0, 0, 1);
         state.rotate(90, 0, 0, 1);
         // 180 degrees about z sends +x to -x.
@@ -113,7 +115,7 @@ class VulkanGlStateTransformTest {
 
     @Test
     void translateAfterARotationMovesTheTranslationThroughTheRotation() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.rotate(90, 0, 0, 1);
         state.translate(1, 0, 0);
         float[] m = topModelView(state);
@@ -126,7 +128,7 @@ class VulkanGlStateTransformTest {
     void threeLevelsOfPushAndPopReturnToEachLevelsMatrix() {
         // The tops are cached references refreshed on push/pop, so nesting is the case that breaks a cache that is
         // refreshed in the wrong place.
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.translate(1, 0, 0);
         state.pushMatrix();
         state.translate(10, 0, 0);
@@ -141,13 +143,13 @@ class VulkanGlStateTransformTest {
 
     @Test
     void eachMatrixModeAndTextureUnitKeepsItsOwnTop() {
-        VulkanGlState state = state();
-        state.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+        Lane2ImmediateState state = state();
+        state.matrixMode(Lane2ImmediateState.MATRIX_MODE_TEXTURE);
         state.translate(4, 0, 0);
-        state.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        state.matrixMode(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         state.translate(7, 0, 0);
         assertEquals(7.0f, topModelView(state)[12], 1.0e-5f);
-        state.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+        state.matrixMode(Lane2ImmediateState.MATRIX_MODE_TEXTURE);
         assertEquals(4.0f, state.peekTextureMatrix(0)[12], 1.0e-5f,
                 "the texture matrix kept its own translation");
         // Unit 1 has its own stack: switching the active unit must not read unit 0's matrix.
@@ -157,7 +159,7 @@ class VulkanGlStateTransformTest {
 
     @Test
     void pushAndPopStillGiveEachStackEntryItsOwnArray() {
-        VulkanGlState state = state();
+        Lane2ImmediateState state = state();
         state.translate(5, 0, 0);
         state.pushMatrix();
         state.translate(5, 0, 0);
@@ -173,9 +175,9 @@ class VulkanGlStateTransformTest {
         double[] angles = {0, 17.5, 90, -133, 180, 361};
         for (double[] axis : axes) {
             for (double angle : angles) {
-                VulkanGlState fast = state();
-                VulkanGlState general = state();
-                for (VulkanGlState s : new VulkanGlState[] {fast, general}) {
+                Lane2ImmediateState fast = state();
+                Lane2ImmediateState general = state();
+                for (Lane2ImmediateState s : new Lane2ImmediateState[] {fast, general}) {
                     s.translate(0.5, -2, 3);
                     s.scale(1.5, 0.75, 2);
                     s.rotate(31, 0.3, 0.4, 0.5);

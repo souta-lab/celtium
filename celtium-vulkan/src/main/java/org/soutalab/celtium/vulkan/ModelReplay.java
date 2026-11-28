@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.vulkan.VK10.*;
@@ -196,9 +198,9 @@ final class ModelReplay {
             // path uses. The mirror, not glGetFloatv: asking GL here was measured to give the orthographic projection the
             // HUD last installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
             // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
-            float[] projectionNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+            float[] projectionNow = b.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
             // Scratch, as is the remapped projection: a queued group clones what it keeps (enqueue below).
-            float[] modelViewNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            float[] modelViewNow = b.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
             b.modelViewRelativizer.makeRelative(modelViewNow, listId);
             // The remap is cached by the projection contents: it is installed per pass, and this path asked for the same
             // sixteen floats once per replay. The suspicion that the live projection had already been remapped was tested

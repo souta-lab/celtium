@@ -1,10 +1,12 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * The pipeline-selection state of one drawing state, packed into a single 64-bit key
  * (Stage 5 stage 7, S5-5: the state unification's key form).
  * <p>
- * This is the canonical encoding of the question {@link VulkanGlState#pipelineKey(int)} used
+ * This is the canonical encoding of the question {@link Lane2ImmediateState#pipelineKey(int)} used
  * to answer with a {@code *31} mix hash: <em>which of the values that bake into a pipeline
  * object does this state hold?</em> The mix hash discriminated everything and decoded
  * nothing; this packing discriminates the same state fields <em>exactly</em> in the low 48
@@ -21,7 +23,7 @@ package org.soutalab.celtium.vulkan;
  *   {@code 0x0300..0x0307}, {@code 0x8001..0x8004} - the fifteen values
  *   {@code glBlendFactorToVk} maps, an unknown factor's batch is refused) and, as the
  *   raster's initial values, as the legacy ordinals {@code 0..9} of
- *   {@link VulkanGlState}'s {@code BLEND_*} constants. The 5-bit factor code below is
+ *   {@link Lane2ImmediateState}'s {@code BLEND_*} constants. The 5-bit factor code below is
  *   injective over the union of both domains.</li>
  *   <li>blend equations reach the mirror as GL enums ({@code 0x8006..0x800B}); only their
  *   low nibble is stored, which is injective over the five defined equations and consistent
@@ -77,7 +79,7 @@ public final class PipelineStateKey {
     }
 
     /** {@return the key of the state the mirror currently holds, for one vertex format}. */
-    public static PipelineStateKey of(VulkanGlState state, int vertexFormatHash) {
+    public static PipelineStateKey of(Lane2ImmediateState state, int vertexFormatHash) {
         return pack(vertexFormatHash,
                 state.blendEnabled(), state.blendSrcRgb(), state.blendDstRgb(),
                 state.blendSrcAlpha(), state.blendDstAlpha(),
@@ -91,7 +93,7 @@ public final class PipelineStateKey {
 
     /**
      * Packs one drawing state from its primitive values, under the same erasure rules
-     * {@link VulkanGlState#pipelineKey(int)} applies: a disabled blend erases the factors
+     * {@link Lane2ImmediateState#pipelineKey(int)} applies: a disabled blend erases the factors
      * and equations, a disabled test erases its function.
      */
     public static PipelineStateKey pack(int vertexFormatHash,

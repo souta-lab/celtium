@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -12,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>
  * {@code VulkanTerrainGpuBackend.celtium$stateSignature} reads twenty-one inputs on every offer and now skips the
  * capture when three versions are the ones the cached signature was taken under:
- * {@link VulkanGlState#stateVersion()} (the wrapper's own fields plus the raster mirror),
+ * {@link Lane2ImmediateState#stateVersion()} (the wrapper's own fields plus the raster mirror),
  * {@link NativeTextureEnvironment#version()} (the two environment parameters) and the window-target bit. That is only
  * exact if every input is owned by one of those versions. A setter that moved an input without moving its version
  * would make the cache serve a stale signature, and a stale signature is a wrong pipeline - a wrong picture, not a
@@ -29,7 +31,7 @@ class StateSignatureVersionContractTest {
     /** The wrapper's own fields and the raster mirror, through the one number the cache compares. */
     @Test
     void everyWrapperAndRasterInputMovesTheStateVersion() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
 
         // SIGNATURE_BLEND
         long before = state.stateVersion();
@@ -38,13 +40,13 @@ class StateSignatureVersionContractTest {
 
         // SIGNATURE_SRC_RGB / DST_RGB / SRC_ALPHA / DST_ALPHA
         before = state.stateVersion();
-        state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO,
-                VulkanGlState.BLEND_DST_COLOR, VulkanGlState.BLEND_SRC_COLOR);
+        state.blendFunc(Lane2ImmediateState.BLEND_ONE, Lane2ImmediateState.BLEND_ZERO,
+                Lane2ImmediateState.BLEND_DST_COLOR, Lane2ImmediateState.BLEND_SRC_COLOR);
         assertMoved("blend factors", before, state.stateVersion());
 
         // SIGNATURE_EQ_RGB / EQ_ALPHA
         before = state.stateVersion();
-        state.blendEquation(VulkanGlState.BLEND_FUNC_SUBTRACT, VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT);
+        state.blendEquation(Lane2ImmediateState.BLEND_FUNC_SUBTRACT, Lane2ImmediateState.BLEND_FUNC_REVERSE_SUBTRACT);
         assertMoved("blend equations", before, state.stateVersion());
 
         // SIGNATURE_COLOR_MASK
@@ -74,7 +76,7 @@ class StateSignatureVersionContractTest {
 
         // SIGNATURE_CULL_FACE
         before = state.stateVersion();
-        state.cullFace(VulkanGlState.CULL_FRONT);
+        state.cullFace(Lane2ImmediateState.CULL_FRONT);
         assertMoved("culled face", before, state.stateVersion());
 
         // SIGNATURE_FRONT_FACE
@@ -240,7 +242,7 @@ class StateSignatureVersionContractTest {
     /** The version is monotonic, which is what makes "unchanged" a safe answer for "the same signature". */
     @Test
     void theVersionNeverGoesBackwards() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         long previous = state.stateVersion();
         for (int i = 0; i < 8; i++) {
             state.blendEnabled(i % 2 == 0);
@@ -263,7 +265,7 @@ class StateSignatureVersionContractTest {
         uf.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) uf.get(null);
         VulkanTerrainGpuBackend b = (VulkanTerrainGpuBackend) unsafe.allocateInstance(VulkanTerrainGpuBackend.class);
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         setBackendField(b, "immediateState", state);
         setBackendField(b, "targetRegistry", new RenderTargetRegistry());
         setBackendField(b, "immediateStatistics", new ImmediateStatistics());

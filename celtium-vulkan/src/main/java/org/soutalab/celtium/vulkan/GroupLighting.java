@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * The lit group's light payload - the two GL lights rotated into model space, the ambient and each diffuse - with
  * the shared-array cache, the replay variants and the replay's projection and combine colour. Moved out of
@@ -75,7 +77,7 @@ final class GroupLighting {
      * The model replay's lit payload, rebuilt only when the rotation or the light state moved.
      * <p>
      * The replay path calls this per display-list replay - 2.5 M times in one pack leg - while the payload depends only
-     * on {@code modelView[0..10]} and {@link VulkanGlState#lightGeneration()}. A scene of entities sharing an
+     * on {@code modelView[0..10]} and {@link Lane2ImmediateState#lightGeneration()}. A scene of entities sharing an
      * orientation repeats both, so the 3x3 inverse, two square roots and twenty stores were being done to arrive at
      * the bytes that were already in {@link #modelInstanceLight}. The scratch is the model path's own, never
      * {@link #lightParamsScratch}, because the two-arg form above writes that one for the per-group path.

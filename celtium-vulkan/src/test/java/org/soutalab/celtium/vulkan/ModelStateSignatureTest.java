@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -20,16 +22,16 @@ class ModelStateSignatureTest {
         // GL's initial state as the mirror reports it: no blending, no alpha test, cull and depth on, depth write on,
         // GL_LEQUAL, no lighting, unit 0 MODULATE with a TEXTURE source, and the window (identity 0) bound.
         signature[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 0;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = VulkanGlState.BLEND_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = VulkanGlState.BLEND_ONE;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = VulkanGlState.BLEND_FUNC_ADD;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = VulkanGlState.BLEND_FUNC_ADD;
-        signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = VulkanGlState.COLOR_CHANNEL_ALL;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_SRC_ALPHA;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_SRC_ALPHA] = Lane2ImmediateState.BLEND_ONE;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_DST_ALPHA] = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_ADD;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_EQ_ALPHA] = Lane2ImmediateState.BLEND_FUNC_ADD;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK] = Lane2ImmediateState.COLOR_CHANNEL_ALL;
         signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 0;
         signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.1f);
-        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = VulkanGlState.ALPHA_GREATER;
+        signature[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_GREATER;
         signature[VulkanTerrainGpuBackend.SIGNATURE_CULL] = 1;
         signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_TEST] = 1;
         signature[VulkanTerrainGpuBackend.SIGNATURE_DEPTH_WRITE] = 1;
@@ -62,7 +64,7 @@ class ModelStateSignatureTest {
         assertEquals(0, state[6], "an alpha test that is off captures a reference of zero");
         assertEquals(515, state[7], "the GL depth function travels unchanged");
         assertEquals(0, state[8], "lighting off");
-        assertEquals(VulkanGlState.COLOR_CHANNEL_ALL, state[11]);
+        assertEquals(Lane2ImmediateState.COLOR_CHANNEL_ALL, state[11]);
         assertEquals(org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, state[12]);
         assertEquals(org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, state[13]);
         assertEquals(0, state[14], "the function is zero while the test is off");
@@ -97,7 +99,7 @@ class ModelStateSignatureTest {
         int[] window = signature();
         window[VulkanTerrainGpuBackend.SIGNATURE_WINDOW_TARGET] = 1;
         int[] state = state(window);
-        assertEquals(VulkanGlState.COLOR_CHANNEL_ALL & ~0x8, state[11],
+        assertEquals(Lane2ImmediateState.COLOR_CHANNEL_ALL & ~0x8, state[11],
                 "the delivered frame has no alpha bits, so the write is masked there");
     }
 
@@ -106,7 +108,7 @@ class ModelStateSignatureTest {
         enabled[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 1;
         int[] state = state(enabled);
         assertEquals(Float.floatToIntBits(0.1f), state[6], "the reference is captured as its own bits");
-        assertEquals(VulkanGlState.ALPHA_GREATER,
+        assertEquals(Lane2ImmediateState.ALPHA_GREATER,
                 state[14], "GL_GREATER is 0x204, which is what the audit's default compares");
 
         // The reference and the function are ignored while the test is off: the signature may carry them, the state
@@ -114,7 +116,7 @@ class ModelStateSignatureTest {
         int[] off = signature();
         int[] otherOff = signature();
         otherOff[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF] = Float.floatToIntBits(0.9f);
-        otherOff[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = VulkanGlState.ALPHA_LESS;
+        otherOff[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC] = Lane2ImmediateState.ALPHA_LESS;
         assertEquals(0, state(off)[6], "the test is off, so no reference is captured");
         assertEquals(0, state(off)[14], "the test is off, so no function is captured");
         assertEquals(state(off)[6], state(otherOff)[6]);
@@ -124,9 +126,9 @@ class ModelStateSignatureTest {
     @Test void blendingTranslatesTheFactorsAndTheEquations() {
         int[] blend = signature();
         blend[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 1;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = VulkanGlState.BLEND_ONE;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = VulkanGlState.BLEND_ZERO;
-        blend[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = VulkanGlState.BLEND_FUNC_SUBTRACT;
+        blend[VulkanTerrainGpuBackend.SIGNATURE_SRC_RGB] = Lane2ImmediateState.BLEND_ONE;
+        blend[VulkanTerrainGpuBackend.SIGNATURE_DST_RGB] = Lane2ImmediateState.BLEND_ZERO;
+        blend[VulkanTerrainGpuBackend.SIGNATURE_EQ_RGB] = Lane2ImmediateState.BLEND_FUNC_SUBTRACT;
         int[] state = state(blend);
         assertEquals(1, state[0]);
         assertEquals(org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE, state[1]);
@@ -178,18 +180,18 @@ class ModelStateSignatureTest {
                     if (slot != VulkanTerrainGpuBackend.SIGNATURE_BLEND) {
                         changed[VulkanTerrainGpuBackend.SIGNATURE_BLEND] = 1;
                     }
-                    changed[slot] = changed[slot] == VulkanGlState.BLEND_ONE
-                            ? VulkanGlState.BLEND_DST_COLOR : VulkanGlState.BLEND_ONE;
+                    changed[slot] = changed[slot] == Lane2ImmediateState.BLEND_ONE
+                            ? Lane2ImmediateState.BLEND_DST_COLOR : Lane2ImmediateState.BLEND_ONE;
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_COLOR_MASK:
-                    changed[slot] = VulkanGlState.COLOR_CHANNEL_ALL & ~0x8;
+                    changed[slot] = Lane2ImmediateState.COLOR_CHANNEL_ALL & ~0x8;
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST:
                 case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF:
                 case VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC:
                     changed[VulkanTerrainGpuBackend.SIGNATURE_ALPHA_TEST] = 1;
                     if (slot == VulkanTerrainGpuBackend.SIGNATURE_ALPHA_FUNC) {
-                        changed[slot] = VulkanGlState.ALPHA_LESS;
+                        changed[slot] = Lane2ImmediateState.ALPHA_LESS;
                     } else if (slot == VulkanTerrainGpuBackend.SIGNATURE_ALPHA_REF) {
                         changed[slot] = Float.floatToIntBits(0.9f);
                     }
@@ -202,7 +204,7 @@ class ModelStateSignatureTest {
                     changed[slot] = changed[slot] == 0 ? 1 : 0;
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_DEPTH_FUNC:
-                    changed[slot] = VulkanGlState.DEPTH_ALWAYS;
+                    changed[slot] = Lane2ImmediateState.DEPTH_ALWAYS;
                     break;
                 case VulkanTerrainGpuBackend.SIGNATURE_CULL_FACE:
                     // The cull enable is already on in the base signature, so moving the face has to move the state.

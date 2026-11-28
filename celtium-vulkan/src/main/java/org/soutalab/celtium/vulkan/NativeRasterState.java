@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * Render-thread raster state owned by the Vulkan frontend. Minecraft's API and the raw-GL adapter both mutate this
  * owner; drawing never imports a second set of GL records. It exists before device creation and survives swapchain
@@ -16,15 +18,15 @@ public final class NativeRasterState {
     }
 
     private boolean blendEnabled;
-    private int blendSrcRgb = VulkanGlState.BLEND_SRC_ALPHA;
-    private int blendDstRgb = VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA;
-    private int blendSrcAlpha = VulkanGlState.BLEND_ONE;
-    private int blendDstAlpha = VulkanGlState.BLEND_ONE_MINUS_SRC_ALPHA;
-    private int blendEquationRgb = VulkanGlState.BLEND_FUNC_ADD;
-    private int blendEquationAlpha = VulkanGlState.BLEND_FUNC_ADD;
+    private int blendSrcRgb = Lane2ImmediateState.BLEND_SRC_ALPHA;
+    private int blendDstRgb = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+    private int blendSrcAlpha = Lane2ImmediateState.BLEND_ONE;
+    private int blendDstAlpha = Lane2ImmediateState.BLEND_ONE_MINUS_SRC_ALPHA;
+    private int blendEquationRgb = Lane2ImmediateState.BLEND_FUNC_ADD;
+    private int blendEquationAlpha = Lane2ImmediateState.BLEND_FUNC_ADD;
     private int colorMask = 0xF;
     private boolean cullEnabled;
-    private int cullFace = VulkanGlState.CULL_BACK;
+    private int cullFace = Lane2ImmediateState.CULL_BACK;
     private int frontFace = 0x0901;
     private boolean scissorEnabled;
     private boolean scissorCalled;
@@ -40,7 +42,7 @@ public final class NativeRasterState {
      * The state model wraps this owner but is not its only writer: the raw-GL adapter writes blend factors, equations,
      * cull and the colour mask here directly, so a version kept beside the wrapper's fields would miss exactly the
      * mutations a direct-GL mod makes between two model replays. It lives here, next to the fields, for that reason -
-     * and {@link VulkanGlState#stateVersion()} folds it into the number the replay path compares.
+     * and {@link Lane2ImmediateState#stateVersion()} folds it into the number the replay path compares.
      */
     private long version;
 

@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -64,7 +66,7 @@ class ModelReplayInputCacheTest {
 
     @Test void projectionIsReusedOnlyForTheSameVersion() {
         // The remap's key is the projection stack's version, not its contents: every mutation of the stack bumps it
-        // (VulkanGlState.projectionVersion), so one compare proves the sixteen floats the remap was built from. Reading
+        // (Lane2ImmediateState.projectionVersion), so one compare proves the sixteen floats the remap was built from. Reading
         // all sixteen back was a second copy of the same answer.
         ModelReplayInputCache cache = new ModelReplayInputCache();
         assertFalse(cache.reuseProjection(11L), "an empty cache cannot answer a hit");

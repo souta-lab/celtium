@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -416,16 +418,16 @@ class ModelReplayFastPathTest {
         // the value PipelineStateKey.of packs from that same mirror. The model state carries no shade input, so
         // the mirror's shade is set to the flat 0 the signature-driven packing uses, and the format fold is 0 on
         // both sides (a list's format is fixed and the run conditions discriminate it through the backend key).
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         state.blendEnabled(true);
         state.blendFunc(770, 771, 1, 0);
-        state.blendEquation(VulkanGlState.BLEND_FUNC_ADD, VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT);
+        state.blendEquation(Lane2ImmediateState.BLEND_FUNC_ADD, Lane2ImmediateState.BLEND_FUNC_REVERSE_SUBTRACT);
         state.colorMask(0x5);
         state.depthFunc(515);
         state.alphaTestEnabled(true);
         state.alphaFunc(516, 0.5f);
         state.lightingEnabled(true);
-        state.shadeModel(VulkanGlState.SHADE_FLAT);
+        state.shadeModel(Lane2ImmediateState.SHADE_FLAT);
         state.cullEnabled(true);
         state.cullFace(VulkanCullState.GL_FRONT);
         state.frontFace(VulkanCullState.GL_CW);

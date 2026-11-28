@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -13,12 +15,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * matrix stack has to behave like the one mods already use (push/pop, multiplication order), and the pipeline key has
  * to change exactly when the pipeline would have to.
  */
-class VulkanGlStateTest {
+class Lane2ImmediateStateTest {
     @Test
     void repeatedRangeTextureBindsCannotKeepDiagnosticsOpenOrSuppressBinding() throws Exception {
         // Replay the real failure: every observed bind was in 40..60, so the ordinary budget never advanced.
-        var ordinaryBudget = VulkanGlState.class.getDeclaredField("unitLogs");
-        var rangeBudget = VulkanGlState.class.getDeclaredField("unitRangeLogs");
+        var ordinaryBudget = Lane2ImmediateState.class.getDeclaredField("unitLogs");
+        var rangeBudget = Lane2ImmediateState.class.getDeclaredField("unitRangeLogs");
         ordinaryBudget.setAccessible(true);
         rangeBudget.setAccessible(true);
         int ordinaryBefore = ordinaryBudget.getInt(null);
@@ -30,7 +32,7 @@ class VulkanGlStateTest {
             ordinaryBudget.setInt(null, 0);
             rangeBudget.setInt(null, 0);
             var raster = new NativeRasterState();
-            var state = new VulkanGlState(raster, new NativeTextureBindings(raster));
+            var state = new Lane2ImmediateState(raster, new NativeTextureBindings(raster));
             for (int i = 0; i < 4096; i++) state.bindTexture(40 + i % 21);
             assertEquals(40 + 4095 % 21, state.boundTextureName(), "the log cap must not cap the actual binds");
             long lines = bytes.toString().lines().filter(line -> line.contains("CELTIUM_UNIT_BIND")).count();
@@ -44,34 +46,34 @@ class VulkanGlStateTest {
 
     @Test
     void pushAndPopRestoreTheActiveMatrix() {
-        VulkanGlState state = new VulkanGlState();
-        float[] identity = state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        Lane2ImmediateState state = new Lane2ImmediateState();
+        float[] identity = state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         state.pushMatrix();
         state.loadMatrix(translation(2.0f, 3.0f, 4.0f));
-        assertArrayEquals(translation(2.0f, 3.0f, 4.0f), state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW));
+        assertArrayEquals(translation(2.0f, 3.0f, 4.0f), state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW));
         state.popMatrix();
-        assertArrayEquals(identity, state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW));
+        assertArrayEquals(identity, state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW));
     }
 
     @Test
     void projectionAndModelViewStacksAreIndependent() {
-        VulkanGlState state = new VulkanGlState();
-        state.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        Lane2ImmediateState state = new Lane2ImmediateState();
+        state.matrixMode(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         state.pushMatrix();
         state.loadMatrix(translation(1.0f, 0.0f, 0.0f));
-        assertArrayEquals(translation(1.0f, 0.0f, 0.0f), state.matrix(VulkanGlState.MATRIX_MODE_PROJECTION));
-        assertArrayEquals(identity(), state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW));
-        state.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        assertArrayEquals(translation(1.0f, 0.0f, 0.0f), state.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION));
+        assertArrayEquals(identity(), state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW));
+        state.matrixMode(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         state.popMatrix();
-        assertArrayEquals(identity(), state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW));
+        assertArrayEquals(identity(), state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW));
     }
 
     @Test
     void multiplicationFollowsTheColumnMajorOrderMinecraftUses() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         state.loadMatrix(translation(1.0f, 2.0f, 3.0f));
         state.multiplyMatrix(scale(2.0f, 2.0f, 2.0f));
-        float[] product = state.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        float[] product = state.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         // translate(1,2,3) * scale(2) keeps the translation and doubles the basis, column-major.
         assertEquals(2.0f, product[0], 1e-5f);
         assertEquals(2.0f, product[5], 1e-5f);
@@ -81,15 +83,15 @@ class VulkanGlStateTest {
 
     @Test
     void thePipelineKeyTracksPipelineStateAndIgnoresPushConstantState() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         long base = state.pipelineKey(42);
         state.color(0.5f, 0.5f, 0.5f, 0.5f);
         assertEquals(base, state.pipelineKey(42), "colour is a push constant, not pipeline state");
         state.blendEnabled(true);
         assertNotEquals(base, state.pipelineKey(42), "enabling blend needs another pipeline");
         long blended = state.pipelineKey(42);
-        state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO, VulkanGlState.BLEND_ONE,
-                VulkanGlState.BLEND_ZERO);
+        state.blendFunc(Lane2ImmediateState.BLEND_ONE, Lane2ImmediateState.BLEND_ZERO, Lane2ImmediateState.BLEND_ONE,
+                Lane2ImmediateState.BLEND_ZERO);
         assertNotEquals(blended, state.pipelineKey(42), "a different blend function needs another pipeline");
         state.blendEnabled(false);
         assertEquals(base, state.pipelineKey(42), "disabling blend returns to the earlier pipeline");
@@ -99,7 +101,7 @@ class VulkanGlStateTest {
     void thePipelineKeyTracksTheCulledFaceAndTheWinding() {
         // The face and the winding bake into the rasteriser state, so two draws that differ only in them cannot share
         // a pipeline. The fixture's front-culled arm is the picture that measures it.
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         state.cullEnabled(true);
         long back = state.pipelineKey(42);
         state.cullFace(VulkanCullState.GL_FRONT);
@@ -118,7 +120,7 @@ class VulkanGlStateTest {
 
     @Test
     void theKeyDependsOnTheVertexFormat() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         assertNotEquals(state.pipelineKey(1), state.pipelineKey(2));
         assertTrue(state.describe().contains("depthTest"));
     }
@@ -134,7 +136,7 @@ class VulkanGlStateTest {
      */
     @Test
     void theLightingPayloadComesBackWithoutTheModelviewMultiply() {
-        VulkanGlState state = new VulkanGlState();
+        Lane2ImmediateState state = new Lane2ImmediateState();
         state.setLightPosition(0, 0.2f, 1.0f, -0.7f);
         state.setLightDiffuse(0, 0.6f, 0.6f, 0.6f);
         state.setLightAmbient(0.4f, 0.4f, 0.4f);
@@ -149,7 +151,7 @@ class VulkanGlStateTest {
         state.loadMatrix(scale(2.0f, 3.0f, 4.0f));
         state.setLightPosition(0, 0.2f, 1.0f, -0.7f);
         state.setLightDiffuse(0, 0.1f, 0.2f, 0.3f);
-        state.shadeModel(VulkanGlState.SHADE_FLAT);
+        state.shadeModel(Lane2ImmediateState.SHADE_FLAT);
         assertNotEquals(directions[0], state.lightDirections()[0],
                 "the block's modelview moved the stored eye-space direction, which is what the pop has to undo");
         assertNotEquals(diffuse[1], state.lightDiffuse()[1]);

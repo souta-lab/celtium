@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 /**
  * The two per-replay values whose inputs change far less often than the replay count: the lit payload and the
  * depth-remapped projection.
@@ -11,7 +13,7 @@ package org.soutalab.celtium.vulkan;
  *   <li>the lit payload ({@code VulkanTerrainGpuBackend.celtium$lightParams}) is the inverse of the modelview's upper
  *       3x3 times the two light directions, two normalisations and the ambient/diffuse copy - a 3x3 inverse and two
  *       square roots per replay. It reads only {@code modelView[0..10]} (the rotation; the translation at 12..14 is
- *       never read), {@code state[8]} and the light state, whose {@link VulkanGlState#lightGeneration()} moves on every
+ *       never read), {@code state[8]} and the light state, whose {@link Lane2ImmediateState#lightGeneration()} moves on every
  *       light change. A scene of upright entities and block entities replays many rotations that are exactly equal.
  *   <li>the projection remap is a 4x4 multiply of the live projection with a constant matrix, and the projection is
  *       installed per pass, not per replay.
@@ -90,7 +92,7 @@ final class ModelReplayInputCache {
      * Asks whether the light payload can be reused, and counts the answer as a hit or a miss: every call is one of the
      * two, so the pair is the number of rewrites this cache avoided and the number it could not.
      *
-     * @param generation {@link VulkanGlState#lightGeneration()} now
+     * @param generation {@link Lane2ImmediateState#lightGeneration()} now
      * @param modelView  the replay's modelview, column-major, which the payload is derived from
      * @return whether the payload built for the same generation and rotation is still the right one
      */
@@ -133,7 +135,7 @@ final class ModelReplayInputCache {
     /**
      * Asks whether the remapped projection can be reused, counting the answer like {@link #reuseLightPayload}.
      *
-     * @param version {@link VulkanGlState#projectionVersion()} at the moment the live projection was read
+     * @param version {@link Lane2ImmediateState#projectionVersion()} at the moment the live projection was read
      * @return whether the remapped projection built from the same projection is still the right one
      */
     boolean reuseProjection(long version) {

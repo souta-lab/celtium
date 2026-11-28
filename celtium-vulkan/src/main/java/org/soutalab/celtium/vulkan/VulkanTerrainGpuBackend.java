@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.lane2.Lane2ImmediateState;
+
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
@@ -975,7 +977,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
     int currentGroupBatches;
     int[] currentGroupViewportValues;
-    /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
+    /** The lighting generation the open group was created under; see {@code Lane2ImmediateState.lightGeneration()}. */
     private long currentGroupLightGeneration;
     /** The verification line's output contract, whose ownership moved to {@link BackendReport} in plan R1c. */
     private final BackendReport report = new BackendReport();
@@ -1623,7 +1625,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
     final NativeRasterState rasterState = NativeRasterState.current();
-    final VulkanGlState immediateState = new VulkanGlState(this.rasterState, NativeTextureBindings.current());
+    final Lane2ImmediateState immediateState = org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().immediate();
     /** The diagnostic reports (BackendDiagnostics); they read this backend's state and change nothing it draws. */
     final BackendDiagnostics reports = new BackendDiagnostics(this);
 
@@ -5616,7 +5618,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /**
      * Puts the lighting payload back to an attribute-stack snapshot; see
-     * {@link VulkanGlState#restoreLightState(float[], float[], float[], int)} for why this cannot go through
+     * {@link Lane2ImmediateState#restoreLightState(float[], float[], float[], int)} for why this cannot go through
      * {@link #setLightPosition}.
      *
      * @return whether any value moved
@@ -5761,7 +5763,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     @Override
     public void setShadeModel(int glMode) {
         // GL_FLAT and GL_SMOOTH are the two the mirror distinguishes; the shader path treats per-quad normals as flat.
-        this.immediateState.shadeModel(glMode == 7424 ? VulkanGlState.SHADE_FLAT : VulkanGlState.SHADE_SMOOTH);
+        this.immediateState.shadeModel(glMode == 7424 ? Lane2ImmediateState.SHADE_FLAT : Lane2ImmediateState.SHADE_SMOOTH);
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
@@ -6618,7 +6620,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + "/" + this.lightmapReestablished
                     + (this.textureRegistry == null ? ""
                             : " invalidationsKeptNoGl=" + this.textureInvalidationsKeptGlless
-                            + " " + VulkanGlState.perUnitBindCensus()
+                            + " " + Lane2ImmediateState.perUnitBindCensus()
                             + " mirrorSources=[" + this.textureRegistry.mirrorSourceSummary() + "]"
                             + " " + org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureCaptureSummary()
                             + " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
@@ -6738,7 +6740,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             java.nio.FloatBuffer live = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
             try {
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, live);
-                float[] mirrored = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+                float[] mirrored = this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
                 float delta = 0.0f;
                 for (int i = 0; i < 16; i++) {
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
@@ -6751,7 +6753,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     while (this.trace.size() >= 12) {
                         this.trace.remove(0);
                     }
-                    float[] mvBefore = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                    float[] mvBefore = this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
                     java.nio.FloatBuffer glMv = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, glMv);
@@ -6775,11 +6777,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.matricesDirty = true;
         // OpenGL's constants, mapped onto the three stacks the state model keeps.
         if (glMode == 5889) {
-            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+            this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         } else if (glMode == 5890) {
-            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+            this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_TEXTURE);
         } else {
-            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         }
         this.immediateStatistics.noteImmediateStateCalls();
         this.matrixModeCalls++;
@@ -6789,7 +6791,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public void loadIdentity() {
         celtium$fontMatrixBoundary();
         if (this.trace.size() < 40) {
-            float[] v = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            float[] v = this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
             this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
         }
         this.mirrorMidSetup = true;
@@ -6904,7 +6906,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         frustum[14] = (2.0f * far * near) / (near - far);
         // glFrustum multiplies, so the mirrored projection stack must multiply too.
         int mode = this.immediateState.matrixMode();
-        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         this.immediateState.multiplyMatrix(frustum);
         this.immediateState.matrixMode(mode);
         this.immediateStatistics.noteImmediateStateCalls();
@@ -6949,11 +6951,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         boolean wantGluReport = this.gluPerspectiveShapes.size() < 12
                 && this.mirroredGluPerspectives <= GLU_PERSPECTIVE_CENSUS_CALLS;
-        float[] before = wantGluReport ? this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION) : null;
+        float[] before = wantGluReport ? this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION) : null;
         // The mirrored loadIdentity this call site always performs, applied to the projection stack whether or not the
         // mirror's mode still points at it: the stack whose value GL is replacing is the projection stack.
         int mode = this.immediateState.matrixMode();
-        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         this.immediateState.loadIdentity();
         this.immediateState.matrixMode(mode);
         this.perspective(fovDegrees, aspect, near, far);
@@ -6988,7 +6990,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.gluPerspectiveShapes.size() >= 12 || !this.gluPerspectiveShapes.add(site)) {
             return;
         }
-        float[] after = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        float[] after = this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE fov=" + round3(fovDegrees) + " aspect=" + round3(aspect)
                 + " near=" + round3(near) + " far=" + round3(far)
                 + " after=[m00=" + round3(after[0]) + ",m11=" + round3(after[5]) + ",m22=" + round3(after[10])
@@ -7065,7 +7067,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         matrix[11] = -1.0f;
         matrix[14] = (float) (-(2.0 * far * near) / depth);
         int mode = this.immediateState.matrixMode();
-        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.matrixMode(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         this.immediateState.multiplyMatrix(matrix);
         this.immediateState.matrixMode(mode);
         this.immediateStatistics.noteImmediateStateCalls();
@@ -7091,7 +7093,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // refused for an identity projection; this says whether the mod's multiply went to the projection stack at
             // all, which is the one question the count of refusals cannot answer.
             matrixTraceDumps++;
-            float[] projection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+            float[] projection = this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
             StringBuilder callers = new StringBuilder();
             StackTraceElement[] trace = Thread.currentThread().getStackTrace();
             for (int i = 2; i < Math.min(trace.length, 9); i++) {
@@ -9591,19 +9593,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!this.worldPassActive) {
             return;
         }
-        float[] derived = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        float[] derived = this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
         System.arraycopy(derived, 0, this.worldSnapshotProjection, 0, 16);
         // The camera transform is mirrored from the hooked GlStateManager matrix calls, so it is already here: the
         // GL read would answer zeros, and a zeroed camera transform degenerates every world draw.
-        System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+        System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW), 0,
                 this.worldSnapshotModelView, 0, 16);
         this.worldSnapshotValid = true;
         // Seed the mirror's base: the projection derived from Minecraft's numbers and the camera transform as the camera
         // setup left it. Everything the pass then does through the hooked matrix calls - per-model, per-entity, per-TESR
         // pushes, translates, rotates and pops - accumulates on top of this base. Copying the snapshot into every batch's
         // matrices instead would throw those local transforms away and draw every model at the camera origin.
-        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, this.worldSnapshotProjection);
-        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW, this.worldSnapshotModelView);
+        this.immediateState.setMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION, this.worldSnapshotProjection);
+        this.immediateState.setMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW, this.worldSnapshotModelView);
         this.immediateStatistics.noteSnapshotCaptures();
         if (GROUP_BOUNDS_DIAGNOSTICS) {
             // The base every group of this pass is measured against, printed once per camera boundary: with the group's
@@ -10090,11 +10092,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /**
      * The mirrored matrices, for the GL reads the stub has to answer: vanilla reads the terrain's projection and
      * model-view through {@code glGetFloatv} ({@code ActiveRenderInfo.updateRenderInfo}), and it builds the frustum
-     * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code VulkanGlState.matrix}
+     * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code Lane2ImmediateState.matrix}
      * returns a copy, so a caller cannot write into the mirror through this.
      */
     public float[] celtium$mirroredModelView() {
-        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
     }
 
     /**
@@ -10107,12 +10109,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The mirrored projection; see {@link #celtium$mirroredModelView()}. */
     public float[] celtium$mirroredProjection() {
-        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION);
     }
 
     /** The mirrored texture matrix of the active unit, which is what the mirror's texture mode addresses. */
     public float[] celtium$mirroredTexture() {
-        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_TEXTURE);
+        return this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_TEXTURE);
     }
 
     /** Whether the mirrored colour's red and green are both zero - the per-draw probe, without an array per call. */
@@ -10159,7 +10161,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         frustum[10] = (far + near) / (near - far);
         frustum[11] = -1.0F;
         frustum[14] = (2.0F * far * near) / (near - far);
-        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, frustum);
+        this.immediateState.setMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION, frustum);
         this.derivedProjections++;
         // The world pass installs a perspective projection; the overlay and the GUI install orthographic ones.
         // That is enough to tell the passes apart for the mirror comparison, which is only meaningful within one.
@@ -10865,9 +10867,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // the last one does not need the two 64-byte copies, and the merge predicate below still compares the
                 // same values because nothing can have moved them. At ~280 batches a frame that is 560 copies and 560
                 // sixteen-float comparisons removed whenever a tile entity draws several parts under one transform.
-                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
+                System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
-                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW), 0,
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
@@ -12427,13 +12429,13 @@ this.frameBufferOpen = false;
      * The last signature captured, and the three versions that decide whether it can be reused.
      * <p>
      * The capture reads twenty-one inputs, two of them through a hash map, and it runs on every offer (~220 a frame).
-     * Every one of those inputs is owned by a version that moves when it moves: {@link VulkanGlState#stateVersion()}
+     * Every one of those inputs is owned by a version that moves when it moves: {@link Lane2ImmediateState#stateVersion()}
      * folds the wrapper's own fields and the raster mirror, {@link NativeTextureEnvironment#version()} covers the two
      * environment parameters, and the window-target bit is the identity the registry already tracks. So "all three
      * versions are the ones the cached signature was taken under" is exactly "the signature is the same", and the
      * capture can be skipped rather than repeated.
      * <p>
-     * The contract is the one {@code VulkanGlState.stateVersion} documents and {@code StateSignatureVersionContractTest}
+     * The contract is the one {@code Lane2ImmediateState.stateVersion} documents and {@code StateSignatureVersionContractTest}
      * checks input by input: a setter that moved a signature input without moving its version would make this cache
      * serve a stale signature, which is a wrong pipeline rather than a slow frame. That is why the test enumerates the
      * inputs instead of trusting the comment.
@@ -12676,7 +12678,7 @@ this.frameBufferOpen = false;
      * <p>
      * {@link #celtium$stateKey} hashes the layout id and the sixteen mapped integers, and the mapping
      * ({@link #celtium$stateFromSignature}) is a pure function of the signature. The signature is itself a pure
-     * function of {@code VulkanGlState.stateVersion()}, {@code NativeTextureEnvironment.version()} and the
+     * function of {@code Lane2ImmediateState.stateVersion()}, {@code NativeTextureEnvironment.version()} and the
      * window-target bit - the contract round 58 established and {@code StateSignatureVersionContractTest} enumerates
      * input by input. So the key is a pure function of those three versions and the layout id, and a cache keyed on
      * all four is exactly as sound as the signature cache: a hit cannot serve a key the capture would not have
@@ -12908,12 +12910,12 @@ this.frameBufferOpen = false;
      */
     private static int glBlendEquationToVk(int glEquation) {
         switch (glEquation) {
-            case VulkanGlState.BLEND_FUNC_SUBTRACT: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_SUBTRACT;
-            case VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT:
+            case Lane2ImmediateState.BLEND_FUNC_SUBTRACT: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_SUBTRACT;
+            case Lane2ImmediateState.BLEND_FUNC_REVERSE_SUBTRACT:
                 return org.lwjgl.vulkan.VK10.VK_BLEND_OP_REVERSE_SUBTRACT;
-            case VulkanGlState.BLEND_MIN: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MIN;
-            case VulkanGlState.BLEND_MAX: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MAX;
-            case VulkanGlState.BLEND_FUNC_ADD:
+            case Lane2ImmediateState.BLEND_MIN: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MIN;
+            case Lane2ImmediateState.BLEND_MAX: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MAX;
+            case Lane2ImmediateState.BLEND_FUNC_ADD:
             default: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
         }
     }
@@ -13421,7 +13423,7 @@ this.frameBufferOpen = false;
         // Skip while the mirror is still the zeroed array a reset leaves, which is the condition itself rather than a
         // proxy for it: a flag that cleared after one skip was too narrow, and the worst sample stayed a zeroed matrix.
         // Comparing an unset matrix with GL's measures the interval between two frames, not the mirror.
-        float[] viewNow = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        float[] viewNow = this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
         if (viewNow[0] == 0.0f && viewNow[5] == 0.0f && viewNow[12] == 0.0f && viewNow[13] == 0.0f && viewNow[14] == 0.0f) {
             this.midSetupComparisonsSkipped++;
             return;
@@ -13435,9 +13437,9 @@ this.frameBufferOpen = false;
             return;
         }
         this.matrixComparisons++;
-        float projectionDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION),
+        float projectionDelta = maxDelta(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION),
                 this.glProjection);
-        float modelViewDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
+        float modelViewDelta = maxDelta(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW),
                 this.glModelView);
         // Dump the first comparison's sixteen elements from each side. The counter said the mirror is wrong
         // everywhere; whether that is a transpose, a clip-depth remap or a different stack cannot be read from a
@@ -13445,9 +13447,9 @@ this.frameBufferOpen = false;
         boolean newWorst = projectionDelta > this.immediateStatistics.mirroredProjectionDelta()
                 || modelViewDelta > this.mirroredModelViewDelta;
         if (newWorst || this.matrixDump == null) {
-            this.matrixDump = "projMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION))
+            this.matrixDump = "projMirror=" + java.util.Arrays.toString(this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION))
                     + ";projGl=" + java.util.Arrays.toString(this.glProjection)
-                    + ";viewMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW))
+                    + ";viewMirror=" + java.util.Arrays.toString(this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW))
                     + ";viewGl=" + java.util.Arrays.toString(this.glModelView);
         }
         this.immediateStatistics.setMirroredProjectionDelta(Math.max(this.immediateStatistics.mirroredProjectionDelta(), projectionDelta));
@@ -13465,7 +13467,7 @@ this.frameBufferOpen = false;
             // which render target and viewport the disagreeing comparison belongs to.
             if (modelViewDelta > this.worstModelViewDelta) {
                 this.worstModelViewDelta = modelViewDelta;
-                float[] mirrorView = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                float[] mirrorView = this.immediateState.matrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW);
                 this.worstModelViewSample = "frame=" + this.framesSeen + " target=" + this.targetRegistry.currentIdentity()
                         + " viewport=" + this.currentViewportKey + " projDelta=" + projectionDelta
                         + " mirror[m0=" + fmt3(mirrorView[0]) + ",m5=" + fmt3(mirrorView[5]) + ",t=" + fmt3(mirrorView[12])
@@ -24043,8 +24045,8 @@ this.frameBufferOpen = false;
             // No GL read on this path. The matrices are the mirror's: the camera base seeded at the boundary plus whatever
             // local transforms the pass applied through the hooked calls since. The GL readback that used to run here was
             // the per-batch cost the plan calls dominant, and it is replaced rather than disabled.
-            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
-            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             this.immediateStatistics.noteSnapshotServedCaptures();
             return;
         }
@@ -24052,8 +24054,8 @@ this.frameBufferOpen = false;
             // Minecraft's overlay/FBO setup uses the mirrored GlStateManager ortho/model-view stacks. These batches ARE
             // accepted: returning without capturing them left the previous world's perspective here and clipped real GUI
             // geometry. Snapshot the local pass matrices, never borrow another pass's camera.
-            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
-            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(Lane2ImmediateState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             return;
         }
         try {

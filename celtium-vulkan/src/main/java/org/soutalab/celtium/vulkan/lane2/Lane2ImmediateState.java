@@ -1,8 +1,12 @@
-package org.soutalab.celtium.vulkan;
+package org.soutalab.celtium.vulkan.lane2;
 
 import java.util.ArrayDeque;
 
-import org.soutalab.celtium.vulkan.gl.GlsmMatrixMode;
+import org.soutalab.celtium.vulkan.NativeRasterState;
+import org.soutalab.celtium.vulkan.NativeTextureBindings;
+import org.soutalab.celtium.vulkan.PipelineStateKey;
+import org.soutalab.celtium.vulkan.VulkanCullState;
+import org.soutalab.celtium.vulkan.VulkanDiagnostics;
 
 /**
  * The renderer state that Minecraft's and Forge's {@code GlStateManager} calls are translated into.
@@ -12,13 +16,19 @@ import org.soutalab.celtium.vulkan.gl.GlsmMatrixMode;
  * here instead, and the draw entry turns the accumulated state plus the batch's vertex format into a pipeline key,
  * so a pipeline is only created when a draw actually needs it - the deferred selection the policy asks for.
  * <p>
+ * Seated in the Lane 2 mirror household since the E5 seat A move (Neon E4 ruling 2026-11-28; this class is the
+ * former {@code VulkanGlState} of the backend package): the single production instance is owned by
+ * {@link Lane2StateMirror} and reached through {@link Lane2StateMirror#immediate()}, so the immediate funnel's
+ * working state and the mirror the converter syncs against share one owner. The matrix mode lives here in GL
+ * enum terms, with the mirror's accessors delegating to it.
+ * <p>
  * Matrices are kept as {@code float[16]} column-major arrays, matching what the terrain path already uploads into its
  * push-constant block, so no conversion is needed at draw time and this class carries no matrix library dependency
  * that the shadow step would have to relocate.
  * <p>
  * Threading: render thread only, like the rest of the backend.
  */
-public final class VulkanGlState {
+public final class Lane2ImmediateState {
     private static final int MATRIX_FLOATS = 16;
 
     /** The default state Minecraft starts a frame with, as far as this renderer tracks it. */
@@ -32,9 +42,17 @@ public final class VulkanGlState {
     private final ArrayDeque<float[]> textureStack0 = new ArrayDeque<float[]>();
     private final ArrayDeque<float[]> textureStack1 = new ArrayDeque<float[]>();
 
-    // M-3 rewired: the matrix mode has no per-instance field any more. GlsmMatrixMode is the single
-    // owner for both routes (the stub route writes it in GL enum values; this class converts to and
-    // from its ordinals in matrixMode()/matrixMode(int)). See GlsmMatrixMode's javadoc.
+    // The matrix mode's single owner for both routes, held here in GL enum values since the E5
+    // seat A move (Neon E4 ruling 2026-11-28): the Lane 2 mirror delegates its mode accessors to
+    // this field, the immediate funnel converts to and from its ordinals in matrixMode() /
+    // matrixMode(int), and the old GLSM record (GlsmMatrixMode) forwards to the mirror until it
+    // is deleted with the capture package at E4-c. A direct GL11.glMatrixMode call that reaches
+    // only one route therefore still moves the mode the other route's stack machinery selects
+    // by - the disagreement the former double ownership allowed stays gone (the M-3 property).
+    private static final int GL_MODELVIEW_VALUE = 0x1700;
+    private static final int GL_PROJECTION_VALUE = 0x1701;
+    private static final int GL_TEXTURE_VALUE = 0x1702;
+    private volatile int matrixModeGl = GL_MODELVIEW_VALUE;
     /** GL's two blend equations; {@code GL_FUNC_ADD} is GL's initial state and what the pipelines baked alone. */
     /** Which channels a write may touch: bit 0 red, 1 green, 2 blue, 3 alpha (Vulkan's own component bits). */
     private boolean depthTestEnabled = true;
@@ -163,21 +181,20 @@ public final class VulkanGlState {
     private final NativeRasterState raster;
     private final NativeTextureBindings textures;
 
-    public VulkanGlState() {
+    public Lane2ImmediateState() {
         this(new NativeRasterState());
     }
 
-    VulkanGlState(NativeRasterState raster) {
+    public Lane2ImmediateState(NativeRasterState raster) {
         this(raster, new NativeTextureBindings(raster));
     }
 
-    VulkanGlState(NativeRasterState raster, NativeTextureBindings textures) {
+    public Lane2ImmediateState(NativeRasterState raster, NativeTextureBindings textures) {
         this.raster = raster;
         this.textures = textures;
-        // M-3: construction used to initialise a per-instance MODELVIEW field. The shared record is
-        // initialised instead, preserving the "a fresh state starts in MODELVIEW, as GL does" meaning
-        // existing callers and tests rely on. In production this runs once, at backend construction.
-        GlsmMatrixMode.current().set(GlsmMatrixMode.MODELVIEW);
+        // A fresh state starts in MODELVIEW, as GL does: the mode field's initial value carries
+        // that meaning (before the E5 move the constructor wrote it into the shared GLSM record).
+        // In production this runs once, when the Lane 2 mirror is created.
         this.modelViewStack.push(newIdentity());
         this.projectionStack.push(newIdentity());
         this.textureStack0.push(newIdentity());
@@ -425,19 +442,29 @@ public final class VulkanGlState {
 
     /**
      * {@return the active matrix mode as this class's ordinal} ({@link #MATRIX_MODE_MODELVIEW} and
-     * friends). The single owner is {@link GlsmMatrixMode}, which holds GL enum values; the conversion
+     * friends). The owner is this class's GL-enum field (see {@link #matrixModeGl()}); the conversion
      * lives here so that owner stays in GL terms. An unrecognised GL value reads as MODELVIEW, the
      * same fall-through the backend's GL-to-ordinal mapping and {@code stack(int)}'s default use.
      */
     public int matrixMode() {
-        int glMode = GlsmMatrixMode.current().get();
-        if (glMode == GlsmMatrixMode.PROJECTION) {
+        int glMode = this.matrixModeGl;
+        if (glMode == GL_PROJECTION_VALUE) {
             return MATRIX_MODE_PROJECTION;
         }
-        if (glMode == GlsmMatrixMode.TEXTURE) {
+        if (glMode == GL_TEXTURE_VALUE) {
             return MATRIX_MODE_TEXTURE;
         }
         return MATRIX_MODE_MODELVIEW;
+    }
+
+    /** {@return the active matrix mode in GL enum terms} - the owner's own encoding. */
+    public int matrixModeGl() {
+        return this.matrixModeGl;
+    }
+
+    /** Sets the active matrix mode from a GL enum value, as the mirror and the legacy record do. */
+    public void matrixModeGl(int glMode) {
+        this.matrixModeGl = glMode;
     }
 
     /**
@@ -453,18 +480,18 @@ public final class VulkanGlState {
     }
 
     /**
-     * Sets the active matrix mode from this class's ordinal, writing through to the single owner
-     * {@link GlsmMatrixMode} in GL enum terms, so a mode set here is the mode the stub route's
-     * redundant-call skip sees (and vice versa). An unrecognised ordinal writes MODELVIEW, matching
-     * the getter's fall-through.
+     * Sets the active matrix mode from this class's ordinal, writing through to the owner's
+     * GL-enum field, so a mode set here is the mode the stub route's redundant-call skip sees
+     * (and vice versa, through the legacy record's forwarding). An unrecognised ordinal writes
+     * MODELVIEW, matching the getter's fall-through.
      */
     public void matrixMode(int mode) {
         if (mode == MATRIX_MODE_PROJECTION) {
-            GlsmMatrixMode.current().set(GlsmMatrixMode.PROJECTION);
+            this.matrixModeGl = GL_PROJECTION_VALUE;
         } else if (mode == MATRIX_MODE_TEXTURE) {
-            GlsmMatrixMode.current().set(GlsmMatrixMode.TEXTURE);
+            this.matrixModeGl = GL_TEXTURE_VALUE;
         } else {
-            GlsmMatrixMode.current().set(GlsmMatrixMode.MODELVIEW);
+            this.matrixModeGl = GL_MODELVIEW_VALUE;
         }
     }
 
