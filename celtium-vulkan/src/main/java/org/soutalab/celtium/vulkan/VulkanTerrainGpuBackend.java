@@ -603,48 +603,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int targetWidth;
     int targetHeight;
     /**
-     * The published wrapper for the chain's adopted output: the renderer's off-target colour image under the GL name
-     * the game's composite binds, plus the name and the image handle it was published for.
-     * <p>
-     * The pair is published from the chain's adoption, the one place that knows both the identity -&gt; GL name
-     * association (reported by the game's own framebuffer bind) and the image the chain actually runs on. Publishing
-     * is idempotent for the same handles, so a per-frame call returns the same wrapper and the descriptor keys the
-     * immediate path cached stay valid. The image handle is kept so a pair recreated at a new size - whose wrapper
-     * would name a destroyed image - is unpublished instead of transitioned.
-     */
-    VulkanGlTexture publishedChainOutput;
-    int publishedChainTexture;
-    long publishedChainImage;
-    /** The framebuffer identity whose chain pair the published chain output is the image of. */
-    long publishedChainIdentity;
-    /**
-     * Every game colour texture name published over the chain pair's image, as its *image handle*, so a pair
-     * recreated at a new size can be unpublished from every name it stood for instead of only from the outline's.
-     * <p>
-     * The name-to-wrapper half of this census is `PublishedFrameTextures.published` (refactoring plan R1b); the
-     * backend's own `Map<Integer, VulkanGlTexture> publishedFrameTextures` stood beside it and was read by nothing -
-     * the plan's R8 item "the duplicated publication display". It is removed here, and the image-handle map below
-     * stays because it is read at :10453/:10492/:10539.
-     */
-    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImages =
-            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
-
-    /**
-     * The shared depth store key each depth-published GL name stands for, beside {@link #publishedFrameImages}.
-     * <p>
-     * A depth publication's layout record lives in the frame target's shared depth store, not in a pair, so the
-     * transition walk needs the key to report the wrapper's moves back into the store - the report the owner's
-     * next attachment acquire reads its source layout from (SHADOW-NATIVE-DESIGN section 3.4). Colour names are
-     * absent here; presence in this map is what makes a published name a depth publication.
-     */
-    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameDepthKeys =
-            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
-
-    /** The published GL names, formatted like the boxed key set it replaced so log readers see the same text. */
-    private String publishedFrameNames() {
-        return java.util.Arrays.toString(this.publishedFrameImages.keySet().toIntArray());
-    }
-    /**
      * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
      * <p>
      * A published name that stands for this image must NOT be moved to the sampling layout before the pass begins. The
@@ -1630,136 +1588,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     final BackendDiagnostics reports = new BackendDiagnostics(this);
 
     /** The post-process chain bridge: runs a collected shader chain natively, adopts its framebuffers and keeps the textures it publishes to the game in the right layout. */
-    // The published-frame-texture machinery the PostChainBridge used to house, seated here
-    // with the bridge's retirement (ruling step 5): publication, the layout transition walk,
-    // the stale-name prune and the pair-recreation scan all operate on this class's own
-    // publication state, and their final redistribution follows the frame loop's inversion
-    // to FrameCoordinator ownership at E7.
-    /**
-     * Publishes a game framebuffer's colour texture name over the chain pair's image, and keeps it current.
-     * <p>
-     * One entry per GL texture name, holding the image that name currently stands for. The same name is published
-     * again only when the pair has been recreated (a new size makes a new image); a recreated pair's old image is
-     * destroyed, so the wrapper that named it is unpublished first - the rule {@code celtium$syncPublishedChainOutput}
-     * follows for the outline's name. Called from the off-target pass that draws the game's own framebuffer into the
-     * pair, which is the moment both facts are true: the identity being drawn is known, and the image its draws land in
-     * is the pair.
-     */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$publishFrameTexture(int glTextureName, long image, long view, int width, int height) {
-        if (glTextureName == 0 || image == 0L || width <= 0 || height <= 0) {
-            return;
-        }
-        VulkanGlTexture current = this.publishedTextures.published(glTextureName);
-        // One lookup: image is non-zero here (the guard above), so 0 is the absent sentinel.
-        if (current != null && this.publishedFrameImages.get(glTextureName) == image) {
-            return;
-        }
-        if (current != null) {
-            this.celtium$registry().unpublishExternalImage(glTextureName);
-        }
-        VulkanGlTexture published = this.celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
-        if (published == null) {
-            return;
-        }
-        this.publishedTextures.putPublished(glTextureName, published);
-        this.publishedFrameImages.put(glTextureName, image);
-        this.publishedTextures.noteCreated();
-        // Which image this name stands for decides the layout a descriptor from it declares: a pair image is attached
-        // by a pass that declares GENERAL, and pair images stay in GENERAL, so it must declare GENERAL too.
-        GllessFrameTarget offTarget = this.offTargetTarget();
-        // The native main attachment also stays in GENERAL. Treating only auxiliary pairs this way let its
-        // published sampler move the main image to SHADER_READ_ONLY behind the native target owner's back;
-        // the next world/menu acquisition then disagreed with the wrapper's remembered layout.
-        published.notePairImage((this.frameTarget instanceof GllessFrameTarget && image == this.frameTarget.colorImage())
-                || (offTarget != null && (offTarget.isChainPairColorImage(image)
-                || image == offTarget.offTargetColorImage())));
-        if (offTarget != null) {
-            long owner = offTarget.chainPairIdentityForImage(image);
-            if (owner != Long.MIN_VALUE) {
-                this.publishedFrameImageIdentities.put(glTextureName, owner);
-                int slot = offTarget.chainPairColorSlotForImage(owner, image);
-                if (slot > 0) {
-                    this.publishedFrameImageSlots.put(glTextureName, slot);
-                } else {
-                    this.publishedFrameImageSlots.remove(glTextureName);
-                }
-            } else {
-                this.publishedFrameImageIdentities.remove(glTextureName);
-                this.publishedFrameImageSlots.remove(glTextureName);
-            }
-        }
+        this.presentSwapchain.celtium$publishFrameTexture(glTextureName, image, view, width, height);
     }
 
-    /**
-     * The depth twin of {@link #celtium$publishFrameTexture}: one GL depth texture name over the shared depth
-     * image that stands for it (SHADOW-NATIVE-DESIGN section 3.4).
-     * <p>
-     * The name's store key is recorded beside the publication ({@code publishedFrameDepthKeys}), because the
-     * shared depth store - not a pair - holds this image's layout record, and the transition walk reports the
-     * wrapper's moves back into it. No pair identity is recorded: the pair owner map names colour images only,
-     * and the stale-name prune reads the store for depth names instead.
-     */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$publishFrameDepthTexture(int glTextureName, long image, long view, int width, int height,
             int declaredLayout, long depthKey) {
-        if (glTextureName == 0 || image == 0L || view == 0L || depthKey == 0L || width <= 0 || height <= 0) {
-            return;
-        }
-        VulkanGlTexture current = this.publishedTextures.published(glTextureName);
-        if (current != null && current.isDepthExternal()
-                && this.publishedFrameImages.get(glTextureName) == image
-                && this.publishedFrameDepthKeys.get(glTextureName) == depthKey) {
-            return;
-        }
-        if (current != null) {
-            this.celtium$registry().unpublishExternalImage(glTextureName);
-        }
-        VulkanGlTexture published = this.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
-                width, height, declaredLayout);
-        if (published == null) {
-            return;
-        }
-        this.publishedTextures.putPublished(glTextureName, published);
-        this.publishedFrameImages.put(glTextureName, image);
-        this.publishedFrameDepthKeys.put(glTextureName, depthKey);
-        this.publishedTextures.noteCreated();
+        this.presentSwapchain.celtium$publishFrameDepthTexture(glTextureName, image, view, width, height, declaredLayout, depthKey);
     }
 
-    /** Drop wrappers for a deleted target before its owner retires the image and view. */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$forgetPublishedTarget(long identity) {
-        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> it =
-                this.publishedFrameImageIdentities.int2LongEntrySet().fastIterator();
-        while (it.hasNext()) {
-            it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = it.next();
-            if (entry.getLongValue() != identity) continue;
-            int name = entry.getIntKey();
-            this.celtium$registry().unpublishExternalImage(name);
-            this.publishedTextures.removePublished(name);
-            this.publishedFrameImages.remove(name);
-            this.publishedFrameImageSlots.remove(name);
-            it.remove();
-        }
-        if (this.publishedChainOutput != null && this.publishedChainIdentity == identity) {
-            this.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
-            this.publishedChainOutput = null;
-            this.publishedChainTexture = 0;
-            this.publishedChainImage = 0L;
-            this.publishedChainIdentity = 0L;
-        }
-        // Depth publications record no pair identity, so they are matched through the depth record instead -
-        // which the caller still holds at this point (it clears the identity's depth binding after this
-        // returns). A name whose depth texture belongs to the forgotten identity is unpublished with the
-        // colour names, before the shared depth store entry it stands for is retired.
-        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> depthIt =
-                this.publishedFrameDepthKeys.int2LongEntrySet().fastIterator();
-        while (depthIt.hasNext()) {
-            it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = depthIt.next();
-            int name = entry.getIntKey();
-            if (this.publishedTextures.identityForDepthTexture(name) != identity) continue;
-            this.celtium$registry().unpublishExternalImage(name);
-            this.publishedTextures.removePublished(name);
-            this.publishedFrameImages.remove(name);
-            depthIt.remove();
-        }
+        this.presentSwapchain.celtium$forgetPublishedTarget(identity);
     }
 
     /**
@@ -1833,567 +1675,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return 0L;
     }
 
-    /**
-     * Name-to-image resolution cached for the transition loop, rebuilt only when the publication set or a chain pair
-     * changes. The loop runs once per window (about fifty a frame on a world scene), and it used to prune and rebuild
-     * its map views on every one of them.
-     */
-    private long publishedCacheVersion = Long.MIN_VALUE;
-    private long publishedCachePairs = Long.MIN_VALUE;
-    /**
-     * The frame target's colour image as of the last prune and cache rebuild. The prune's liveness rule
-     * for a name published over the frame image compares against the live {@code frameTarget.colorImage()},
-     * but neither the publication version nor the pair generation moves when that image does - the
-     * borrowed swapchain image rotates every frame, and a borrow bypass swaps in the owned image - so
-     * without this component the prune never re-ran once the chain pairs settled, and the main name
-     * stayed published over a single already-presented swapchain image.
-     */
-    private long publishedCacheFrameImage = Long.MIN_VALUE;
 
 
-    private int[] cachedNames = new int[0];
-    private VulkanGlTexture[] cachedWrappers = new VulkanGlTexture[0];
-    private long[] cachedImages = new long[0];
-    /**
-     * The chain-pair identity each cached name's image stands for, resolved once per cache rebuild.
-     * <p>
-     * The transition loop used to ask {@code chainPairIdentityForImage} for every name on every window - a hash lookup
-     * per name per window, and the loop runs once per window (35.8 a frame on the measured world scene). The answer
-     * only changes when the pair generation changes, which is already part of the cache key, so it is resolved here
-     * with the rest of the cache instead of 35.8 times a frame.
-     */
-    private long[] cachedPairIdentities = new long[0];
 
-    /**
-     * The chain-pair colour slot each cached name's image fills, resolved with the rest of the cache.
-     * <p>
-     * The walk used to re-resolve this per name per pass through
-     * {@code chainPairColorSlotForImage} - a pair lookup plus a slot scan - although the answer only
-     * changes when the pair generation changes, which is already part of the cache key (the same
-     * argument as {@link #cachedPairIdentities}). -1 for a name that fills no slot.
-     */
-    private int[] cachedPairSlots = new int[0];
 
-    /**
-     * The shared depth store key each cached name stands for, 0 for a colour name, resolved with the rest of the
-     * cache: the walk reports a depth wrapper's layout moves into the store under this key, and resolving it per
-     * window would be the same per-name lookup the pair-identity cache exists to avoid.
-     */
-    private long[] cachedDepthKeys = new long[0];
-
-    /**
-     * The pair generation each identity's stale-name scan last completed for, and the publication version it saw.
-     * <p>
-     * The scan re-points names whose image died with a recreated pair, so it can only find one when that identity's
-     * pair was recreated or the publication set moved. The key used to be the identity and the pair's colour image,
-     * which is the same thing only while one identity is bound: the measured world scene binds thirteen of
-     * GregTech's post-chain framebuffers a frame, so the key missed on every window and the scan walked all published
-     * names (38) with two boxed-key lookups each, thirteen times a frame. That is the whole of {@code winHead}'s
-     * 0.1 ms a frame, and it is a scan that could not have found anything - no pair was recreated between those
-     * windows. The generation is the counter that moves when one is, and it is per identity, so a window for one
-     * framebuffer cannot consume the scan another framebuffer still needs.
-     */
-    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap syncScanGenerations =
-            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
-    private long syncScanVersion = Long.MIN_VALUE;
-    /** The frame target's pair-generation total when the memo was last used, so a new target clears it. */
-    private long syncScanTotal = Long.MIN_VALUE;
-
-    /**
-     * Whether the published-name walk has to visit one name.
-     * <p>
-     * The sampling side always does: it is the direction that has to cover every name a draw in the pass might sample,
-     * and that set is not known at the walk. The attach side only has to visit the names whose image the pass is about
-     * to attach - the hand-back exists to satisfy {@code VUID-vkCmdBeginRenderPass-initialLayout-00900} for that one
-     * image - so a name over another image is skipped. {@code attachImage == 0} means the caller did not name an
-     * image, and the walk keeps its old, unconditional behaviour.
-     * <p>
-     * Static and package-private so the rule is testable without a device: the walk itself needs a GPU, but "which
-     * names may be skipped" is arithmetic, and a green test here is not evidence that a transition happened.
-     *
-     * @param general     {@code true} for the attach-side hand-back
-     * @param attachImage the image the pass attaches, or 0 when the caller did not narrow
-     * @param publishedImage the image the published name stands for, 0 when it has none
-     */
-    static boolean celtium$attachHandBackNeeded(boolean general, long attachImage, long publishedImage) {
-        return !general || attachImage == 0L || publishedImage == attachImage;
-    }
-
-    /**
-     * The same rule for a pass that attaches several images (a multi-target window's whole tuple): the name is
-     * visited when any attached image is the one it stands for. A null array is the unnarrowed walk, as
-     * {@code attachImage == 0} is above.
-     */
-    static boolean celtium$attachHandBackNeeded(boolean general, long[] attachImages, long publishedImage) {
-        if (!general || attachImages == null) {
-            return true;
-        }
-        for (long attachImage : attachImages) {
-            if (celtium$attachHandBackNeeded(true, attachImage, publishedImage)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Zero-allocation attach hand-back predicate covering a pass's color target(s) AND its borrowed shared depth
-     * target (shadow §3.4). When {@code general == false} (sampling side) or all attach arguments are unset
-     * (unnarrowed walk), returns {@code true}; otherwise returns {@code true} iff {@code publishedImage} matches
-     * {@code attachColor}, {@code attachDepth}, or any element of {@code attachColors}.
-     */
-    static boolean celtium$attachHandBackNeeded(boolean general, long attachColor, long attachDepth,
-            long[] attachColors, long publishedImage) {
-        if (!general) {
-            return true;
-        }
-        if (attachColor == 0L && attachDepth == 0L && attachColors == null) {
-            return true;
-        }
-        if (attachColor != 0L && publishedImage == attachColor) {
-            return true;
-        }
-        if (attachDepth != 0L && publishedImage == attachDepth) {
-            return true;
-        }
-        if (attachColors != null) {
-            for (long candidate : attachColors) {
-                if (candidate != 0L && candidate == publishedImage) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * {@return the layout the published-name walk moves one name's image to, and the layout it reports to the
-     * image's owner afterwards}.
-     * <p>
-     * One decision for both the transition and the report, so the two cannot disagree: the walk records a barrier
-     * to this value and then reports this value (read back as the wrapper's recorded destination). The sampling
-     * side ({@code general == false}) is {@code SHADER_READ_ONLY_OPTIMAL} for every published image - the layout
-     * the sampling descriptors declare. The attach side differs by kind: a colour image's owner attaches it in
-     * {@code GENERAL}, the layout its pass declares, but a depth image's owner attaches it in its own layout
-     * ({@code ownerLayout}, normally {@code DEPTH_STENCIL_ATTACHMENT_OPTIMAL}) - {@code GENERAL} is a value the
-     * depth owner's records never use, and handing a depth image back there left the owner's store record naming
-     * a layout the next draw's descriptor did not declare (item 537 wall (c): the two
-     * {@code VUID-vkCmdDraw-None-09600} on the published depth image).
-     * <p>
-     * Static and package-private so the rule is testable without a device, like
-     * {@link #celtium$attachHandBackNeeded}: a green test here pins the decision table, not a recorded barrier.
-     *
-     * @param depth       {@code true} when the published name stands for a depth image (it carries a depth key)
-     * @param general     {@code true} for the attach-side hand-back, {@code false} for the sampling side
-     * @param ownerLayout the layout the depth image's owner attaches it in; ignored for colour names and on the
-     *                    sampling side
-     */
-    static int celtium$publishedHandBackLayout(boolean depth, boolean general, int ownerLayout) {
-        if (!general) {
-            return org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        }
-        return depth ? ownerLayout : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
-    }
-
-    private void celtium$rebuildPublishedCache() {
-        int size = this.publishedTextures.publishedCount();
-        GllessFrameTarget pairOwner = this.offTargetTarget();
-        this.cachedNames = new int[size];
-        this.cachedWrappers = new VulkanGlTexture[size];
-        this.cachedImages = new long[size];
-        this.cachedPairIdentities = new long[size];
-        this.cachedPairSlots = new int[size];
-        this.cachedDepthKeys = new long[size];
-        for (int i = 0; i < size; i++) {
-            int name = this.publishedTextures.publishedKeyAt(i);
-            VulkanGlTexture wrapper = this.publishedTextures.publishedValueAt(i);
-            long image = this.publishedFrameImages.get(name);
-            this.cachedNames[i] = name;
-            this.cachedWrappers[i] = wrapper;
-            this.cachedImages[i] = image;
-            this.cachedPairIdentities[i] = pairOwner == null || image == 0L
-                    ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(image);
-            this.cachedPairSlots[i] = pairOwner == null || this.cachedPairIdentities[i] == Long.MIN_VALUE
-                    ? -1 : pairOwner.chainPairColorSlotForImage(this.cachedPairIdentities[i], image);
-            this.cachedDepthKeys[i] = this.publishedFrameDepthKeys.get(name);
-        }
-    }
-
-    /**
-     * Moves every published frame texture to the layout its next use needs.
-     * <p>
-     * Two uses alternate on the same image: the pass that draws the game's framebuffer into the pair attaches it, which
-     * declares GENERAL, and the pass that samples it through the published name has a descriptor declaring
-     * SHADER_READ_ONLY_OPTIMAL. {@code general} picks which one is next; the sampling side is the transition that was
-     * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
-     */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$transitionPublishedFrameTextures(boolean general) {
-        celtium$transitionPublishedFrameTextures(general, 0L);
+        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general);
     }
 
-    /**
-     * Records a layout move in the pair that owns the image, at the slot the cache resolved for it:
-     * slot 0's record is the pair's own, a tuple slot's record is what that slot's acquire barrier
-     * reads as its source layout.
-     *
-     * @return whether the pair's record changed - a settled name (the record already names this
-     *         layout) writes nothing, and its caller skips the layout report for it too
-     */
-    private boolean notePairColorLayout(GllessFrameTarget pairOwner, long identity, int slot, int layout) {
-        return pairOwner.noteChainPairColorLayoutAtSlotIfChanged(identity, slot, layout);
-    }
-
-    /**
-     * The same walk, narrowed on the attach side to the names that stand for the image the pass is about to attach.
-     * <p>
-     * The hand-back exists for one reason: the pass declares {@code GENERAL} for attachment 0, so every published name
-     * whose image that pass attaches has to be moved back before {@code vkCmdBeginRenderPass}
-     * ({@code VUID-vkCmdBeginRenderPass-initialLayout-00900}). A name published over a <em>different</em> image is not
-     * attached by this pass and is not moved by it, so handing it back is a transition nothing asked for - and the walk
-     * that records it runs once per off-target window, over every published name (38 at the end of the measured run).
-     * <p>
-     * The sampling side ({@code general == false}) is unchanged: it is the direction that has to cover every name a
-     * draw in the pass might sample, and that set is not known here.
-     *
-     * @param general     {@code true} for the attach-side hand-back, {@code false} for the sampling-side transition
-     * @param attachImage the image the pass is about to attach, or 0 to hand back every published name as before
-     */
-    void celtium$transitionPublishedFrameTextures(boolean general, long attachImage) {
-        celtium$transitionPublishedFrameTextures(general, attachImage, 0L, null);
-    }
-
-    /** Zero-allocation overload for a single-color pass that may also attach a borrowed shared depth image. */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth) {
-        celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth, null);
+        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth);
     }
 
-    /**
-     * The same walk for a pass that attaches several images at once (a multi-target window's tuple): the
-     * hand-back covers every attached slot's names, and the sampling side skips every attached slot's names.
-     *
-     * @param attachImages the images the pass is about to attach, or null to hand back every published name
-     */
-    void celtium$transitionPublishedFrameTextures(boolean general, long[] attachImages) {
-        celtium$transitionPublishedFrameTextures(general, 0L, 0L, attachImages);
-    }
-
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth,
             long[] attachImages) {
-        if (this.publishedTextures.isEmptyPublished() || this.commandBuffer == null) {
-            return;
-        }
-        long publications = this.publishedTextures.publishedVersion();
-        GllessFrameTarget cachePairsOwner = this.offTargetTarget();
-        long pairs = cachePairsOwner == null ? -1L : cachePairsOwner.chainPairGenerationTotal();
-        long frameColorImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
-        if (publications != this.publishedCacheVersion || pairs != this.publishedCachePairs
-                || frameColorImage != this.publishedCacheFrameImage) {
-            // The prune re-publishes a name whose pair image was recreated; it is the reason a stale resolution cannot
-            // simply be cached forever, and the generation is part of the key for exactly that case. The frame
-            // image is part of the key for the twin case: a name published over it goes stale when the image
-            // rotates or is swapped, which neither of the other two components can see.
-            celtium$pruneStalePublishedNames();
-            this.publishedCacheVersion = this.publishedTextures.publishedVersion();
-            this.publishedCachePairs = pairs;
-            this.publishedCacheFrameImage = frameColorImage;
-            celtium$rebuildPublishedCache();
-            if (this.publishedTextures.isEmptyPublished()) {
-                return;
-            }
-        }
-        GllessFrameTarget pairOwner = this.offTargetTarget();
-        for (int cachedIndex = 0; cachedIndex < this.cachedNames.length; cachedIndex++) {
-            int entryKey = this.cachedNames[cachedIndex];
-            VulkanGlTexture entryValue = this.cachedWrappers[cachedIndex];
-            long publishedImageHandleValue = this.cachedImages[cachedIndex];
-            long publishedImageIdentity = this.cachedPairIdentities[cachedIndex];
-            boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
-            if (!celtium$attachHandBackNeeded(general, attachColor, attachDepth, attachImages,
-                    publishedImageHandleValue)) {
-                // The hand-back is the attach's own precondition: only the names that stand for the image this pass
-                // attaches have to be in GENERAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL for it. A name over another
-                // image is not attached here and is not moved here, so the transition would be one nothing asked for.
-                continue;
-            }
-            // The sampling side must not move an image (color OR depth) that this pass is about to attach: the pass
-            // declares GENERAL for color attachments and DEPTH_STENCIL_ATTACHMENT_OPTIMAL for depth attachments, so
-            // transitioning it to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass causes
-            // VUID-vkCmdBeginRenderPass-initialLayout-00900.
-            if (!general && (this.passAttachedColorImage != 0L || this.passAttachedDepthImage != 0L)) {
-                if (publishedImageHandleValue != 0L
-                        && this.celtium$passAttachesImage(publishedImageHandleValue)) {
-                    this.publishedTextures.noteSkippedForAttach();
-                    if (this.publishedTextures.skippedForAttach() == 1) {
-                        this.record("published name " + entryKey + " stands for the image this pass attaches (0x"
-                                + Long.toHexString(this.passAttachedColorImage) + "); the sampling-side transition"
-                                + " would leave it in SHADER_READ_ONLY under a pass that declares GENERAL, so it is"
-                                + " skipped and the attach-side hand-back keeps it in GENERAL");
-                    }
-                    if (this.pairSkipLogs < 8) {
-                        // Whether the refusal leaves a draw without the layout its descriptor declares: the count is
-                        // of groups that sampled a published chain-pair name, this frame and cumulatively.
-                        this.pairSkipLogs++;
-                        System.out.println("[Celtium] CELTIUM_PAIR_SKIP frame=" + this.frameId
-                                + " name=" + entryKey + " attached=0x"
-                                + Long.toHexString(this.passAttachedColorImage)
-                                + " identity=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
-                                + " samplingDrawsThisRun=" + this.pairNameSamplingDraws
-                                + " samplingDrawsLastFrame=" + this.pairNameSamplingDrawsFrame
-                                + " (0 means nothing sampled this name before the skip)");
-                    }
-                    continue;
-                }
-            }
-            // A depth publication is decided apart from the colour names (item 537 wall (c)): its owner's
-            // vocabulary has no GENERAL in it, so the hand-back target comes from the same decision the report
-            // below uses, with the owner's own attachment layout as the depth answer.
-            long depthKey = this.cachedDepthKeys[cachedIndex];
-            int pairSlot = this.cachedPairSlots[cachedIndex];
-            // Whether this name's pair record actually moves below: a settled name writes nothing
-            // and earns no layout report (the report's summary cannot have changed through it).
-            boolean pairRecordChanged = false;
-            if (general) {
-                if (depthKey != 0L) {
-                    entryValue.ensureHandBackLayout(this.commandBuffer, celtium$publishedHandBackLayout(true, true,
-                            GllessFrameTarget.DEPTH_RENDER_LAYOUT));
-                } else {
-                    entryValue.ensureGeneralLayout(this.commandBuffer);
-                }
-            } else if (pairImageName) {
-                // The pair is never moved out of the layout its pass declares, so its sampling transition is not
-                // served. Counted, so "the transition was skipped" is a measurement; and the pair's own record follows,
-                // because the image is still in GENERAL and a record left at SHADER_READ_ONLY would be stale.
-                this.publishedTextures.noteSkippedForAttach();
-                if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                    pairRecordChanged = notePairColorLayout(pairOwner, publishedImageIdentity, pairSlot,
-                            org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
-                }
-            } else {
-                entryValue.ensureSampledLayout(this.commandBuffer);
-            }
-            // The pair's own record of the image's layout follows the wrapper's barrier, but only for the names that
-            // stand for the pair image on the hand-back side: on the sampling side (!general), pairImageName already
-            // skipped the transition and recorded GENERAL above, so writing SHADER_READ_ONLY_OPTIMAL here would
-            // overwrite the true GENERAL layout with a stale sampling layout.
-            if (general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                pairRecordChanged = notePairColorLayout(pairOwner, publishedImageIdentity, pairSlot,
-                        celtium$publishedHandBackLayout(false, true, 0));
-            }
-            // A depth publication's layout record is the shared depth store, not a pair, so the wrapper's move is
-            // reported into it under the name's key: the owner's next attachment acquire reads the store for its
-            // barrier's source layout, and the native depth copy reads it too. Without the report the store would
-            // keep naming the attachment layout while the image sits in the read layout the sampling side left it
-            // in, and the next acquire would name a source layout the image is not in. This is the report
-            // SHADOW-NATIVE-DESIGN section 3.4 requires of the publication.
-            // The reported value is the destination the wrapper's recording actually leaves the image in, read
-            // back from the wrapper - not a value synthesised from `general`. The two agreed for colour, but for
-            // depth the binary synthesis wrote GENERAL on the hand-back side: a layout the depth owner never
-            // uses, over an image the hand-back above moved to the owner's attachment layout (item 537 wall (c)).
-            if (depthKey != 0L && pairOwner != null) {
-                // The destination is the value the transition above was told to reach, on both
-                // deterministic routes: the hand-back names DEPTH_RENDER_LAYOUT, the sampling side
-                // names the wrapper's sampling layout. Reading it back through foreignLayoutIn -
-                // a synchronized lookup over two shared maps - per depth name per pass bought
-                // nothing on those routes. The pair-name sampling route is the exception: it
-                // records no transition, so the image stays wherever it was, and only the read-back
-                // knows that value. The store write itself is skipped when it already names the
-                // destination (a settled depth name).
-                int depthDestination;
-                if (general) {
-                    depthDestination = GllessFrameTarget.DEPTH_RENDER_LAYOUT;
-                } else if (pairImageName) {
-                    depthDestination = entryValue.foreignLayoutIn(this.commandBuffer);
-                } else {
-                    depthDestination = entryValue.samplingLayout();
-                }
-                pairOwner.noteSharedDepthLayoutIfChanged(depthKey, depthDestination);
-            }
-        }
+        this.presentSwapchain.celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth, attachImages);
     }
 
-    /**
-     * Drops every published name whose image is no longer the pair's live image.
-     * <p>
-     * A name is published over the renderer's own image so the game's composite can sample it by the name it binds. That
-     * image is destroyed and replaced when the pair is recreated (a size change, the first real frame after the splash),
-     * and the wrapper then names freed memory. Recording a barrier on it is not a validation warning: the menu leg
-     * measured `vkCmdPipelineBarrier(): pImageMemoryBarriers[0].image Invalid VkImage Object 0x300000000030` and then a
-     * <b>SIGSEGV inside libvulkan_radeon</b> — the driver dereferenced the freed handle. The unpublish-on-recreation rule
-     * already existed ({@code celtium$syncPublishedChainOutput}), but it only ran on the chain-identity branch, so a
-     * frame that samples the name before that branch runs used the stale wrapper. This is the same rule at the point of
-     * use, so a recreated pair cannot be sampled through a name that still points at the old image.
-     */
-    void celtium$pruneStalePublishedNames() {
-        if (this.publishedTextures.isEmptyPublished()) {
-            return;
-        }
-        GllessFrameTarget offTarget = this.offTargetTarget();
-        if (offTarget == null) {
-            // Only the owned target carries the chain pairs the published names stand for; without one there is
-            // nothing here to judge.
-            return;
-        }
-        for (int idx = this.publishedTextures.publishedCount() - 1; idx >= 0; idx--) {
-            int name = this.publishedTextures.publishedKeyAt(idx);
-            long image = this.publishedFrameImages.get(name);
-            long owner = this.publishedFrameImageIdentities.get(name);
-            long depthKey = this.publishedFrameDepthKeys.get(name);
-            long live;
-            if (depthKey != 0L) {
-                // A depth publication stands for the shared depth store's image for its key, not a pair's colour
-                // image: the store is its liveness record, and a recreated store entry re-points the name the
-                // same way a recreated pair re-points a colour name.
-                live = offTarget.sharedDepthImage(depthKey);
-            } else if (owner != Long.MIN_VALUE) {
-                // The name stands for the slot it was published over: a tuple slot's live image is not slot 0's
-                // (comparing against slot 0 re-published colortex4/5 and shadowcolor1 over the pair's own image).
-                live = offTarget.chainPairColorImageAt(owner, this.publishedFrameImageSlots.get(name));
-            } else if (image != 0L && (image == this.frameTarget.colorImage()
-                    || image == offTarget.offTargetColorImage())) {
-                live = image;
-            } else {
-                live = 0L;
-            }
-            if (image != 0L && live != 0L && image == live) {
-                continue;
-            }
-            if (live != 0L) {
-                VulkanGlTexture republished;
-                if (depthKey != 0L) {
-                    long liveView = offTarget.sharedDepthView(depthKey);
-                    int[] liveExtent = offTarget.sharedDepthExtent(depthKey);
-                    int liveLayout = offTarget.sharedDepthLayout(depthKey);
-                    republished = liveView == 0L || liveExtent == null
-                            || liveLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED ? null
-                                    : this.celtium$registry().publishExternalDepthImage(name, live, liveView,
-                                            liveExtent[0], liveExtent[1], liveLayout);
-                } else {
-                    republished = this.celtium$registry().publishExternalImage(name, live,
-                            offTarget.chainPairColorViewAt(owner, this.publishedFrameImageSlots.get(name)),
-                            this.targetWidth, this.targetHeight);
-                    // A republished wrapper is a fresh wrapper: without the flag it declares SHADER_READ_ONLY over an
-                    // image the pair keeps in GENERAL (09600/00344 colour form, 00900 on the next attach).
-                    if (republished != null) {
-                        republished.notePairImage(true);
-                    }
-                }
-                if (republished != null) {
-                    this.publishedTextures.setPublishedValueAt(idx, republished);
-                    this.publishedFrameImages.put(name, live);
-                    this.publishedTextures.noteRepublished();
-                    continue;
-                }
-            }
-            this.celtium$registry().unpublishExternalImage(name);
-            this.publishedFrameImages.remove(name);
-            this.publishedFrameImageIdentities.remove(name);
-            this.publishedFrameImageSlots.remove(name);
-            this.publishedFrameDepthKeys.remove(name);
-            this.publishedTextures.noteUnpublished();
-            this.publishedTextures.noteStalePruned();
-            if (this.publishedTextures.stalePruned() == 1) {
-                this.record("published name " + name + " named image 0x"
-                        + (image == 0L ? "unknown" : Long.toHexString(image))
-                        + " which is no longer the pair's image (0x" + Long.toHexString(live)
-                        + " for identity 0x" + Long.toHexString(owner)
-                        + "); unpublished before any barrier could be recorded on it");
-            }
-            this.publishedTextures.removePublishedAt(idx);
-        }
-    }
 
-    /**
-     * Follows a pair re-creation for every published name whose image died with it.
-     * <p>
-     * With per-identity pairs the caller names <em>which</em> identity's pair was recreated: only names published over
-     * that identity's image can be stale; the others name living images and are left alone. The name's owner is the
-     * identity recorded at publish time.
-     *
-     * @param identity the framebuffer identity whose pair was (re)created
-     * @param chainPairColorImage the pair's live colour image now
-     */
+    /** Delegating door (S3-b E6): the implementation lives in {@link PresentSwapchain}. */
     void celtium$syncPublishedChainOutput(long identity, long chainPairColorImage) {
-        if (!this.publishedTextures.isEmptyPublished()) {
-            // The scan below walks every published name and asks two boxed-key lookups of each, and it runs on every
-            // off-target window (13 a frame on the measured world scene) - which is where winHead's 0.1 ms a frame
-            // comes from. What it looks for is a name whose image died with a recreated pair, so it can only find one
-            // when that identity's pair was recreated or the publication set moved. Both are counters, and both are in
-            // the key; when neither has moved the scan would find nothing again and is skipped. The key used to be the
-            // identity and the pair's colour image, which misses on every window of a frame that binds thirteen
-            // different framebuffers - the scan then ran thirteen times for a question whose answer could not change.
-            long publications = this.publishedTextures.publishedVersion();
-            GllessFrameTarget scanTarget = this.offTargetTarget();
-            long generation = scanTarget == null ? -1L : scanTarget.chainPairGeneration(identity);
-            long total = scanTarget == null ? -1L : scanTarget.chainPairGenerationTotal();
-            if (total < this.syncScanTotal) {
-                // A new frame target: its generations start over, so a memo from the previous one would say "already
-                // scanned" for a pair that has just been created. The total is monotonic within one target.
-                this.syncScanGenerations.clear();
-            }
-            this.syncScanTotal = total;
-            if (this.syncScanGenerations.get(identity) == generation
-                    && publications == this.syncScanVersion) {
-                if (this.publishedChainOutput == null) {
-                    return;
-                }
-                if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-                    this.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
-                    this.publishedChainOutput = null;
-                    this.publishedChainImage = 0L;
-                    return;
-                }
-                this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
-                return;
-            }
-            this.syncScanGenerations.put(identity, generation);
-            this.syncScanVersion = publications;
-            GllessFrameTarget liveTarget = this.offTargetTarget();
-            long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage(identity);
-            long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView(identity);
-            for (int idx = this.publishedTextures.publishedCount() - 1; idx >= 0; idx--) {
-                int name = this.publishedTextures.publishedKeyAt(idx);
-                long image = this.publishedFrameImages.get(name);
-                long owner = this.publishedFrameImageIdentities.get(name);
-                if (owner != identity) {
-                    continue;
-                }
-                int nameSlot = this.publishedFrameImageSlots.get(name);
-                long slotImage = nameSlot == 0 || liveTarget == null ? liveImage
-                        : liveTarget.chainPairColorImageAt(identity, nameSlot);
-                long slotView = nameSlot == 0 || liveTarget == null ? liveView
-                        : liveTarget.chainPairColorViewAt(identity, nameSlot);
-                if (image != 0L && image == (nameSlot == 0 ? chainPairColorImage : slotImage)) {
-                    continue;
-                }
-                if (slotImage != 0L && slotView != 0L) {
-                    VulkanGlTexture republished = this.celtium$registry().publishExternalImage(name,
-                            slotImage, slotView, this.targetWidth, this.targetHeight);
-                if (republished != null) {
-                    republished.notePairImage(true);
-                    this.publishedTextures.setPublishedValueAt(idx, republished);
-                    this.publishedFrameImages.put(name, slotImage);
-                    this.publishedTextures.noteRepublished();
-                    continue;
-                }
-                }
-                this.celtium$registry().unpublishExternalImage(name);
-                this.publishedFrameImages.remove(name);
-                this.publishedFrameImageIdentities.remove(name);
-                this.publishedFrameImageSlots.remove(name);
-                this.publishedTextures.noteUnpublished();
-                this.publishedTextures.removePublishedAt(idx);
-            }
-        }
-        if (this.publishedChainOutput == null) {
-            return;
-        }
-        if (this.publishedChainIdentity == identity && this.publishedChainImage != chainPairColorImage) {
-            this.celtium$registry().unpublishExternalImage(this.publishedChainTexture);
-            this.publishedChainOutput = null;
-            this.publishedChainImage = 0L;
-            return;
-        }
-        this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
+        this.presentSwapchain.celtium$syncPublishedChainOutput(identity, chainPairColorImage);
     }
 
     /** Writes every chain pair at its own extent; see {@code VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT}. */
@@ -6130,11 +5435,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** {@return whether a queued batch for this target samples the published outline image}. */
     private boolean celtium$queuedForTargetUsesPublished(long target) {
-        if (this.publishedChainOutput == null || this.publishedChainTexture == 0) {
+        if (this.presentSwapchain.publishedChainOutput == null || this.presentSwapchain.publishedChainTexture == 0) {
             return false;
         }
         for (ImmediateGroup group : this.immediateGroups) {
-            if (group.target == target && group.texture == this.publishedChainTexture) {
+            if (group.target == target && group.texture == this.presentSwapchain.publishedChainTexture) {
                 return true;
             }
         }
@@ -8199,14 +7504,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         this.publishedTextures.forgetDepthTexture(texture);
         this.mainFramebufferColorNames.remove(texture);
         if (texture != 0 && !this.gpuStalled && this.context != null && !this.context.celtium$isDeviceLost()) {
-            if (this.publishedFrameDepthKeys.containsKey(texture)) {
+            if (this.presentSwapchain.publishedFrameDepthKeys.containsKey(texture)) {
                 // The depth publication over the store entry forgotten below dies with it: the wrapper would
                 // otherwise keep naming an image the store no longer holds, under a name a recycled depth
                 // texture could inherit - the same inheritance the record forget above exists to prevent.
                 this.celtium$registry().unpublishExternalImage(texture);
                 this.publishedTextures.removePublished(texture);
-                this.publishedFrameImages.remove(texture);
-                this.publishedFrameDepthKeys.remove(texture);
+                this.presentSwapchain.publishedFrameImages.remove(texture);
+                this.presentSwapchain.publishedFrameDepthKeys.remove(texture);
             }
             long depthKey = RenderTargetRegistry.rawColorTextureIdentity(texture);
             GllessFrameTarget target = offTargetTarget();
@@ -11483,7 +10788,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // branch, so the answer is the same object. It was one lookup per opened group (~112 a frame) out of
                 // the 462-569 the registry serves a frame (leg r35b-memo).
                 boolean publishedHere = false;
-                if (boundTexture != 0 && this.publishedFrameImages.get(boundTexture) == 0L
+                if (boundTexture != 0 && this.presentSwapchain.publishedFrameImages.get(boundTexture) == 0L
                         && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
                     celtium$publishFramebufferColorTexture(boundTexture);
                     publishedHere = true;
@@ -14488,7 +13793,7 @@ this.frameBufferOpen = false;
                                 // the pair the splash actually drew into. If they differ, the sample is stale by number
                                 // rather than by symptom, and that is the round-232 suspicion stated as a fact.
                                 GllessFrameTarget handles = offTargetTarget();
-                                long publishedSix = this.publishedFrameImages.get(6);
+                                long publishedSix = this.presentSwapchain.publishedFrameImages.get(6);
                                 boolean publishedIsLivePair = publishedSix != 0L && handles != null
                                         && handles.isChainPairColorImage(publishedSix);
                                 StringBuilder chainHandles = new StringBuilder();
@@ -14514,7 +13819,7 @@ this.frameBufferOpen = false;
                                         + " defaultPair=" + (handles == null ? "none"
                                                 : "0x" + Long.toHexString(handles.offTargetColorImage()))
                                         + " frameImage=0x" + Long.toHexString(this.frameTarget.colorImage())
-                                        + " publishedNames=" + publishedFrameNames());
+                                        + " publishedNames=" + this.presentSwapchain.publishedFrameNames());
                                 GllessFrameTarget defaultPairTarget = offTargetTarget();
                                 long defaultPairImage = defaultPairTarget == null ? 0L
                                         : defaultPairTarget.offTargetColorImage();
@@ -15426,7 +14731,7 @@ this.frameBufferOpen = false;
         // a mirror under the name: a mod that allocates its attachment with glTexImage2D(null) gets an (empty) mirror,
         // and that mirror used to win. Xaero's Minimap's rotation pass then sampled black from texture 124 while its
         // scaling framebuffer held the map (pair dump, leg pairdump2-amd) - the minimap was see-through.
-        long publishedImage = textureId == 0 ? 0L : this.publishedFrameImages.get(textureId);
+        long publishedImage = textureId == 0 ? 0L : this.presentSwapchain.publishedFrameImages.get(textureId);
         boolean unpublishedAttachment = textureId != 0 && texture != null
                 && publishedImage == 0L
                 && celtium$framebufferIdentityForColorTexture(textureId) != Long.MIN_VALUE;
@@ -15442,8 +14747,8 @@ this.frameBufferOpen = false;
             staleFramePublication = celtium$staleFramePublication(publishedImage,
                     this.frameTarget == null ? 0L : this.frameTarget.colorImage(),
                     liveTarget == null ? 0L : liveTarget.offTargetColorImage(),
-                    this.publishedFrameImageIdentities.get(textureId),
-                    this.publishedFrameDepthKeys.get(textureId));
+                    this.presentSwapchain.publishedFrameImageIdentities.get(textureId),
+                    this.presentSwapchain.publishedFrameDepthKeys.get(textureId));
         }
         if (textureId != 0 && (texture == null || !texture.hasFullContent() || unpublishedAttachment
                 || staleFramePublication)) {
@@ -15683,10 +14988,10 @@ this.frameBufferOpen = false;
      * two are read together.
      */
     private void celtium$notePairNameSamplingDraw(int boundTexture) {
-        if (boundTexture == 0 || this.publishedFrameImages.isEmpty()) {
+        if (boundTexture == 0 || this.presentSwapchain.publishedFrameImages.isEmpty()) {
             return;
         }
-        long publishedImage = this.publishedFrameImages.get(boundTexture);
+        long publishedImage = this.presentSwapchain.publishedFrameImages.get(boundTexture);
         if (publishedImage == 0L) {
             return;
         }
@@ -16183,7 +15488,7 @@ this.frameBufferOpen = false;
                     if (RenderTargetRegistry.isRawColorDepthIdentity(chainIdentityValue)
                             && fboExtent != null && fboExtent[0] != 0L) {
                         int winColor0Tex = (int) fboExtent[0];
-                        long existingOwner = this.publishedFrameImageIdentities.get(winColor0Tex);
+                        long existingOwner = this.presentSwapchain.publishedFrameImageIdentities.get(winColor0Tex);
                         boolean ownerExists = existingOwner != Long.MIN_VALUE && existingOwner != 0L
                                 && offTarget.chainPairExists(existingOwner);
                         boolean ownerSizeMatches = ownerExists
@@ -16522,7 +15827,7 @@ this.frameBufferOpen = false;
         // (-Dceltium.vulkan.passSplit / -Dceltium.vulkan.brackets).
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPrefix");
         try {
-        if (this.publishedChainOutput != null
+        if (this.presentSwapchain.publishedChainOutput != null
                 // This pass's own target: activeImmediateTarget is assigned only where the pass begins, below, so here it
                 // still named the previous pass's target (found 2026-11-05 through the mod-program read barrier).
                 && celtium$queuedForTargetUsesPublished(this.targetRegistry.currentIdentity())) {
@@ -16530,7 +15835,7 @@ this.frameBufferOpen = false;
             // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
             // in which the chain did not run never moves it forward. The transition belongs to the submission that
             // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
-            this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
+            this.presentSwapchain.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
         }
         // Every other name published over the pair's image gets the same transition at the same site. A name published
         // for a game framebuffer whose draws land in the pair (the vanilla loading screen's, measured) is sampled from a
@@ -20123,23 +19428,6 @@ this.frameBufferOpen = false;
 
 
 
-    /**
-     * GL name -> the slot of the owner's chain pair its published image fills (0 = the pair's own, absent = 0). A
-     * name over a tuple slot must be re-published over that slot's live image, not over slot 0's.
-     */
-    final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap publishedFrameImageSlots =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
-    /** GL name -> the chain-pair identity its published image belongs to. MIN_VALUE/absent = not a chain image. */
-    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImageIdentities =
-            createPublishedFrameImageIdentities();
-
-    private static it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap createPublishedFrameImageIdentities() {
-        it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap map =
-                new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
-        map.defaultReturnValue(Long.MIN_VALUE);
-        return map;
-    }
 
 
     /** Hashes one accepted batch's source bytes with its state and matrix, and counts a previous-frame repeat. */
@@ -21230,35 +20518,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /**
-     * The native pack frame seat's swapchain supply for this frame (D7 seat ruling,
-     * NEON 2026-11-28, construction spec): a single colour attachment naming the
-     * frame's active colour target - the borrowed present image's view while a
-     * borrow is live, the target's own view on a bypass frame - with no depth
-     * attachment (the executor's depth-format-0 contract) and the target's real
-     * extent. The target's accessors are borrow-aware and its format is the
-     * borrow's own gate, so the view and format named here always describe the
-     * image the frame actually renders into.
-     *
-     * @return the targets, or null when this frame opens no seat: no live target,
-     *         or a minimized 0x0 target (FP-4 - no borrow, no seat)
-     */
-    private org.soutalab.celtium.core.frame.ActiveRenderTargets celtium$seatSwapchainTargets() {
-        if (!(this.frameTarget instanceof GllessFrameTarget target)) {
-            return null;
-        }
-        int width = target.width();
-        int height = target.height();
-        if (width <= 0 || height <= 0) {
-            return null;
-        }
-        return new org.soutalab.celtium.core.frame.ActiveRenderTargets(
-                java.util.List.of(new org.soutalab.celtium.core.frame.ActiveRenderTargets.RenderTargetView(
-                        target.colorView(), target.colorFormat(),
-                        org.soutalab.celtium.core.frame.ActiveRenderTargets.LoadOp.DONT_CARE,
-                        org.soutalab.celtium.core.frame.ActiveRenderTargets.StoreOp.STORE)),
-                null, width, height);
-    }
 
     void beginCommands() {
         if (this.frameBufferOpen) {
@@ -21376,7 +20635,8 @@ this.frameBufferOpen = false;
                 // missed close degrades to a lost pack frame, never to a stale seat.
                 org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.endNativeFrame();
             }
-            org.soutalab.celtium.core.frame.ActiveRenderTargets seatTargets = celtium$seatSwapchainTargets();
+            org.soutalab.celtium.core.frame.ActiveRenderTargets seatTargets =
+                    this.presentSwapchain.celtium$seatSwapchainTargets();
             if (seatTargets != null) {
                 org.soutalab.celtium.vulkan.pack.ShaderPackRuntime.beginNativeFrame(
                         this.context, this.commandBuffer, seatTargets,
@@ -24745,8 +24005,8 @@ this.frameBufferOpen = false;
             if (slotName == 0) {
                 continue;
             }
-            long srcOwner = this.publishedFrameImageIdentities.get(slotName);
-            int srcSlot = this.publishedFrameImageSlots.get(slotName);
+            long srcOwner = this.presentSwapchain.publishedFrameImageIdentities.get(slotName);
+            int srcSlot = this.presentSwapchain.publishedFrameImageSlots.get(slotName);
             if (srcOwner != Long.MIN_VALUE && srcOwner != 0L && srcOwner != drawIdentity
                     && pairOwner.chainPairExists(srcOwner) && pairOwner.chainPairAcquired(srcOwner)) {
                 if (pairOwner.copyChainPairColorSlot(srcOwner, srcSlot, drawIdentity, s, this.commandBuffer)) {

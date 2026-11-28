@@ -99,9 +99,14 @@ final class RawFboIdentityProbe {
                     || !Boolean.TRUE.equals(publish.invoke(backend, texture))) {
                 throw new IllegalStateException("raw attachment adoption or publication failed");
             }
-            Field images = backendClass.getDeclaredField("publishedFrameImages");
+            // The publication census's image half moved to PresentSwapchain in S3-b E6;
+            // the backend keeps only the presentSwapchain field.
+            Field swapchainField = backendClass.getDeclaredField("presentSwapchain");
+            swapchainField.setAccessible(true);
+            Object presentSwapchain = swapchainField.get(backend);
+            Field images = presentSwapchain.getClass().getDeclaredField("publishedFrameImages");
             images.setAccessible(true);
-            Object sampled = ((Map<?, ?>) images.get(backend)).get(Integer.valueOf(texture));
+            Object sampled = ((Map<?, ?>) images.get(presentSwapchain)).get(Integer.valueOf(texture));
             long sampledImage = sampled == null ? 0L : ((Number) sampled).longValue();
             if (drawnImage == 0L || drawnImage != sampledImage) {
                 throw new IllegalStateException("draw image 0x" + Long.toHexString(drawnImage)
