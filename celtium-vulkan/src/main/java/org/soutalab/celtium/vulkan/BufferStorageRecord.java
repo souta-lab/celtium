@@ -1,4 +1,4 @@
-package org.soutalab.celtium.vulkan.gl;
+package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
@@ -17,7 +17,14 @@ import java.nio.ByteBuffer;
  * this record owns is the allocation policy over that store (reuse while large enough, so a persistently
  * mapped address stays stable), the per-name logical sizes, and the mapping counters.
  */
-final class BufferStorageRecord {
+public final class BufferStorageRecord {
+
+    /** The shared record over {@link GlsmBufferState}'s store: the one the frontend built per instance
+     * until E4-b2, now a singleton seat beside the store's owner, so the capture context and the
+     * Hint doors read the same logical sizes the dispatch wrote. */
+    private static final BufferStorageRecord CURRENT = new BufferStorageRecord(GlsmBufferState.current().store());
+
+    public static BufferStorageRecord current() { return CURRENT; }
 
     /** The stub's buffer store: name to backing bytes. Owned by the stub; operated on here. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store;
@@ -37,12 +44,12 @@ final class BufferStorageRecord {
     private long mapBufferCalls;
     private long mapBufferRefusals;
 
-    BufferStorageRecord(it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store) {
+    public BufferStorageRecord(it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store) {
         this.store = store;
     }
 
     /** The one buffer-data producer: the dispatch case and the transformer's route both land here. */
-    void bufferDataFor(int name, long size, long data) {
+    public void bufferDataFor(int name, long size, long data) {
         if (name == 0 || size < 0 || size > Integer.MAX_VALUE) {
             return;
         }
@@ -87,7 +94,7 @@ final class BufferStorageRecord {
      * @param name     the buffer name
      * @param capacity the backing storage's size
      */
-    int logicalSizeOf(int name, int capacity) {
+    public int logicalSizeOf(int name, int capacity) {
         // containsKey, not get: a buffer redefined to zero is a recorded size, not an absent one.
         return this.logicalSize.containsKey(name) ? this.logicalSize.get(name) : capacity;
     }
@@ -99,7 +106,7 @@ final class BufferStorageRecord {
      * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
      * offset -1 was answered as 0, and a length running past the end was not looked at).
      */
-    static long mapRangeOffset(long offset, long length, long capacity) {
+    public static long mapRangeOffset(long offset, long length, long capacity) {
         if (offset < 0L || length <= 0L || capacity < 0L) {
             return -1L;
         }
@@ -111,7 +118,7 @@ final class BufferStorageRecord {
     }
 
     /** {@return the map calls and how many were refused for an out-of-range request}, for the verification line. */
-    String census() {
+    public String census() {
         return "calls=" + this.mapBufferCalls + " refusals=" + this.mapBufferRefusals;
     }
 
@@ -119,17 +126,17 @@ final class BufferStorageRecord {
      * Drops this name's recorded logical size, the delete path's share of this record: the stub's
      * {@code forgetBuffer} removes the store entry and the bindings, which are its own fields.
      */
-    void forget(int name) {
+    public void forget(int name) {
         this.logicalSize.remove(name);
     }
 
     /** {@code glUnmapBuffer} on a named buffer: the storage is the caller's memory already, so there is nothing to flush. */
-    static boolean unmap(int name) {
+    public static boolean unmap(int name) {
         NativeGeometryBuffer mapped = NativeGeometryBuffer.find(name);
         return mapped == null || mapped.unmap();
     }
 
-    long mapBufferFor(int name, boolean range, long rangeOffset, long rangeLength, long access) {
+    public long mapBufferFor(int name, boolean range, long rangeOffset, long rangeLength, long access) {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) {
             this.mapBufferCalls++;

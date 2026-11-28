@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
+import org.soutalab.celtium.vulkan.BufferStorageRecord;
+
 import org.soutalab.celtium.vulkan.GlsmDisplayListLedger;
 
 import org.soutalab.celtium.vulkan.GlsmClientArrayState;
@@ -1487,6 +1489,32 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
     @Override
     public void pixelUnpackBuffer(int buffer) {
         this.pixelUnpackBuffer = buffer;
+    }
+
+    /** The store's PBO byte read (E4-b2 interface extension): this stub's own filed storage. */
+    @Override
+    public java.nio.ByteBuffer pixelUnpackStorage() {
+        return GlsmBufferState.current().storage(this.pixelUnpackBuffer);
+    }
+
+    @Override
+    public int unpackAlignment() {
+        return GlsmBufferState.current().unpackAlignment();
+    }
+
+    @Override
+    public int unpackRowLength() {
+        return GlsmBufferState.current().unpackRowLength();
+    }
+
+    @Override
+    public int unpackSkipPixels() {
+        return GlsmBufferState.current().unpackSkipPixels();
+    }
+
+    @Override
+    public int unpackSkipRows() {
+        return GlsmBufferState.current().unpackSkipRows();
     }
 
     /** Counts one bounded PBO upload log line for the capture store; false once the bound is spent. */
@@ -6812,7 +6840,7 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
      * that names the buffer a call applies to and the delegations the dispatch, the transformer's route and
      * the census land on.
      */
-    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(GlsmBufferState.current().store());
+    private final BufferStorageRecord bufferStorage = BufferStorageRecord.current();
 
     /**
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg

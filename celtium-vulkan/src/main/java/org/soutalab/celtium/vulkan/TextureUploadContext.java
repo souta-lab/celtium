@@ -24,6 +24,21 @@ public interface TextureUploadContext {
     /** Rebinds the pixel unpack buffer record (the PBO upload path clears and restores it). */
     void pixelUnpackBuffer(int buffer);
 
+    /** {@return the bound pixel unpack buffer's filed CPU bytes}, or null when it holds none. */
+    java.nio.ByteBuffer pixelUnpackStorage();
+
+    /** {@return the recorded {@code GL_UNPACK_ALIGNMENT} the upload conversion aligns rows with}. */
+    int unpackAlignment();
+
+    /** {@return the recorded {@code GL_UNPACK_ROW_LENGTH}}. */
+    int unpackRowLength();
+
+    /** {@return the recorded {@code GL_UNPACK_SKIP_PIXELS}}. */
+    int unpackSkipPixels();
+
+    /** {@return the recorded {@code GL_UNPACK_SKIP_ROWS}}. */
+    int unpackSkipRows();
+
     /** {@return the size GL last gave a buffer}, falling back to the storage's capacity. */
     int logicalSizeOf(int bufferName, int capacity);
 

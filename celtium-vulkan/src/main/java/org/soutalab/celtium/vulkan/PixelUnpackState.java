@@ -6,19 +6,19 @@ import java.util.Map;
 
 /**
  * The pixel-unpack record the texture capture store reads (S3-b E4-b2, door ruling family 3):
- * the bound {@code GL_PIXEL_UNPACK_BUFFER} name, the {@code GL_UNPACK_*} pixel-store values and
- * the CPU byte storage of pixel buffers whose bytes an upload reads back.
+ * the bound {@code GL_PIXEL_UNPACK_BUFFER} name and the CPU byte storage of pixel buffers whose
+ * bytes an upload reads back.
  *
- * <p>Until E4-b2 this record lived inside {@code GlsmBufferState} in {@code vulkan.gl}, and the
- * capture store - a HAL class that must not import the capture layer - reached across the
- * package boundary for it. The record now sits in this package beside the store. Its writers
- * are the capture routes that own the calls: the capture entry's dispatch and the hint doors
- * write the binding and the pixel-store values (the converter keeps its own pixel-store state
- * for Lane 3 through {@code GLSMTextures.glPixelStorei}; this record is the upload reader's
- * copy), and the same two routes file a pixel buffer's bytes here when they write them
- * ({@link #fileFallbackStorage}), which is the function boundary the door ruling §4.2 prescribes
- * for the PBO read: the store asks this record, never the capture layer. A storage supplier may
- * be registered to answer from another backing store instead; none is in the shipped path.
+ * <p>The {@code GL_UNPACK_*} pixel-store values themselves live in {@link GlsmBufferState} - the
+ * record the dispatch and the hint doors have always written, and the one the {@code glGet*}
+ * answers read - so this class delegates to it rather than keeping a second copy that could
+ * drift. What this class owns is the PBO binding (which the buffer state never held; the old
+ * stub kept it as a bare field) and the fallback byte filing: the capture routes file a pixel
+ * buffer's bytes here when they write them ({@link #fileFallbackStorage}), which is the narrow
+ * function boundary the door ruling §4.2 prescribes for the PBO read - the store asks this
+ * record, never the capture layer. A storage supplier may be registered to answer from another
+ * backing store instead; none is in the shipped path, and the last fallback is the buffer
+ * state's own byte store, where the buffer-data routes file the same bytes.
  */
 public final class PixelUnpackState {
 
@@ -29,10 +29,6 @@ public final class PixelUnpackState {
     }
 
     private int pixelUnpackBuffer;
-    private int unpackAlignment = 4;
-    private int unpackRowLength;
-    private int unpackSkipPixels;
-    private int unpackSkipRows;
     private final Map<Integer, ByteBuffer> fallbackStorage = new HashMap<>();
     private java.util.function.IntFunction<ByteBuffer> storageSupplier;
 
@@ -46,32 +42,20 @@ public final class PixelUnpackState {
         this.pixelUnpackBuffer = buffer;
     }
 
-    /** Records one {@code glPixelStorei} value under its {@code GL_UNPACK_*} pname. */
+    /** Records one {@code glPixelStorei} value; the record is {@link GlsmBufferState}'s. */
     public void pixelStore(int pname, int value) {
-        switch (pname) {
-            case 0x0CF5: this.unpackAlignment = value == 1 || value == 2 || value == 8 ? value : 4; break;
-            case 0x0CF2: this.unpackRowLength = Math.max(0, value); break;
-            case 0x0CF4: this.unpackSkipPixels = Math.max(0, value); break;
-            case 0x0CF3: this.unpackSkipRows = Math.max(0, value); break;
-            default: break;
-        }
+        GlsmBufferState.current().pixelStore(pname, value);
     }
 
-    /** {@return a recorded {@code GL_UNPACK_*} value}, or 0 for a pname this record does not hold. */
+    /** {@return a recorded pixel-store value} from {@link GlsmBufferState}'s record. */
     public int pixelStoreValue(int pname) {
-        switch (pname) {
-            case 0x0CF5: return this.unpackAlignment;
-            case 0x0CF2: return this.unpackRowLength;
-            case 0x0CF4: return this.unpackSkipPixels;
-            case 0x0CF3: return this.unpackSkipRows;
-            default: return 0;
-        }
+        return GlsmBufferState.current().pixelStore(pname);
     }
 
-    public int unpackAlignment() { return this.unpackAlignment; }
-    public int unpackRowLength() { return this.unpackRowLength; }
-    public int unpackSkipPixels() { return this.unpackSkipPixels; }
-    public int unpackSkipRows() { return this.unpackSkipRows; }
+    public int unpackAlignment() { return GlsmBufferState.current().unpackAlignment(); }
+    public int unpackRowLength() { return GlsmBufferState.current().unpackRowLength(); }
+    public int unpackSkipPixels() { return GlsmBufferState.current().unpackSkipPixels(); }
+    public int unpackSkipRows() { return GlsmBufferState.current().unpackSkipRows(); }
 
     /**
      * Installs a storage supplier that answers a buffer's current CPU bytes from another
@@ -94,7 +78,8 @@ public final class PixelUnpackState {
 
     /**
      * {@return the CPU bytes of a buffer}: the registered supplier's answer when one is
-     * installed, otherwise the fallback store's, otherwise {@code null}.
+     * installed, otherwise the fallback store's, otherwise the buffer state's byte store,
+     * otherwise {@code null}.
      */
     public ByteBuffer storage(int buffer) {
         java.util.function.IntFunction<ByteBuffer> supplier = this.storageSupplier;
@@ -104,6 +89,7 @@ public final class PixelUnpackState {
                 return supplied;
             }
         }
-        return this.fallbackStorage.get(Integer.valueOf(buffer));
+        ByteBuffer filed = this.fallbackStorage.get(Integer.valueOf(buffer));
+        return filed != null ? filed : GlsmBufferState.current().storage(buffer);
     }
 }

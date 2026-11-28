@@ -1,6 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.GlsmBufferState;
 
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
@@ -715,7 +714,7 @@ public final class TextureCaptureStore {
         int x = xOffset;
         int y = yOffset;
         if (stub.pixelUnpackBuffer() > 0 && stub.countPboUploadLog()) {
-            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer());
+            ByteBuffer storage = stub.pixelUnpackStorage();
             System.out.println("[Celtium] CELTIUM_PBO_UPLOAD texture=" + name + " level=" + level + " at=" + x + ","
                     + y + " size=" + width + "x" + height + " format=0x" + Integer.toHexString(format) + " type=0x"
                     + Integer.toHexString(type) + " buffer=" + stub.pixelUnpackBuffer() + " offset=" + pixels
@@ -899,7 +898,7 @@ public final class TextureCaptureStore {
         if (stub.pixelUnpackBuffer() > 0) {
             // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
             // so the offset is resolved to an address inside it - bounds-checked against the buffer's logical size.
-            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer());
+            ByteBuffer storage = stub.pixelUnpackStorage();
             int logicalSize = storage == null ? 0
                     : stub.logicalSizeOf(stub.pixelUnpackBuffer(), storage.capacity());
             if (storage != null && width > 0 && height > 0
@@ -925,8 +924,8 @@ public final class TextureCaptureStore {
         if (pixels == 0L || width <= 0 || height <= 0) {
             return null;
         }
-        if ((GlsmBufferState.current().unpackRowLength() != 0 && GlsmBufferState.current().unpackRowLength() != width)
-                || GlsmBufferState.current().unpackSkipPixels() != 0 || GlsmBufferState.current().unpackSkipRows() != 0) {
+        if ((stub.unpackRowLength() != 0 && stub.unpackRowLength() != width)
+                || stub.unpackSkipPixels() != 0 || stub.unpackSkipRows() != 0) {
             return null;
         }
         long bytes = (long) width * (long) height * 4L;
@@ -936,7 +935,7 @@ public final class TextureCaptureStore {
         boolean bgra = format == GL_BGRA;
         if (type == GL_UNSIGNED_BYTE && (format == GL_RGBA || bgra)) {
             int rowBytes = width * 4;
-            int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
+            int stride = aligned(rowBytes, stub.unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
             long outAddress = memAddress(out);
@@ -963,7 +962,7 @@ public final class TextureCaptureStore {
         if (type == GL_UNSIGNED_BYTE && format == GL_RGB) {
             // Three bytes per pixel, expanded with an opaque alpha; the source rows carry GL's alignment padding.
             int rowBytes = width * 3;
-            int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
+            int stride = aligned(rowBytes, stub.unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
             for (int row = 0; row < height; row++) {
@@ -982,7 +981,7 @@ public final class TextureCaptureStore {
             // The packed forms read the 32-bit word in host order. _REV puts the first component in the least
             // significant bits - for GL_BGRA that is the game's own 0xAARRGGBB int - and the plain form puts it in the
             // most significant bits (Xaero's Minimap uploads its tiles as GL_BGRA/GL_UNSIGNED_INT_8_8_8_8).
-            int stride = aligned(width * 4, GlsmBufferState.current().unpackAlignment());
+            int stride = aligned(width * 4, stub.unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (height - 1) * stride + width * 4)
                     .order(java.nio.ByteOrder.nativeOrder());
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
