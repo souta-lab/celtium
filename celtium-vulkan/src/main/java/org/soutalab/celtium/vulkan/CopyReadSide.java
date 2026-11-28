@@ -1126,14 +1126,6 @@ final class CopyReadSide {
             }
             this.backend.targetWidth = width;
             this.backend.targetHeight = height;
-            // B10 of the maximum audit: the post chain's executor holds the frame target every `main` pass input/output
-            // resolves against, and it used to keep the one it was created with. The old target's images are destroyed
-            // just above, so the executor has to move with the replacement before any chain is recorded against it;
-            // otherwise a chain recorded after this point would name freed memory. The generation is the target
-            // replacement count, and the executor refuses a recording whose generation moved underneath it.
-            if (this.backend.postChain != null) {
-                this.backend.postChain.adoptFrameTarget(this.backend.frameTarget, this.backend.targetRegistry.generation());
-            }
             // The fresh target's first frame borrows its swapchain image from here (see the match path).
             this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;

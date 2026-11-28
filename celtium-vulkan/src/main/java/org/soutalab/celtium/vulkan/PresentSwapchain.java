@@ -408,21 +408,12 @@ final class PresentSwapchain {
             celtium$noteBorrowBypass("shader-pack");
             return;
         }
-        // 2. A post chain has been adopted on this backend (a custom framebuffer's ShaderGroup - the
-        //    entity outline, a mod's bloom chain - has run natively): the chain's main-input passes
-        //    sample the frame image, and a chain that ran once is live machinery whose groups recur
-        //    while their feature is on. The condition is the chain executor's existence, not the mere
-        //    existence of chain pairs: pairs are allocated for framebuffers that may never sample the
-        //    frame (the outline framebuffer exists from startup, the leg harness's capture FBOs
-        //    likewise), and keying on them disabled the borrow for whole sessions that never ran a
-        //    chain (measured: agera leg run-s1bgra-agera, 0 direct presents with postChains=0). The
-        //    one frame a session's first chain is adopted on can still hold a borrow taken before the
-        //    chain existed; that frame is closed at the chain's own entry instead
-        //    (PostChainBridge.celtium$postChainRun refuses a main-reading chain over a live borrow).
-        if (backend.postChain != null) {
-            celtium$noteBorrowBypass("post-chain");
-            return;
-        }
+        // 2. (Retired with VulkanPostChain, ruling step 5.) This condition keyed on the old chain
+        //    executor's existence: a chain that had run natively samples the frame image, so its
+        //    frames kept their own image. The vanilla chain's seat is now the FrameCoordinator's
+        //    VanillaPostExecutor, which is handed the borrowed state of the main image and refuses
+        //    a run whose main input is borrowed - the hazard is closed at the chain's own entry,
+        //    so no borrow condition remains here.
         // 3. A presented-image readback is outstanding (a diagnostics dump requested of the backend or
         //    already handed to the swapchain): the dump reads the presented image back, which the borrow
         //    contract does not offer. Costs nothing outside a leg - no fixture, no dump requests.
@@ -432,9 +423,10 @@ final class PresentSwapchain {
             return;
         }
         // 4. The frame's own colour has been sampled through the "frame-image" publication route (a mod
-        //    program's main input, or an immediate batch bound to the main colour name). Condition 2
-        //    cannot see the measured case: GTCEu's bloom chain runs through ModPrograms, not ShaderGroup,
-        //    so no post chain is ever adopted while the chain samples main every frame. The sampling side
+        //    program's main input, or an immediate batch bound to the main colour name). The retired
+        //    condition 2 could not see the measured case: GTCEu's bloom chain runs through the immediate
+        //    path, not ShaderGroup, so no post chain is ever adopted while the chain samples main every
+        //    frame. The sampling side
         //    notes the demand on the backend when the frame image is published (or refused), and while
         //    the latch stands the frame keeps its own SAMPLED image and takes the composed present. The
         //    one frame the demand first arrives on can still hold a borrow taken before it existed; that

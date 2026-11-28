@@ -100,8 +100,10 @@ def main():
     # to the group frame while the scope is open - the bounded lifetime this check exists for).
     require('particle fallback draw is issued inside bounded group scope',
             'celtium$drawParticleGroupFallback(group, mesh, prepared, push)' in body)
-    require('mod-program draw is inside bounded group scope',
-            'value.draw(this.commandBuffer, mesh, this.immediateBindCache)' in body)
+    # The mod-program draw form retired with VulkanModProgramPipeline (S3-b ruling step 5):
+    # no fourth draw form remains inside the scope, and the retired call must not reappear.
+    require('the retired mod-program draw form does not reappear inside group scope',
+            'value.draw(this.commandBuffer, mesh, this.immediateBindCache)' not in body)
     require('no control-flow exits inside group scope can bypass close',
             'continue;' not in body and 'return;' not in body)
     require('group frame closes before draw-count accounting',
