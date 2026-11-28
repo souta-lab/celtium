@@ -68,10 +68,10 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
 public final class GlsmFrontend implements FunctionProvider {
 
     /** C return types. Java-side only - the trampoline marshals them into the libffi result slot. */
-    static final byte R_VOID = 0;
-    static final byte R_INT = 1;
-    static final byte R_LONG = 2;
-    static final byte R_PTR = 3;
+    public static final byte R_VOID = 0;
+    public static final byte R_INT = 1;
+    public static final byte R_LONG = 2;
+    public static final byte R_PTR = 3;
 
     /**
      * Argument types as they arrive at the trampoline: every arg slot is a pointer to the value. Package-private
@@ -79,78 +79,78 @@ public final class GlsmFrontend implements FunctionProvider {
      * encoding when it builds a row's CIF and picks its upcall shape, and {@link GlFunctionTable} reads the same
      * ids when it registers a row.
      */
-    static final byte A_INT = 11;
-    static final byte A_LONG = 12;
-    static final byte A_PTR = 13;
-    static final byte A_FLOAT = 14;
-    static final byte A_DOUBLE = 15;
-    static final byte A_UINT = 16;
+    public static final byte A_INT = 11;
+    public static final byte A_LONG = 12;
+    public static final byte A_PTR = 13;
+    public static final byte A_FLOAT = 14;
+    public static final byte A_DOUBLE = 15;
+    public static final byte A_UINT = 16;
 
     // Semantics ids - what dispatch() does with the call. The enum keeps the table lines short.
-    static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
-    static final int SEM_GEN = 1;             // object-name allocation: returns the next id
-    static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
-    static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
-    static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
-    static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
-    static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
-    static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
-    static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
-    static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
-    static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
-    static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
-    static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
-    static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
+    public static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
+    public static final int SEM_GEN = 1;             // object-name allocation: returns the next id
+    public static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
+    public static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
+    public static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
+    public static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
+    public static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
+    public static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
+    public static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
+    public static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
+    public static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
+    public static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
+    public static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
+    public static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
     // GAP-SEM-1 (b): SEM_ROUTE (id 14) removed - zero function-table rows ever targeted it.
-    static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
-    static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
-    static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
-    static final int SEM_MAP = 18;            // ptr return: the named buffer's storage
-    static final int SEM_UNMAP = 19;          // byte return: true, buffer contents already live
-    static final int SEM_BUFFER_DATA = 20;    // (target,size,data,usage) -> size bytes of storage
-    static final int SEM_STATUS = 21;         // (obj,pname,out[]) -> successful-answer queries
-    static final int SEM_INFO_LOG = 22;       // (obj,bufSize,len*,log) -> empty string
-    static final int SEM_BIND_BUFFER = 23;    // (target,name) -> binding record for map/data
-    static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
-    static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
-    static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
-    static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
-    static final int SEM_FOG_I = 71;
-    static final int SEM_FOG_F = 72;
-    static final int SEM_FOG_FV = 73;
-    static final int SEM_FOG_IV = 74;
-    static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
-    static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
-    static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
-    static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
-    static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
-    static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
-    static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
-    static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
-    static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
-    static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
-    static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
-    static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
-    static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
-    static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
-    static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
-    static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
-    static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
-    static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
-    static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
-    static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
-    static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
-    static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
-    static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
-    static final int SEM_END_LIST = 36;        // () -> compilation finished
-    static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
-    static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
-    static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
-    static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
-    static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
-    static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
-    static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
-    static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    public static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
+    public static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
+    public static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
+    public static final int SEM_MAP = 18;            // ptr return: the named buffer's storage
+    public static final int SEM_UNMAP = 19;          // byte return: true, buffer contents already live
+    public static final int SEM_BUFFER_DATA = 20;    // (target,size,data,usage) -> size bytes of storage
+    public static final int SEM_STATUS = 21;         // (obj,pname,out[]) -> successful-answer queries
+    public static final int SEM_INFO_LOG = 22;       // (obj,bufSize,len*,log) -> empty string
+    public static final int SEM_BIND_BUFFER = 23;    // (target,name) -> binding record for map/data
+    public static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
+    public static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
+    public static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
+    public static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    public static final int SEM_FOG_I = 71;
+    public static final int SEM_FOG_F = 72;
+    public static final int SEM_FOG_FV = 73;
+    public static final int SEM_FOG_IV = 74;
+    public static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
+    public static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
+    public static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
+    public static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
+    public static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
+    public static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
+    public static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
+    public static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
+    public static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
+    public static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
+    public static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
+    public static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
+    public static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
+    public static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
+    public static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
+    public static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
+    public static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
+    public static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
+    public static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
+    public static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
+    public static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
+    public static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
+    public static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
+    public static final int SEM_END_LIST = 36;        // () -> compilation finished
+    public static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
+    public static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
+    public static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
+    public static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
+    public static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
+    public static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
+    public static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
+    public static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
     private static final int SEM_COMPILED_ARRAYS = -2;
     private static final Fn COMPILED_ARRAYS = new Fn("compiledClientArrays", R_VOID, new byte[0], SEM_COMPILED_ARRAYS);
     // Step 1 of the loading-screen unit: glBegin/glEnd leave the generic no-op table so the *site* that opens a
@@ -159,21 +159,21 @@ public final class GlsmFrontend implements FunctionProvider {
     // window reached SEM_NOOP and drew nothing; the no-op census showed glVertex3f=152460/glBegin=38115/glEnd=38115
     // but a count is not a site. This step only names the callers; the vertex recording and the submit are the next
     // two steps, each landing on its own.
-    static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
-    static final int SEM_END = 69;             // () -> the site that closes it
-    static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
-    static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
-    static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
-    static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
-    static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
-    static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
-    static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
-    static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
-    static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
-    static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
-    static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
-    static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
-    static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
+    public static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
+    public static final int SEM_END = 69;             // () -> the site that closes it
+    public static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
+    public static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
+    public static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
+    public static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
+    public static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
+    public static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
+    public static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
+    public static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
+    public static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
+    public static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
+    public static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
+    public static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
+    public static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
 
     /** One function-table row: name, return type, arg types, semantics. */
     public static final class Fn {
@@ -208,7 +208,7 @@ public final class GlsmFrontend implements FunctionProvider {
     private static final List<Fn> TABLE = new ArrayList<>();
     private static final Map<String, Integer> IDS = new HashMap<>();
 
-    static Fn fn(String name, byte ret, int semantics, byte... args) {
+    public static Fn fn(String name, byte ret, int semantics, byte... args) {
         Fn fn = new Fn(name, ret, args, semantics);
         TABLE.add(fn);
         return fn;

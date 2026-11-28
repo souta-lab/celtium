@@ -1,5 +1,7 @@
 package org.soutalab.celtium.glcompat.capture;
 
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
+
 /**
  * The stub's function table, extracted from {@code GlsmFrontend} unchanged in behaviour
  * (refactor/giant-split-4): every GL entry point the stub knows, grouped by the shape of its
