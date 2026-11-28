@@ -74,7 +74,7 @@ SCAN_EXTENSIONS = (".java", ".kt", ".gradle", ".gradle.kts", ".glsl", ".json", "
 # that approved it. Occurrences covered by an entry are reported as approved,
 # not dropped silently; occurrences of the same strings anywhere else fail.
 
-COMPETITORS_REL = "forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java"
+COMPETITORS_REL = "forge122/src/main/java/org/soutalab/celtium/core/CeltiumCompetitors.java"
 
 RFG_ATTRIBUTE_KEY = "com.gtnewhorizons.retrofuturagradle.obfuscation"
 RFG_EXCEPTION_FILES = (

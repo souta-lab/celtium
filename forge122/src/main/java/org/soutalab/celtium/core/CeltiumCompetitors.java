@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -38,8 +38,8 @@ public final class CeltiumCompetitors {
 
     private static final Logger LOGGER = LogManager.getLogger("Celtium");
 
-    private static final String PLUGIN_CLASS_NAME = "org.taumc.celeritas.core.CeleritasLoadingPlugin";
-    private static final String PLUGIN_CLASS_RESOURCE = "org/taumc/celeritas/core/CeleritasLoadingPlugin.class";
+    private static final String PLUGIN_CLASS_NAME = "org.soutalab.celtium.core.CeleritasLoadingPlugin";
+    private static final String PLUGIN_CLASS_RESOURCE = "org/soutalab/celtium/core/CeleritasLoadingPlugin.class";
 
     private static final String[][] KNOWN = {
             // {class resource, mod name, what it replaces}
@@ -189,7 +189,7 @@ public final class CeltiumCompetitors {
                 + " {} classpath copies of the class exist. Celtium's coremod was skipped by the loader.",
                 PLUGIN_CLASS_NAME, pluginSource, ownSource, copies);
         String shadowLine = "\n  - " + jarFileName(pluginSource) + " (another mod): ships a class with the same"
-                + " name as Celtium's loading plugin (org.taumc.celeritas.core.CeleritasLoadingPlugin), which"
+                + " name as Celtium's loading plugin (org.soutalab.celtium.core.CeleritasLoadingPlugin), which"
                 + " prevents Celtium itself from loading";
         StringBuilder found = collectKnown(loader);
         if (found.length() > 0) {

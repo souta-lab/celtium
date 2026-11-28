@@ -17,8 +17,8 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPETITORS = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java"
-LOADING_PLUGIN = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java"
+COMPETITORS = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeltiumCompetitors.java"
+LOADING_PLUGIN = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeleritasLoadingPlugin.java"
 COMPAT_DOC = ROOT / "docs/mod-compatibility.md"
 
 PHOSPHOR_MARKER = "me/jellysquid/mods/phosphor/core/PhosphorFMLLoadingPlugin.class"

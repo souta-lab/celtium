@@ -153,7 +153,7 @@ def verify(path):
             "licenses/lwjgl-LICENSE", "org/lwjgl/vulkan/VK.class",
             "org/lwjgl/vulkan/KHRWin32Surface.class",
             "org/taumc/celeritas/CeleritasVintage.class",
-            "org/taumc/celeritas/core/CeleritasLoadingPlugin.class",
+            "org/soutalab/celtium/core/CeleritasLoadingPlugin.class",
             "org/soutalab/celtium/forge/CeltiumCommand.class",
             "org/soutalab/celtium/impl/shadow/joml/Matrix4f.class",
         }
@@ -192,7 +192,7 @@ def verify(path):
             errors.append("Manifest names external jars although the dependencies are embedded")
         expected_manifest = {
             "FMLAT": "celeritas_at.cfg",
-            "FMLCorePlugin": "org.taumc.celeritas.core.CeleritasLoadingPlugin",
+            "FMLCorePlugin": "org.soutalab.celtium.core.CeleritasLoadingPlugin",
             "FMLCorePluginContainsFMLMod": "true",
             "ForceLoadAsMod": "true",
             "Celtium-License": "LGPL-3.0",

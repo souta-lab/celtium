@@ -14,7 +14,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-COMPETITORS = Path("forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java")
+COMPETITORS = Path("forge122/src/main/java/org/soutalab/celtium/core/CeltiumCompetitors.java")
 REFUSAL_DOCS = (Path("docs/mod-compatibility.md"), Path("notworkingmods.md"))
 
 

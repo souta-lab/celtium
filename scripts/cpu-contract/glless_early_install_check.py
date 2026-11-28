@@ -47,9 +47,9 @@ def main():
     require('the dead Display mixin is gone', not (ROOT / 'forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java').exists())
 
     require('the window hint and the stub no longer depend on that mixin',
-            'CeltiumGllessWindowTransformer' in (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8'))
+            'CeltiumGllessWindowTransformer' in (ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8'))
 
-    coremod = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
+    coremod = (ROOT / 'forge122/src/main/java/org/soutalab/celtium/core/CeleritasLoadingPlugin.java').read_text(encoding='utf-8')
     require('the coremod registers the GL-less transformer',
             'CeltiumGllessWindowTransformer' in coremod and 'getASMTransformerClass' in coremod)
     transformer = (ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessWindowTransformer.java').read_text(encoding='utf-8')

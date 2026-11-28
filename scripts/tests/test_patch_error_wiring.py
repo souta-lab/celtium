@@ -11,7 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HANDLER = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeltiumMixinErrorHandler.java"
-LOADING_PLUGIN = ROOT / "forge122/src/main/java/org/taumc/celeritas/core/CeleritasLoadingPlugin.java"
+LOADING_PLUGIN = ROOT / "forge122/src/main/java/org/soutalab/celtium/core/CeleritasLoadingPlugin.java"
 RECORDER = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchErrorRecorder.java"
 
 

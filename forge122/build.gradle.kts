@@ -269,7 +269,7 @@ tasks.named<Jar>("jar") {
     }
     manifest {
         attributes["FMLAT"] = "celeritas_at.cfg"
-        attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"
+        attributes["FMLCorePlugin"] = "org.soutalab.celtium.core.CeleritasLoadingPlugin"
         attributes["FMLCorePluginContainsFMLMod"] = "true"
         attributes["ForceLoadAsMod"] = "true"
         // Replaces the stale `Celtium-Stage: backend-boundary` (a 2026-10-09 label). These two are true today

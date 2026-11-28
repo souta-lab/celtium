@@ -13,7 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.soutalab.celtium.forge.CeltiumCommand;
 import org.soutalab.celtium.forge.ui.CeltiumConfig;
 import org.soutalab.celtium.forge.ui.CeltiumF3Overlay;
-import org.taumc.celeritas.core.CeltiumCompetitors;
+import org.soutalab.celtium.core.CeltiumCompetitors;
 
 @Mod(modid = CeleritasVintage.MODID, useMetadata = true, clientSideOnly = true, acceptableRemoteVersions = "*")
 public class CeleritasVintage {

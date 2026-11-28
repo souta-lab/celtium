@@ -1,4 +1,4 @@
-package org.taumc.celeritas.core;
+package org.soutalab.celtium.core;
 
 import net.minecraftforge.fml.relauncher.IFMLLoadingPlugin;
 import org.jetbrains.annotations.Nullable;
@@ -80,7 +80,7 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
         // returned and patch failures simply go unrecorded, exactly as before the handler existed.
         try {
             org.spongepowered.asm.mixin.Mixins.registerErrorHandlerClass(
-                    CeltiumMixinErrorHandler.class.getName());
+                    org.taumc.celeritas.core.CeltiumMixinErrorHandler.class.getName());
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
                     "Failed to register the celtium mixin error handler; patch failures will not be recorded: {}",
