@@ -88,6 +88,22 @@ class LightStateRegisterTest {
     }
 
     @Test
+    void compilingListIdDefaultsToZeroRoundTripsAndRejectsNegatives() {
+        try (LightStateRegister register = new LightStateRegister()) {
+            assertEquals(0, register.compilingListId());
+            int keyBefore = register.key().value();
+            register.setCompilingListId(42);
+            assertEquals(42, register.compilingListId());
+            register.setCompilingListId(0);
+            assertEquals(0, register.compilingListId());
+            assertThrows(IllegalArgumentException.class, () -> register.setCompilingListId(-1));
+            // The compiling id is not pipeline state: the key - and with it the fixed
+            // pipeline census (K5) - must not move when the id changes (G2-07 ruling).
+            assertEquals(keyBefore, register.key().value());
+        }
+    }
+
+    @Test
     void lane3DirtyDisciplineFollowsTheContract() {
         try (LightStateRegister register = new LightStateRegister()) {
             assertFalse(register.isLane3Dirty());

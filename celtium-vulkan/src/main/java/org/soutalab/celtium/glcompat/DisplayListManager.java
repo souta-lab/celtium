@@ -9,6 +9,7 @@ package org.soutalab.celtium.glcompat;
  */
 
 
+import org.soutalab.celtium.core.state.LightStateRegister;
 import org.soutalab.celtium.glcompat.gtnh.bytebuf.MemoryUtilities;
 import org.soutalab.celtium.glcompat.gtnh.client.renderer.DirectTessellator;
 import org.soutalab.celtium.glcompat.gtnh.client.renderer.TessellatorManager;
@@ -817,6 +818,22 @@ public final class DisplayListManager {
     }
 
     /**
+     * Publishes the compiling-list id to the shared register (G2-07, NEON ruling
+     * 2026-11-28): the non-terrain lane reads only the register, so the display-list
+     * open/close owners - this manager for the direct-GL path - are its only writers.
+     * A no-op until the frame owner attaches the register to the dispatcher.
+     */
+    private static void publishCompilingListId(int listId) {
+        LightStateRegister register = DirectGlDispatcher.register();
+        if (register != null) {
+            register.setCompilingListId(listId);
+        }
+    }
+
+    /** Whether the current glEndList body reached its context-restore point. */
+    private static boolean endListRestored;
+
+    /**
      * Supports nested glNewList() calls (spec-violating but needed for mod compatibility).
      *   GL_COMPILE: Commands are recorded only (not executed), GLSM cache unchanged
      *   GL_COMPILE_AND_EXECUTE: Commands are recorded AND executed (GLSM cache updated)
@@ -860,15 +877,42 @@ public final class DisplayListManager {
             }
             return true;
         });
+
+        // The register publish completes before glNewList returns to its caller, so a
+        // batch the list's first draws produce already sees the compilation in progress.
+        // A name of zero is not a list (GL_INVALID_VALUE) and is never registered.
+        if (list > 0) {
+            publishCompilingListId(list);
+        }
     }
 
     /**
      * End display list compilation and build optimized/unoptimized versions.
+     * <p>
+     * The register's compiling-list id is restored in a finally around the body: the
+     * restored outer list's id when nested, 0 at the outermost level - and the restore
+     * publish lands even when the body throws, so a failed glEndList cannot wedge the
+     * register at a non-zero id and block the non-terrain lane's immediate path for
+     * the rest of the session (G2-07, NEON ruling 2026-11-28).
      */
     public static void glEndList() {
         if (glListMode == 0) {
             throw new RuntimeException("glEndList called outside of a display list!");
         }
+        endListRestored = false;
+        try {
+            glEndListBody();
+        } finally {
+            if (endListRestored) {
+                publishCompilingListId(glListMode == 0 ? 0 : glListId);
+            } else {
+                publishCompilingListId(compilationStack.isEmpty() ? 0
+                        : compilationStack.peek().listId);
+            }
+        }
+    }
+
+    private static void glEndListBody() {
         flushMatrix();
         final boolean isNested = !compilationStack.isEmpty();
 
@@ -956,6 +1000,7 @@ public final class DisplayListManager {
         } else {
             resetCompilationState();
         }
+        endListRestored = true;
     }
 
     private static void resetCompilationState() {
@@ -1002,6 +1047,9 @@ public final class DisplayListManager {
         }
         compilationStack.clear();
         resetCompilationState();
+        // An aborted compilation is closed for good: the register must not keep
+        // naming a list nobody is compiling any more.
+        publishCompilingListId(0);
     }
 
     /**

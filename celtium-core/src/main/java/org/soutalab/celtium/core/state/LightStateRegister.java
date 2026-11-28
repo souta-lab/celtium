@@ -8,7 +8,8 @@ import java.util.Objects;
 /**
  * The single source of truth for the lightweight fixed-function state the non-terrain lane and the
  * direct-GL converter share (design V040-FINAL-PLAN section 2.3, interface 3 contract): the
- * {@link RenderStateKey}, the bound texture id, and the matrix stack. The stack lives off-heap in an
+ * {@link RenderStateKey}, the bound texture id, the display list currently being compiled, and the
+ * matrix stack. The stack lives off-heap in an
  * FFM segment because the lanes read it while recording - the same 16 floats the pipeline's push
  * constants carry, with no per-draw copy out of a Java array.
  * <p>
@@ -37,6 +38,7 @@ public final class LightStateRegister implements AutoCloseable {
     private int depth;
     private RenderStateKey key = RenderStateKey.DEFAULT;
     private int boundTextureId;
+    private int compilingListId;
     private boolean lane3Dirty;
 
     public LightStateRegister() {
@@ -69,6 +71,29 @@ public final class LightStateRegister implements AutoCloseable {
             throw new IllegalArgumentException("textureId must not be negative");
         }
         this.boundTextureId = textureId;
+    }
+
+    // -- display list compilation --------------------------------------------
+
+    /**
+     * The display list currently being compiled, or 0 when none is. Written only by the
+     * display-list open/close owners (the vanilla/Forge capture path and the converter's
+     * display-list manager), which publish the new value synchronously at glNewList /
+     * glEndList; the non-terrain lane reads it to keep its hands off batches that belong
+     * to a list being compiled. It is deliberately not part of {@link RenderStateKey}:
+     * a list id is an arbitrary positive integer, not pipeline state, and the lane-3
+     * register sync does not carry it - a compilation scope is owned by glNewList /
+     * glEndList alone, including across converter excursions inside the list.
+     */
+    public int compilingListId() {
+        return compilingListId;
+    }
+
+    public void setCompilingListId(int listId) {
+        if (listId < 0) {
+            throw new IllegalArgumentException("listId must not be negative");
+        }
+        this.compilingListId = listId;
     }
 
     // -- matrix stack ---------------------------------------------------------

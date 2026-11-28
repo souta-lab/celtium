@@ -82,6 +82,24 @@ class Lane2StateMirrorTest {
     }
 
     @Test
+    void activeUnitComposesTheGlEnumFromTheRegisterKey() {
+        this.mirror.setActiveTextureUnit(5);
+        // The uploader's census read (G2-07, NEON ruling 2026-11-28): the GL enum is
+        // composed from the register key - the same representation the replay half of
+        // the display-list census speaks, with no second source of truth.
+        assertEquals(org.lwjgl.opengl.GL13.GL_TEXTURE0 + 5,
+                org.lwjgl.opengl.GL13.GL_TEXTURE0 + this.mirror.register().key().activeTextureUnit());
+    }
+
+    @Test
+    void resetReturnsTheCompilingListToZero() {
+        this.mirror.register().setCompilingListId(77);
+        assertEquals(77, this.mirror.register().compilingListId());
+        this.mirror.reset();
+        assertEquals(0, this.mirror.register().compilingListId());
+    }
+
+    @Test
     void modelViewTransformsComposeOnTheRegisterStack() {
         float[] out = new float[16];
         this.mirror.translate(2.0f, 3.0f, 4.0f);

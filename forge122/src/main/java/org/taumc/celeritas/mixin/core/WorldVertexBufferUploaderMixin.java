@@ -255,7 +255,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             return;
         }
         if (celtium$compilingList != 0) {
-            // GL_LIST_INDEX did not answer at all. That is an identity that could not be established, so it is
+            // The register did not answer at all. That is an identity that could not be established, so it is
             // counted as unknown and kept out of the per-list census; filing it under 0 would name a list that no
             // replay can ever reach, which is what every model quad did while the stub answered 0 for everything.
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originUnknown(celtium$compilingList,
@@ -848,33 +848,28 @@ public abstract class WorldVertexBufferUploaderMixin {
         }
     }
 
-    /**
-     * {@return the display list GL is compiling into, 0 when none is, and {@link Integer#MIN_VALUE} when GL did not
-     * answer}.
-     * <p>
-     * The distinction matters under the GL-less stub: 0 is a real answer ("nothing is being compiled", which is true for
-     * every immediate batch) while a failed query is an identity that could not be established. The old catch collapsed
-     * both into 0, so a broken read looked exactly like the ordinary no-list case.
-     */
-    private static int celtium$listIndex() {
-        try {
-            int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x0B33);
-            return stub != Integer.MIN_VALUE ? stub
-                    : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
-        } catch (RuntimeException | LinkageError error) {
-            return Integer.MIN_VALUE;
-        }
+    /** The shared register this lane reads its fixed-function state from (interface 3, clause 1). */
+    private static org.soutalab.celtium.core.state.LightStateRegister celtium$register() {
+        return org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register();
     }
 
     /**
-     * {@return the value the stub tracks for {@code pname}}, falling back to the real GL query - the instrument reads
-     * below used to pay a trampoline round trip for a field the stub holds; with the stub installed the answer is the
-     * same map the query would have served.
+     * {@return the display list being compiled into, 0 when none is, and {@link Integer#MIN_VALUE} when the
+     * register could not be read at all}.
+     * <p>
+     * The distinction matters: 0 is a real answer ("nothing is being compiled", which is true for every
+     * immediate batch) while a failed read is an identity that could not be established. The old catch
+     * collapsed both into 0, so a broken read looked exactly like the ordinary no-list case. The register
+     * is the only source (G2-07, NEON ruling 2026-11-28): the display-list open/close owners publish the
+     * compiling id there, and there is no GL query fallback - in the GL-less world there is no GL to ask.
+     * In normal operation the value is always {@code >= 0}.
      */
-    private static int celtium$getInteger(int pname) {
-        int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(pname);
-        return stub != Integer.MIN_VALUE ? stub
-                : org.lwjgl.opengl.GL11.glGetInteger(pname);
+    private static int celtium$listIndex() {
+        try {
+            return celtium$register().compilingListId();
+        } catch (RuntimeException | LinkageError error) {
+            return Integer.MIN_VALUE;
+        }
     }
 
     /**
@@ -935,7 +930,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             return;
         }
         try {
-            int texture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$boundTexture();
+            int texture = celtium$register().boundTextureId();
             if (texture != celtium$PROBE_TEXTURE) {
                 return;
             }
@@ -1032,23 +1027,23 @@ public abstract class WorldVertexBufferUploaderMixin {
     /**
      * Records the texture the list is being compiled under, once per list.
      * <p>
-     * The same GL state the quad capture reads per quad, taken from the uploader side: the stub answers both from the
-     * single {@code glBindTexture} record, so this is the compile-time half of the texture identity the replay-time read
-     * in the {@code callList} hook pairs with. Read once per list - a batch arriving inside {@code glNewList} is the
-     * moment the geometry is compiled, and the texture does not change between the batches of one part.
+     * The same GL state the quad capture reads per quad, taken from the uploader side: the shared register
+     * answers both from the single {@code glBindTexture} record the state mirror keeps, so this is the
+     * compile-time half of the texture identity the replay-time read in the {@code callList} hook pairs
+     * with. Read once per list - a batch arriving inside {@code glNewList} is the moment the geometry is
+     * compiled, and the texture does not change between the batches of one part.
      */
     private static void celtium$noteCompileTexture(int listIndex) {
         try {
             if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTextureKnown(listIndex)) {
                 return;
             }
-            int unit = celtium$getInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-            // The model capture reads the same value from the same place, so the compile and replay halves of the
-            // census pair cannot disagree about which texture the list was built under.
-            int texture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$boundTexture();
-            if (texture <= 0) {
-                texture = celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-            }
+            // The active unit rides the register's state key; compose the GL enum the census's
+            // replay half also speaks (G2-07, NEON ruling 2026-11-28).
+            int unit = org.lwjgl.opengl.GL13.GL_TEXTURE0 + celtium$register().key().activeTextureUnit();
+            // The register is the single source for the bound texture in the GL-less world;
+            // 0 is the legitimate "nothing bound" value and is recorded as-is.
+            int texture = celtium$register().boundTextureId();
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTexture(listIndex, texture, unit);
         } catch (RuntimeException | LinkageError error) {
             // Record the failure rather than leaving the list to be retried on every batch, and rather than reporting a

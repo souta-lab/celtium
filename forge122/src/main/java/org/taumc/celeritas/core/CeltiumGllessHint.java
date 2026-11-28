@@ -953,6 +953,16 @@ public final class CeltiumGllessHint {
         NEW_LIST_CALLS.incrementAndGet();
         listIndex = list;
         listMode = mode;
+        // Publish the open list to the shared register before glNewList returns to its
+        // caller (G2-07, NEON ruling 2026-11-28): the non-terrain lane reads only the
+        // register to keep its hands off batches belonging to a list being compiled.
+        // This is the single aggregation point both system-1 entries converge on -
+        // GlStateManager.glNewList via CeltiumModelCapture, and the transformer's raw
+        // glNewList below. A name of zero is not a list and is never registered.
+        if (list > 0) {
+            org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register()
+                    .setCompilingListId(list);
+        }
         // Published to the stub as well, because that is where the model capture reads the open list from
         // (GlsmFrontend.compilingList). This class is the layer the transformer delegates to, so without this the
         // stub's field stays 0 and every quad is filed under no list at all - measured on leg gv-cohort-dl9.
@@ -961,8 +971,13 @@ public final class CeltiumGllessHint {
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityEndList();
-        nativeEndList();
+        // The close publish inside nativeEndList must land even when the stub's close
+        // throws, so the register cannot wedge at a non-zero list (G2-07 ruling).
+        try {
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityEndList();
+        } finally {
+            nativeEndList();
+        }
     }
 
     public static void nativeEndList() {
@@ -971,6 +986,11 @@ public final class CeltiumGllessHint {
         listIndex = 0;
         listMode = 0;
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteListClosed();
+        // The compilation is closed: the register's compiling id returns to 0. This
+        // path has no nesting (the hint's listIndex is a single slot), so the restore
+        // value is always 0 here; nested restore lives in the converter's manager.
+        org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register()
+                .setCompilingListId(0);
     }
 
     /**

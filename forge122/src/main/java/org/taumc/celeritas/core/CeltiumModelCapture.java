@@ -52,8 +52,14 @@ public final class CeltiumModelCapture {
         // Close the stub's recording before the hint clears the open list: the stub keys the compiled list by its own
         // {@code compilingList}, and {@code nativeEndList} resets it to zero. The raw-GL path
         // ({@code CeltiumGllessHint.glEndList}) has the same order for the same reason.
-        GlsmFrontend.compatibilityEndList();
-        CeltiumGllessHint.nativeEndList();
+        // The finally keeps that order while guaranteeing the hint's close - and with it
+        // the register's compiling-list restore publish - runs even if the stub's close
+        // throws (G2-07, NEON ruling 2026-11-28).
+        try {
+            GlsmFrontend.compatibilityEndList();
+        } finally {
+            CeltiumGllessHint.nativeEndList();
+        }
         return true;
     }
 }

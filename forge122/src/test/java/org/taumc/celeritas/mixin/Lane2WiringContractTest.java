@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -81,6 +82,33 @@ class Lane2WiringContractTest {
         }
         assertTrue(mixin.contains("Lane2StateMirror.current()"),
                 "the mirror accessor must resolve the singleton register owner");
+    }
+
+    @Test
+    void uploaderReadsStateFromTheRegisterOnly() throws Exception {
+        String uploader = read(
+                "forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java",
+                "src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java");
+        // G2-07 / G2-14 (NEON ruling 2026-11-28): the uploader's state reads ride the
+        // shared register only - no old-frontend or converter references, no GL query
+        // fallback, and no writes to the compiling-list id from the reading lane.
+        String[] forbidden = {
+                "GlsmFrontend",
+                "org.soutalab.celtium.vulkan.gl",
+                "org.soutalab.celtium.glcompat",
+                "GL_LIST_INDEX",
+                "celtium$getInteger",
+                "setCompilingListId",
+        };
+        for (String word : forbidden) {
+            assertFalse(uploader.contains(word), "forbidden reference in the uploader mixin: " + word);
+        }
+        assertTrue(uploader.contains("compilingListId()"),
+                "the compiling-list read must ride the register");
+        assertTrue(uploader.contains("boundTextureId()"),
+                "the bound-texture read must ride the register");
+        assertTrue(uploader.contains("key().activeTextureUnit()"),
+                "the active-unit read must compose from the register key");
     }
 
     @Test
