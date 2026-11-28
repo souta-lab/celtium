@@ -3246,6 +3246,10 @@ public final class VulkanContext {
                             + " confirm idle) and were dropped; the resources are left to the process teardown");
                 }
             }
+            if (ringDrained && this.vanillaPostTeardown != null) {
+                this.vanillaPostTeardown.run();
+                this.vanillaPostTeardown = null;
+            }
             for (int i = 0; i < this.idleDeferredFenceCount; i++) {
                 vkDestroyFence(this.device, this.idleDeferredFences[i], null);
             }
@@ -5503,6 +5507,12 @@ public final class VulkanContext {
             this.site = site;
             this.destroy = destroy;
         }
+    }
+
+    private Runnable vanillaPostTeardown;
+
+    void setVanillaPostTeardown(Runnable teardown) {
+        this.vanillaPostTeardown = teardown;
     }
 
     private final java.util.ArrayList<RetiredCleanup> retiredCleanups = new java.util.ArrayList<RetiredCleanup>();

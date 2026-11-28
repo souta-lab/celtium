@@ -115,7 +115,7 @@ final class FullscreenPassPipeline {
             pipeline = handle.get(0);
             check(result, "graphics pipeline");
         } catch (RuntimeException | Error failure) {
-            destroy();
+            destroyIdle();
             throw failure;
         } finally {
             if (fragmentModule != 0) vkDestroyShaderModule(device, fragmentModule, null);
@@ -215,12 +215,13 @@ final class FullscreenPassPipeline {
     void delete() {
         if (retired) return;
         retired = true;
-        context.celtium$retireCleanup("fullscreen pass pipeline", this::destroy);
+        context.celtium$retireCleanup("fullscreen pass pipeline", this::destroyIdle);
         // Context teardown also drains device-owned retirements after the idle wait.
-        VulkanRetireQueue.retire(device.address(), this::destroy);
+        VulkanRetireQueue.retire(device.address(), this::destroyIdle);
     }
 
-    private void destroy() {
+    void destroyIdle() {
+        retired = true;
         if (pool != 0) vkDestroyDescriptorPool(device, pool, null);
         if (pipeline != 0) vkDestroyPipeline(device, pipeline, null);
         if (layout != 0) vkDestroyPipelineLayout(device, layout, null);
