@@ -620,7 +620,8 @@ public final class CeltiumTerrainDriver {
      * The upload carrier in the mesher's own storage shape (S2-b-perf CPU-4): references to
      * the pooled buffers' backing arrays, consumed synchronously by the store's bulk copy
      * before the buffers return to the pool in the caller's finally - the old form built a
-     * record and two list copies per quad on this thread.
+     * record and two list copies per quad on this thread. The per-corner light column
+     * (R-107) rides as the one concatenated array, in the store's layout.
      */
     private static SectionGeometryRaw toRaw(MeshBuffers buffers) {
         return new SectionGeometryRaw(
@@ -631,7 +632,8 @@ public final class CeltiumTerrainDriver {
                 new float[][]{buffers.generalPositions(0), buffers.generalPositions(1),
                         buffers.generalPositions(2)},
                 new int[][]{buffers.generalMeta(0), buffers.generalMeta(1), buffers.generalMeta(2)},
-                new int[]{buffers.generalCount(0), buffers.generalCount(1), buffers.generalCount(2)});
+                new int[]{buffers.generalCount(0), buffers.generalCount(1), buffers.generalCount(2)},
+                buffers.cornerLightColumn());
     }
 
     // ------------------------------------------------------------------

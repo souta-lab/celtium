@@ -89,7 +89,12 @@ public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDraw
     // (leaves, cutout, non-cube) lands there). General gets the headroom; axis keeps 2x.
     private static final long AXIS_SLAB_BYTES = 96L * 1024L * 1024L;
     private static final long GENERAL_SLAB_BYTES = 192L * 1024L * 1024L;
-    private static final long AUX_SLAB_BYTES = 32L * 1024L * 1024L;
+    // The auxiliary slab carries the pack mc_Entity columns (2 B per axis quad) and, since
+    // R-107, the unconditional per-corner light columns (8 B per quad over both quad kinds).
+    // Worst-case sizing against the geometry slabs' quad ceilings: ~6M axis quads and ~2.4M
+    // general quads of light (48 MB + 19 MB) plus ~12 MB of mc_Entity columns stays under
+    // 96 MB with headroom.
+    private static final long AUX_SLAB_BYTES = 96L * 1024L * 1024L;
     private static final int MAX_SECTIONS = 32768;
     private static final long DESC_BYTES = (long) MAX_SECTIONS * 48L;
     /** DrawPush byte offsets: mat4 0, camera section 64, grid origin 80, metadata 96, camera fraction 112. */

@@ -86,6 +86,9 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     private final boolean[] leaves;
     private final boolean[] noGreedy;
     private final short[] mcEntity;
+    private final float[] aoValue;
+    private final boolean[] translucent;
+    private final byte[] lightEmission;
     private final int[] faceTexture;       // [state * 6 + dir]
     private final int[] faceCell;          // [state * 6 + dir]
     private final boolean[] faceTint;      // [state * 6 + dir]
@@ -108,6 +111,9 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         this.leaves = tables.leaves;
         this.noGreedy = tables.noGreedy;
         this.mcEntity = tables.mcEntity;
+        this.aoValue = tables.aoValue;
+        this.translucent = tables.translucent;
+        this.lightEmission = tables.lightEmission;
         this.faceTexture = tables.faceTexture;
         this.faceCell = tables.faceCell;
         this.faceTint = tables.faceTint;
@@ -217,6 +223,17 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         Block block = state.getBlock();
         Material material = state.getMaterial();
         t.air[id] = material == Material.AIR;
+        // The smooth-lighting inputs (R-107) are state-derived like the rest of the row and
+        // are recorded for air too: corner samples read the states of air cells constantly.
+        try {
+            t.aoValue[id] = state.getAmbientOcclusionLightValue();
+            t.translucent[id] = state.isTranslucent();
+            t.lightEmission[id] = (byte) state.getLightValue();
+        } catch (Throwable ignored) {
+            t.aoValue[id] = 1.0f;
+            t.translucent[id] = false;
+            t.lightEmission[id] = 0;
+        }
         if (t.air[id]) {
             return;
         }
@@ -769,6 +786,21 @@ public final class ForgeBlockFaceData implements BlockFaceData {
     }
 
     @Override
+    public int lightValue(int state) {
+        return state >= 0 && state < stateCount ? lightEmission[state] & 0xFF : 0;
+    }
+
+    @Override
+    public float aoLightValue(int state) {
+        return state >= 0 && state < stateCount ? aoValue[state] : 1.0f;
+    }
+
+    @Override
+    public boolean isTranslucent(int state) {
+        return state >= 0 && state < stateCount && translucent[state];
+    }
+
+    @Override
     public int generalQuadCount(int state) {
         return state >= 0 && state < stateCount ? generalCount[state] : 0;
     }
@@ -817,6 +849,9 @@ public final class ForgeBlockFaceData implements BlockFaceData {
         boolean[] leaves;
         boolean[] noGreedy;
         short[] mcEntity;
+        float[] aoValue;
+        boolean[] translucent;
+        byte[] lightEmission;
         int[] faceTexture;
         int[] faceCell;
         boolean[] faceTint;
@@ -837,6 +872,10 @@ public final class ForgeBlockFaceData implements BlockFaceData {
             leaves = new boolean[size];
             noGreedy = new boolean[size];
             mcEntity = new short[size];
+            aoValue = new float[size];
+            java.util.Arrays.fill(aoValue, 1.0f);
+            translucent = new boolean[size];
+            lightEmission = new byte[size];
             faceTexture = new int[size * 6];
             faceCell = new int[size * 6];
             faceTint = new boolean[size * 6];

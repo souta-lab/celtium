@@ -30,6 +30,11 @@ import java.util.Map;
  * column is missing is armed per the store's rule: its descriptor reports {@link
  * SectionDesc#NO_AUXILIARY} and the terrain shaders read the fallback entity id 0 - never garbage.
  * <p>
+ * The per-corner smooth-light column (R-107, 8 B per quad over both quad kinds) also lives in
+ * the auxiliary space, but it is NOT requirements-driven: every upload writes it and the
+ * descriptor's {@code lightDataBase} (its offset in 4-byte words) points at it for the whole
+ * residency; a requirements change preserves the base (see {@link #withAux}).
+ * <p>
  * All frees are timeline-deferred through the regions; the caller drives {@link
  * #collectCompleted(long)} with the context's slab completion value. Methods are synchronized:
  * mesher threads hand geometry in, the render thread reads descriptors out.
@@ -44,6 +49,9 @@ public final class TerrainSectionStore {
     private static final long AXIS_ALIGNMENT = PackedAxisQuad.BYTE_SIZE;
     private static final long GENERAL_ALIGNMENT = GeneralQuad.BYTE_SIZE;
     private static final long AUX_ALIGNMENT = 2L;
+    private static final long LIGHT_ALIGNMENT = 4L;
+    /** Bytes of corner-light column per quad (two packed ints, axis and general alike). */
+    private static final long LIGHT_BYTES_PER_QUAD = 8L;
 
     /** One layer's slice of a section's slab ranges: quad offset (in quads) and count, per slab kind. */
     public record LayerRange(int axisQuadOffset, int axisQuadCount,
@@ -74,6 +82,7 @@ public final class TerrainSectionStore {
         long axisBytes;
         long generalBytes;
         long auxBytes;
+        long lightBytes;
 
         Resident(long key) {
             this.key = key;
@@ -151,7 +160,7 @@ public final class TerrainSectionStore {
             generalCounts[layer] = geometry.generalLayer(layer).size();
         }
         return doUpload(sectionX, sectionY, sectionZ, axisCounts, generalCounts,
-                geometry.mcEntityIds(), new LayerWriter() {
+                geometry.mcEntityIds(), geometry.cornerLight(), new LayerWriter() {
                     @Override
                     public void writeAxis(MemorySegment segment, int layer, int quadCursor, int count) {
                         List<PackedAxisQuad> axis = geometry.axisLayer(layer);
@@ -186,7 +195,7 @@ public final class TerrainSectionStore {
     public synchronized SectionDesc uploadRaw(int sectionX, int sectionY, int sectionZ,
                                               SectionGeometryRaw raw, long timelineValue) {
         return doUpload(sectionX, sectionY, sectionZ, raw.axisCounts(), raw.generalCounts(),
-                raw.concatenatedAux(), new LayerWriter() {
+                raw.concatenatedAux(), raw.cornerLight(), new LayerWriter() {
                     @Override
                     public void writeAxis(MemorySegment segment, int layer, int quadCursor, int count) {
                         if (count == 0) {
@@ -220,7 +229,7 @@ public final class TerrainSectionStore {
 
     private SectionDesc doUpload(int sectionX, int sectionY, int sectionZ,
                                  int[] axisCounts, int[] generalCounts, short[] mcEntityIds,
-                                 LayerWriter writer, long timelineValue) {
+                                 int[] cornerLight, LayerWriter writer, long timelineValue) {
         long key = sectionKey(sectionX, sectionY, sectionZ);
         int axisCount = axisCounts[0] + axisCounts[1] + axisCounts[2];
         int generalCount = generalCounts[0] + generalCounts[1] + generalCounts[2];
@@ -229,12 +238,14 @@ public final class TerrainSectionStore {
         boolean wantsAux = requirements.needsAuxiliaryColumn() && mcEntityIds.length == axisCount
                 && axisCount > 0;
         long auxBytes = wantsAux ? axisCount * 2L : 0L;
+        long lightBytes = (long) (axisCount + generalCount) * LIGHT_BYTES_PER_QUAD;
 
         long axisOffset = axisBytes == 0L ? 0L : axisRegion.allocate(axisBytes, AXIS_ALIGNMENT);
         long generalOffset = generalBytes == 0L ? 0L : generalRegion.allocate(generalBytes, GENERAL_ALIGNMENT);
         long auxOffset = auxBytes == 0L ? -1L : auxRegion.allocate(auxBytes, AUX_ALIGNMENT);
+        long lightOffset = lightBytes == 0L ? 0L : auxRegion.allocate(lightBytes, LIGHT_ALIGNMENT);
         if ((axisBytes > 0L && axisOffset < 0L) || (generalBytes > 0L && generalOffset < 0L)
-                || (auxBytes > 0L && auxOffset < 0L)) {
+                || (auxBytes > 0L && auxOffset < 0L) || (lightBytes > 0L && lightOffset < 0L)) {
             if (axisBytes > 0L && axisOffset >= 0L) {
                 axisRegion.releaseDeferred(axisOffset, axisBytes, timelineValue);
             }
@@ -244,15 +255,19 @@ public final class TerrainSectionStore {
             if (auxBytes > 0L && auxOffset >= 0L) {
                 auxRegion.releaseDeferred(auxOffset, auxBytes, timelineValue);
             }
+            if (lightBytes > 0L && lightOffset >= 0L) {
+                auxRegion.releaseDeferred(lightOffset, lightBytes, timelineValue);
+            }
             throw new IllegalStateException("terrain slab cannot fit section (" + sectionX + ", "
                     + sectionY + ", " + sectionZ + "): axis " + axisBytes + " B, general "
-                    + generalBytes + " B, aux " + auxBytes + " B");
+                    + generalBytes + " B, aux " + auxBytes + " B, light " + lightBytes + " B");
         }
 
         Resident resident = new Resident(key);
         resident.axisBytes = axisBytes;
         resident.generalBytes = generalBytes;
         resident.auxBytes = auxBytes;
+        resident.lightBytes = lightBytes;
         resident.mcEntityIds = mcEntityIds;
 
         MemorySegment axisSegment = axisBytes == 0L ? null : axisSpace.segment(axisOffset, axisBytes);
@@ -276,8 +291,16 @@ public final class TerrainSectionStore {
             }
             mcEntityBase = (int) (auxOffset / 2L);
         }
+        int lightDataBase = 0;
+        if (lightBytes > 0L) {
+            MemorySegment lightSegment = auxSpace.segment(lightOffset, lightBytes);
+            for (int i = 0; i < cornerLight.length; i++) {
+                lightSegment.set(ValueLayout.JAVA_INT, (long) i * 4L, cornerLight[i]);
+            }
+            lightDataBase = (int) (lightOffset / 4L);
+        }
         resident.desc = new SectionDesc(sectionX, sectionY, sectionZ, 0,
-                axisOffset, generalOffset, axisCount, generalCount, 0, mcEntityBase);
+                axisOffset, generalOffset, axisCount, generalCount, lightDataBase, mcEntityBase);
 
         generation++;
         cachedDescriptors = null;
@@ -486,6 +509,10 @@ public final class TerrainSectionStore {
         }
         if (resident.auxBytes > 0L && resident.desc.hasAuxiliaryColumn()) {
             auxRegion.releaseDeferred((long) resident.desc.mcEntityBase() * 2L, resident.auxBytes, timelineValue);
+        }
+        if (resident.lightBytes > 0L) {
+            auxRegion.releaseDeferred((long) resident.desc.lightDataBase() * 4L, resident.lightBytes,
+                    timelineValue);
         }
     }
 

@@ -78,6 +78,28 @@ public interface BlockFaceData {
     short mcEntityId(int state);
 
     /**
+     * The state's own light emission (0..15), vanilla's {@code IBlockState.getLightValue()}:
+     * every light sample the smooth-lighting corner computation takes is floored at the face
+     * block's emission, exactly as {@code World.getCombinedLight(pos, lightValue)} does.
+     */
+    int lightValue(int state);
+
+    /**
+     * Vanilla's {@code IBlockState.getAmbientOcclusionLightValue()}: 0.2 for a normal cube,
+     * 1.0 for everything else (air included), unless a block overrides it. The per-corner AO
+     * multiplier of the smooth-lighting model averages this value over the corner's sample
+     * cells.
+     */
+    float aoLightValue(int state);
+
+    /**
+     * Vanilla's {@code IBlockState.isTranslucent()}: the smooth-lighting diagonal sample of a
+     * corner quadrant is taken only when at least one of the two cells just beyond the
+     * quadrant's edge cells (one more step along the face direction) is translucent.
+     */
+    boolean isTranslucent(int state);
+
+    /**
      * The number of general (baked-model) quads this state emits; 0 for air and for full cubes
      * whose faces all stay on the axis path (escaped faces contribute their quads here).
      */

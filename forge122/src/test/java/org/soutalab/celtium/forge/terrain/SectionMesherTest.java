@@ -47,6 +47,9 @@ class SectionMesherTest {
             int quadTexture = 0;
             boolean[] generalFaces = new boolean[6];
             int[] quadUvs = null;
+            float ao = 1.0f;
+            boolean translucent = false;
+            int emission = 0;
         }
 
         final Row[] rows = new Row[16];
@@ -60,7 +63,9 @@ class SectionMesherTest {
             rows[0].fullCube = false;
             rows[0].occludes = false;
             rows[0].sideSolid = false;
+            rows[0].translucent = true;
             rows[STONE].texture = 10;
+            rows[STONE].ao = 0.2f;
             rows[STONE2].texture = 11;
             rows[GLASS].occludes = false;
             rows[GLASS].cullsSame = true;
@@ -150,6 +155,21 @@ class SectionMesherTest {
         @Override
         public short mcEntityId(int state) {
             return rows[state].mcEntity;
+        }
+
+        @Override
+        public int lightValue(int state) {
+            return rows[state].emission;
+        }
+
+        @Override
+        public float aoLightValue(int state) {
+            return rows[state].ao;
+        }
+
+        @Override
+        public boolean isTranslucent(int state) {
+            return rows[state].translucent;
         }
 
         @Override
@@ -519,6 +539,115 @@ class SectionMesherTest {
         pair.setFluid(WorldSectionSnapshot.index(10, 9, 9), FLUID);
         MeshBuffers pairOut = mesh(pair, new Stub(), MesherOptions.PACK_OFF);
         assertEquals(10, pairOut.generalCount(TerrainLayer.TRANSLUCENT.ordinal()));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Per-corner smooth light (R-107)
+    // ---------------------------------------------------------------------------------------------
+
+    /** One packed corner-light field: corner c of quad i in a layer, axis or general stream. */
+    private static int cornerField(MeshBuffers out, int layer, int i, boolean general, int corner) {
+        int word = general ? out.generalCornerLight(layer, i, corner >> 1)
+                : out.axisCornerLight(layer, i, corner >> 1);
+        return (word >> ((corner & 1) * 16)) & 0xFFFF;
+    }
+
+    private static int skySum(int field) {
+        return field & 63;
+    }
+
+    private static int blockSum(int field) {
+        return (field >> 6) & 63;
+    }
+
+    private static int aoStep(int field) {
+        return (field >> 12) & 15;
+    }
+
+    /** The index (in its layer) of the single cube's UP face at section-local (x, z). */
+    private static int upFaceIndex(MeshBuffers out, int x, int z) {
+        for (int i = 0; i < out.axisCount(0); i++) {
+            PackedAxisQuad q = out.axisQuad(0, i);
+            if (q.axis() == 1 && !q.negativeFacing() && q.minX() == x && q.minZ() == z) {
+                return i;
+            }
+        }
+        throw new AssertionError("no UP face at " + x + ", " + z);
+    }
+
+    @Test
+    void axisCornerLightVariesAcrossAFace() {
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 8, 8, 8, STONE);
+        // The UP face's face cell is snapshot (9, 10, 9). Darken the west edge cell and the
+        // west-north diagonal to sky 7: the (cu=0, cv=0) corner averages 15+7+15+7, the
+        // (cu=0, cv=1) corner 15+7+15+15, the east corners stay at 60.
+        snap.skyLight()[WorldSectionSnapshot.index(8, 10, 9)] = 7;
+        snap.skyLight()[WorldSectionSnapshot.index(8, 10, 8)] = 7;
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        int i = upFaceIndex(out, 8, 8);
+        assertEquals(44, skySum(cornerField(out, 0, i, false, 0)), "west-north corner");
+        assertEquals(60, skySum(cornerField(out, 0, i, false, 1)), "east-north corner");
+        assertEquals(52, skySum(cornerField(out, 0, i, false, 2)), "west-south corner");
+        assertEquals(60, skySum(cornerField(out, 0, i, false, 3)), "east-south corner");
+        assertEquals(0, blockSum(cornerField(out, 0, i, false, 0)));
+    }
+
+    @Test
+    void axisCornerAoRespondsToOccluder() {
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 8, 8, 8, STONE);
+        // A stone in the west edge cell of the west corners (snapshot (8, 10, 9)): its AO
+        // value 0.2 replaces air's 1.0 in that corner's average - (1 + 0.2 + 1 + 1) / 4 = 0.8,
+        // step 12 of 15. The east corners keep full AO.
+        set(snap, 7, 9, 8, STONE);
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        int i = upFaceIndex(out, 8, 8);
+        assertEquals(12, aoStep(cornerField(out, 0, i, false, 0)));
+        assertEquals(12, aoStep(cornerField(out, 0, i, false, 2)));
+        assertEquals(15, aoStep(cornerField(out, 0, i, false, 1)));
+        assertEquals(15, aoStep(cornerField(out, 0, i, false, 3)));
+    }
+
+    @Test
+    void generalQuadCornerLightVaries() {
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 3, 4, 5, MODEL);
+        // The model quad faces UP; its face cell is snapshot (4, 6, 6). Darken the west edge
+        // and the west-north diagonal: corner 0 (at block-local (0, 1, 0)) averages 44,
+        // corner 2 (at (1, 1, 1)) stays at 60.
+        snap.skyLight()[WorldSectionSnapshot.index(3, 6, 6)] = 7;
+        snap.skyLight()[WorldSectionSnapshot.index(3, 6, 5)] = 7;
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        assertEquals(1, out.generalTotal());
+        int layer = TerrainLayer.SOLID.ordinal();
+        assertEquals(44, skySum(cornerField(out, layer, 0, true, 0)));
+        assertEquals(60, skySum(cornerField(out, layer, 0, true, 2)));
+    }
+
+    @Test
+    void cornerLightColumnMatchesStoreLayout() {
+        WorldSectionSnapshot snap = snapshot();
+        set(snap, 8, 8, 8, STONE);
+        set(snap, 3, 4, 5, MODEL);
+        MeshBuffers out = mesh(snap, new Stub(), MesherOptions.PACK_OFF);
+        int[] column = out.cornerLightColumn();
+        assertEquals((out.axisTotal() + out.generalTotal()) * 2, column.length);
+        // Axis quads first (layer order), then general quads.
+        int axisCursor = 0;
+        for (int layer = 0; layer < TerrainLayer.COUNT; layer++) {
+            for (int i = 0; i < out.axisCount(layer); i++) {
+                assertEquals(out.axisCornerLight(layer, i, 0), column[axisCursor++]);
+                assertEquals(out.axisCornerLight(layer, i, 1), column[axisCursor++]);
+            }
+        }
+        for (int layer = 0; layer < TerrainLayer.COUNT; layer++) {
+            for (int i = 0; i < out.generalCount(layer); i++) {
+                assertEquals(out.generalCornerLight(layer, i, 0), column[axisCursor++]);
+                assertEquals(out.generalCornerLight(layer, i, 1), column[axisCursor++]);
+            }
+        }
+        assertEquals(column.length, axisCursor);
     }
 
     @Test

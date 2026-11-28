@@ -16,7 +16,10 @@ import java.util.Objects;
  * {@code generalMeta[layer]} ([textureIndex, lightWord, normalPacked, flags, uvPacked x4] -
  * exactly the 32 meta bytes of the 80 B slab layout, after the 48 position bytes). When
  * {@code auxEnabled} is set, {@code axisAux[layer]} holds one {@code mc_Entity} id per axis
- * quad of that layer.
+ * quad of that layer. {@code cornerLight} is the per-corner light column in the store's
+ * layout (every axis quad's two words in layer order, then every general quad's - the
+ * shape {@code SectionGeometry.cornerLight()} carries on the object path), or an empty
+ * array when the mesh produced none.
  * <p>
  * <b>Borrowed arrays:</b> the components are the producer's live buffers. They are valid
  * only for the duration of the {@code uploadRaw} call and must not be retained; the store
@@ -29,7 +32,8 @@ public record SectionGeometryRaw(
         boolean auxEnabled,
         float[][] generalPositions,
         int[][] generalMeta,
-        int[] generalCounts) {
+        int[] generalCounts,
+        int[] cornerLight) {
 
     public SectionGeometryRaw {
         Objects.requireNonNull(axisWords, "axisWords");
@@ -38,6 +42,13 @@ public record SectionGeometryRaw(
         Objects.requireNonNull(generalPositions, "generalPositions");
         Objects.requireNonNull(generalMeta, "generalMeta");
         Objects.requireNonNull(generalCounts, "generalCounts");
+        cornerLight = cornerLight == null ? new int[0] : cornerLight;
+        int quadTotal = axisCounts[0] + axisCounts[1] + axisCounts[2]
+                + generalCounts[0] + generalCounts[1] + generalCounts[2];
+        if (cornerLight.length != 0 && cornerLight.length != quadTotal * 2) {
+            throw new IllegalArgumentException("raw cornerLight must hold two words per quad: "
+                    + cornerLight.length + " words for " + quadTotal + " quads");
+        }
         if (axisWords.length != TerrainSectionStore.LAYER_COUNT
                 || axisCounts.length != TerrainSectionStore.LAYER_COUNT
                 || axisAux.length != TerrainSectionStore.LAYER_COUNT

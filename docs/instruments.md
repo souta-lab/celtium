@@ -251,8 +251,8 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.lane1.gpuCull` | `System.getProperty` | [Lane1TerrainFrontend.java:108](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L108>) |
-| `celtium.lane1.hiZ` | `System.getProperty` | [Lane1TerrainFrontend.java:109](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L109>) |
+| `celtium.lane1.gpuCull` | `System.getProperty` | [Lane1TerrainFrontend.java:113](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L113>) |
+| `celtium.lane1.hiZ` | `System.getProperty` | [Lane1TerrainFrontend.java:114](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L114>) |
 
 <a id="group-celtium-mirrorDump"></a>
 ## `celtium.mirrorDump.*`
