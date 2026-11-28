@@ -45,8 +45,8 @@ public final class Lane2ImmediateState {
     // The matrix mode's single owner for both routes, held here in GL enum values since the E5
     // seat A move (Neon E4 ruling 2026-11-28): the Lane 2 mirror delegates its mode accessors to
     // this field, the immediate funnel converts to and from its ordinals in matrixMode() /
-    // matrixMode(int), and the old GLSM record (GlsmMatrixMode) forwards to the mirror until it
-    // is deleted with the capture package at E4-c. A direct GL11.glMatrixMode call that reaches
+    // matrixMode(int), and the capture entry writes the mirror directly since the old GLSM
+    // forwarding record was deleted in E4-b2-tail. A direct GL11.glMatrixMode call that reaches
     // only one route therefore still moves the mode the other route's stack machinery selects
     // by - the disagreement the former double ownership allowed stays gone (the M-3 property).
     private static final int GL_MODELVIEW_VALUE = 0x1700;

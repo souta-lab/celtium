@@ -42,7 +42,6 @@ import org.soutalab.celtium.vulkan.GlsmBufferState;
 import org.soutalab.celtium.vulkan.GlsmClientArrayState;
 import org.soutalab.celtium.vulkan.GlsmEnableState;
 import org.soutalab.celtium.vulkan.GlsmImmediateState;
-import org.soutalab.celtium.vulkan.GlsmMatrixMode;
 import org.soutalab.celtium.vulkan.GlsmAttribStacks;
 import org.soutalab.celtium.vulkan.GlsmNameLedger;
 import org.soutalab.celtium.vulkan.LegacyAttribSnapshot;
@@ -898,10 +897,16 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case SEM_MULT_MATRIX:
                 noteMatrixMultiplyArrival(fn);
                 return 0L;
-            case SEM_MATRIX_MODE:
-                GlsmMatrixMode.current().set((int) c[0]);
-                GLSMMatrices.glMatrixMode((int) c[0]);
+            case SEM_MATRIX_MODE: {
+                final int mode = (int) c[0];
+                // Direct to the Lane 2 mirror (the forwarding record that used to sit
+                // between this seat and the mirror was deleted in E4-b2-tail); the fall-through to MODELVIEW for values outside
+                // the three matrix modes, which the record applied on write, is kept here.
+                Lane2StateMirror.current().setMatrixMode(
+                        mode == 0x1700 || mode == 0x1701 || mode == 0x1702 ? mode : 0x1700);
+                GLSMMatrices.glMatrixMode(mode);
                 return 0L;
+            }
             case SEM_CULL_FACE:
                 GLSMRasterizer.glCullFace((int) c[0]);
                 NativeRasterState.current().cullFace((int) c[0]);
@@ -2174,7 +2179,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
                 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
-                    + " mode=" + GlsmMatrixMode.current().get()
+                    + " mode=" + Lane2StateMirror.current().matrixMode()
                     + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
                     + " site=[" + callSite(8) + "]");
         }
@@ -3316,7 +3321,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case 0x0C02: // GL_READ_BUFFER
                 return FramebufferBindings.current().readFramebuffer() == 0 ? 0x0405 : 0x8CE0;
             case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
-                return GlsmMatrixMode.current().get();
+                return Lane2StateMirror.current().matrixMode();
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this provider's own record. With no backend the record is the answer, the same one
