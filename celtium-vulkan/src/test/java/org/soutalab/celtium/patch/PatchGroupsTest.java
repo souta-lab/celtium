@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class PatchGroupsTest {
 
     @Test
-    void theTableHasThirteenGroupsAndNinetySixMembersWithNoDuplicates() {
-        assertEquals(13, PatchGroups.groups().size());
+    void theTableHasTwelveGroupsAndEightyEightMembersWithNoDuplicates() {
+        assertEquals(12, PatchGroups.groups().size());
         int members = 0;
         Set<String> seen = new HashSet<>();
         for (String group : PatchGroups.groups()) {
@@ -29,8 +29,8 @@ class PatchGroupsTest {
                 assertTrue(seen.add(member), member + " is listed twice");
             }
         }
-        assertEquals(96, members);
-        assertEquals(96, seen.size());
+        assertEquals(88, members);
+        assertEquals(88, seen.size());
     }
 
     @Test
