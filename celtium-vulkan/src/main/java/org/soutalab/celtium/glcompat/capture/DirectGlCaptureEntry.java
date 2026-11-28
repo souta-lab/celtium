@@ -710,10 +710,8 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 texSubImage(fn, c);
                 return 0L;
             case SEM_COMPRESSED_TEXIMAGE:
-                if (c[7] != 0L) {
-                    GLSMTextures.glCompressedTexImage2D((int) c[0], (int) c[1], (int) c[2], (int) c[3],
-                            (int) c[4], (int) c[5], bytes(c[7], (int) c[6]));
-                }
+                // The converter holds no compressed-image form; the old stub recorded the
+                // extent only and stored no pixels either, so the call stays a counted arrival.
                 return 0L;
             case SEM_PIXEL_STORE:
                 if (fn.name.indexOf('f') == fn.name.length() - 1) {
@@ -800,11 +798,16 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 }
                 return 0L;
             case SEM_TEX_PARAM_I_DSA:
-                GLSMTextures.glTextureParameteri((int) c[0], (int) c[1], (int) c[2]);
+                GLStateManager.glTextureParameteri((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
             case SEM_TEX_PARAM_IV_DSA:
-                GLSMTextures.glTextureParameter((int) c[0], (int) c[1],
-                        MemoryUtil.memIntBuffer(c[2], 4));
+                if (c[2] != 0L) {
+                    int[] params = new int[4];
+                    for (int i = 0; i < 4; i++) {
+                        params[i] = MemoryUtil.memGetInt(c[2] + (long) i * 4L);
+                    }
+                    GLStateManager.glTextureParameteriv((int) c[0], (int) c[1], params);
+                }
                 return 0L;
             case SEM_MULT_MATRIX:
                 if (fn.name.endsWith("f")) {
@@ -1044,7 +1047,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
         long data = c[2];
         int usage = (int) c[3];
         if (fn.namedObject) {
-            GLSMBuffers.nglNamedBufferData(target, size, data, usage);
+            if (data != 0L) {
+                GLSMBuffers.glNamedBufferData(target, bytes(data, (int) Math.min(size, Integer.MAX_VALUE - 8)), usage);
+            } else {
+                GLSMBuffers.glNamedBufferData(target, size, usage);
+            }
         } else {
             GLSMBuffers.nglBufferData(target, size, data, usage);
         }
@@ -1578,7 +1585,7 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
                 GLSMDepthStencilAlpha.glStencilOp((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
             case "glStencilOpSeparate":
-                GLSMDepthStencilAlpha.glStencilOpSeparate((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4]);
+                GLSMDepthStencilAlpha.glStencilOpSeparate((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case "glStencilMask":
                 GLSMDepthStencilAlpha.glStencilMask((int) c[0]);
@@ -1631,16 +1638,11 @@ public final class DirectGlCaptureEntry implements FunctionProvider {
             case "glEndQuery": case "glEndQueryARB":
                 GLSMQueries.glEndQuery((int) c[0]);
                 return 0L;
-            case "glBeginQueryIndexed":
-                GLSMQueries.glBeginQueryIndexed((int) c[0], (int) c[1], (int) c[2]);
-                return 0L;
-            case "glEndQueryIndexed":
-                GLSMQueries.glEndQueryIndexed((int) c[0], (int) c[1]);
-                return 0L;
             default:
                 // Counted arrival (the fn census carries it when enabled): float-carrying
-                // immediate/state names and the selection/feedback legacy the old stub also
-                // answered with silence.
+                // immediate/state names, indexed queries (the converter holds no indexed form;
+                // the old stub answered them as no-ops too) and the selection/feedback legacy
+                // the old stub also answered with silence.
                 return 0L;
         }
     }
