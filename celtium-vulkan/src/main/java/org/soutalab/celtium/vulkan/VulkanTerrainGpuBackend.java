@@ -10904,10 +10904,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
             // check that would have refused.
             long programQueryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-            int boundProgram = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$currentProgram();
-            if (boundProgram == Integer.MIN_VALUE) {
-                boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
-            }
+            // The bound program is the register's published value only (E4-b2 point 6): the old
+            // entrance query and its GL11.glGetInteger(GL_CURRENT_PROGRAM) fallback are gone, and
+            // the refusal gate below reads nothing else.
+            int boundProgram = org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register().activeProgramId();
             if (BATCH_TIMINGS) {
                 this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
                 this.immediateStatistics.noteBatchTimed();

@@ -33,19 +33,19 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
             org.soutalab.celtium.vulkan.gl.GlsmFrontend.install();
             // The recorded-list probe boundary (E5 seat C, Neon E4 ruling 2026-11-28): the model path asks whether a
             // list holds recorded commands, and which list a replay is executing, through this read-only predicate
-            // instead of reaching into the capture package. The backing store today is the stub's display-list
-            // ledger, installed here at the composition root; when the capture entrance moves at E4-b, this
-            // installation re-points at the new store and the contract does not change.
+            // instead of reaching into the capture package. The backing store is the converter's display-list
+            // manager, installed here at the composition root (re-pointed from the stub's ledger at E4-b2,
+            // NEON door ruling 2026-11-28 point 4); the contract does not change.
             org.soutalab.celtium.core.state.RecordedListProbes.install(new org.soutalab.celtium.core.state.RecordedListProbe() {
                 @Override
                 public boolean hasRecordedList(int listId) {
                     return listId > 0
-                            && org.soutalab.celtium.vulkan.gl.GlsmDisplayListLedger.current().hasList(listId);
+                            && org.soutalab.celtium.glcompat.DisplayListManager.displayListExists(listId);
                 }
 
                 @Override
                 public int executingListId() {
-                    return org.soutalab.celtium.vulkan.gl.GlsmDisplayListLedger.current().executingListId();
+                    return org.soutalab.celtium.glcompat.DisplayListManager.getCurrentRenderingList();
                 }
             });
             // The terrain backend needs the light map's texture name and cannot ask GL for it: 1.12.2 binds it

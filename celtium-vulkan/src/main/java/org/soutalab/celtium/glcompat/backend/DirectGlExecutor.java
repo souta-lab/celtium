@@ -1469,32 +1469,32 @@ public final class DirectGlExecutor {
     }
 
     public void uniform1iv(int location, IntBuffer value) {
-            throw new UnsupportedOperationException("uniform1iv is only supported by the LWJGL3 backend");
-        }
+        this.runtime.uniform1iv(location, value);
+    }
 
     public void uniform2(int location, FloatBuffer value) {
-            throw new UnsupportedOperationException("uniform2 is only supported by the LWJGL3 backend");
-        }
+        this.runtime.uniform2(location, value);
+    }
 
     public void uniform2iv(int location, IntBuffer value) {
-            throw new UnsupportedOperationException("uniform2iv is only supported by the LWJGL3 backend");
-        }
+        this.runtime.uniform2iv(location, value);
+    }
 
     public void uniform3fv(int location, float[] values) {
         this.runtime.uniform3fv(location, values);
     }
 
     public void uniform3iv(int location, IntBuffer value) {
-            throw new UnsupportedOperationException("uniform3iv is only supported by the LWJGL3 backend");
-        }
+        this.runtime.uniform3iv(location, value);
+    }
 
     public void uniform4fv(int location, float[] values) {
         this.runtime.uniform4fv(location, values);
     }
 
     public void uniform4iv(int location, IntBuffer value) {
-            throw new UnsupportedOperationException("uniform4iv is only supported by the LWJGL3 backend");
-        }
+        this.runtime.uniform4iv(location, value);
+    }
 
     public void uniformMatrix2(int location, boolean transpose, FloatBuffer matrices) {
         this.runtime.uniformMatrix2(location, transpose, matrices);

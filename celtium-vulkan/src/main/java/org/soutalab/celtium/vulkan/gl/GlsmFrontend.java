@@ -1094,36 +1094,6 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
         return stub == null ? 0 : GlsmDisplayListLedger.current().compiling();
     }
 
-    /**
-     * Records the display list {@code glNewList} opened, from the layer that sees the call.
-     *
-     * <p>Needed because the two layers are not the same one under GL-less: the game's display-list calls reach
-     * {@code CeltiumGllessNativeTransformer}, which rewrites them to {@code CeltiumGllessHint} and returns, so
-     * {@link #compilingList} - the field this stub sets from its own dispatch - is only written when a call travels
-     * the trampoline, which these do not. Measured on leg {@code gv-cohort-dl9}: the hint counted 37
-     * {@code glNewList} arrivals while every one of the 222 model quads was filed with {@code list=-1}, because the
-     * capture reads this field. Pushed rather than pulled so the reader stays one field read.
-     */
-    public static void celtium$noteListOpened(int list, int mode) {
-        GlsmFrontend stub = installed;
-        if (stub == null) {
-            return;
-        }
-        GlsmDisplayListLedger.current().compiling(list);
-        GlsmDisplayListLedger.current().compilingMode(mode);
-        // Where the current colour and texture coordinate came from decides whether a compiled run keeps its baked
-        // bytes or takes the values current at glCallList; see CompiledLegacyRun. A name of zero is not a list.
-        if (list > 0) {
-            stub.openCompileState(mode);
-        }
-        // The model capture takes a generation per compile. The vanilla path notifies it from its own mixin before
-        // this call (a harmless second reset, since no quad arrives between them); a mod's raw glNewList reaches only
-        // this point, and without the notification its recompiled list kept the mesh built from the old contents.
-        if (list > 0) {
-            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(list);
-        }
-    }
-
     /** Direct Mod GL entry points share the compatibility compiler, including transformed LWJGL calls. */
     public static void compatibilityNewList(int list, int mode) {
         GlsmFrontend stub = installed;
@@ -1145,17 +1115,6 @@ public final class GlsmFrontend implements FunctionProvider, org.soutalab.celtiu
             long[] c = stub.dispatchArgsScratch(); c[0] = list;
             stub.dispatchArgs(IDS.get("glCallList"), c);
         }
-    }
-
-    /** Closes the list {@link #celtium$noteListOpened} opened, as {@code glEndList} does. */
-    public static void celtium$noteListClosed() {
-        GlsmFrontend stub = installed;
-        if (stub == null) {
-            return;
-        }
-        GlsmDisplayListLedger.current().compiling(0);
-        GlsmDisplayListLedger.current().compilingMode(0);
-        stub.closeCompileState();
     }
 
     /**

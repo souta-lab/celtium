@@ -944,7 +944,7 @@ public final class CeltiumGllessHint {
      */
     public static void glNewList(int list, int mode) {
         nativeNewList(list, mode);
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityNewList(list, mode);
+        org.soutalab.celtium.glcompat.DisplayListManager.glNewList(list, mode);
     }
 
     /** Native vanilla compilation tracks its own geometry; it does not use the Mod GL compiler. */
@@ -963,18 +963,22 @@ public final class CeltiumGllessHint {
             org.soutalab.celtium.vulkan.lane2.Lane2StateMirror.current().register()
                     .setCompilingListId(list);
         }
-        // Published to the stub as well, because that is where the model capture reads the open list from
-        // (GlsmFrontend.compilingList). This class is the layer the transformer delegates to, so without this the
-        // stub's field stays 0 and every quad is filed under no list at all - measured on leg gv-cohort-dl9.
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteListOpened(list, mode);
+        // The model capture takes a generation per compile, notified here directly (E4-b2 point 5,
+        // NEON door ruling 2026-11-28: the stub door celtium$noteListOpened is removed; the capture
+        // reads the open list from the register publish above, not from the stub - G2-07). A mod's raw
+        // glNewList reaches only this point, and without the notification its recompiled list kept the
+        // mesh built from the old contents.
+        if (list > 0) {
+            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(list);
+        }
     }
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
-        // The close publish inside nativeEndList must land even when the stub's close
+        // The close publish inside nativeEndList must land even when the manager's close
         // throws, so the register cannot wedge at a non-zero list (G2-07 ruling).
         try {
-            org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityEndList();
+            org.soutalab.celtium.glcompat.DisplayListManager.glEndList();
         } finally {
             nativeEndList();
         }
@@ -985,7 +989,6 @@ public final class CeltiumGllessHint {
         END_LIST_CALLS.incrementAndGet();
         listIndex = 0;
         listMode = 0;
-        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteListClosed();
         // The compilation is closed: the register's compiling id returns to 0. This
         // path has no nesting (the hint's listIndex is a single slot), so the restore
         // value is always 0 here; nested restore lives in the converter's manager.
