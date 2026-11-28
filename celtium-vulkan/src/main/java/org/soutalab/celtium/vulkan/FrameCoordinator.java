@@ -156,6 +156,22 @@ public final class FrameCoordinator {
         return true;
     }
 
+    /**
+     * A category-A refusal raised at the mixin boundary itself (ruling section 5.3): the chain is a
+     * native target (the group's main is the game's framebuffer and every program is bundled), but
+     * the boundary could not describe it natively - a pass that would not collect, or a chain input
+     * with no colour texture to supply. The refusal is counted on the executor's census exactly like
+     * a preflight refusal inside {@link #runVanillaPostChain}, and the caller still cancels the GL
+     * original: on the GL-less path a silent fallback would draw nothing and say nothing.
+     */
+    public VanillaPostOutcome refuseVanillaPostChain(String reason) {
+        if (this.vanillaPost == null) {
+            this.vanillaPost = new VanillaPostExecutor();
+        }
+        this.lastVanillaPostRefusal = null;
+        return this.vanillaPost.refuseUnsupported(reason);
+    }
+
     public String lastVanillaPostRefusalReason() {
         if (this.lastVanillaPostRefusal != null) return this.lastVanillaPostRefusal;
         return this.vanillaPost == null ? null : this.vanillaPost.lastRefusalReason();

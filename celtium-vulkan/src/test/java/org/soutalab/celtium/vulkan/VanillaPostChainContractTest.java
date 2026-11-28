@@ -2,6 +2,10 @@ package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +15,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 import static org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
 
+/**
+ * The ruling section 5.4 contract for the vanilla post receiver: the entity-outline chain is a
+ * bundled (category A) target whose input is adopted at both ends, a refusal on a category-A chain
+ * is counted with its reason and never silently falls back, and a non-bundled (category B) group
+ * moves no loss counter at all. The mixin boundary itself is pinned by source contract, in the
+ * shape the repo's other boundary contracts use: the mixin calls the coordinator's entrances, not
+ * a monolith delegator, and the retired VulkanPostChain shape is gone from it.
+ */
 class VanillaPostChainContractTest {
     @Test
     void outlineUsesAdoptedImageAtBothEndsAndResolvesScratchInPassOrder() {
@@ -42,6 +54,68 @@ class VanillaPostChainContractTest {
         assertFalse(FrameCoordinator.isBundledVanillaPostChain(specs));
         assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED, coordinator.runVanillaPostChain(specs));
         assertEquals(0, coordinator.postChainUnsupportedRefusals());
+    }
+
+    @Test
+    void theEntityOutlineChainIsABundledCategoryATarget() {
+        var specs = List.of(pass("entity_outline", 10, 11), pass("blur", 11, 12), pass("blit", 12, 10));
+        assertTrue(FrameCoordinator.isBundledVanillaPostChain(specs),
+                "the outline group's three programs are all in the bundled set");
+    }
+
+    @Test
+    void aBundledChainRefusedAtPreflightIsCountedWithItsReason() {
+        var coordinator = new FrameCoordinator(null);
+        var specs = List.of(pass("entity_outline", 10, 11), pass("blur", 11, 12), pass("blit", 12, 10));
+        assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED,
+                coordinator.runVanillaPostChain(specs),
+                "no recording frame: the chain is refused, never silently left to GL");
+        assertEquals(1, coordinator.postChainUnsupportedRefusals());
+        assertNotNull(coordinator.lastVanillaPostRefusalReason(),
+                "the refusal carries the reason the boundary prints");
+    }
+
+    @Test
+    void aBoundaryRefusalIsCountedLikeAPreflightRefusal() {
+        var coordinator = new FrameCoordinator(null);
+        assertEquals(FrameCoordinator.VanillaPostOutcome.REFUSED_UNSUPPORTED,
+                coordinator.refuseVanillaPostChain("pass-not-collected"));
+        assertEquals(1, coordinator.postChainUnsupportedRefusals());
+        assertEquals("pass-not-collected", coordinator.lastVanillaPostRefusalReason());
+        coordinator.refuseVanillaPostChain("input-without-texture");
+        assertEquals(2, coordinator.postChainUnsupportedRefusals());
+        assertEquals("input-without-texture", coordinator.lastVanillaPostRefusalReason());
+    }
+
+    @Test
+    void theMixinCallsTheCoordinatorEntrancesNotTheRetiredChain() throws IOException {
+        String mixin = Files.readString(findRepoFile(
+                "forge122/src/main/java/org/taumc/celeritas/mixin/core/ShaderGroupMixin.java"));
+        assertTrue(mixin.contains("coordinator.runVanillaPostChain(passes)"),
+                "the chain runs through the frame coordinator's entrance (ruling 5.2)");
+        assertTrue(mixin.contains("FrameCoordinator.isBundledVanillaPostChain(passes)"),
+                "the category B gate is the bundled-set check, decided before any run");
+        assertTrue(mixin.contains("coordinator.refuseVanillaPostChain("),
+                "boundary refusals are counted through the coordinator");
+        assertFalse(mixin.contains("VulkanPostChain"),
+                "the retired chain shape is gone from the mixin");
+        assertFalse(mixin.contains("celtium$postChainRun"),
+                "no monolith delegator remains on the chain path");
+        assertFalse(mixin.contains("celtium$postChainAvailable"),
+                "the old availability gate is gone; preflight refusal is the coordinator's");
+    }
+
+    private static Path findRepoFile(String repoRelative) {
+        Path direct = Paths.get(repoRelative);
+        if (Files.exists(direct)) {
+            return direct;
+        }
+        Path fromModule = Paths.get("..").resolve(repoRelative);
+        if (Files.exists(fromModule)) {
+            return fromModule;
+        }
+        throw new IllegalStateException("cannot locate " + repoRelative + " from "
+                + Paths.get("").toAbsolutePath());
     }
 
     private static VanillaPostExecutor.Target target(long image) {

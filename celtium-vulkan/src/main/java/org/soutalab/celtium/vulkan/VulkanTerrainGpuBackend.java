@@ -1203,6 +1203,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         createCommandResources();
         this.nativePassExecutor = new PassExecutor(this.context, this.targetRegistry,
                 this.publishedTextures, this.nativePassRegistry);
+        // The vanilla post executor resolves its targets through the renderer's existing
+        // publications (ruling section 5.2); the coordinator holds no mirror of its own.
+        this.frameCoordinator.setVanillaPostPublications(this.publishedTextures);
         celtium$installWindowSplitExitHook();
         celtium$installFontCensusExitHook();
         // The pipeline prewarm pair (Stage 5 slice S5-0): created with the backend so its
@@ -1753,27 +1756,32 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The post-process chain bridge: runs a collected shader chain natively, adopts its framebuffers and keeps the textures it publishes to the game in the right layout. */
     final PostChainBridge postChainBridge = new PostChainBridge(this);
 
-    /** Chain-input flush failures the ShaderGroupMixin boundary swallowed (drawpath audit DP-32). */
-    long chainInputFlushFailures;
     /** Framebuffer hint/probe failures the FramebufferMixin boundary swallowed (drawpath audit DP-34). */
     long framebufferHintFailures;
 
-    public boolean celtium$postChainRun(java.util.List<VulkanPostChain.Pass> passes) {
-        return this.postChainBridge.celtium$postChainRun(passes);
+    /**
+     * The frame coordinator whose entrances the ShaderGroupMixin boundary calls (ruling
+     * section 5.2): the vanilla post chain runs through {@code runVanillaPostChain}, never
+     * through a delegator on this class.
+     */
+    public FrameCoordinator celtium$frameCoordinator() {
+        return this.frameCoordinator;
     }
 
     /**
      * Counts a chain-input flush failure (DP-32). The mixin's catch at the chain boundary used to
      * swallow these whole: a flush that keeps failing leaves the pending geometry unsubmitted at
      * exactly the moment the chain reads the frame, and the run showed a chain reading stale content
-     * with no record anywhere. Counted always, printed for the first few, and read by the verify
-     * line as {@code chainInputFlushFailures}.
+     * with no record anywhere. The count itself lives on the frame coordinator (the verify line's
+     * seat since the ruling's step 4); this seat keeps the bounded print. Counted always, printed
+     * for the first few.
      */
     public void celtium$noteChainInputFlushFailure(Throwable error) {
-        this.chainInputFlushFailures++;
-        if (this.chainInputFlushFailures <= 3) {
+        this.frameCoordinator.noteChainInputFlushFailure();
+        long failures = this.frameCoordinator.chainInputFlushFailures();
+        if (failures <= 3) {
             System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH_FAILED failures="
-                    + this.chainInputFlushFailures + " error=" + describe(error));
+                    + failures + " error=" + describe(error));
         }
     }
 
@@ -1794,13 +1802,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     public int celtium$flushPendingForChainInput() {
         // M-6 wired (FL-1 F-6): the chain-input boundary records into the single flush census
-        // at this entry - the bridge below is the delegation, this method is the boundary.
+        // at this entry.
         org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
                 .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.POST_CHAIN);
         // The chain input's flush orders the pending work before the chain reads it; it is an
         // ordering flush, not a draw boundary (the window census' stamp).
         this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-        return this.postChainBridge.celtium$flushPendingForChainInput();
+        // The body the PostChainBridge used to run for this entry, seated here with the bridge's
+        // retirement (ruling step 5): the model path coalesces its own flushes to one per target
+        // change, so the batches that arrived after that first flush are still queued at chain
+        // time - this records them against the current target before the chain reads it.
+        if (this.gpuStalled || this.immediateWindowBusy) {
+            return 0;
+        }
+        int pending = this.countGroupsForTarget(this.targetRegistry.currentIdentity());
+        if (pending == 0) {
+            return 0;
+        }
+        this.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
+        if (this.chainInputBatchLogs <= 12) {
+            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH frame=" + this.frameId
+                    + " target=" + this.targetRegistry.currentIdentity() + " groups=" + pending
+                    + " recordedTotal=" + this.immediateStatistics.immediateRecordedBatches());
+        }
+        return pending;
     }
 
 

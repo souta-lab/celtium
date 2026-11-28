@@ -11,7 +11,8 @@ import net.minecraft.client.shader.ShaderManager;
 import net.minecraft.client.shader.ShaderUniform;
 import org.soutalab.celtium.vulkan.CeltiumBackend;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
-import org.soutalab.celtium.vulkan.VulkanPostChain;
+import org.soutalab.celtium.vulkan.FrameCoordinator;
+import org.soutalab.celtium.vulkan.VanillaPostPassSpec;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,15 +20,26 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Sends the vanilla post-process chain to the native executor instead of drawing it through GL.
+ * Sends the vanilla post-process chain to the native executor instead of drawing it through GL,
+ * under the two-category contract of the G2-26 ruling (section 5.3).
  * <p>
  * {@code ShaderGroup.render} is a list of fullscreen passes over the group's framebuffers. Each pass is collected
  * with its live uniform values and the whole chain runs natively inside a GL-to-Vulkan handoff, ordered exactly
- * where the GL chain ran - after the world, before the HUD. Anything the executor declines still renders through GL
- * unchanged.
+ * where the GL chain ran - after the world, before the HUD.
  * <p>
- * The group's main framebuffer is the game's own for every reachable chain, the entity-outline group included: its
- * silhouette does not live in the group's main but in a <em>named target</em> the game fills itself -
+ * <b>Category A - a bundled vanilla chain</b> (the group's main framebuffer is the game's own and every program
+ * belongs to the bundled set): the chain runs through {@link FrameCoordinator#runVanillaPostChain} and the GL
+ * original is cancelled <em>whether the run succeeds or not</em> - on the GL-less path a silent fallback would
+ * draw nothing and say nothing. A refusal (preflight, or a pass this boundary could not describe) draws nothing,
+ * is counted on the executor's census, and is named by a {@code CELTIUM_CHAIN_SKIP} line.
+ * <p>
+ * <b>Category B - anything else</b> (a group built around a framebuffer that is not the game's own, or a chain
+ * containing a program outside the bundled set): the hook does not intercept at all. The original runs and the
+ * mod's GL calls are handled by the regular Lane 3 path; the boundary is applicability, not a loss, so no
+ * refusal counter moves.
+ * <p>
+ * The group's main framebuffer is the game's own for every reachable vanilla chain, the entity-outline group
+ * included: its silhouette does not live in the group's main but in a <em>named target</em> the game fills itself -
  * {@code RenderGlobal.entityOutlineFramebuffer}, the outline group's {@code final} target - and the chain both reads
  * that target first and writes it last. The framebuffer a chain reads is therefore what this hook reports: when it
  * is not the game's own framebuffer it is an image the renderer already keeps under that framebuffer's identity
@@ -65,21 +77,20 @@ public abstract class ShaderGroupMixin {
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean mainIsGame = this.mainFramebuffer == minecraft.getFramebuffer();
         CeltiumBackend current = CeltiumBackends.current();
-        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)
-                || !backend.celtium$postChainAvailable()) {
+        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) {
             celtium$skip("unavailable");
             return;
         }
         if (!mainIsGame) {
-            // Every pass that names "main" resolves to the shared frame image in the executor: that is the game's own
-            // framebuffer, and only while the group's main framebuffer *is* the game's own does the name mean what the
-            // chain reads and writes. A group built around a different framebuffer (vanilla builds none - ShaderGroup
-            // is constructed with Minecraft.getFramebuffer() - but a mod can) would have its "main" passes sample and
-            // write the wrong image while reporting the chain as run, so that group keeps its GL chain instead. The
-            // audit's N04 rule: accept a chain only when its real input can be supplied natively.
+            // Category B: a group built around a different framebuffer (vanilla builds none - ShaderGroup
+            // is constructed with Minecraft.getFramebuffer() - but a mod can) is not intercepted; its
+            // "main" passes would sample and write the wrong image if the executor adopted them, and its
+            // own GL calls belong to Lane 3. The audit's N04 rule in its ruling form: applicability is a
+            // boundary, not a refusal, so nothing is counted here.
             celtium$skip("main-not-game");
             return;
         }
+        FrameCoordinator coordinator = backend.celtium$frameCoordinator();
         // The framebuffer the chain reads first - its entry point. For every chain that starts from the game's main
         // image this is the game framebuffer itself; for the entity-outline group it is the outline target the game
         // filled with the silhouette, which the chain also writes last. That framebuffer is the game's own buffer for
@@ -88,8 +99,12 @@ public abstract class ShaderGroupMixin {
         net.minecraft.client.shader.Framebuffer chainInput = celtium$chainInput();
         boolean inputIsGame = chainInput == null || chainInput == minecraft.getFramebuffer();
         if (!inputIsGame && chainInput.framebufferTexture <= 0) {
-            // An input the game filled without a colour texture cannot stand for anything.
+            // An input the game filled without a colour texture cannot be supplied natively. The chain is
+            // a category-A target (its main is the game's own), so the refusal is counted and the GL
+            // original is still cancelled - it could only draw from the same unsuppliable input.
+            coordinator.refuseVanillaPostChain("input-without-texture");
             celtium$skip("input-without-texture");
+            info.cancel();
             return;
         }
         int inputIdentity = 0;
@@ -100,7 +115,7 @@ public abstract class ShaderGroupMixin {
             // The image under this identity is the one the renderer kept when the game drew the silhouette into it,
             // and the GL name is what the game binds again to composite the finished outline. Both are reported
             // before the passes are collected, because they say where the input lives even when the chain itself
-            // cannot be described natively and stays on GL - and because the bind hook's own report is a bind-time
+            // turns out not to be a native target - and because the bind hook's own report is a bind-time
             // association this one refreshes at the moment of use.
             inputIdentity = System.identityHashCode(chainInput);
             inputTexture = chainInput.framebufferTexture;
@@ -109,7 +124,69 @@ public abstract class ShaderGroupMixin {
             backend.bindFramebufferColorTexture(inputIdentity, inputTexture, inputW, inputH);
         }
 
-        // The time accumulation is the group's own; the mixin cannot call the original, so it keeps the contract.
+        // The time accumulation is the group's own; the mixin cannot call the original when it cancels,
+        // so it keeps the contract itself. Doing it here is safe for the paths that do not cancel either:
+        // the accumulation sets lastStamp to this call's partialTicks, so an original that still runs
+        // afterwards adds exactly zero.
+        celtium$accumulateTime(partialTicks);
+        float passTime = this.time / 20.0F;
+
+        List<VanillaPostPassSpec> passes = new ArrayList<>(this.listShaders.size());
+        for (int i = 0; i < this.listShaders.size(); i++) {
+            boolean first = i == 0 && !inputIsGame;
+            VanillaPostPassSpec pass = collect(this.listShaders.get(i), passTime, minecraft, this.mainFramebuffer,
+                    first ? inputTexture : 0, first ? inputIdentity : 0, first ? inputW : 0, first ? inputH : 0);
+            if (pass == null) {
+                // A pass that cannot be described natively refuses the whole group - partial chains are
+                // not a mode the GL and native outputs can be compared on. Category A: counted, cancelled.
+                coordinator.refuseVanillaPostChain("pass-not-collected");
+                celtium$skip("pass-not-collected");
+                info.cancel();
+                return;
+            }
+            passes.add(pass);
+        }
+        if (passes.isEmpty()) {
+            return;
+        }
+        if (!FrameCoordinator.isBundledVanillaPostChain(passes)) {
+            // Category B: a program outside the bundled set. Not intercepted, not counted - the
+            // original runs and its GL is Lane 3's ordinary work.
+            celtium$skip("non-vanilla-program");
+            return;
+        }
+        // The chain's input image has to hold the geometry the game just drew into it before the first pass
+        // samples it. The model path coalesces its own flushes to one per target change, so the silhouette batches
+        // that arrived after that first flush are still queued here - and the bind below is the only other flush,
+        // which makes the outcome depend on a bind that exists for another reason. This asks for the flush
+        // explicitly, while the chain's own framebuffer is still the current target and before main is bound.
+        if (CHAIN_INPUT_FLUSH) {
+            try {
+                backend.celtium$flushPendingForChainInput();
+            } catch (RuntimeException | LinkageError error) {
+                // An ordering hint must never stop the chain from running - but a flush that
+                // fails here leaves the pending geometry unsubmitted at the moment the chain
+                // reads the frame, so the failure is counted and printed by the backend
+                // instead of swallowed whole (drawpath audit DP-32).
+                backend.celtium$noteChainInputFlushFailure(error);
+            }
+        }
+        // The handoff validates the bound framebuffer, and under adoption the game framebuffer's binding is the
+        // shared one - exactly what a mid-frame acquire needs to see. The bind is also what flushes the batches
+        // the game left pending for the framebuffer the chain is about to read: for the outline group those are
+        // the silhouette draws, and they must have reached the image before the first pass samples it.
+        minecraft.getFramebuffer().bindFramebuffer(true);
+        FrameCoordinator.VanillaPostOutcome outcome = coordinator.runVanillaPostChain(passes);
+        if (outcome != FrameCoordinator.VanillaPostOutcome.EXECUTED) {
+            String reason = coordinator.lastVanillaPostRefusalReason();
+            celtium$skip(reason != null ? reason : outcome.name().toLowerCase(java.util.Locale.ROOT));
+        }
+        // Category A cancels the GL original whether the chain ran or was refused (ruling 5.3).
+        info.cancel();
+    }
+
+    /** The group's own time accumulation, kept by this hook whenever it cancels the original render. */
+    private void celtium$accumulateTime(float partialTicks) {
         if (partialTicks < this.lastStamp) {
             this.time += 1.0F - this.lastStamp;
             this.time += partialTicks;
@@ -118,60 +195,6 @@ public abstract class ShaderGroupMixin {
         }
         for (this.lastStamp = partialTicks; this.time > 20.0F; this.time -= 20.0F) {
             ;
-        }
-        float passTime = this.time / 20.0F;
-
-        List<VulkanPostChain.Pass> passes = new ArrayList<>(this.listShaders.size());
-        for (Shader shader : this.listShaders) {
-            VulkanPostChain.Pass pass = collect(shader, passTime, minecraft, this.mainFramebuffer);
-            if (pass == null) {
-                // A pass that cannot be described natively keeps the whole group on GL - partial chains are not a
-                // mode the GL and native outputs can be compared on.
-                celtium$skip("pass-not-collected");
-                return;
-            }
-            passes.add(pass);
-        }
-        if (passes.isEmpty()) {
-            return;
-        }
-        if (!inputIsGame) {
-            // The framebuffer whose image the executor must adopt, on the pass it reads it from: identity, GL colour
-            // texture and size. Zero - the game's own framebuffer - marks the shared frame image instead, which the
-            // chain already resolves without an adoption.
-            VulkanPostChain.Pass first = passes.get(0);
-            first.groupMainFbId = inputIdentity;
-            first.groupMainTextureId = inputTexture;
-            first.groupMainW = inputW;
-            first.groupMainH = inputH;
-        }
-        if (mainIsGame) {
-            // The chain's input image has to hold the geometry the game just drew into it before the first pass
-            // samples it. The model path coalesces its own flushes to one per target change, so the silhouette batches
-            // that arrived after that first flush are still queued here - and the bind below is the only other flush,
-            // which makes the outcome depend on a bind that exists for another reason. This asks for the flush
-            // explicitly, while the chain's own framebuffer is still the current target and before main is bound.
-            if (CHAIN_INPUT_FLUSH) {
-                try {
-                    backend.celtium$flushPendingForChainInput();
-                } catch (RuntimeException | LinkageError error) {
-                    // An ordering hint must never stop the chain from running - but a flush that
-                    // fails here leaves the pending geometry unsubmitted at the moment the chain
-                    // reads the frame, so the failure is counted and printed by the backend
-                    // instead of swallowed whole (drawpath audit DP-32).
-                    backend.celtium$noteChainInputFlushFailure(error);
-                }
-            }
-            // The handoff validates the bound framebuffer, and under adoption the game framebuffer's binding is the
-            // shared one - exactly what a mid-frame acquire needs to see. The bind is also what flushes the batches
-            // the game left pending for the framebuffer the chain is about to read: for the outline group those are
-            // the silhouette draws, and they must have reached the image before the first pass samples it.
-            minecraft.getFramebuffer().bindFramebuffer(true);
-        }
-        if (backend.celtium$postChainRun(passes)) {
-            info.cancel();
-        } else {
-            celtium$skip("run-refused");
         }
     }
 
@@ -188,8 +211,9 @@ public abstract class ShaderGroupMixin {
         return this.listShaders.isEmpty() ? null : this.listShaders.get(0).framebufferIn;
     }
 
-    private static VulkanPostChain.Pass collect(Shader shader, float passTime, Minecraft minecraft,
-            net.minecraft.client.shader.Framebuffer groupMain) {
+    private static VanillaPostPassSpec collect(Shader shader, float passTime, Minecraft minecraft,
+            net.minecraft.client.shader.Framebuffer groupMain,
+            int groupMainTextureId, int groupMainFbId, int groupMainW, int groupMainH) {
         try {
             ShaderManager manager = shader.getShaderManager();
             net.minecraft.client.shader.Framebuffer in = shader.framebufferIn;
@@ -214,25 +238,23 @@ public abstract class ShaderGroupMixin {
                 }
             }
 
-            VulkanPostChain.Pass pass = new VulkanPostChain.Pass();
-            pass.program = programName(manager);
+            String program = programName(manager);
             // 'main' in a chain means the group's own main framebuffer; how the executor resolves it - shared
             // image for the game's, seeded chain target for an external one - is the run's decision.
-            pass.inIsMain = in == groupMain;
-            pass.outIsMain = out == groupMain;
+            boolean inIsMain = in == groupMain;
+            boolean outIsMain = out == groupMain;
             // Identity keys, not GL framebuffer ids: the executor only matches them, and identity keeps each
             // framebuffer distinct even where the GL object name would be zero (a context-less path assigns no
             // real ids at all).
-            pass.inFbId = System.identityHashCode(in);
-            pass.inW = in.framebufferTextureWidth;
-            pass.inH = in.framebufferTextureHeight;
-            pass.outFbId = System.identityHashCode(out);
-            pass.outW = out.framebufferTextureWidth;
-            pass.outH = out.framebufferTextureHeight;
+            int inFbId = System.identityHashCode(in);
+            int outFbId = System.identityHashCode(out);
+            int[] auxFbIds = new int[0];
+            int[] auxW = new int[0];
+            int[] auxH = new int[0];
             if (!auxFramebuffers.isEmpty()) {
-                pass.auxFbIds = new int[auxFramebuffers.size()];
-                pass.auxW = new int[auxFramebuffers.size()];
-                pass.auxH = new int[auxFramebuffers.size()];
+                auxFbIds = new int[auxFramebuffers.size()];
+                auxW = new int[auxFramebuffers.size()];
+                auxH = new int[auxFramebuffers.size()];
                 for (int i = 0; i < auxFramebuffers.size(); ++i) {
                     Object aux = auxFramebuffers.get(i);
                     if (!(aux instanceof net.minecraft.client.shader.Framebuffer)) {
@@ -240,9 +262,9 @@ public abstract class ShaderGroupMixin {
                     }
                     net.minecraft.client.shader.Framebuffer fbo = (net.minecraft.client.shader.Framebuffer) aux;
                     // 0 marks the group's main framebuffer, resolved the same way intarget is.
-                    pass.auxFbIds[i] = fbo == groupMain ? 0 : System.identityHashCode(fbo);
-                    pass.auxW[i] = fbo.framebufferTextureWidth;
-                    pass.auxH[i] = fbo.framebufferTextureHeight;
+                    auxFbIds[i] = fbo == groupMain ? 0 : System.identityHashCode(fbo);
+                    auxW[i] = fbo.framebufferTextureWidth;
+                    auxH[i] = fbo.framebufferTextureHeight;
                 }
             }
             int[] outBytes = new int[1];
@@ -252,17 +274,20 @@ public abstract class ShaderGroupMixin {
             if (block == null || outBytes[0] <= 0 || outBytes[0] > block.length * 4) {
                 return null;
             }
-            pass.push = block;
-            pass.pushBytes = outBytes[0];
-            // The same layout said member by member. The native executor compares these offsets with the ones the
-            // shader modules declare before it writes a block: a length alone cannot tell a permuted block from a
-            // correct one, and the buffer route in particular writes at whatever offset this reports.
-            pass.blockNames = blockNames.toArray(new String[0]);
-            pass.blockOffsets = new int[blockOffsets.size()];
+            int[] blockOffsetArray = new int[blockOffsets.size()];
             for (int i = 0; i < blockOffsets.size(); ++i) {
-                pass.blockOffsets[i] = blockOffsets.get(i).intValue();
+                blockOffsetArray[i] = blockOffsets.get(i).intValue();
             }
-            return pass;
+            // The group-main adoption fields ride on the first pass only (the executor reads them there):
+            // the framebuffer whose image the executor must adopt, on the pass it reads it from - identity,
+            // GL colour texture and size. Zero - the game's own framebuffer - marks the shared frame image
+            // instead, which the chain already resolves without an adoption.
+            return new VanillaPostPassSpec(program,
+                    inFbId, in.framebufferTextureWidth, in.framebufferTextureHeight,
+                    outFbId, out.framebufferTextureWidth, out.framebufferTextureHeight,
+                    inIsMain, outIsMain, auxFbIds, auxW, auxH,
+                    block, outBytes[0], blockNames.toArray(new String[0]), blockOffsetArray,
+                    groupMainTextureId, groupMainFbId, groupMainW, groupMainH);
         } catch (RuntimeException | LinkageError error) {
             celtium$skip("collect-error " + error);
             return null;
