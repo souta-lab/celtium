@@ -36,13 +36,13 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_sint64;
 public final class GlTrampolines {
 
     /** The stub's uniform dispatch: one function id and the call's twelve argument slots. */
-    interface Dispatch {
+    public interface Dispatch {
         long invoke(int functionId, long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7,
                 long a8, long a9, long a10, long a11);
     }
 
     /** The stub's legacy (libffi) entry: the result slot and the pointer array the closure was handed. */
-    interface LegacyDispatch {
+    public interface LegacyDispatch {
         void invoke(int functionId, long result, long args);
     }
 
@@ -53,7 +53,7 @@ public final class GlTrampolines {
     private final Map<String, Callback> trampolines = new HashMap<>();
     private final List<Callback> ownedTrampolines = new ArrayList<>();
 
-    GlTrampolines(Dispatch dispatch, LegacyDispatch legacyDispatch) {
+    public GlTrampolines(Dispatch dispatch, LegacyDispatch legacyDispatch) {
         this.dispatch = dispatch;
         this.legacyDispatch = legacyDispatch;
     }
@@ -63,7 +63,7 @@ public final class GlTrampolines {
      * libffi trampoline for the name. The stub's {@code addressFor} keeps the table lookup, the
      * unknown-symbol record and the trace print; everything from the signature onward lives here.
      */
-    long addressFor(String name, int functionId, byte[] args) {
+    public long addressFor(String name, int functionId, byte[] args) {
         if (celtium$ffmCompatible(args)) {
             // Explicit get/put: computeIfAbsent with a lambda that captures id/args allocates that lambda on every
             // call, and this is the per-name resolution path of the GL surface.
@@ -241,7 +241,7 @@ public final class GlTrampolines {
      * slot 8 and an upcall narrower than that never receives it. Slots past a call's declared arguments carry whatever
      * the caller left in the registers and stack; no handler reads past its own row's declaration, so they are inert.
      */
-    static final int SLOTS = 12;
+    public static final int SLOTS = 12;
 
     /**
      * One uniform call interface covers every function in the table: the FFM upcall invokes the SAM with the C
