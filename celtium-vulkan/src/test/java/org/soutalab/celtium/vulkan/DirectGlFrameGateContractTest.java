@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkDevice;
 import org.soutalab.celtium.core.frame.ActiveRenderTargets;
 import org.soutalab.celtium.core.glcompat.ComputeProgramHandle;
 import org.soutalab.celtium.core.glcompat.DirectGlDrawState;
@@ -28,8 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *
  * <p>The dummy command buffer is an address-only wrapper: every path asserted here refuses
  * or returns before any native Vulkan call is made on it (the program/geometry check reads
- * only the sink's inline-initialised maps). Census counts are static and cumulative, so
- * every assertion is a before/after delta, as in {@link DirectGlUniformSnapshotTest}.
+ * only the sink's inline-initialised maps). Its device is allocated without a constructor
+ * (see {@code dummyCommandBuffer()}), because the buffer's constructor reads the device's
+ * capabilities while a real device would load them natively. Census counts are static and
+ * cumulative, so every assertion is a before/after delta, as in
+ * {@link DirectGlUniformSnapshotTest}.
  */
 class DirectGlFrameGateContractTest {
 
@@ -52,7 +56,7 @@ class DirectGlFrameGateContractTest {
         VulkanContext context = newContext();
         var sink = new VulkanDirectGlSink(context, null, null);
         context.setDirectGlFrameSlot(0);
-        DirectGlFrameBridge.bindFrame(new VkCommandBuffer(1L, null), mainTargets());
+        DirectGlFrameBridge.bindFrame(dummyCommandBuffer(), mainTargets());
 
         long noFrameBefore = DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.NO_FRAME);
         long incompatibleBefore = DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.TARGET_INCOMPATIBLE);
@@ -70,7 +74,7 @@ class DirectGlFrameGateContractTest {
         VulkanContext context = newContext();
         var sink = new VulkanDirectGlSink(context, null, null);
         context.setDirectGlFrameSlot(0);
-        DirectGlFrameBridge.bindFrame(new VkCommandBuffer(1L, null), mainTargets());
+        DirectGlFrameBridge.bindFrame(dummyCommandBuffer(), mainTargets());
         DirectGlFrameBridge.unbindFrame();
 
         long noFrameBefore = DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.NO_FRAME);
@@ -95,7 +99,7 @@ class DirectGlFrameGateContractTest {
         // then returns silently (the current form - nothing further is asserted).
         // The clear/blit entrances drop silently when unpublished, leaving no census
         // trace, so they stand outside this contract.
-        DirectGlFrameBridge.bindFrame(new VkCommandBuffer(1L, null), mainTargets());
+        DirectGlFrameBridge.bindFrame(dummyCommandBuffer(), mainTargets());
         sink.dispatchCompute(new ComputeProgramHandle(7L), 1, 1, 1);
         assertEquals(noFrameBefore + 1, DirectGlRefusalCensus.count(DirectGlRefusalCensus.Reason.NO_FRAME));
     }
@@ -104,6 +108,20 @@ class DirectGlFrameGateContractTest {
         var constructor = VulkanContext.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         return constructor.newInstance();
+    }
+
+    private static VkCommandBuffer dummyCommandBuffer() throws Exception {
+        // The buffer's constructor reads getCapabilities() off its device, and a real
+        // VkDevice loads those capabilities natively at construction - neither exists in
+        // a unit test, and a null device is rejected by the constructor's read. Allocate
+        // the device without its constructor (the idiom of GrayAlphaImageTest): its
+        // capabilities stay null, the buffer's constructor only stores that reference,
+        // and nothing on the paths asserted here ever reads it back.
+        var unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        var unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        VkDevice device = (VkDevice) unsafe.allocateInstance(VkDevice.class);
+        return new VkCommandBuffer(1L, device);
     }
 
     private static ActiveRenderTargets mainTargets() {
