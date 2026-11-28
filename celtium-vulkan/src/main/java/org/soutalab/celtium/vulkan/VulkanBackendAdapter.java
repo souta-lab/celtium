@@ -1474,9 +1474,12 @@ public final class VulkanBackendAdapter implements VulkanRenderer, PackStageStat
         return this.funnel.immediateFogAvailable();
     }
 
-    @Override
     public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height) {
         this.funnel.announceDynamicTexture(glTextureId, pixels, width, height);
+    }
+
+    public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height, boolean fromSplash) {
+        this.funnel.announceDynamicTexture(glTextureId, pixels, width, height, fromSplash);
     }
 
     @Override

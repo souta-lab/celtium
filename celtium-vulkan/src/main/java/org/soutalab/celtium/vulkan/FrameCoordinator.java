@@ -405,7 +405,7 @@ public final class FrameCoordinator {
         // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
         this.funnel.passVpX = this.funnel.passVpY = this.funnel.passVpW = this.funnel.passVpH = -1;
         this.funnel.passScX = this.funnel.passScY = this.funnel.passScW = this.funnel.passScH = -1;
-        this.funnel.passBiasC = this.passBiasS = Float.NaN;
+        this.funnel.passBiasC = this.funnel.passBiasS = Float.NaN;
         // The pass area is the window's until a pass says otherwise; see the field's own note.
         this.funnel.passAreaWidth = this.funnel.targetWidth;
         this.funnel.passAreaHeight = this.funnel.targetHeight;
