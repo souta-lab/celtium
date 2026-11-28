@@ -582,6 +582,15 @@ final class BackendDiagnostics {
                 // written, and the skip counter names the remaining unfogged shape (a non-perspective projection).
                 + " litFogGroups=" + b.litFogGroupCount()
                 + " litFogSkippedNonPerspective=" + b.litFogSkipCount()
+                // The R-105 fog feed census, in the same key shape the CELTIUM_FOG_STATE trace carries: what the
+                // GlStateManager mixin fed (feedEnable/feedDisable), what the terrain latch read per frame
+                // (latchEnabled/latchDisabled), and the identity of the instance the backend read - a leg tells
+                // "the mixin never fired" / "a disable interrupted" / "a different instance" apart from these five.
+                + " fogFeedEnable=" + b.fog.feedEnableCount()
+                + " fogFeedDisable=" + b.fog.feedDisableCount()
+                + " fogLatchEnabled=" + b.fog.latchEnabledCount()
+                + " fogLatchDisabled=" + b.fog.latchDisabledCount()
+                + " fogStateId=" + Integer.toHexString(b.fog.stateId())
                 + " boundTextureSamples=" + b.textureStats.boundTextureComparisons()
                 + " boundTextureMismatches=" + b.textureStats.boundTextureMismatches()
                 + " announcedDynamicTextures=" + b.textureStats.announcedDynamicTextures()

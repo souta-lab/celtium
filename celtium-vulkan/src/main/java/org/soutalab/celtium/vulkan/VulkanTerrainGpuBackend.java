@@ -1528,7 +1528,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
         int fogMode = 0;
-        if (this.fog.enabled()) {
+        boolean fogEnabled = this.fog.enabled();
+        // R-105 census: the value this latch read, once per prepared frame, beside the mixin's feed counts.
+        this.fog.noteLatchRead(fogEnabled);
+        if (fogEnabled) {
             fogMode = switch (this.fog.glMode()) {
                 case 0x2600 -> 1;
                 case 0x0800 -> 2;
