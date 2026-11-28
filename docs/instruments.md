@@ -79,17 +79,17 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.debug.abParity` | `System.getProperty` | [Lane2ImmediateRecorder.java:14953](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14953>) |
-| `celtium.debug.announceGrowth` | `System.getProperty` | [Lane2ImmediateRecorder.java:18975](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18975>) |
-| `celtium.debug.announceLarge` | `System.getProperty` | [Lane2ImmediateRecorder.java:18977](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18977>) |
-| `celtium.debug.announceRepeat` | `System.getProperty` | [Lane2ImmediateRecorder.java:18973](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18973>) |
-| `celtium.debug.bindlessSlotDump` | `System.getProperty` | [Lane2ImmediateRecorder.java:19890](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19890>), [VulkanTextureRegistry.java:431](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L431>), [BindlessTextureBinding.java:59](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/bindless/BindlessTextureBinding.java#L59>) |
-| `celtium.debug.bufferCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18383](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18383>) |
+| `celtium.debug.abParity` | `System.getProperty` | [Lane2ImmediateRecorder.java:14957](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14957>) |
+| `celtium.debug.announceGrowth` | `System.getProperty` | [Lane2ImmediateRecorder.java:18979](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18979>) |
+| `celtium.debug.announceLarge` | `System.getProperty` | [Lane2ImmediateRecorder.java:18981](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18981>) |
+| `celtium.debug.announceRepeat` | `System.getProperty` | [Lane2ImmediateRecorder.java:18977](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18977>) |
+| `celtium.debug.bindlessSlotDump` | `System.getProperty` | [Lane2ImmediateRecorder.java:19894](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19894>), [VulkanTextureRegistry.java:431](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L431>), [BindlessTextureBinding.java:59](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/bindless/BindlessTextureBinding.java#L59>) |
+| `celtium.debug.bufferCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18387](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18387>) |
 | `celtium.debug.copyOrderProbe` | `Boolean.getBoolean` | [TextureCopyService.java:198](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L198>) |
 | `celtium.debug.displayListCensus` | `Boolean.getBoolean` | [VulkanDisplayListCensus.java:322](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java#L322>) |
-| `celtium.debug.drawAtlasQuad` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18982](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18982>) |
-| `celtium.debug.drawBench` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18954](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18954>) |
-| `celtium.debug.drawKeyCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18372](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18372>) |
+| `celtium.debug.drawAtlasQuad` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18986](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18986>) |
+| `celtium.debug.drawBench` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18958](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18958>) |
+| `celtium.debug.drawKeyCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18376](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18376>) |
 | `celtium.debug.dumpPairsAtPresent` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:3976](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3976>) |
 | `celtium.debug.dumpTextureIds` | `System.getProperty` | [Lane2ImmediateRecorder.java:4012](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4012>) |
 | `celtium.debug.extraAllocations` | `Integer.getInteger` | [VulkanContext.java:3612](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3612>) |
@@ -102,18 +102,18 @@
 | `celtium.debug.flickerSample` | `Boolean.getBoolean` | [VulkanSwapchain.java:408](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L408>) |
 | `celtium.debug.fnCensus` | `Boolean.getBoolean` | [DirectGlCaptureEntry.java:402](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L402>) |
 | `celtium.debug.frameTail` | `Boolean.getBoolean` | [GameLoopTiming.java:105](<../forge122/src/main/java/org/taumc/celeritas/impl/profile/GameLoopTiming.java#L105>) |
-| `celtium.debug.groupCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18375](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18375>) |
-| `celtium.debug.itemCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18430](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18430>) |
-| `celtium.debug.itemCensusLimit` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18432](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18432>) |
+| `celtium.debug.groupCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18379](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18379>) |
+| `celtium.debug.itemCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18434](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18434>) |
+| `celtium.debug.itemCensusLimit` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18436](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18436>) |
 | `celtium.debug.logLinesPerTag` | `Integer.getInteger` | [CeltiumLogLimiter.java:32](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L32>) |
 | `celtium.debug.mirrorFontAtlas` | `Boolean.getBoolean` | [CeltiumFontAtlas.java:45](<../forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontAtlas.java#L45>) |
 | `celtium.debug.modelLightFrame` | `Long.getLong` | [ModelReplay.java:491](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L491>) |
 | `celtium.debug.modelRecords` | `Integer.getInteger` | [VulkanModelInstances.java:99](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelInstances.java#L99>), [VulkanModelInstances.java:180](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelInstances.java#L180>) |
-| `celtium.debug.noAffineBake` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:11312](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L11312>) |
+| `celtium.debug.noAffineBake` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:11314](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L11314>) |
 | `celtium.debug.periodicLogs` | `Boolean.getBoolean` | [PeriodicLog.java:12](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PeriodicLog.java#L12>) |
-| `celtium.debug.pushComponentCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18479](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18479>) |
+| `celtium.debug.pushComponentCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18483](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18483>) |
 | `celtium.debug.replaceTextures` | `System.getProperty` | [Lane2ImmediateRecorder.java:4036](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4036>) |
-| `celtium.debug.retainedCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18369](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18369>) |
+| `celtium.debug.retainedCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18373](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18373>) |
 | `celtium.debug.sampleWindowImages` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3993](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3993>) |
 | `celtium.debug.skipDrawCalls` | `Boolean.getBoolean` | [VulkanDynamicMesh.java:826](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDynamicMesh.java#L826>) |
 | `celtium.debug.skipTextures` | `System.getProperty` | [Lane2ImmediateRecorder.java:4069](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4069>) |
@@ -369,7 +369,7 @@
 | `celtium.vulkan.arenaVerifyOkReports` | `Integer.getInteger` | [VulkanArena.java:82](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanArena.java#L82>) |
 | `celtium.vulkan.assumeNoPresentSupport` | `Boolean.getBoolean` | [VulkanSwapchain.java:62](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L62>) |
 | `celtium.vulkan.atlasAudit` | `System.getProperty` | [VulkanTerrainPipeline.java:593](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L593>) |
-| `celtium.vulkan.batchReuseCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18524](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18524>) |
+| `celtium.vulkan.batchReuseCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18528](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18528>) |
 | `celtium.vulkan.batchTimings` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:4204](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4204>) |
 | `celtium.vulkan.chainClearLog` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:4390](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4390>) |
 | `celtium.vulkan.chainFrameDump` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3969](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3969>) |
@@ -377,7 +377,7 @@
 | `celtium.vulkan.chainInputFlush` | `System.getProperty` | [ShaderGroupMixin.java:61](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ShaderGroupMixin.java#L61>) |
 | `celtium.vulkan.chainPreflightAdoption` | `System.getProperty` | [Lane2ImmediateRecorder.java:1513](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L1513>) |
 | `celtium.vulkan.clearSkipFlush` | `System.getProperty` | [Lane2ImmediateRecorder.java:6282](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L6282>) |
-| `celtium.vulkan.coalesceRawWrites` | `System.getProperty` | [Lane2ImmediateRecorder.java:12181](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12181>) |
+| `celtium.vulkan.coalesceRawWrites` | `System.getProperty` | [Lane2ImmediateRecorder.java:12183](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12183>) |
 | `celtium.vulkan.colourAttrOffset` | `Integer.getInteger` | [VulkanTerrainPipeline.java:198](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L198>) |
 | `celtium.vulkan.compareBoundTexture` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:2072](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2072>) |
 | `celtium.vulkan.copyOrderWithoutIdle` | `System.getProperty` | [TextureCopyService.java:182](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L182>) |
@@ -390,10 +390,10 @@
 | `celtium.vulkan.descWriteCensus` | `Boolean.getBoolean` | [VulkanDescriptorWrites.java:21](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDescriptorWrites.java#L21>) |
 | `celtium.vulkan.descriptorPoolSets` | `Integer.getInteger` | [VulkanImmediateTextureRecordsPipeline.java:965](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java#L965>) |
 | `celtium.vulkan.diagnostics` | `Boolean.getBoolean` | [VulkanDiagnostics.java:34](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDiagnostics.java#L34>) |
-| `celtium.vulkan.disableGameClearStandalone` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:19468](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19468>) |
+| `celtium.vulkan.disableGameClearStandalone` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:19472](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19472>) |
 | `celtium.vulkan.displaySync` | `System.getProperty` | [MinecraftMixin.java:20](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L20>) |
 | `celtium.vulkan.drawSite` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:2723](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2723>) |
-| `celtium.vulkan.drawSiteCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18712](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18712>) |
+| `celtium.vulkan.drawSiteCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18716](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18716>) |
 | `celtium.vulkan.drawSiteFormat` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:2727](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2727>) |
 | `celtium.vulkan.drawSiteLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:2707](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2707>) |
 | `celtium.vulkan.drawSiteMinFrame` | `Long.getLong` | [Lane2ImmediateRecorder.java:2711](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2711>) |
@@ -409,8 +409,8 @@
 | `celtium.vulkan.failAllocationSite` | `System.getProperty` | [VulkanAllocationFault.java:24](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanAllocationFault.java#L24>) |
 | `celtium.vulkan.failDescriptorSetAt` | `Long.getLong` | [VulkanDescriptorFault.java:16](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDescriptorFault.java#L16>) |
 | `celtium.vulkan.failDescriptorSetSite` | `System.getProperty` | [VulkanDescriptorFault.java:17](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDescriptorFault.java#L17>) |
-| `celtium.vulkan.failDeviceLost` | `Boolean.getBoolean` | [FrameCoordinator.java:1716](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1716>) |
-| `celtium.vulkan.failFenceWait` | `Boolean.getBoolean` | [FrameCoordinator.java:1709](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1709>) |
+| `celtium.vulkan.failDeviceLost` | `Boolean.getBoolean` | [FrameCoordinator.java:1767](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1767>) |
+| `celtium.vulkan.failFenceWait` | `Boolean.getBoolean` | [FrameCoordinator.java:1760](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1760>) |
 | `celtium.vulkan.failIdleAfter` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:2409](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2409>) |
 | `celtium.vulkan.failSubmitAt` | `Long.getLong` | [VulkanSubmitFault.java:15](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSubmitFault.java#L15>) |
 | `celtium.vulkan.failSubmitSite` | `System.getProperty` | [VulkanSubmitFault.java:16](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSubmitFault.java#L16>) |
@@ -418,29 +418,29 @@
 | `celtium.vulkan.failTextureUploadAt` | `Long.getLong` | [VulkanTextureFault.java:15](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureFault.java#L15>) |
 | `celtium.vulkan.failTextureUploadSite` | `System.getProperty` | [VulkanTextureFault.java:16](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureFault.java#L16>) |
 | `celtium.vulkan.flushEntryCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:4227](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4227>) |
-| `celtium.vulkan.flushReasonCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:12085](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12085>) |
+| `celtium.vulkan.flushReasonCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:12087](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12087>) |
 | `celtium.vulkan.fogCaptureLog` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:4910](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4910>) |
 | `celtium.vulkan.fontAtlasAggregation` | `System.getProperty` | [FontBatch.java:419](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FontBatch.java#L419>) |
 | `celtium.vulkan.fontDrawStateBoundary` | `System.getProperty` | [Lane2ImmediateRecorder.java:4542](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4542>) |
 | `celtium.vulkan.forceAcquireOutOfDate` | `Boolean.getBoolean` | [VulkanSwapchain.java:370](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L370>) |
 | `celtium.vulkan.forceNoTerrainCulling` | `Boolean.getBoolean` | [TerrainStatisticsReport.java:89](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainStatisticsReport.java#L89>) |
 | `celtium.vulkan.forceNoTerrainStatistics` | `Boolean.getBoolean` | [TerrainStatisticsReport.java:88](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainStatisticsReport.java#L88>) |
-| `celtium.vulkan.forceNoTimestamps` | `Boolean.getBoolean` | [FrameCoordinator.java:918](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L918>) |
+| `celtium.vulkan.forceNoTimestamps` | `Boolean.getBoolean` | [FrameCoordinator.java:969](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L969>) |
 | `celtium.vulkan.forceOutOfDate` | `Boolean.getBoolean` | [VulkanSwapchain.java:365](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L365>) |
 | `celtium.vulkan.fractionalPowGuard` | `System.getProperty` | [ModGlslTranslator.java:2019](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/ModGlslTranslator.java#L2019>) |
 | `celtium.vulkan.fractionalPowGuard.census` | `Boolean.getBoolean` | [ModGlslTranslator.java:2029](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/ModGlslTranslator.java#L2029>) |
 | `celtium.vulkan.fractionalPowGuard.fastSqrt` | `Boolean.getBoolean` | [ModGlslTranslator.java:2024](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/ModGlslTranslator.java#L2024>) |
 | `celtium.vulkan.frameArenaInitialIndexBytes` | `Long.getLong` | [VulkanFrameArena.java:58](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameArena.java#L58>) |
 | `celtium.vulkan.frameArenaInitialVertexBytes` | `Long.getLong` | [VulkanFrameArena.java:56](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanFrameArena.java#L56>) |
-| `celtium.vulkan.frameAtWindowFrame` | `Long.getLong` | [Lane2ImmediateRecorder.java:16510](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16510>) |
-| `celtium.vulkan.frameAtWindowLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16514](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16514>) |
-| `celtium.vulkan.frameClearMark` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16489](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16489>) |
+| `celtium.vulkan.frameAtWindowFrame` | `Long.getLong` | [Lane2ImmediateRecorder.java:16514](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16514>) |
+| `celtium.vulkan.frameAtWindowLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16518](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16518>) |
+| `celtium.vulkan.frameClearMark` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16493](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16493>) |
 | `celtium.vulkan.frameRingSlotMiB` | `Integer.getInteger` | [FrameLinearRing.java:68](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/FrameLinearRing.java#L68>) |
-| `celtium.vulkan.frameSignature` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18175](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18175>) |
+| `celtium.vulkan.frameSignature` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18179](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18179>) |
 | `celtium.vulkan.frameSlots` | `Integer.getInteger` | [FrameSubmissionScheduler.java:43](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameSubmissionScheduler.java#L43>) |
 | `celtium.vulkan.freshPresentSemaphores` | `Boolean.getBoolean` | [VulkanSwapchain.java:509](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L509>) |
 | `celtium.vulkan.gameClearLatch` | `System.getProperty` | [Lane2ImmediateRecorder.java:3964](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3964>) |
-| `celtium.vulkan.glDrawExempt` | `System.getProperty` | [Lane2ImmediateRecorder.java:12981](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12981>) |
+| `celtium.vulkan.glDrawExempt` | `System.getProperty` | [Lane2ImmediateRecorder.java:12983](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12983>) |
 | `celtium.vulkan.glDrawWindowCensus` | `Boolean.getBoolean` | [GlDrawWindowCensus.java:56](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GlDrawWindowCensus.java#L56>) |
 | `celtium.vulkan.glessKeepsInvalidations` | `System.getProperty` | [Lane2ImmediateRecorder.java:1379](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L1379>) |
 | `celtium.vulkan.glsmPackState` | `System.getProperty` | [GlsmPackState.java:51](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/shader/GlsmPackState.java#L51>) |
@@ -481,8 +481,8 @@
 | `celtium.vulkan.matrixDiagnostics` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:2519](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2519>) |
 | `celtium.vulkan.matrixTrace` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:6125](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L6125>), [CeltiumGllessHint.java:2068](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L2068>) |
 | `celtium.vulkan.memoPerName` | `System.getProperty` | [VulkanTextureRegistry.java:128](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L128>) |
-| `celtium.vulkan.mergeCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18356](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18356>) |
-| `celtium.vulkan.mergeCensusPipelines` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18437](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18437>) |
+| `celtium.vulkan.mergeCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18360](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18360>) |
+| `celtium.vulkan.mergeCensusPipelines` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18441](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18441>) |
 | `celtium.vulkan.meshUploadBudgetBytes` | `System.getProperty` | [MeshUploadBudget.java:71](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/MeshUploadBudget.java#L71>) |
 | `celtium.vulkan.meshUploadBudgetMiB` | `Long.getLong` | [MeshUploadBudget.java:67](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/MeshUploadBudget.java#L67>) |
 | `celtium.vulkan.mirrorCapturedLevels` | `System.getProperty` | [VulkanTextureRegistry.java:313](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L313>) |
@@ -494,16 +494,16 @@
 | `celtium.vulkan.mirrorPoison` | `System.getProperty` | [VulkanGlTexture.java:168](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L168>) |
 | `celtium.vulkan.mirrorPoisonFlat` | `System.getProperty` | [VulkanGlTexture.java:180](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L180>) |
 | `celtium.vulkan.mirrorReachOverride` | `Integer.getInteger` | [VulkanTextureRegistry.java:311](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L311>) |
-| `celtium.vulkan.mirrorRefreshFrames` | `Integer.getInteger` | [FrameCoordinator.java:1129](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1129>) |
+| `celtium.vulkan.mirrorRefreshFrames` | `Integer.getInteger` | [FrameCoordinator.java:1180](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1180>) |
 | `celtium.vulkan.mirrorUploadLog` | `Integer.getInteger` | [VulkanGlTexture.java:108](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L108>) |
 | `celtium.vulkan.mirroredMatrices` | `System.getProperty` | [Lane2ImmediateRecorder.java:1283](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L1283>) |
-| `celtium.vulkan.modelDraw` | `System.getProperty` | [Lane2ImmediateRecorder.java:19425](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19425>) |
-| `celtium.vulkan.modelDrawOnlyList` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:19411](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19411>) |
-| `celtium.vulkan.modelMatrixLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18612](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18612>) |
+| `celtium.vulkan.modelDraw` | `System.getProperty` | [Lane2ImmediateRecorder.java:19429](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19429>) |
+| `celtium.vulkan.modelDrawOnlyList` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:19415](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19415>) |
+| `celtium.vulkan.modelMatrixLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18616](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18616>) |
 | `celtium.vulkan.modelMeshBuild` | `System.getProperty` | [ModelGeometryCache.java:33](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelGeometryCache.java#L33>) |
 | `celtium.vulkan.modelQuadLimit` | `Integer.getInteger` | [ModelGeometryCache.java:35](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelGeometryCache.java#L35>) |
 | `celtium.vulkan.modelSegmentRecords` | `System.getProperty` | [VulkanModelInstances.java:92](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelInstances.java#L92>) |
-| `celtium.vulkan.noMerge` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18466](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18466>) |
+| `celtium.vulkan.noMerge` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18470](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18470>) |
 | `celtium.vulkan.noTerrainDepth` | `Boolean.getBoolean` | [VulkanTerrainPipeline.java:201](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L201>) |
 | `celtium.vulkan.nullRenderer` | `Boolean.getBoolean` | [NullRenderer.java:28](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NullRenderer.java#L28>) |
 | `celtium.vulkan.paceToRefresh` | `System.getProperty` | [CeltiumFramePacing.java:38](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumFramePacing.java#L38>) |
@@ -511,7 +511,7 @@
 | `celtium.vulkan.packShadowRebuildBudget` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:371](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L371>) |
 | `celtium.vulkan.packTerrainPrograms` | `System.getProperty` | [Lane2ImmediateRecorder.java:361](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L361>) |
 | `celtium.vulkan.packetTimings` | `Boolean.getBoolean` | [PacketCost.java:27](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PacketCost.java#L27>) |
-| `celtium.vulkan.pairProbeClear` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16586](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16586>) |
+| `celtium.vulkan.pairProbeClear` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16590](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16590>) |
 | `celtium.vulkan.patchMipLevels` | `System.getProperty` | [VulkanTextureRegistry.java:324](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L324>) |
 | `celtium.vulkan.pipelineCache` | `System.getProperty` | [VulkanContext.java:96](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L96>) |
 | `celtium.vulkan.pipelineCacheFile` | `System.getProperty` | [VulkanContext.java:3658](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3658>) |
@@ -519,27 +519,27 @@
 | `celtium.vulkan.pipelineCreateCensusSlowMs` | `Long.getLong` | [PipelineCreateCensus.java:54](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PipelineCreateCensus.java#L54>) |
 | `celtium.vulkan.pollUploadsAlways` | `Boolean.getBoolean` | [VulkanContext.java:466](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L466>) |
 | `celtium.vulkan.positionNormalDepthTest` | `System.getProperty` | [Lane2ImmediateRecorder.java:3344](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3344>) |
-| `celtium.vulkan.prepareCacheBits` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:14547](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14547>) |
-| `celtium.vulkan.presentDrainFinishGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:13013](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13013>) |
-| `celtium.vulkan.presentFlushPending` | `System.getProperty` | [Lane2ImmediateRecorder.java:16569](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16569>) |
+| `celtium.vulkan.prepareCacheBits` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:14551](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14551>) |
+| `celtium.vulkan.presentDrainFinishGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:13015](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13015>) |
+| `celtium.vulkan.presentFlushPending` | `System.getProperty` | [Lane2ImmediateRecorder.java:16573](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16573>) |
 | `celtium.vulkan.presentFromComposite` | `System.getProperty` | [Lane2ImmediateRecorder.java:3926](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3926>), [VulkanContext.java:92](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L92>), [VulkanSwapchain.java:51](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L51>) |
 | `celtium.vulkan.presentMarker` | `Boolean.getBoolean` | [VulkanSwapchain.java:363](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L363>) |
 | `celtium.vulkan.presentNoRecord` | `Boolean.getBoolean` | [VulkanSwapchain.java:507](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L507>) |
-| `celtium.vulkan.presentPatch` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16561](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16561>) |
-| `celtium.vulkan.presentPatchLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16573](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16573>) |
-| `celtium.vulkan.presentPatchMinPresent` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16577](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16577>) |
-| `celtium.vulkan.presentUnbindFlushGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:12995](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12995>) |
+| `celtium.vulkan.presentPatch` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16565](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16565>) |
+| `celtium.vulkan.presentPatchLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16577](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16577>) |
+| `celtium.vulkan.presentPatchMinPresent` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:16581](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16581>) |
+| `celtium.vulkan.presentUnbindFlushGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:12997](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12997>) |
 | `celtium.vulkan.probeHighlight` | `Boolean.getBoolean` | [HighlightProbe.java:34](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L34>) |
 | `celtium.vulkan.probeHighlightBorrow` | `Boolean.getBoolean` | [HighlightProbe.java:39](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L39>) |
 | `celtium.vulkan.probeHighlightMinFrame` | `Long.getLong` | [HighlightProbe.java:36](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L36>) |
 | `celtium.vulkan.probeOldShape` | `Boolean.getBoolean` | [VulkanSwapchain.java:511](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L511>) |
 | `celtium.vulkan.pumpBeforePresent` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3148](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3148>) |
 | `celtium.vulkan.pumpInRedirect` | `System.getProperty` | [MinecraftMixin.java:31](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L31>) |
-| `celtium.vulkan.pushBlockCache` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18169](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18169>) |
+| `celtium.vulkan.pushBlockCache` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18173](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18173>) |
 | `celtium.vulkan.rawFboTextureIdentity` | `Boolean.getBoolean` | [RenderTargetRegistry.java:57](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/RenderTargetRegistry.java#L57>) |
-| `celtium.vulkan.rawWriteSampleGate` | `System.getProperty` | [Lane2ImmediateRecorder.java:12195](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12195>) |
+| `celtium.vulkan.rawWriteSampleGate` | `System.getProperty` | [Lane2ImmediateRecorder.java:12197](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12197>) |
 | `celtium.vulkan.readResolveLog` | `Integer.getInteger` | [TextureCopyService.java:202](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L202>) |
-| `celtium.vulkan.rebuildDescriptors` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16549](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16549>) |
+| `celtium.vulkan.rebuildDescriptors` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16553](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16553>) |
 | `celtium.vulkan.recordsDedicatedPool` | `System.getProperty` | [InstanceDataStore.java:342](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/InstanceDataStore.java#L342>) |
 | `celtium.vulkan.recordsRingSlotMiB` | `Integer.getInteger` | [RecordsRing.java:60](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/RecordsRing.java#L60>) |
 | `celtium.vulkan.referenceRender` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:2436](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2436>) |
@@ -547,14 +547,14 @@
 | `celtium.vulkan.refuseTerrainPass` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3961](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3961>) |
 | `celtium.vulkan.replayValueVersions` | `System.getProperty` | [ModelReplayFastPath.java:47](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplayFastPath.java#L47>) |
 | `celtium.vulkan.retainedIndexFlushExempt` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3951](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3951>) |
-| `celtium.vulkan.retireRecordingGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:15113](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15113>) |
+| `celtium.vulkan.retireRecordingGuard` | `System.getProperty` | [Lane2ImmediateRecorder.java:15117](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15117>) |
 | `celtium.vulkan.samplerConfirmEarly` | `System.getProperty` | [VulkanTextureRegistry.java:2704](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L2704>) |
 | `celtium.vulkan.scratchZero` | `System.getProperty` | [Lane2ImmediateRecorder.java:4527](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L4527>) |
 | `celtium.vulkan.shaderModules` | `Boolean.getBoolean` | [SpirvShaders.java:33](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java#L33>) |
 | `celtium.vulkan.skipAnimatedUploads` | `System.getProperty` | [Lane2ImmediateRecorder.java:5253](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L5253>) |
 | `celtium.vulkan.skipGlComposite` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3908](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3908>) |
-| `celtium.vulkan.skipPresent` | `Boolean.getBoolean` | [FrameCoordinator.java:1099](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1099>) |
-| `celtium.vulkan.skipSelfComposite` | `System.getProperty` | [Lane2ImmediateRecorder.java:16542](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16542>) |
+| `celtium.vulkan.skipPresent` | `Boolean.getBoolean` | [FrameCoordinator.java:1150](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1150>) |
+| `celtium.vulkan.skipSelfComposite` | `System.getProperty` | [Lane2ImmediateRecorder.java:16546](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16546>) |
 | `celtium.vulkan.skyCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:772](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L772>) |
 | `celtium.vulkan.skyCensusLines` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:804](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L804>) |
 | `celtium.vulkan.skyFrameProbe` | `Long.getLong` | [Lane2ImmediateRecorder.java:859](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L859>) |
@@ -563,10 +563,10 @@
 | `celtium.vulkan.skyNoDepth` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:801](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L801>) |
 | `celtium.vulkan.skyNoFog` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:791](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L791>) |
 | `celtium.vulkan.skyPoison` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:782](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L782>) |
-| `celtium.vulkan.splashCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18366](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18366>) |
+| `celtium.vulkan.splashCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:18370](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18370>) |
 | `celtium.vulkan.suppressReadbackIds` | `System.getProperty` | [VulkanGlTexture.java:250](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L250>) |
 | `celtium.vulkan.swapchainImages` | `Integer.getInteger` | [VulkanSwapchain.java:228](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L228>) |
-| `celtium.vulkan.swapchainProbe` | `Boolean.getBoolean` | [FrameCoordinator.java:1101](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1101>), [VulkanContext.java:90](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L90>), [VulkanSwapchain.java:49](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L49>) |
+| `celtium.vulkan.swapchainProbe` | `Boolean.getBoolean` | [FrameCoordinator.java:1152](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1152>), [VulkanContext.java:90](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L90>), [VulkanSwapchain.java:49](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L49>) |
 | `celtium.vulkan.targetCensus` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:7666](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7666>) |
 | `celtium.vulkan.targetFormatCensus` | `Boolean.getBoolean` | [CaptureUploadContext.java:26](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CaptureUploadContext.java#L26>), [TargetFormatCensus.java:57](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TargetFormatCensus.java#L57>) |
 | `celtium.vulkan.targetFormatClass` | `System.getProperty` | [Lane2ImmediateRecorder.java:318](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L318>) |
@@ -578,14 +578,14 @@
 | `celtium.vulkan.terrainToBoundTarget` | `System.getProperty` | [Lane2ImmediateRecorder.java:3415](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3415>) |
 | `celtium.vulkan.terrainToDepthTarget` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3504](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3504>) |
 | `celtium.vulkan.textureDiagnostics` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:2439](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2439>), [VulkanGlTexture.java:130](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L130>) |
-| `celtium.vulkan.uiTest` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16479](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16479>) |
+| `celtium.vulkan.uiTest` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:16483](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16483>) |
 | `celtium.vulkan.unflushedTargetLog` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:2185](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L2185>) |
 | `celtium.vulkan.uploadBudgetMiB` | `Long.getLong` | [VulkanContext.java:1057](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L1057>) |
-| `celtium.vulkan.uploadCallerId` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18580](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18580>) |
+| `celtium.vulkan.uploadCallerId` | `Integer.getInteger` | [Lane2ImmediateRecorder.java:18584](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L18584>) |
 | `celtium.vulkan.uploadTrace` | `Boolean.getBoolean` | [VulkanContext.java:592](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L592>) |
 | `celtium.vulkan.upstreamArrivalCensus` | `Boolean.getBoolean` | [UpstreamArrivalCensus.java:28](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/UpstreamArrivalCensus.java#L28>) |
 | `celtium.vulkan.upstreamArrivalCensusFrames` | `Integer.getInteger` | [UpstreamArrivalCensus.java:30](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/UpstreamArrivalCensus.java#L30>) |
-| `celtium.vulkan.vertexDiagnostics` | `Boolean.getBoolean` | [FrameCoordinator.java:1654](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1654>) |
+| `celtium.vulkan.vertexDiagnostics` | `Boolean.getBoolean` | [FrameCoordinator.java:1705](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1705>) |
 | `celtium.vulkan.vsync` | `System.getProperty` | [VulkanSwapchain.java:218](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L218>) |
 | `celtium.vulkan.windowCopyBlit` | `System.getProperty` | [TextureCopyService.java:192](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L192>) |
 | `celtium.vulkan.windowDiag` | `Boolean.getBoolean` | [Lane2ImmediateRecorder.java:3244](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3244>) |
@@ -605,7 +605,7 @@
 
 | マーカー | 位置 |
 |---|---|
-| `CELTIUM_ACCEPTED` | [Lane2ImmediateRecorder.java:10923](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10923>) |
+| `CELTIUM_ACCEPTED` | [Lane2ImmediateRecorder.java:10925](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10925>) |
 | `CELTIUM_ACCEPT_FLUSH` | [FramePassTimings.java:894](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java#L894>) |
 | `CELTIUM_ADOPT_PROBE` | [FramebufferMixin.java:236](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/FramebufferMixin.java#L236>) |
 | `CELTIUM_ALLOCATION_EXPERIMENT` | [VulkanContext.java:3629](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3629>) |
@@ -623,8 +623,8 @@
 | `CELTIUM_ATLAS_DESCRIPTOR` | [VulkanTerrainPipeline.java:1108](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1108>), [VulkanTerrainPipeline.java:1149](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1149>), [VulkanTerrainPipeline.java:1169](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1169>) |
 | `CELTIUM_ATLAS_SAMPLER` | [VulkanTerrainPipeline.java:476](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L476>) |
 | `CELTIUM_BACKEND_CALLS` | [BackendCallCounters.java:154](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendCallCounters.java#L154>) |
-| `CELTIUM_BACKEND_DELETE` | [VulkanBackendAdapter.java:1054](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1054>) |
-| `CELTIUM_BATCH_ROUTE` | [Lane2ImmediateRecorder.java:21487](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21487>) |
+| `CELTIUM_BACKEND_DELETE` | [VulkanBackendAdapter.java:1058](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1058>) |
+| `CELTIUM_BATCH_ROUTE` | [Lane2ImmediateRecorder.java:21491](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21491>) |
 | `CELTIUM_BATCH_SITE` | [Lane2ImmediateRecorder.java:9684](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9684>) |
 | `CELTIUM_BIND_ENTRY` | [Lane2ImmediateRecorder.java:8307](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8307>) |
 | `CELTIUM_BIND_PENDING` | [Lane2ImmediateRecorder.java:8320](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8320>) |
@@ -632,10 +632,10 @@
 | `CELTIUM_BLIT_UNSERVED` | [DirectGlCaptureEntry.java:1315](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1315>) |
 | `CELTIUM_BLOCKLAYER` | [RenderGlobalMixin.java:250](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L250>) |
 | `CELTIUM_BORROW_BYPASS` | [PresentSwapchain.java:372](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java#L372>) |
-| `CELTIUM_BOUNDARY_SLOW` | [FrameCoordinator.java:1192](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1192>) |
-| `CELTIUM_BOUNDARY_SPLIT` | [FrameCoordinator.java:1234](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1234>) |
+| `CELTIUM_BOUNDARY_SLOW` | [FrameCoordinator.java:1243](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1243>) |
+| `CELTIUM_BOUNDARY_SPLIT` | [FrameCoordinator.java:1285](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1285>) |
 | `CELTIUM_BOUND_TARGET_CENSUS` | [Lane2ImmediateRecorder.java:3451](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3451>) |
-| `CELTIUM_BOX_PRE` | [Lane2ImmediateRecorder.java:13760](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13760>) |
+| `CELTIUM_BOX_PRE` | [Lane2ImmediateRecorder.java:13762](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13762>) |
 | `CELTIUM_BOX_PROBE` | [TextureCopyService.java:951](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L951>) |
 | `CELTIUM_BUFFER_CENSUS` | [FrameStatsReport.java:151](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L151>) |
 | `CELTIUM_BUFFER_RETIRED` | [VulkanContext.java:5741](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L5741>), [VulkanContext.java:6144](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L6144>) |
@@ -643,7 +643,7 @@
 | `CELTIUM_CANCEL_NOT_CANCELLABLE` | [GlStateManagerMixin.java:86](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java#L86>) |
 | `CELTIUM_CANCEL_STATE` | [GlStateManagerMixin.java:74](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java#L74>) |
 | `CELTIUM_CAPS_PROBE` | [CeltiumGllessHint.java:61](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L61>), [CeltiumGllessHint.java:76](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L76>) |
-| `CELTIUM_CAPTURE` | [Lane2ImmediateRecorder.java:19904](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19904>) |
+| `CELTIUM_CAPTURE` | [Lane2ImmediateRecorder.java:19908](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19908>) |
 | `CELTIUM_CAPTURED_UPLOAD` | [VulkanGlTexture.java:1658](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1658>) |
 | `CELTIUM_CAPTURE_ENTITY_HOLD` | [ValidationClient.java:7897](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7897>) |
 | `CELTIUM_CAPTURE_MISS` | [VulkanGlTexture.java:1679](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1679>) |
@@ -652,13 +652,13 @@
 | `CELTIUM_CHAIN_FRAME_DUMP` | [CopyReadSide.java:595](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java#L595>), [CopyReadSide.java:625](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java#L625>) |
 | `CELTIUM_CHAIN_INPUT_FLUSH` | [VulkanBackendAdapter.java:625](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L625>) |
 | `CELTIUM_CHAIN_INPUT_FLUSH_FAILED` | [VulkanBackendAdapter.java:601](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L601>) |
-| `CELTIUM_CHAIN_PAIR_CLEAR` | [Lane2ImmediateRecorder.java:15503](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15503>) |
+| `CELTIUM_CHAIN_PAIR_CLEAR` | [Lane2ImmediateRecorder.java:15507](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15507>) |
 | `CELTIUM_CHAIN_PASS` | [Lane2ImmediateRecorder.java:138](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L138>), [Lane2ImmediateRecorder.java:161](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L161>), [Lane2ImmediateRecorder.java:218](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L218>), [Lane2ImmediateRecorder.java:256](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L256>) |
 | `CELTIUM_CHAIN_SKIP` | [ShaderGroupMixin.java:206](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ShaderGroupMixin.java#L206>) |
 | `CELTIUM_CHANGE_DIM` | [EntityPlayerMPMixin.java:32](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/EntityPlayerMPMixin.java#L32>) |
 | `CELTIUM_CHURN` | [ValidationClient.java:13636](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13636>) |
 | `CELTIUM_CLEANUP_RETIRED` | [VulkanContext.java:5574](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L5574>) |
-| `CELTIUM_CLEAR_LATCH` | [Lane2ImmediateRecorder.java:17741](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17741>) |
+| `CELTIUM_CLEAR_LATCH` | [Lane2ImmediateRecorder.java:17745](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17745>) |
 | `CELTIUM_CLIENT_CHUNKS` | [ValidationClient.java:5201](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L5201>) |
 | `CELTIUM_CLOUD_CELLS` | [ForgeCloudCellsMixin.java:189](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ForgeCloudCellsMixin.java#L189>), [ForgeCloudCellsMixin.java:296](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ForgeCloudCellsMixin.java#L296>) |
 | `CELTIUM_COMMAND_BUFFER_TARGETS` | [ValidationClient.java:3259](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3259>) |
@@ -674,18 +674,18 @@
 | `CELTIUM_CRASH_CONTEXT` | [CrashBreadcrumbs.java:287](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CrashBreadcrumbs.java#L287>) |
 | `CELTIUM_CRUMB` | [CeltiumLogLimiter.java:45](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L45>), [CrashBreadcrumbs.java:294](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CrashBreadcrumbs.java#L294>) |
 | `CELTIUM_DEAD_TEXTURE_REFUSED` | [VulkanDescriptorWrites.java:49](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDescriptorWrites.java#L49>) |
-| `CELTIUM_DEBUG_ANNOUNCE` | [Lane2ImmediateRecorder.java:19065](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19065>), [Lane2ImmediateRecorder.java:19067](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19067>), [Lane2ImmediateRecorder.java:19069](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19069>) |
-| `CELTIUM_DEBUG_ATLAS_QUAD` | [Lane2ImmediateRecorder.java:19094](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19094>), [Lane2ImmediateRecorder.java:19096](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19096>) |
+| `CELTIUM_DEBUG_ANNOUNCE` | [Lane2ImmediateRecorder.java:19069](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19069>), [Lane2ImmediateRecorder.java:19071](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19071>), [Lane2ImmediateRecorder.java:19073](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19073>) |
+| `CELTIUM_DEBUG_ATLAS_QUAD` | [Lane2ImmediateRecorder.java:19098](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19098>), [Lane2ImmediateRecorder.java:19100](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19100>) |
 | `CELTIUM_DEBUG_FULLSCREEN` | [PresentSwapchain.java:672](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java#L672>) |
-| `CELTIUM_DEBUG_GROWTH` | [Lane2ImmediateRecorder.java:19044](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19044>), [Lane2ImmediateRecorder.java:19047](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19047>), [Lane2ImmediateRecorder.java:19049](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19049>) |
-| `CELTIUM_DEBUG_MIRROR` | [Lane2ImmediateRecorder.java:19102](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19102>), [Lane2ImmediateRecorder.java:19105](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19105>), [Lane2ImmediateRecorder.java:19108](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19108>), [Lane2ImmediateRecorder.java:19110](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19110>) |
-| `CELTIUM_DEBUG_REPEAT` | [Lane2ImmediateRecorder.java:19022](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19022>), [Lane2ImmediateRecorder.java:19025](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19025>) |
+| `CELTIUM_DEBUG_GROWTH` | [Lane2ImmediateRecorder.java:19048](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19048>), [Lane2ImmediateRecorder.java:19051](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19051>), [Lane2ImmediateRecorder.java:19053](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19053>) |
+| `CELTIUM_DEBUG_MIRROR` | [Lane2ImmediateRecorder.java:19106](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19106>), [Lane2ImmediateRecorder.java:19109](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19109>), [Lane2ImmediateRecorder.java:19112](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19112>), [Lane2ImmediateRecorder.java:19114](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19114>) |
+| `CELTIUM_DEBUG_REPEAT` | [Lane2ImmediateRecorder.java:19026](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19026>), [Lane2ImmediateRecorder.java:19029](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19029>) |
 | `CELTIUM_DEBUG_RESIZE` | [Lane2ImmediateRecorder.java:3195](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L3195>) |
-| `CELTIUM_DELETE_SETTLED_SLOW` | [VulkanBackendAdapter.java:1016](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1016>) |
+| `CELTIUM_DELETE_SETTLED_SLOW` | [VulkanBackendAdapter.java:1020](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1020>) |
 | `CELTIUM_DEPTH_COPY` | [CopyReadSide.java:295](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java#L295>) |
 | `CELTIUM_DEPTH_COPY_SKIPPED` | [CeltiumGllessHint.java:1557](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1557>) |
 | `CELTIUM_DEPTH_END` | [TextureCopyService.java:697](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L697>) |
-| `CELTIUM_DEPTH_JUDGE` | [Lane2ImmediateRecorder.java:16930](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16930>) |
+| `CELTIUM_DEPTH_JUDGE` | [Lane2ImmediateRecorder.java:16934](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16934>) |
 | `CELTIUM_DEPTH_NOTE` | [Lane2ImmediateRecorder.java:6838](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L6838>) |
 | `CELTIUM_DEPTH_STAGE` | [TextureCopyService.java:919](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L919>) |
 | `CELTIUM_DESCRIPTOR_FAULT` | [VulkanDescriptorFault.java:56](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDescriptorFault.java#L56>) |
@@ -696,7 +696,7 @@
 | `CELTIUM_DEVICE_CONTRACT` | [VulkanContext.java:4327](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L4327>) |
 | `CELTIUM_DEVICE_DESCRIPTOR_LIMITS` | [VulkanContext.java:4655](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L4655>) |
 | `CELTIUM_DEVICE_FEATURES` | [VulkanContext.java:4863](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L4863>) |
-| `CELTIUM_DEVICE_LOST` | [FrameCoordinator.java:2105](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2105>), [FrameCoordinator.java:2193](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2193>) |
+| `CELTIUM_DEVICE_LOST` | [FrameCoordinator.java:2156](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2156>), [FrameCoordinator.java:2246](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2246>) |
 | `CELTIUM_DIM_ARRIVED` | [ValidationClient.java:4917](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4917>) |
 | `CELTIUM_DIM_BACK_ARRIVED` | [ValidationClient.java:4934](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4934>) |
 | `CELTIUM_DIM_CHANGE` | [ValidationClient.java:5014](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L5014>) |
@@ -717,10 +717,10 @@
 | `CELTIUM_DISPLAY_LIST_TEXTURE_UNKNOWN` | [VulkanDisplayListCensus.java:403](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java#L403>) |
 | `CELTIUM_DISPLAY_LIST_UNKNOWN` | [VulkanDisplayListCensus.java:349](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java#L349>) |
 | `CELTIUM_DRAWS` | [DrawCounters.java:103](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/DrawCounters.java#L103>) |
-| `CELTIUM_DRAW_BENCH` | [Lane2ImmediateRecorder.java:19131](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19131>) |
+| `CELTIUM_DRAW_BENCH` | [Lane2ImmediateRecorder.java:19135](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19135>) |
 | `CELTIUM_DRAW_KEY_CENSUS` | [FrameStatsReport.java:179](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L179>) |
-| `CELTIUM_DRAW_SITE` | [Lane2ImmediateRecorder.java:21415](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21415>) |
-| `CELTIUM_DRAW_STATE` | [Lane2ImmediateRecorder.java:21776](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21776>) |
+| `CELTIUM_DRAW_SITE` | [Lane2ImmediateRecorder.java:21419](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21419>) |
+| `CELTIUM_DRAW_STATE` | [Lane2ImmediateRecorder.java:21780](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21780>) |
 | `CELTIUM_DRIVER_INFO` | [VulkanContext.java:4470](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L4470>) |
 | `CELTIUM_DUMP_WRITE` | [VulkanSwapchain.java:626](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L626>) |
 | `CELTIUM_DYNAMIC_LIGHT_ITEM_SPAWNED` | [ValidationClient.java:4091](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4091>) |
@@ -733,8 +733,8 @@
 | `CELTIUM_ENTITY_CACHE_MISMATCH` | [EntityGatherCensus.java:91](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L91>) |
 | `CELTIUM_ENTITY_GATHER` | [EntityGatherCensus.java:97](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L97>) |
 | `CELTIUM_ENTITY_INDEX_MISMATCH` | [EntityGatherCensus.java:60](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L60>) |
-| `CELTIUM_ENTITY_REFUSED` | [Lane2ImmediateRecorder.java:10945](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10945>) |
-| `CELTIUM_ENTITY_REFUSED_SITE` | [Lane2ImmediateRecorder.java:10953](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10953>) |
+| `CELTIUM_ENTITY_REFUSED` | [Lane2ImmediateRecorder.java:10947](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10947>) |
+| `CELTIUM_ENTITY_REFUSED_SITE` | [Lane2ImmediateRecorder.java:10955](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10955>) |
 | `CELTIUM_EXTERNAL_DEPTH_IMAGE` | [VulkanTextureRegistry.java:807](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L807>) |
 | `CELTIUM_EXTERNAL_IMAGE` | [VulkanTextureRegistry.java:693](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L693>), [VulkanTextureRegistry.java:878](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L878>) |
 | `CELTIUM_EXT_ANSWER` | [CeltiumGllessHint.java:205](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L205>), [CeltiumGllessHint.java:954](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L954>) |
@@ -747,14 +747,14 @@
 | `CELTIUM_FBO_PUBLISH_REFUSED` | [Lane2ImmediateRecorder.java:7880](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7880>), [Lane2ImmediateRecorder.java:7951](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7951>), [Lane2ImmediateRecorder.java:7961](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7961>), [Lane2ImmediateRecorder.java:7982](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7982>), [Lane2ImmediateRecorder.java:8007](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8007>), [Lane2ImmediateRecorder.java:8152](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8152>), [Lane2ImmediateRecorder.java:8173](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8173>), [Lane2ImmediateRecorder.java:8192](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8192>), [Lane2ImmediateRecorder.java:8250](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8250>) |
 | `CELTIUM_FBO_TARGET_ENSURED` | [Lane2ImmediateRecorder.java:7924](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7924>) |
 | `CELTIUM_FBO_TEXTURE_PUBLISHED` | [Lane2ImmediateRecorder.java:8018](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8018>), [Lane2ImmediateRecorder.java:8262](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8262>) |
-| `CELTIUM_FENCE_TIMEOUT` | [FrameCoordinator.java:2096](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2096>), [FrameCoordinator.java:2132](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2132>), [FrameCoordinator.java:2185](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2185>), [FrameCoordinator.java:2217](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2217>) |
+| `CELTIUM_FENCE_TIMEOUT` | [FrameCoordinator.java:2147](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2147>), [FrameCoordinator.java:2183](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2183>), [FrameCoordinator.java:2238](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2238>), [FrameCoordinator.java:2270](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2270>) |
 | `CELTIUM_FIXTURE_FRAME` | [ValidationClient.java:7324](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7324>), [ValidationClient.java:7338](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7338>) |
 | `CELTIUM_FIXTURE_TICK` | [ValidationClient.java:4637](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4637>) |
 | `CELTIUM_FLICKER` | [VulkanSwapchain.java:2180](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L2180>) |
 | `CELTIUM_FLICKER_ARMED` | [VulkanSwapchain.java:2140](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L2140>) |
-| `CELTIUM_FLUSH_REASONS` | [Lane2ImmediateRecorder.java:12164](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12164>) |
-| `CELTIUM_FLUSH_SITES` | [Lane2ImmediateRecorder.java:16656](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16656>) |
-| `CELTIUM_FLUSH_SOURCES` | [Lane2ImmediateRecorder.java:16668](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16668>) |
+| `CELTIUM_FLUSH_REASONS` | [Lane2ImmediateRecorder.java:12166](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L12166>) |
+| `CELTIUM_FLUSH_SITES` | [Lane2ImmediateRecorder.java:16660](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16660>) |
+| `CELTIUM_FLUSH_SOURCES` | [Lane2ImmediateRecorder.java:16672](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16672>) |
 | `CELTIUM_FMT5_POS` | [Lane2ImmediateRecorder.java:9737](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9737>) |
 | `CELTIUM_FMT5_SITE` | [Lane2ImmediateRecorder.java:9771](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9771>) |
 | `CELTIUM_FMT5_VERTEX` | [Lane2ImmediateRecorder.java:9760](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9760>) |
@@ -775,14 +775,14 @@
 | `CELTIUM_FONT_WITNESS_CENSUS` | [Lane2ImmediateRecorder.java:9039](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9039>) |
 | `CELTIUM_FORMAT_SITE` | [WorldVertexBufferUploaderMixin.java:920](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L920>) |
 | `CELTIUM_FRAMEBUFFER_HINT_FAILED` | [Lane2ImmediateRecorder.java:1176](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L1176>) |
-| `CELTIUM_FRAME_AT_WINDOW` | [Lane2ImmediateRecorder.java:13526](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13526>) |
+| `CELTIUM_FRAME_AT_WINDOW` | [Lane2ImmediateRecorder.java:13528](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13528>) |
 | `CELTIUM_FRAME_BASE` | [Lane2ImmediateRecorder.java:8745](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8745>) |
 | `CELTIUM_FRAME_BUDGET` | [FrameBudgetTimings.java:686](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L686>) |
 | `CELTIUM_FRAME_BUDGET_SUMMARY` | [FrameBudgetTimings.java:739](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L739>), [FrameBudgetTimings.java:743](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L743>) |
 | `CELTIUM_FRAME_CENSUS` | [CeltiumFrameRelease.java:149](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumFrameRelease.java#L149>) |
 | `CELTIUM_FRAME_FORMAT_MOVED` | [VulkanContext.java:1319](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L1319>) |
 | `CELTIUM_FRAME_PASS_SPLIT` | [FramePassTimings.java:890](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java#L890>) |
-| `CELTIUM_FRAME_QUEUED` | [FrameCoordinator.java:680](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L680>) |
+| `CELTIUM_FRAME_QUEUED` | [FrameCoordinator.java:731](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L731>) |
 | `CELTIUM_FRAME_RELEASE` | [CeltiumFrameRelease.java:175](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumFrameRelease.java#L175>) |
 | `CELTIUM_FRAME_STATS` | [FrameStatsReport.java:215](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L215>) |
 | `CELTIUM_FRAME_TAIL` | [GameLoopTiming.java:152](<../forge122/src/main/java/org/taumc/celeritas/impl/profile/GameLoopTiming.java#L152>) |
@@ -798,8 +798,8 @@
 | `CELTIUM_FUNNEL_FIRST_SOURCE_QUERY` | [CeltiumLightCache.java:324](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L324>) |
 | `CELTIUM_FUNNEL_NO_RAISE_YET` | [CeltiumLightCache.java:351](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L351>) |
 | `CELTIUM_FUNNEL_SUMMARY` | [CeltiumLightCache.java:218](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L218>), [CeltiumLightCache.java:296](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L296>) |
-| `CELTIUM_GAME_CLEAR` | [Lane2ImmediateRecorder.java:17516](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17516>) |
-| `CELTIUM_GAME_CLEAR_ROUTE` | [Lane2ImmediateRecorder.java:17644](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17644>) |
+| `CELTIUM_GAME_CLEAR` | [Lane2ImmediateRecorder.java:17520](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17520>) |
+| `CELTIUM_GAME_CLEAR_ROUTE` | [Lane2ImmediateRecorder.java:17648](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17648>) |
 | `CELTIUM_GATHER_FIRST` | [MinecraftDynamicLightService.java:163](<../forge122/src/main/java/org/soutalab/celtium/forge/light/MinecraftDynamicLightService.java#L163>) |
 | `CELTIUM_GET_TEX_IMAGE` | [TextureCopyService.java:1362](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1362>) |
 | `CELTIUM_GLDRAW_WINDOW_CENSUS` | [GlDrawWindowCensus.java:152](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GlDrawWindowCensus.java#L152>) |
@@ -815,16 +815,16 @@
 | `CELTIUM_GL_SURFACE` | [CeltiumGllessNativeTransformer.java:752](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L752>) |
 | `CELTIUM_GL_SURFACE_DRAWING` | [CeltiumGllessNativeTransformer.java:782](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L782>) |
 | `CELTIUM_GL_SURFACE_NOOP` | [CeltiumGllessNativeTransformer.java:821](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L821>) |
-| `CELTIUM_GPU_VERTEX` | [FrameCoordinator.java:2561](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2561>) |
+| `CELTIUM_GPU_VERTEX` | [FrameCoordinator.java:2616](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L2616>) |
 | `CELTIUM_GREGTECH_STAGE` | [ValidationClient.java:14147](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L14147>) |
 | `CELTIUM_GROUPS` | [Lane2ImmediateRecorder.java:5624](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L5624>) |
 | `CELTIUM_GROUP_BOUNDS` | [BackendDiagnostics.java:1560](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1560>) |
-| `CELTIUM_GROUP_CLOSE` | [Lane2ImmediateRecorder.java:16343](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16343>) |
-| `CELTIUM_GROUP_COMPOSITION` | [FrameStatsReport.java:174](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L174>), [Lane2ImmediateRecorder.java:21480](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21480>) |
+| `CELTIUM_GROUP_CLOSE` | [Lane2ImmediateRecorder.java:16347](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16347>) |
+| `CELTIUM_GROUP_COMPOSITION` | [FrameStatsReport.java:174](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L174>), [Lane2ImmediateRecorder.java:21484](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21484>) |
 | `CELTIUM_GROUP_DECAY` | [GroupDecayCensus.java:82](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GroupDecayCensus.java#L82>) |
 | `CELTIUM_GROUP_DETAIL` | [BackendDiagnostics.java:1055](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1055>) |
-| `CELTIUM_GROUP_SCISSOR` | [Lane2ImmediateRecorder.java:21694](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21694>) |
-| `CELTIUM_GROUP_VIEWPORT` | [Lane2ImmediateRecorder.java:21736](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21736>) |
+| `CELTIUM_GROUP_SCISSOR` | [Lane2ImmediateRecorder.java:21698](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21698>) |
+| `CELTIUM_GROUP_VIEWPORT` | [Lane2ImmediateRecorder.java:21740](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21740>) |
 | `CELTIUM_GUI_CLICK_FAILED` | [ValidationClient.java:10531](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L10531>) |
 | `CELTIUM_GVC_A4_PROBE` | [GvcA4Probe.java:38](<../validation/client/src/main/java/org/soutalab/celtium/validation/GvcA4Probe.java#L38>), [GvcA4Probe.java:41](<../validation/client/src/main/java/org/soutalab/celtium/validation/GvcA4Probe.java#L41>) |
 | `CELTIUM_HINT_DISPLAY_LISTS` | [CeltiumGllessHint.java:1483](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1483>) |
@@ -840,11 +840,11 @@
 | `CELTIUM_IMAGE_RELEASED` | [VulkanGlTexture.java:3177](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3177>) |
 | `CELTIUM_IMGUNIT_ANSWER` | [DirectGlCaptureEntry.java:1287](<../celtium-vulkan/src/main/java/org/soutalab/celtium/glcompat/capture/DirectGlCaptureEntry.java#L1287>), [CeltiumGllessHint.java:959](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L959>) |
 | `CELTIUM_IMMEDIATE_DESCRIPTORS` | [VulkanImmediateItemRecordsPipeline.java:619](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateItemRecordsPipeline.java#L619>), [VulkanImmediateTextureRecordsPipeline.java:1017](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java#L1017>) |
-| `CELTIUM_IMMEDIATE_ENQ` | [Lane2ImmediateRecorder.java:16231](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16231>) |
+| `CELTIUM_IMMEDIATE_ENQ` | [Lane2ImmediateRecorder.java:16235](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16235>) |
 | `CELTIUM_IMMEDIATE_FOG` | [ImmediateFogState.java:226](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ImmediateFogState.java#L226>) |
 | `CELTIUM_INCOMPLETE_TEXTURE_BLACK` | [Lane2ImmediateRecorder.java:9999](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9999>) |
 | `CELTIUM_INVALIDATE_ORIGIN` | [Lane2ImmediateRecorder.java:5385](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L5385>) |
-| `CELTIUM_ITEM_GROUP` | [Lane2ImmediateRecorder.java:20859](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20859>) |
+| `CELTIUM_ITEM_GROUP` | [Lane2ImmediateRecorder.java:20863](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20863>) |
 | `CELTIUM_ITEM_MESH` | [RenderItemMixin.java:238](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/RenderItemMixin.java#L238>) |
 | `CELTIUM_ITEM_MESH_EMPTY` | [RenderItemMixin.java:336](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/RenderItemMixin.java#L336>) |
 | `CELTIUM_K6` | [WorldVertexBufferUploaderMixin.java:467](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L467>) |
@@ -853,11 +853,11 @@
 | `CELTIUM_LAYOUT_TRACE` | [VulkanGlTexture.java:4646](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4646>), [VulkanGlTexture.java:4649](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4649>), [VulkanGlTexture.java:4651](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4651>) |
 | `CELTIUM_LIFECYCLE` | [VulkanTextureRegistry.java:1294](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L1294>), [VulkanTextureRegistry.java:2455](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L2455>) |
 | `CELTIUM_LIGHTCOORD` | [Lane2ImmediateRecorder.java:9740](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9740>) |
-| `CELTIUM_LIGHTMAP` | [Lane2ImmediateRecorder.java:14071](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14071>) |
-| `CELTIUM_LIGHTMAP_EXTENT` | [Lane2ImmediateRecorder.java:14061](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14061>) |
-| `CELTIUM_LIGHTMAP_FAILURE` | [Lane2ImmediateRecorder.java:14150](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14150>) |
-| `CELTIUM_LIGHTMAP_FALLBACK` | [Lane2ImmediateRecorder.java:14182](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14182>) |
-| `CELTIUM_LIGHTMAP_STAGE` | [Lane2ImmediateRecorder.java:14216](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14216>) |
+| `CELTIUM_LIGHTMAP` | [Lane2ImmediateRecorder.java:14075](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14075>) |
+| `CELTIUM_LIGHTMAP_EXTENT` | [Lane2ImmediateRecorder.java:14065](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14065>) |
+| `CELTIUM_LIGHTMAP_FAILURE` | [Lane2ImmediateRecorder.java:14154](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14154>) |
+| `CELTIUM_LIGHTMAP_FALLBACK` | [Lane2ImmediateRecorder.java:14186](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14186>) |
+| `CELTIUM_LIGHTMAP_STAGE` | [Lane2ImmediateRecorder.java:14220](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L14220>) |
 | `CELTIUM_LINE_NARROWED` | [Lane2ImmediateRecorder.java:9707](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9707>) |
 | `CELTIUM_LIT_FOG_SKIPPED` | [Lane2ImmediateRecorder.java:5058](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L5058>) |
 | `CELTIUM_LOADING_PROGRESS_CAPTURE` | [LoadingScreenRendererMixin.java:61](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/LoadingScreenRendererMixin.java#L61>), [ValidationClient.java:9642](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9642>) |
@@ -870,18 +870,18 @@
 | `CELTIUM_MAP_RANGE_REFUSED` | [BufferStorageRecord.java:166](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BufferStorageRecord.java#L166>) |
 | `CELTIUM_MARK_CALLER` | [RenderGlobalMixin.java:326](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L326>) |
 | `CELTIUM_MARK_TRACE` | [RenderGlobalMixin.java:344](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L344>) |
-| `CELTIUM_MATRIX_DUMP` | [Lane2ImmediateRecorder.java:16215](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16215>) |
+| `CELTIUM_MATRIX_DUMP` | [Lane2ImmediateRecorder.java:16219](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16219>) |
 | `CELTIUM_MATRIX_NATIVE` | [CeltiumGllessHint.java:1200](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1200>) |
 | `CELTIUM_MATRIX_TRACE` | [Lane2ImmediateRecorder.java:6156](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L6156>) |
 | `CELTIUM_MEMORY_PROFILE` | [VulkanContext.java:4857](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L4857>) |
-| `CELTIUM_MENU_GROUP` | [Lane2ImmediateRecorder.java:20867](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20867>) |
+| `CELTIUM_MENU_GROUP` | [Lane2ImmediateRecorder.java:20871](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20871>) |
 | `CELTIUM_MENU_REGION_GATE` | [ValidationClient.java:13074](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13074>) |
-| `CELTIUM_MERGE_CENSUS` | [Lane2ImmediateRecorder.java:21500](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21500>) |
+| `CELTIUM_MERGE_CENSUS` | [Lane2ImmediateRecorder.java:21504](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21504>) |
 | `CELTIUM_MIRROR` | [VulkanGlTexture.java:1859](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1859>) |
 | `CELTIUM_MIRROR_COVERAGE` | [VulkanGlTexture.java:2183](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2183>) |
 | `CELTIUM_MIRROR_COVERAGE_PROGRESS` | [VulkanGlTexture.java:2354](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2354>) |
 | `CELTIUM_MIRROR_DEFERRED` | [VulkanTextureRegistry.java:219](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L219>) |
-| `CELTIUM_MIRROR_DRAW` | [Lane2ImmediateRecorder.java:20877](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20877>) |
+| `CELTIUM_MIRROR_DRAW` | [Lane2ImmediateRecorder.java:20881](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L20881>) |
 | `CELTIUM_MIRROR_DUMP` | [VulkanGlTexture.java:3730](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3730>) |
 | `CELTIUM_MIRROR_LEVEL` | [VulkanGlTexture.java:3744](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3744>) |
 | `CELTIUM_MIRROR_MATERIALIZED` | [VulkanTextureRegistry.java:1143](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L1143>) |
@@ -936,10 +936,10 @@
 | `CELTIUM_ORTHO` | [Lane2ImmediateRecorder.java:5865](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L5865>) |
 | `CELTIUM_OTHER_SPLIT` | [FrameBudgetTimings.java:638](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L638>), [FrameBudgetTimings.java:653](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L653>) |
 | `CELTIUM_OWNED_BUFFER` | [ClientArrayBufferOwnershipMixin.java:68](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ClientArrayBufferOwnershipMixin.java#L68>), [ClientArrayBufferOwnershipMixin.java:80](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ClientArrayBufferOwnershipMixin.java#L80>), [ClientArrayBufferOwnershipMixin.java:89](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ClientArrayBufferOwnershipMixin.java#L89>) |
-| `CELTIUM_PAIR_CLEAR_REFUSED` | [Lane2ImmediateRecorder.java:17927](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17927>) |
-| `CELTIUM_PAIR_PROBE_CLEAR` | [Lane2ImmediateRecorder.java:15811](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15811>) |
+| `CELTIUM_PAIR_CLEAR_REFUSED` | [Lane2ImmediateRecorder.java:17931](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17931>) |
+| `CELTIUM_PAIR_PROBE_CLEAR` | [Lane2ImmediateRecorder.java:15815](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15815>) |
 | `CELTIUM_PAIR_SKIP` | [PresentSwapchain.java:1591](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java#L1591>) |
-| `CELTIUM_PAIR_WINDOW_PRESERVE_DEPTH` | [Lane2ImmediateRecorder.java:15557](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15557>) |
+| `CELTIUM_PAIR_WINDOW_PRESERVE_DEPTH` | [Lane2ImmediateRecorder.java:15561](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15561>) |
 | `CELTIUM_PASS_GPU` | [GpuPassTimingReport.java:83](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GpuPassTimingReport.java#L83>) |
 | `CELTIUM_PASS_GPU_MARKS` | [GpuPassTimingReport.java:86](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GpuPassTimingReport.java#L86>) |
 | `CELTIUM_PATCH_ESSENTIAL` | [PatchErrorRecorder.java:98](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchErrorRecorder.java#L98>) |
@@ -979,7 +979,7 @@
 | `CELTIUM_PROBE_BORROW` | [HighlightProbe.java:164](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L164>) |
 | `CELTIUM_PROBE_DRAW` | [HighlightProbe.java:126](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L126>) |
 | `CELTIUM_PROBE_POISON` | [HighlightProbe.java:97](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/HighlightProbe.java#L97>) |
-| `CELTIUM_PROJ_PROBE` | [Lane2ImmediateRecorder.java:16174](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16174>) |
+| `CELTIUM_PROJ_PROBE` | [Lane2ImmediateRecorder.java:16178](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16178>) |
 | `CELTIUM_RAW_ATTACH` | [CeltiumGllessHint.java:1960](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1960>) |
 | `CELTIUM_RAW_BIND_GAME_FRAMEBUFFER` | [Lane2ImmediateRecorder.java:6986](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L6986>) |
 | `CELTIUM_RAW_BIND_REGISTER` | [Lane2ImmediateRecorder.java:7010](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7010>) |
@@ -1002,7 +1002,7 @@
 | `CELTIUM_REGISTRY_TEXTURE` | [VulkanImmediateTextureRecordsPipeline.java:781](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTextureRecordsPipeline.java#L781>) |
 | `CELTIUM_RENDERENTITIES` | [RenderGlobalMixin.java:406](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L406>) |
 | `CELTIUM_RENDERERLESS_ENTITY_SPAWNED` | [ValidationClient.java:4148](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4148>) |
-| `CELTIUM_REPLACE_DROP` | [Lane2ImmediateRecorder.java:13287](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13287>) |
+| `CELTIUM_REPLACE_DROP` | [Lane2ImmediateRecorder.java:13289](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13289>) |
 | `CELTIUM_RESIZE` | [ValidationClient.java:9063](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9063>) |
 | `CELTIUM_RESIZE_COMPOSITOR` | [ValidationClient.java:9210](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9210>), [ValidationClient.java:9211](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9211>) |
 | `CELTIUM_RESIZE_FAILED` | [ValidationClient.java:9152](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9152>), [ValidationClient.java:9186](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9186>) |
@@ -1017,12 +1017,12 @@
 | `CELTIUM_SDL_EVENT` | [CeltiumSdlEventTrace.java:35](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumSdlEventTrace.java#L35>), [CeltiumSdlEventTrace.java:40](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumSdlEventTrace.java#L40>) |
 | `CELTIUM_SDL_LOG` | [CeltiumSdlLogTransformer.java:70](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumSdlLogTransformer.java#L70>), [CeltiumSdlLogTransformer.java:75](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumSdlLogTransformer.java#L75>) |
 | `CELTIUM_SHADER_MODULE` | [SpirvShaders.java:212](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java#L212>) |
-| `CELTIUM_SHADER_PROGRAM_REFUSED` | [Lane2ImmediateRecorder.java:10962](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10962>) |
-| `CELTIUM_SHADER_PROGRAM_REFUSED_SITE` | [Lane2ImmediateRecorder.java:10971](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10971>) |
+| `CELTIUM_SHADER_PROGRAM_REFUSED` | [Lane2ImmediateRecorder.java:10964](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10964>) |
+| `CELTIUM_SHADER_PROGRAM_REFUSED_SITE` | [Lane2ImmediateRecorder.java:10973](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L10973>) |
 | `CELTIUM_SHADOW_FRUSTUM_INIT_CACHE` | [DemonicaShadowFrustumInitCacheMixin.java:100](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/DemonicaShadowFrustumInitCacheMixin.java#L100>) |
 | `CELTIUM_SHADOW_STAGE` | [ValidationClient.java:13882](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13882>) |
-| `CELTIUM_SHARED_DEPTH` | [Lane2ImmediateRecorder.java:15334](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15334>) |
-| `CELTIUM_SHARED_DEPTH_CLEAR_REFUSED` | [Lane2ImmediateRecorder.java:17041](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17041>) |
+| `CELTIUM_SHARED_DEPTH` | [Lane2ImmediateRecorder.java:15338](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15338>) |
+| `CELTIUM_SHARED_DEPTH_CLEAR_REFUSED` | [Lane2ImmediateRecorder.java:17045](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17045>) |
 | `CELTIUM_SHARED_LAYOUT` | [VulkanGlTexture.java:1447](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1447>), [VulkanGlTexture.java:1487](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1487>) |
 | `CELTIUM_SHARED_LAYOUT_ABANDON` | [VulkanGlTexture.java:664](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L664>), [VulkanGlTexture.java:756](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L756>) |
 | `CELTIUM_SHARED_LAYOUT_COMMIT` | [VulkanGlTexture.java:716](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L716>) |
@@ -1030,7 +1030,7 @@
 | `CELTIUM_SHARED_LAYOUT_UNBOUND` | [VulkanGlTexture.java:932](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L932>) |
 | `CELTIUM_SIGN_TEXT_CACHE` | [SignTextCache.java:57](<../forge122/src/main/java/org/taumc/celeritas/impl/render/producer/SignTextCache.java#L57>) |
 | `CELTIUM_SKIP_DECISION` | [VulkanTextureRegistry.java:1231](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L1231>) |
-| `CELTIUM_SKY_DRAW` | [Lane2ImmediateRecorder.java:21267](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21267>) |
+| `CELTIUM_SKY_DRAW` | [Lane2ImmediateRecorder.java:21271](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L21271>) |
 | `CELTIUM_SKY_FAN` | [Lane2ImmediateRecorder.java:8633](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8633>) |
 | `CELTIUM_SKY_FRAME` | [Lane2ImmediateRecorder.java:8620](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8620>) |
 | `CELTIUM_SKY_FRAME_PROBE` | [Lane2ImmediateRecorder.java:8575](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L8575>) |
@@ -1038,17 +1038,17 @@
 | `CELTIUM_SKY_PRESENT_PROBE` | [PresentSwapchain.java:913](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java#L913>) |
 | `CELTIUM_SLOTDUMP` | [VulkanTextureRegistry.java:447](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L447>), [VulkanTextureRegistry.java:454](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L454>), [VulkanTextureRegistry.java:547](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L547>) |
 | `CELTIUM_SLOT_WAIT` | [FrameCoordinator.java:254](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L254>) |
-| `CELTIUM_SPLASH_FLIP` | [Lane2ImmediateRecorder.java:13548](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13548>) |
-| `CELTIUM_SPLASH_HANDLES` | [Lane2ImmediateRecorder.java:13661](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13661>), [Lane2ImmediateRecorder.java:13666](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13666>) |
+| `CELTIUM_SPLASH_FLIP` | [Lane2ImmediateRecorder.java:13550](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13550>) |
+| `CELTIUM_SPLASH_HANDLES` | [Lane2ImmediateRecorder.java:13663](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13663>), [Lane2ImmediateRecorder.java:13668](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13668>) |
 | `CELTIUM_SPLASH_HOOK` | [MinecraftMixin.java:327](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L327>), [MinecraftMixin.java:345](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L345>), [MinecraftMixin.java:361](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L361>), [MinecraftMixin.java:365](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L365>), [ValidationClient.java:9550](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9550>) |
-| `CELTIUM_SPLASH_PAIRPOST` | [Lane2ImmediateRecorder.java:13574](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13574>) |
-| `CELTIUM_SPLASH_PROBE` | [Lane2ImmediateRecorder.java:13728](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13728>) |
+| `CELTIUM_SPLASH_PAIRPOST` | [Lane2ImmediateRecorder.java:13576](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13576>) |
+| `CELTIUM_SPLASH_PROBE` | [Lane2ImmediateRecorder.java:13730](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13730>) |
 | `CELTIUM_SRC` | [VulkanGlTexture.java:3567](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3567>), [VulkanGlTexture.java:3684](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3684>) |
 | `CELTIUM_STAGE_DUMP` | [TextureCopyService.java:883](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L883>) |
 | `CELTIUM_STAGE_QUARANTINED` | [StageGate.java:195](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/StageGate.java#L195>) |
 | `CELTIUM_STAGING_RELEASED` | [VulkanGlTexture.java:4528](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4528>) |
 | `CELTIUM_STALE_COLOR_TEXTURE` | [Lane2ImmediateRecorder.java:7789](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7789>) |
-| `CELTIUM_STALL` | [FrameCoordinator.java:1074](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1074>) |
+| `CELTIUM_STALL` | [FrameCoordinator.java:1125](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameCoordinator.java#L1125>) |
 | `CELTIUM_SUBMIT_FAULT` | [VulkanSubmitFault.java:41](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSubmitFault.java#L41>) |
 | `CELTIUM_SURFACE_WAYLAND` | [VulkanSwapchain.java:1017](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L1017>) |
 | `CELTIUM_SURFACE_WIN32` | [VulkanSwapchain.java:957](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L957>) |
@@ -1062,10 +1062,10 @@
 | `CELTIUM_SWAPPOINT_EXCEPTION` | [VulkanBackendAdapter.java:677](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L677>) |
 | `CELTIUM_TARGET_FORMAT` | [TargetFormatCensus.java:269](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TargetFormatCensus.java#L269>) |
 | `CELTIUM_TARGET_IMAGE` | [Lane2ImmediateRecorder.java:7554](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L7554>) |
-| `CELTIUM_TEARDOWN` | [VulkanBackendAdapter.java:1198](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1198>), [VulkanContext.java:3160](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3160>), [VulkanContext.java:3244](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3244>) |
-| `CELTIUM_TERRAIN_DEPTH_TARGET` | [Lane2ImmediateRecorder.java:16980](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16980>) |
-| `CELTIUM_TERRAIN_DEPTH_TARGET_DRAW` | [Lane2ImmediateRecorder.java:17219](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17219>) |
-| `CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED` | [Lane2ImmediateRecorder.java:16948](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16948>), [Lane2ImmediateRecorder.java:16965](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16965>), [Lane2ImmediateRecorder.java:16973](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16973>) |
+| `CELTIUM_TEARDOWN` | [VulkanBackendAdapter.java:1202](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanBackendAdapter.java#L1202>), [VulkanContext.java:3160](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3160>), [VulkanContext.java:3244](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3244>) |
+| `CELTIUM_TERRAIN_DEPTH_TARGET` | [Lane2ImmediateRecorder.java:16984](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16984>) |
+| `CELTIUM_TERRAIN_DEPTH_TARGET_DRAW` | [Lane2ImmediateRecorder.java:17223](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L17223>) |
+| `CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED` | [Lane2ImmediateRecorder.java:16952](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16952>), [Lane2ImmediateRecorder.java:16969](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16969>), [Lane2ImmediateRecorder.java:16977](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L16977>) |
 | `CELTIUM_TERRAIN_LAYOUT` | [VulkanTerrainPipeline.java:1775](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainPipeline.java#L1775>) |
 | `CELTIUM_TERRAIN_STATS` | [TerrainStatisticsReport.java:169](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TerrainStatisticsReport.java#L169>) |
 | `CELTIUM_TEXTURE_DELETED` | [CaptureUploadContext.java:223](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CaptureUploadContext.java#L223>) |
@@ -1104,14 +1104,14 @@
 | `CELTIUM_WINDOW` | [CeltiumWindow.java:69](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L69>), [CeltiumWindow.java:118](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L118>), [CeltiumWindow.java:125](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L125>) |
 | `CELTIUM_WINDOW_CENSUS` | [BackendDiagnostics.java:1071](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1071>) |
 | `CELTIUM_WINDOW_DESCRIPTORS` | [BackendDiagnostics.java:1310](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1310>) |
-| `CELTIUM_WINDOW_DRAW` | [BackendDiagnostics.java:1084](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1084>), [Lane2ImmediateRecorder.java:15771](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15771>) |
+| `CELTIUM_WINDOW_DRAW` | [BackendDiagnostics.java:1084](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1084>), [Lane2ImmediateRecorder.java:15775](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L15775>) |
 | `CELTIUM_WINDOW_GL` | [CeltiumGllessHint.java:1393](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1393>), [CeltiumGllessHint.java:1491](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1491>) |
 | `CELTIUM_WINDOW_IMAGES` | [BackendDiagnostics.java:1308](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1308>) |
 | `CELTIUM_WINDOW_IMAGE_MEANS` | [BackendDiagnostics.java:1306](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1306>) |
-| `CELTIUM_WINDOW_ORDER` | [Lane2ImmediateRecorder.java:13458](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13458>) |
+| `CELTIUM_WINDOW_ORDER` | [Lane2ImmediateRecorder.java:13460](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L13460>) |
 | `CELTIUM_WINDOW_PIPELINES` | [BackendDiagnostics.java:1346](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1346>) |
 | `CELTIUM_WINDOW_RENDERER` | [MinecraftMixin.java:566](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L566>), [MinecraftMixin.java:572](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L572>), [MinecraftMixin.java:592](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L592>) |
-| `CELTIUM_WINDOW_SITE` | [Lane2ImmediateRecorder.java:19231](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19231>) |
+| `CELTIUM_WINDOW_SITE` | [Lane2ImmediateRecorder.java:19235](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L19235>) |
 | `CELTIUM_WINDOW_SIZE_CHANGED` | [ValidationClient.java:9276](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9276>) |
 | `CELTIUM_WINDOW_SPLIT` | [Lane2ImmediateRecorder.java:9181](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/Lane2ImmediateRecorder.java#L9181>) |
 | `CELTIUM_WINDOW_STATE` | [BackendDiagnostics.java:1378](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1378>) |
