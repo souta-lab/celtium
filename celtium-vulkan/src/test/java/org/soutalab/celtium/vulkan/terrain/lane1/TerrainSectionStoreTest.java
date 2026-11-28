@@ -328,7 +328,7 @@ class TerrainSectionStoreTest {
             MemorySegment outRaw = arena.allocate(SectionDesc.BYTE_SIZE * 4L);
             assertEquals(objectStore.writeDescriptors(outObjects, 0L),
                     rawStore.writeDescriptors(outRaw, 0L), "descriptor count");
-            assertEquals(-1L, MemorySegment.mismatch(outObjects, outRaw),
+            assertEquals(-1L, outObjects.mismatch(outRaw),
                     "descriptor byte stream");
         }
     }
