@@ -867,7 +867,7 @@ final class PresentSwapchain {
                         + " frame=" + backend.frameId
                         + " windows=" + backend.immediateStatistics.immediateWindows()
                         + " windowsThisFrame=" + backend.immediateStatistics.immediateWindowsThisFrame()
-                        + " frameCentre=" + backend.postChainBridge.celtium$patchMean(backend.frameTarget.colorImage(), 928, 516, 64)
+                        + " frameCentre=" + backend.celtium$patchMean(backend.frameTarget.colorImage(), 928, 516, 64)
                         // The hotbar's own band, in the frame image the present is about to blit. A flat band means the
                         // GUI stage's draws are not in that image at all; a textured one means they are and the blit or
                         // the swapchain loses them. Two statements, two different fixes.
@@ -877,20 +877,20 @@ final class PresentSwapchain {
                         // The earlier form read the picture's top: measured on leg r212-world-hud16 at presents 40-47,
                         // "hotbarBand" was (111,145,207) - the sky - while the pair read (32,23,16). Both labels were
                         // read as being about the hotbar in the rounds before that.
-                        + " hotbarBand=" + backend.postChainBridge.celtium$patchMean(backend.frameTarget.colorImage(),
+                        + " hotbarBand=" + backend.celtium$patchMean(backend.frameTarget.colorImage(),
                                 Math.max(0, backend.targetWidth / 2 - 120), 0, 32)
                         // The same coordinates on the picture's other end, so the two are told apart in one line.
-                        + " topBand=" + backend.postChainBridge.celtium$patchMean(backend.frameTarget.colorImage(),
+                        + " topBand=" + backend.celtium$patchMean(backend.frameTarget.colorImage(),
                                 Math.max(0, backend.targetWidth / 2 - 120), Math.max(0, backend.targetHeight - 32), 32)
-                        + " pairCentre=" + (backend.postChainBridge.celtium$livePairImage() == 0L ? "none"
-                                : backend.postChainBridge.celtium$patchMean(backend.postChainBridge.celtium$livePairImage(), 928, 516, 64))
+                        + " pairCentre=" + (backend.celtium$livePairImage() == 0L ? "none"
+                                : backend.celtium$patchMean(backend.celtium$livePairImage(), 928, 516, 64))
                         // The same hotbar band in the chain pair. The teammate's round-240 census puts the HUD family
                         // on its own target identity, not on the frame image's; if that identity routes to the pair,
                         // the HUD is in the pair and the present serves the frame image - a routing fault, not a lost
                         // draw. Pixels, not bounds: the bounds reader collapses these groups to NDC (0,0), so its
                         // geometry evidence cannot answer this.
-                        + " pairHotbarBand=" + (backend.postChainBridge.celtium$livePairImage() == 0L ? "none"
-                                : backend.postChainBridge.celtium$patchMean(backend.postChainBridge.celtium$livePairImage(),
+                        + " pairHotbarBand=" + (backend.celtium$livePairImage() == 0L ? "none"
+                                : backend.celtium$patchMean(backend.celtium$livePairImage(),
                                         Math.max(0, backend.targetWidth / 2 - 120), 0, 32))
                         // And the default pair, which the routing table sends a non-main, non-zero identity's draws to.
                         // The HUD's stage carries an identity of its own in this leg, and that identity's image has to be
@@ -898,7 +898,7 @@ final class PresentSwapchain {
                         // remaining candidate - it is black in the splash legs, and nothing presents it.
                         + " defaultPairHotbarBand=" + (backend.offTargetTarget() == null
                                 || backend.offTargetTarget().offTargetColorImage() == 0L ? "none"
-                                : backend.postChainBridge.celtium$patchMean(backend.offTargetTarget().offTargetColorImage(),
+                                : backend.celtium$patchMean(backend.offTargetTarget().offTargetColorImage(),
                                         Math.max(0, backend.targetWidth / 2 - 120), 0, 32));
                 System.out.println("[Celtium] " + presentLine);
                 backend.record(presentLine);
@@ -1003,7 +1003,7 @@ final class PresentSwapchain {
      */
     private void dumpFrameIfRequested(int presented) {
         if (VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT > 0 && presented == VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT) {
-            backend.postChainBridge.dumpChainPairs("present" + presented);
+            backend.dumpChainPairs("present" + presented);
         }
         // Keep the fixture's own dump fresh as well. It asks for it once, and the write happens at the next present;
         // when the run ends before that present - which is what a capture followed by a shutdown does - the file on

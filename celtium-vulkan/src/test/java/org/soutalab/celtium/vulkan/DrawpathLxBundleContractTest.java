@@ -23,8 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class DrawpathLxBundleContractTest {
 
-    private static final String POST_CHAIN_BRIDGE =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java";
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
     private static final String DIAGNOSTICS =
@@ -65,28 +63,17 @@ class DrawpathLxBundleContractTest {
         return found;
     }
 
-    // DP-32: the commit follows the coordinator's outcome, never the call's return.
+    // DP-32: the deferred first-use commit seat retired with the old chain (ruling step 5).
+    // The vanilla receiver records into the frame's own command buffer, so there is no
+    // separate commit to settle; what remains of DP-32 is the flush-failure census below.
 
     @Test
-    void theChainCommitWaitsForTheSubmissionThatCarriesItsBarriers() throws IOException {
-        String bridge = read(POST_CHAIN_BRIDGE);
-        assertEquals(1, count(bridge, "b.postChain.commitPasses(chainRecording)"),
-                "the immediate commit may exist only inside the QUEUED branch");
-        assertTrue(bridge.contains("if (submission == FrameCoordinator.Submission.QUEUED)"),
-                "the QUEUED outcome commits immediately");
-        assertTrue(bridge.contains("this.deferredCommitToken = chainRecording"),
-                "the RECORDED outcome defers the commit by token");
-        assertTrue(bridge.contains("void celtium$settleDeferredCommit(boolean queued)"),
-                "the deferred commit settles through one named seat");
-        assertTrue(bridge.contains("b.postChain.commitPasses(token)"),
-                "the settle commits the deferred token, nothing else");
-    }
-
-    @Test
-    void bothFrameBufferFinishPathsSettleTheDeferredCommit() throws IOException {
+    void theDeferredCommitSeatIsRetiredWithTheOldChain() throws IOException {
         String backend = read(BACKEND);
-        assertEquals(2, count(backend, "celtium$settleDeferredCommit(!this.gpuStalled)"),
-                "celtium$finishFrameBuffer and submitOpenFrameBuffer both finish the frame buffer");
+        assertEquals(0, count(backend, "celtium$settleDeferredCommit"),
+                "no finish path settles a deferred chain commit any more");
+        assertEquals(0, count(backend, "this.postChainBridge"),
+                "the bridge seat itself is gone from the backend");
     }
 
     @Test

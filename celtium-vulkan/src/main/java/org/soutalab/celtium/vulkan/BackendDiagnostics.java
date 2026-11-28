@@ -458,7 +458,6 @@ final class BackendDiagnostics {
                 + " framebufferHintFailures=" + b.framebufferHintFailures
                 + " pairNameSamplingDraws=" + b.pairNameSamplingDraws
                 + " presentedDumpFailure=" + (b.swapchain == null ? "none" : b.swapchain.lastDumpFailure())
-                + " " + b.postChainBridge.celtium$pairLayoutSummary()
                 + " matrixSplits=" + b.immediateStatistics.matrixSplits()
                 + " groupSplits[" + b.groupSplitCensus.summary() + "]"
                 + " groupCloses=" + b.groupClosesForcingStart

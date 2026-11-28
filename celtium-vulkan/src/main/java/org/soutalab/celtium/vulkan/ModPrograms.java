@@ -847,14 +847,14 @@ final class ModPrograms {
                                 (320 + 540) / 2 * width / 1280 - lampSize / 2, width - lampSize));
                         int lampY = Math.max(0, Math.min(
                                 height - (265 + 315) / 2 * height / 720 - lampSize / 2, height - lampSize));
-                        lampPatch = b.postChainBridge.celtium$patchMean(input.image(), lampX, lampY, lampSize);
+                        lampPatch = b.celtium$patchMean(input.image(), lampX, lampY, lampSize);
                     }
                     System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_PATCH frame=" + b.frameId
                             + " identity=0x" + Long.toHexString(identity.longValue())
                             + " pairImage=0x" + Long.toHexString(input.image())
                             + " size=" + width + "x" + height
                             + " patch=" + x + "," + y + " " + size + "x" + size
-                            + " haloPatch=" + b.postChainBridge.celtium$patchMean(input.image(), x, y, size)
+                            + " haloPatch=" + b.celtium$patchMean(input.image(), x, y, size)
                             + " lampPatch=" + lampPatch
                             + b.celtium$boundPairProbe(identity.longValue())
                             + " program=" + (draw.label == null ? "pass"
