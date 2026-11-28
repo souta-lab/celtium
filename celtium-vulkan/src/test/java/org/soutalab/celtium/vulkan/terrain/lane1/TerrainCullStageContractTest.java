@@ -22,6 +22,36 @@ import static org.soutalab.celtium.vulkan.terrain.lane1.FrustumExtractor.DepthCo
 
 class TerrainCullStageContractTest {
 
+    @Test
+    void computeCullEmitsPackedDrawsInSixLayerStreamRegions() {
+        String shader = Lane1Shaders.CULL_COMPUTE;
+        assertTrue(shader.contains("layout(local_size_x = 64) in;"));
+        assertTrue(shader.contains("vec4 planes[6];"));
+        assertTrue(shader.contains("ivec3 cameraSection; // byte 96"));
+        assertTrue(shader.contains("uint sectionCount;   // byte 108"));
+        assertTrue(shader.contains("vec3 cameraFrac;     // byte 112"));
+        assertTrue(shader.contains("uint regionStride;   // byte 124"));
+        assertTrue(shader.contains("uint counts[8];"));
+        assertTrue(shader.contains("binding = 3) uniform sampler2D hiZ;"));
+        assertFalse(shader.contains("texture(hiZ"));
+        assertTrue(shader.contains("binding = 4) readonly buffer Ranges"));
+        assertTrue(shader.contains("if (quadCount == 0u) return;"));
+        assertTrue(shader.contains("uint index = atomicAdd(counts[region], 1u);"));
+        assertTrue(shader.contains("(region * pc.regionStride + index) * 4u"));
+        assertTrue(shader.contains("commands[base + 0u] = quadCount * 6u;"));
+        assertTrue(shader.contains("commands[base + 1u] = 1u;"));
+        assertTrue(shader.contains("commands[base + 2u] = firstQuad * 6u;"));
+        assertTrue(shader.contains("commands[base + 3u] = slot;"));
+        assertTrue(shader.contains("if (!frustumVisible(mn, mx)) return;"));
+        assertTrue(shader.contains("atomicAdd(counts[6], 1u);"));
+        assertTrue(shader.contains("layer < 3u"));
+        assertTrue(shader.contains("slot * 12u + layer * 4u"));
+        assertTrue(shader.contains("emitCommand(layer * 2u, ranges[range + 1u],"));
+        assertTrue(shader.contains("uint(d.axisOffset / 16u) + ranges[range], slot);"));
+        assertTrue(shader.contains("emitCommand(layer * 2u + 1u, ranges[range + 3u],"));
+        assertTrue(shader.contains("uint(d.generalOffset / 80u) + ranges[range + 2u], slot);"));
+    }
+
     private static final CameraPose ZERO = pose(0, 0, 0);
     private static final float FOV = radians(70);
     private static final float ASPECT = 16.0f / 9.0f;
@@ -122,7 +152,7 @@ class TerrainCullStageContractTest {
     void invalidMatricesFailOpenAndTheNextValidFrameRecovers() {
         CameraPose origin = pose(29_999_900.125, 70.25, -29_999_900.375);
         TerrainWorld world = new TerrainWorld(null);
-        TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world), (cmd, kind, draws) -> {});
+        TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world), (cmd, kind, packed, count) -> {});
         List<SectionDesc> sections = List.of(section(0, 0, 0), section(1_874_993, 4, -1_874_993),
                 section(-1_874_993, 4, 1_874_993));
         float[] identity = flat(new Matrix4f());
@@ -157,7 +187,7 @@ class TerrainCullStageContractTest {
         float[] modelView = flat(new Matrix4f().translate(0, -1.62f, 0.05f));
         FrustumExtractor.View first = FrustumExtractor.extract(ZERO, projection, modelView, VULKAN_ZERO_TO_ONE);
         TerrainWorld world = new TerrainWorld(null);
-        TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world), (cmd, kind, draws) -> {});
+        TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world), (cmd, kind, packed, count) -> {});
         stage.prepareMainView(first.origin(), first.planes(), 1L);
         FrustumPlanes snapshot = world.mainFrustum();
         float[] beforePlanes = snapshot.coefficients();

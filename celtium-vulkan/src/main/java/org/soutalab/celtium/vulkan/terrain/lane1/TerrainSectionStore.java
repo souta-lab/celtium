@@ -277,6 +277,26 @@ public final class TerrainSectionStore {
         return keys.size();
     }
 
+    /** Writes three layer ranges per section in descriptor slot order (48 bytes per slot). */
+    public synchronized void writeLayerRanges(MemorySegment segment) {
+        List<Long> keys = sections.keySet().stream().sorted().toList();
+        long offset = 0L;
+        for (Long key : keys) {
+            LayerRange[] ranges = sections.get(key).layers;
+            for (int layer = 0; layer < LAYER_COUNT; layer++) {
+                LayerRange range = ranges[layer];
+                if (range == null) {
+                    range = LayerRange.EMPTY;
+                }
+                segment.set(ValueLayout.JAVA_INT, offset, range.axisQuadOffset());
+                segment.set(ValueLayout.JAVA_INT, offset + 4, range.axisQuadCount());
+                segment.set(ValueLayout.JAVA_INT, offset + 8, range.generalQuadOffset());
+                segment.set(ValueLayout.JAVA_INT, offset + 12, range.generalQuadCount());
+                offset += 16;
+            }
+        }
+    }
+
     /** Snapshot of the resident descriptors, in key order - the cull stage's CPU-side input. */
     public synchronized List<SectionDesc> descriptors() {
         if (cachedDescriptors == null) {

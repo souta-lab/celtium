@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **357 個**／文字列内マーカー **573 個**。
+システムプロパティの読み取りキー **359 個**／文字列内マーカー **573 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -36,6 +36,7 @@
 | [celtium.glstub](#group-celtium-glstub) | 6 |
 | [celtium.gpuPassTimings](#group-celtium-gpuPassTimings) | 1 |
 | [celtium.itemMeshCache](#group-celtium-itemMeshCache) | 1 |
+| [celtium.lane1](#group-celtium-lane1) | 2 |
 | [celtium.mirrorDump](#group-celtium-mirrorDump) | 1 |
 | [celtium.modelPhaseReport](#group-celtium-modelPhaseReport) | 1 |
 | [celtium.native](#group-celtium-native) | 4 |
@@ -253,6 +254,14 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.itemMeshCache` | `System.getProperty` | [RenderItemMixin.java:77](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/RenderItemMixin.java#L77>) |
+
+<a id="group-celtium-lane1"></a>
+## `celtium.lane1.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.lane1.gpuCull` | `System.getProperty` | [Lane1TerrainFrontend.java:108](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L108>) |
+| `celtium.lane1.hiZ` | `System.getProperty` | [Lane1TerrainFrontend.java:109](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/terrain/lane1/Lane1TerrainFrontend.java#L109>) |
 
 <a id="group-celtium-mirrorDump"></a>
 ## `celtium.mirrorDump.*`

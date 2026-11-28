@@ -1,10 +1,10 @@
 package org.soutalab.celtium.vulkan.terrain.lane1;
 
 /**
- * The Lane 1 terrain shaders (design V040-FINAL-PLAN section 2.1): the GPU cull compute (frustum
- * + half-res Hi-Z, R-19 plan-2), the Hi-Z pyramid build, and the vertex-pulling draw pair (K1)
- * whose vertex stage unpacks the 16 B {@code PackedAxisQuad} / 80 B {@code GeneralQuad} in the
- * shader - no vertex buffers exist on this lane. The dynamic-light evaluation walks the cluster
+ * The Lane 1 terrain shaders (design V040-FINAL-PLAN section 2.1): the GPU frustum cull,
+ * the Hi-Z pyramid build, and the vertex-pulling draw pair (K1). The draw shaders unpack the
+ * 16 B {@code PackedAxisQuad} and 80 B {@code GeneralQuad} directly from storage buffers.
+ * The dynamic-light evaluation walks the cluster
  * mask with {@code findLSB} (V2-5), so per-vertex light cost tracks local density.
  * <p>
  * These are the lane's built-in (pack-OFF) programs and the cull machinery the pack form reuses;
@@ -41,19 +41,22 @@ public final class Lane1Shaders {
             };
             """;
 
-    /** Frustum + Hi-Z cull: one invocation per section, emitting VkDrawIndirectCommand records. */
+    /** Frustum cull: one invocation per section, emitting VkDrawIndirectCommand records. */
     public static final String CULL_COMPUTE = "#version 450\n"
             + "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
             + COMMON + """
+            layout(local_size_x = 64) in;
             layout(std430, set = 0, binding = 0) readonly buffer Descs { SectionDesc descs[]; };
             layout(std430, set = 0, binding = 1) writeonly buffer Commands { uint commands[]; };
-            layout(std430, set = 0, binding = 2) buffer Counters { uint visibleCount; uint commandCount; };
+            layout(std430, set = 0, binding = 2) buffer Counters { uint counts[8]; };
             layout(set = 0, binding = 3) uniform sampler2D hiZ;
+            layout(std430, set = 0, binding = 4) readonly buffer Ranges { uint ranges[]; };
             layout(push_constant) uniform CullPush {
                 vec4 planes[6];
                 ivec3 cameraSection; // byte 96
                 uint sectionCount;   // byte 108
-                vec4 cameraFrac;     // byte 112
+                vec3 cameraFrac;     // byte 112
+                uint regionStride;   // byte 124
             } pc;
             bool frustumVisible(vec3 mn, vec3 mx) {
                 for (int i = 0; i < 6; i++) {
@@ -63,6 +66,15 @@ public final class Lane1Shaders {
                     if (dot(pc.planes[i].xyz, p) + pc.planes[i].w < 0.0) return false;
                 }
                 return true;
+            }
+            void emitCommand(uint region, uint quadCount, uint firstQuad, uint slot) {
+                if (quadCount == 0u) return;
+                uint index = atomicAdd(counts[region], 1u);
+                uint base = (region * pc.regionStride + index) * 4u;
+                commands[base + 0u] = quadCount * 6u;
+                commands[base + 1u] = 1u;
+                commands[base + 2u] = firstQuad * 6u;
+                commands[base + 3u] = slot;
             }
             void main() {
                 uint slot = gl_GlobalInvocationID.x;
@@ -74,34 +86,38 @@ public final class Lane1Shaders {
                 // Hi-Z occlusion against the previous frame's pyramid is sampled by the caller-side
                 // variant of this shader once the pyramid exists (K3 gate); the frustum result is
                 // the conservative floor and never culls more than the pyramid would.
-                uint cmd = atomicAdd(commandCount, 1u);
-                uint base = cmd * 5u;
-                // Layer ranges ride a side table in the full binding set; the axis range of the
-                // section is the fallback span this built-in emits (see TerrainSectionStore).
-                commands[base + 0u] = uint(d.axisCount) * 6u;
-                commands[base + 1u] = 1u;
-                commands[base + 2u] = uint(d.axisOffset / 16u);
-                commands[base + 3u] = slot;
-                commands[base + 4u] = 0u;
-                atomicAdd(visibleCount, 1u);
+                atomicAdd(counts[6], 1u);
+                for (uint layer = 0u; layer < 3u; layer++) {
+                    uint range = slot * 12u + layer * 4u;
+                    emitCommand(layer * 2u, ranges[range + 1u],
+                            uint(d.axisOffset / 16u) + ranges[range], slot);
+                    emitCommand(layer * 2u + 1u, ranges[range + 3u],
+                            uint(d.generalOffset / 80u) + ranges[range + 2u], slot);
+                }
             }
             """;
 
-    /** Half-resolution depth pyramid reduction (one invocation per output texel, per level). */
+    /** Full-resolution depth seed followed by MAX reduction for each mip. */
     public static final String HIZ_COMPUTE = "#version 450\n" + """
+            layout(local_size_x = 8, local_size_y = 8) in;
             layout(set = 0, binding = 0) uniform sampler2D sourceDepth;
             layout(r32f, set = 0, binding = 1) writeonly uniform image2D targetLevel;
-            layout(push_constant) uniform HiZPush { ivec2 sourceSize; };
+            layout(push_constant) uniform HiZPush { int level; } pc;
             void main() {
                 ivec2 p = ivec2(gl_GlobalInvocationID.xy);
                 ivec2 size = imageSize(targetLevel);
-                if (p.x >= size.x || p.y >= size.y) return;
-                vec2 uv = (vec2(p) * 2.0 + 1.0) / vec2(sourceSize);
-                vec2 texel = 1.0 / vec2(sourceSize);
-                float d = texture(sourceDepth, uv).r;
-                d = max(d, texture(sourceDepth, uv + vec2(texel.x, 0.0)).r);
-                d = max(d, texture(sourceDepth, uv + vec2(0.0, texel.y)).r);
-                d = max(d, texture(sourceDepth, uv + texel).r);
+                if (any(greaterThanEqual(p, size))) return;
+                int sourceLevel = max(0, pc.level - 1);
+                ivec2 sourceSize = textureSize(sourceDepth, sourceLevel);
+                ivec2 lo = p * sourceSize / size;
+                ivec2 hi = (p + 1) * sourceSize / size;
+                // Include the final row/column when a source dimension is odd.
+                float d = 0.0;
+                for (int y = lo.y; y < hi.y; y++) {
+                    for (int x = lo.x; x < hi.x; x++) {
+                        d = max(d, texelFetch(sourceDepth, ivec2(x, y), sourceLevel).r);
+                    }
+                }
                 imageStore(targetLevel, p, vec4(d));
             }
             """;

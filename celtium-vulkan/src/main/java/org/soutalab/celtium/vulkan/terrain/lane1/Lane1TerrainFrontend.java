@@ -1,10 +1,11 @@
 package org.soutalab.celtium.vulkan.terrain.lane1;
 
-import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VK12;
+import org.lwjgl.vulkan.VkBufferMemoryBarrier;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
 import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
@@ -13,6 +14,10 @@ import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
+import org.lwjgl.vulkan.VkImageCreateInfo;
+import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageViewCreateInfo;
+import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
@@ -24,6 +29,7 @@ import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
 import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
 import org.lwjgl.vulkan.VkPushConstantRange;
+import org.lwjgl.vulkan.VkQueueFamilyProperties;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkSamplerCreateInfo;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
@@ -43,8 +49,12 @@ import org.soutalab.celtium.core.shader.ShaderStage;
 import org.soutalab.celtium.core.shader.SpirvModuleBundle;
 import org.soutalab.celtium.core.shader.TerrainPassKind;
 import org.soutalab.celtium.core.shader.TerrainStageProgram;
+import org.soutalab.celtium.vulkan.FrameImageTarget;
+import org.soutalab.celtium.vulkan.FrameSubmissionScheduler;
+import org.soutalab.celtium.vulkan.GllessFrameTarget;
 import org.soutalab.celtium.vulkan.VulkanContext;
 import org.soutalab.celtium.vulkan.VulkanHostBuffer;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.shader.ModShaderCompiler;
 
 import java.lang.foreign.MemorySegment;
@@ -52,6 +62,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -66,12 +77,11 @@ import java.util.Map;
  * class is only the terrain lane's HAL: it builds pipelines from {@link TerrainStageProgram}s and
  * decides nothing else.
  * <p>
- * Culling is the CPU frustum walk inside {@code TerrainDrawStage} (the K3 fallback state); the
- * GPU cull / Hi-Z wiring is S3-b's seat. Fog rides a per-kind uniform block (binding 8) written at
+ * Main draws can use the GPU frustum cull. Fog rides a per-kind uniform block (binding 8) written at
  * {@link #prepareFrame} from the backend's immediate fog state, so the built-in fragment matches
  * the vanilla fog the GL path applied.
  */
-public final class Lane1TerrainFrontend {
+public final class Lane1TerrainFrontend implements TerrainDrawStage.IndirectDrawSink {
 
     // Sized from the Gate G1 flight scene's measured demand (2,269 sections resident):
     // axis 32.6 MB (~14 KB/section), general 67.1 MB and FULL at 64 MB (~30 KB/section -
@@ -94,10 +104,17 @@ public final class Lane1TerrainFrontend {
     /** Per-slot indirect-draw staging capacity: 16 B VkDrawIndirectCommand records. */
     private static final int MAX_INDIRECT_COMMANDS = 16384;
     private static final long INDIRECT_BYTES = (long) MAX_INDIRECT_COMMANDS * 16L;
-    private static final int FRAME_SLOTS = 3;
+    private static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
+    private static final boolean GPU_CULL = Boolean.parseBoolean(System.getProperty("celtium.lane1.gpuCull", "true"));
+    private static final boolean HIZ = Boolean.parseBoolean(System.getProperty("celtium.lane1.hiZ", "true"));
+    private static final int COMMAND_STRIDE = 16;
+    private static final long CULL_COMMAND_BYTES = 6L * MAX_SECTIONS * COMMAND_STRIDE;
+    private static final long COUNTER_BYTES = 8L * Integer.BYTES;
+    private static final int MAX_HIZ_LEVELS = 31;
     private static final int KIND_COUNT = 3;
 
     private final VulkanContext context;
+    private final boolean computeQueue;
     private final VulkanSlabSpace axisSpace;
     private final VulkanSlabSpace generalSpace;
     private final VulkanSlabSpace auxSpace;
@@ -106,6 +123,12 @@ public final class Lane1TerrainFrontend {
     private TerrainDrawStage drawStage;
 
     private final VulkanHostBuffer descBuffer;
+    private final VulkanHostBuffer rangesBuffer;
+    private final VulkanHostBuffer[] frameDescs = new VulkanHostBuffer[FRAME_SLOTS];
+    private final VulkanHostBuffer[] frameRanges = new VulkanHostBuffer[FRAME_SLOTS];
+    private final long[] uploadedDescVersions = new long[FRAME_SLOTS];
+    private long descVersion;
+    private int descCount;
     private final VulkanHostBuffer lightBuffer;
     private final VulkanHostBuffer maskBuffer;
     private final VulkanHostBuffer textureCellBuffer;
@@ -135,6 +158,21 @@ public final class Lane1TerrainFrontend {
     // Per-frame state, written by prepareFrame and consumed by recordPass / push constants.
     private final float[] viewProj = new float[16];
     private CameraSection cameraSection;
+    private FrustumPlanes frustum;
+    private long indirectCommandBuffer;
+    private int indirectSlot;
+    private ComputeProgram cullProgram;
+    private ComputeProgram hiZProgram;
+    private final VulkanHostBuffer[] cullCommands = new VulkanHostBuffer[FRAME_SLOTS];
+    private final VulkanHostBuffer[] cullCounters = new VulkanHostBuffer[FRAME_SLOTS];
+    private final HiZImage[] cullImages = new HiZImage[FRAME_SLOTS];
+    private final HiZSlot[] hiZSlots = new HiZSlot[FRAME_SLOTS];
+    private HiZImage dummyDepth;
+    private HiZImage pyramid;
+    private long hiZSampler;
+    private boolean hiZGuarded;
+    private boolean hiZValid;
+    private int hiZGuardCount;
     private int gridOriginX;
     private int gridOriginY;
     private int gridOriginZ;
@@ -149,17 +187,24 @@ public final class Lane1TerrainFrontend {
 
     public Lane1TerrainFrontend(VulkanContext context) {
         this.context = context;
+        this.computeQueue = (GPU_CULL || HIZ) && supportsCompute(context);
         this.axisSpace = new VulkanSlabSpace(context, AXIS_SLAB_BYTES);
         this.generalSpace = new VulkanSlabSpace(context, GENERAL_SLAB_BYTES);
         this.auxSpace = new VulkanSlabSpace(context, AUX_SLAB_BYTES);
         this.store = new TerrainSectionStore(axisSpace, generalSpace, auxSpace);
         this.world = new TerrainWorld(store);
         this.descBuffer = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        this.rangesBuffer = canCull() ? new VulkanHostBuffer(context, DESC_BYTES,
+                VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) : null;
         this.textureCellBuffer = new VulkanHostBuffer(context, TEXTURE_CELL_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         this.textureRectBuffer = new VulkanHostBuffer(context, TEXTURE_RECT_BYTES,
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
+            frameDescs[slot] = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            if (rangesBuffer != null) {
+                frameRanges[slot] = new VulkanHostBuffer(context, DESC_BYTES, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            }
             this.indirectBuffers[slot] = new VulkanHostBuffer(context, INDIRECT_BYTES,
                     VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         }
@@ -185,6 +230,7 @@ public final class Lane1TerrainFrontend {
     private void rebuildDrawStage() {
         TerrainCullStage cullStage = new TerrainCullStage(world);
         this.drawStage = new TerrainDrawStage(world, cullStage, this::sinkDraw);
+        this.drawStage.setIndirectDrawSink(this);
     }
 
     // ------------------------------------------------------------------
@@ -196,6 +242,12 @@ public final class Lane1TerrainFrontend {
         this.store = new TerrainSectionStore(axisSpace, generalSpace, auxSpace);
         this.world = new TerrainWorld(store);
         rebuildDrawStage();
+        cameraSection = null;
+        frustum = null;
+        hiZValid = false;
+        if (pyramid != null) {
+            pyramid.built = false;
+        }
     }
 
     public synchronized void uploadSection(int x, int y, int z, SectionGeometry geometry, long timeline) {
@@ -309,8 +361,22 @@ public final class Lane1TerrainFrontend {
     private void prepareFrame(float[] viewProj16, CameraPose origin, FrustumPlanes frustum,
                               List<LightGridBuilder.PointLight> lights, float[] fogColorRgba,
                               float fogStart, float fogEnd, float fogDensity, int fogMode, long frameId) {
+        CameraSection nextCamera = CameraSection.of(origin);
+        if (cameraSection == null || this.frameId != frameId) {
+            hiZGuarded = cameraSection != null && (
+                    Math.abs(viewProj16[5] - viewProj[5]) > 0.15f * Math.abs(viewProj[5])
+                    || Math.abs((long) nextCamera.x() - cameraSection.x()) > 4
+                    || Math.abs((long) nextCamera.y() - cameraSection.y()) > 4
+                    || Math.abs((long) nextCamera.z() - cameraSection.z()) > 4);
+            if (hiZGuarded && hiZGuardCount < Integer.MAX_VALUE) {
+                hiZGuardCount++;
+            }
+            hiZValid = pyramid != null && pyramid.built && !hiZGuarded;
+        }
+        drawStage.disarmIndirect();
         System.arraycopy(viewProj16, 0, this.viewProj, 0, 16);
-        this.cameraSection = CameraSection.of(origin);
+        this.cameraSection = nextCamera;
+        this.frustum = frustum;
         this.frameId = frameId;
         world.setMainView(origin, frustum, frameId);
         double camX = origin.x();
@@ -321,7 +387,11 @@ public final class Lane1TerrainFrontend {
         if (descStore != store || descGeneration != store.generation()) {
             MemorySegment descSegment = MemorySegment.ofAddress(descBuffer.mappedAddress())
                     .reinterpret(DESC_BYTES);
-            store.writeDescriptors(descSegment, 0L);
+            descCount = store.writeDescriptors(descSegment, 0L);
+            if (rangesBuffer != null) {
+                store.writeLayerRanges(mapped(rangesBuffer, DESC_BYTES));
+            }
+            descVersion++;
             descStore = store;
             descGeneration = store.generation();
         }
@@ -379,13 +449,19 @@ public final class Lane1TerrainFrontend {
         }
         int kindOrdinal = kind.ordinal();
         int slot = Math.floorMod(frameSlot, FRAME_SLOTS);
+        uploadFrameDescriptors(slot);
         if (boundViews[slot][0] != atlasView || boundViews[slot][1] != lightmapView) {
             writeImageDescriptors(slot, atlasView, lightmapView);
             boundViews[slot][0] = atlasView;
             boundViews[slot][1] = lightmapView;
         }
         ShellStream stream = new ShellStream(commandBuffer, renderPass, slot, kindOrdinal);
-        drawStage.recordTerrainPass(stream, kind, axisPrograms[kindOrdinal], null);
+        if (kind.isMain() && drawStage.indirectArmed(frameId)
+                && indirectSlot == slot && indirectCommandBuffer == commandBuffer.address()) {
+            drawStage.recordTerrainPassIndirect(stream, kind, axisPrograms[kindOrdinal], null);
+        } else {
+            drawStage.recordTerrainPass(stream, kind, axisPrograms[kindOrdinal], null);
+        }
     }
 
     /**
@@ -398,43 +474,518 @@ public final class Lane1TerrainFrontend {
      * the frame's command budget is exhausted.
      */
     private void sinkDraw(VulkanCommandStream stream, TerrainPassKind kind,
-                          List<TerrainDrawStage.DrawCommand> commands) {
+                          int[] packed, int commandCount) {
         ShellStream shell = (ShellStream) stream;
         VkCommandBuffer cmd = shell.commandBuffer();
         int slot = shell.slot();
-        boolean useIndirect = context.multiDrawIndirectEnabled();
+        boolean useIndirect = context.multiDrawIndirectEnabled() && context.drawIndirectFirstInstanceEnabled();
         int index = 0;
-        while (index < commands.size()) {
-            boolean general = commands.get(index).general();
+        while (index < commandCount) {
+            boolean general = packed[index * 4 + 3] != 0;
             int end = index + 1;
-            while (end < commands.size() && commands.get(end).general() == general) {
+            while (end < commandCount && (packed[end * 4 + 3] != 0) == general) {
                 end++;
             }
             shell.bindTerrainProgram(general
                     ? generalPrograms[kind.ordinal()] : axisPrograms[kind.ordinal()]);
             int count = end - index;
-            if (useIndirect && indirectCursor[slot] + count <= MAX_INDIRECT_COMMANDS) {
+            if (useIndirect && indirectCursor[slot] + count <= MAX_INDIRECT_COMMANDS
+                    && Integer.compareUnsigned(count, context.maxDrawIndirectCount()) <= 0) {
                 int base = indirectCursor[slot];
                 MemorySegment segment = MemorySegment.ofAddress(indirectBuffers[slot].mappedAddress())
                         .reinterpret(INDIRECT_BYTES);
                 for (int i = 0; i < count; i++) {
-                    TerrainDrawStage.DrawCommand command = commands.get(index + i);
+                    int command = (index + i) * 4;
                     long offset = (long) (base + i) * 16L;
-                    segment.set(ValueLayout.JAVA_INT, offset, command.vertexCount());
+                    segment.set(ValueLayout.JAVA_INT, offset, packed[command]);
                     segment.set(ValueLayout.JAVA_INT, offset + 4L, 1);
-                    segment.set(ValueLayout.JAVA_INT, offset + 8L, command.firstQuad() * 6);
-                    segment.set(ValueLayout.JAVA_INT, offset + 12L, command.sectionSlot());
+                    segment.set(ValueLayout.JAVA_INT, offset + 8L, packed[command + 1] * 6);
+                    segment.set(ValueLayout.JAVA_INT, offset + 12L, packed[command + 2]);
                 }
                 VK10.vkCmdDrawIndirect(cmd, indirectBuffers[slot].buffer(), (long) base * 16L, count, 16);
                 indirectCursor[slot] = base + count;
             } else {
                 for (int i = index; i < end; i++) {
-                    TerrainDrawStage.DrawCommand command = commands.get(i);
-                    VK10.vkCmdDraw(cmd, command.vertexCount(), 1, command.firstQuad() * 6,
-                            command.sectionSlot());
+                    int command = i * 4;
+                    VK10.vkCmdDraw(cmd, packed[command], 1, packed[command + 1] * 6,
+                            packed[command + 2]);
                 }
             }
             index = end;
+        }
+    }
+
+    private boolean canCull() {
+        return GPU_CULL && computeQueue && context.drawIndirectCountEnabled() && context.multiDrawIndirectEnabled()
+                && context.drawIndirectFirstInstanceEnabled()
+                && Integer.compareUnsigned(context.maxDrawIndirectCount(), MAX_SECTIONS) >= 0;
+    }
+
+    private static boolean supportsCompute(VulkanContext context) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer count = stack.mallocInt(1);
+            VK10.vkGetPhysicalDeviceQueueFamilyProperties(context.physicalDevice(), count, null);
+            VkQueueFamilyProperties.Buffer families = VkQueueFamilyProperties.malloc(count.get(0), stack);
+            VK10.vkGetPhysicalDeviceQueueFamilyProperties(context.physicalDevice(), count, families);
+            return (families.get(context.queueFamilyIndex()).queueFlags() & VK10.VK_QUEUE_COMPUTE_BIT) != 0;
+        }
+    }
+
+    private static MemorySegment mapped(VulkanHostBuffer buffer, long bytes) {
+        return MemorySegment.ofAddress(buffer.mappedAddress()).reinterpret(bytes);
+    }
+
+    private void uploadFrameDescriptors(int slot) {
+        if (uploadedDescVersions[slot] == descVersion) {
+            return;
+        }
+        // prepareFrame stages the latest residency. Each slot keeps its own snapshot until
+        // the scheduler has waited for that slot, including when another frame changes the store.
+        long bytes = descCount * 48L;
+        mapped(frameDescs[slot], bytes).copyFrom(mapped(descBuffer, bytes));
+        if (rangesBuffer != null) {
+            mapped(frameRanges[slot], bytes).copyFrom(mapped(rangesBuffer, bytes));
+        }
+        uploadedDescVersions[slot] = descVersion;
+    }
+
+    /**
+     * Records the main-view cull outside rendering, before the terrain passes in this command
+     * buffer. The caller has acquired the scheduler slot for recording.
+     */
+    public synchronized void recordCullDispatch(VkCommandBuffer commandBuffer, int frameSlot) {
+        if (!canCull() || frustum == null || descStore != store || descCount == 0) {
+            drawStage.disarmIndirect();
+            return;
+        }
+        int slot = Math.floorMod(frameSlot, FRAME_SLOTS);
+        if (drawStage.indirectArmed(frameId) && indirectSlot == slot
+                && indirectCommandBuffer == commandBuffer.address()) {
+            return;
+        }
+        uploadFrameDescriptors(slot);
+        ensureCullResources(slot);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long commands = cullCommands[slot].buffer();
+            long counters = cullCounters[slot].buffer();
+            VK10.vkCmdFillBuffer(commandBuffer, counters, 0, COUNTER_BYTES, 0);
+            VkBufferMemoryBarrier.Buffer reset = VkBufferMemoryBarrier.calloc(1, stack);
+            bufferBarrier(reset.get(0), counters, COUNTER_BYTES, VK10.VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK10.VK_ACCESS_SHADER_READ_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT);
+            VK10.vkCmdPipelineBarrier(commandBuffer, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, null, reset, null);
+
+            HiZImage source = pyramid != null && pyramid.built ? pyramid : dummyDepth;
+            source.toGeneral(commandBuffer, stack);
+            if (cullImages[slot] != source) {
+                long set = cullProgram.sets[slot];
+                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(5, stack);
+                writes.put(0, bufferWrite(stack, set, 0, frameDescs[slot].buffer(), DESC_BYTES));
+                writes.put(1, bufferWrite(stack, set, 1, commands, CULL_COMMAND_BYTES));
+                writes.put(2, bufferWrite(stack, set, 2, counters, COUNTER_BYTES));
+                imageWrite(stack, writes.get(3), set, 3, VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                        source.fullView, hiZSampler);
+                writes.put(4, bufferWrite(stack, set, 4, frameRanges[slot].buffer(), DESC_BYTES));
+                VK10.vkUpdateDescriptorSets(context.device(), writes, null);
+                source.retain();
+                if (cullImages[slot] != null) {
+                    cullImages[slot].release();
+                }
+                cullImages[slot] = source;
+            }
+            cullProgram.bind(commandBuffer, slot, stack);
+            ByteBuffer push = stack.malloc(PUSH_BYTES);
+            for (int plane = 0; plane < FrustumPlanes.PLANE_COUNT; plane++) {
+                for (int component = 0; component < 4; component++) {
+                    push.putFloat(frustum.coefficient(plane, component));
+                }
+            }
+            push.putInt(cameraSection.x()).putInt(cameraSection.y()).putInt(cameraSection.z()).putInt(descCount);
+            push.putFloat(cameraSection.fracX()).putFloat(cameraSection.fracY()).putFloat(cameraSection.fracZ());
+            push.putInt(MAX_SECTIONS).flip();
+            VK10.vkCmdPushConstants(commandBuffer, cullProgram.layout, VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
+            VK10.vkCmdDispatch(commandBuffer, (descCount + 63) / 64, 1, 1);
+
+            VkBufferMemoryBarrier.Buffer ready = VkBufferMemoryBarrier.calloc(2, stack);
+            bufferBarrier(ready.get(0), commands, CULL_COMMAND_BYTES,
+                    VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+            bufferBarrier(ready.get(1), counters, COUNTER_BYTES,
+                    VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+            VK10.vkCmdPipelineBarrier(commandBuffer, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, null, ready, null);
+        }
+        indirectCommandBuffer = commandBuffer.address();
+        indirectSlot = slot;
+        drawStage.armIndirect(frameId);
+    }
+
+    private static void bufferBarrier(VkBufferMemoryBarrier barrier, long buffer, long bytes,
+                                      int srcAccess, int dstAccess) {
+        barrier.sType$Default().buffer(buffer).offset(0).size(bytes)
+                .srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+                .srcAccessMask(srcAccess).dstAccessMask(dstAccess);
+    }
+
+    @Override
+    public void drawPass(VulkanCommandStream stream, TerrainPassKind kind, int layer) {
+        if (!context.drawIndirectCountEnabled()) {
+            return;
+        }
+        ShellStream shell = (ShellStream) stream;
+        int slot = shell.slot();
+        for (int streamIndex = 0; streamIndex < 2; streamIndex++) {
+            shell.bindTerrainProgram(streamIndex == 0 ? axisPrograms[kind.ordinal()] : generalPrograms[kind.ordinal()]);
+            int region = layer * 2 + streamIndex;
+            VK12.vkCmdDrawIndirectCount(shell.commandBuffer(), cullCommands[slot].buffer(),
+                    (long) region * MAX_SECTIONS * COMMAND_STRIDE, cullCounters[slot].buffer(),
+                    (long) region * Integer.BYTES, MAX_SECTIONS, COMMAND_STRIDE);
+        }
+    }
+
+    public synchronized boolean hiZValid() {
+        return hiZValid;
+    }
+
+    public synchronized int hiZGuardCount() {
+        return hiZGuardCount;
+    }
+
+    /**
+     * Records a depth seed and its MAX-reduced mips outside rendering, after the frame's
+     * depth writes. Call once per frame on the acquired scheduler slot.
+     */
+    public synchronized void recordHiZBuild(VkCommandBuffer commandBuffer, FrameImageTarget target, int frameSlot) {
+        if (!HIZ || !computeQueue || !(target instanceof GllessFrameTarget owned)
+                || owned.width() <= 0 || owned.height() <= 0 || target.depthImage() == VK10.VK_NULL_HANDLE) {
+            return;
+        }
+        int slot = Math.floorMod(frameSlot, FRAME_SLOTS);
+        int width = owned.width();
+        int height = owned.height();
+        int depthFormat = VulkanFormatDepth();
+        ensureHiZResources(slot, owned, depthFormat);
+        int depthLayout = target.depthLayout();
+        int depthAspect = depthAspectMask(depthFormat);
+        int compute = VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        int allCommands = VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        int shaderRead = VK10.VK_ACCESS_SHADER_READ_BIT;
+        int shaderReadWrite = shaderRead | VK10.VK_ACCESS_SHADER_WRITE_BIT;
+        int memoryReadWrite = VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT;
+        int general = VK10.VK_IMAGE_LAYOUT_GENERAL;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            // This also orders depth writes when the target already rests in GENERAL.
+            imageBarrier(commandBuffer, stack, target.depthImage(), depthAspect, 1,
+                    depthLayout, general, allCommands, compute, memoryReadWrite, shaderRead);
+            if (pyramid.inGeneral) {
+                imageBarrier(commandBuffer, stack, pyramid.image, VK10.VK_IMAGE_ASPECT_COLOR_BIT, pyramid.levels,
+                        general, general, compute, compute, shaderReadWrite, shaderReadWrite);
+            } else {
+                pyramid.toGeneral(commandBuffer, stack);
+            }
+            ByteBuffer push = stack.malloc(Integer.BYTES);
+            for (int level = 0; level < pyramid.levels; level++) {
+                hiZProgram.bind(commandBuffer, slot * MAX_HIZ_LEVELS + level, stack);
+                push.putInt(0, level);
+                VK10.vkCmdPushConstants(commandBuffer, hiZProgram.layout, VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
+                int w = Math.max(1, width >> level);
+                int h = Math.max(1, height >> level);
+                VK10.vkCmdDispatch(commandBuffer, (w + 7) / 8, (h + 7) / 8, 1);
+                if (level + 1 < pyramid.levels) {
+                    imageBarrier(commandBuffer, stack, pyramid.image, VK10.VK_IMAGE_ASPECT_COLOR_BIT, pyramid.levels,
+                            general, general, compute, compute, shaderReadWrite, shaderReadWrite);
+                }
+            }
+            imageBarrier(commandBuffer, stack, target.depthImage(), depthAspect, 1,
+                    general, depthLayout, compute, allCommands, shaderRead, memoryReadWrite);
+        }
+        pyramid.built = true;
+        hiZValid = !hiZGuarded;
+    }
+
+    private static int depthAspectMask(int format) {
+        return switch (format) {
+            case VK10.VK_FORMAT_D16_UNORM_S8_UINT, VK10.VK_FORMAT_D24_UNORM_S8_UINT, VK10.VK_FORMAT_D32_SFLOAT_S8_UINT ->
+                    VK10.VK_IMAGE_ASPECT_DEPTH_BIT | VK10.VK_IMAGE_ASPECT_STENCIL_BIT;
+            default -> VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
+        };
+    }
+
+    private static void imageBarrier(VkCommandBuffer cmd, MemoryStack stack, long image, int aspect, int levels,
+                                     int oldLayout, int newLayout, int srcStage, int dstStage,
+                                     int srcAccess, int dstAccess) {
+        VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(1, stack);
+        VkImageMemoryBarrier barrier = barriers.get(0).sType$Default().image(image)
+                .oldLayout(oldLayout).newLayout(newLayout).srcAccessMask(srcAccess).dstAccessMask(dstAccess)
+                .srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
+        barrier.subresourceRange().set(aspect, 0, levels, 0, 1);
+        VK10.vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, null, null, barriers);
+    }
+
+    private void ensureCullResources(int slot) {
+        int storage = VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        if (cullProgram == null) {
+            ensureHiZSampler();
+            int depthFormat = VulkanFormatDepth();
+            if (dummyDepth == null) {
+                dummyDepth = new HiZImage(1, 1, 1, depthFormat,
+                        VK10.VK_IMAGE_ASPECT_DEPTH_BIT, depthAspectMask(depthFormat),
+                        VK10.VK_IMAGE_USAGE_SAMPLED_BIT | VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+            }
+            cullProgram = new ComputeProgram(Lane1Shaders.CULL_COMPUTE, PUSH_BYTES, FRAME_SLOTS,
+                    storage, storage, storage, VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, storage);
+        }
+        int indirectStorage = VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                | VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (cullCommands[slot] == null) {
+            cullCommands[slot] = new VulkanHostBuffer(context, CULL_COMMAND_BYTES, indirectStorage);
+        }
+        if (cullCounters[slot] == null) {
+            cullCounters[slot] = new VulkanHostBuffer(context, COUNTER_BYTES, indirectStorage);
+        }
+    }
+
+    private void ensureHiZSampler() {
+        if (hiZSampler == VK10.VK_NULL_HANDLE) {
+            // Sampled depth formats need not support linear filtering.
+            hiZSampler = createSampler(VK10.VK_FILTER_NEAREST, true, VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST);
+        }
+    }
+
+    private void ensureHiZResources(int slot, GllessFrameTarget target, int depthFormat) {
+        int width = target.width();
+        int height = target.height();
+        long depthImage = target.depthImage();
+        ensureHiZSampler();
+        if (hiZProgram == null) {
+            hiZProgram = new ComputeProgram(Lane1Shaders.HIZ_COMPUTE, Integer.BYTES, FRAME_SLOTS * MAX_HIZ_LEVELS,
+                    VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        }
+        if (pyramid == null || width != pyramid.width || height != pyramid.height) {
+            // The helper counts the levels from the half-resolution reduction. Include the full-resolution seed.
+            int levels = width == 1 && height == 1 ? 1 : 1 + TerrainCullStage.hiZPyramidLevels(width, height);
+            HiZImage next = new HiZImage(width, height, levels, VK10.VK_FORMAT_R32_SFLOAT,
+                    VK10.VK_IMAGE_ASPECT_COLOR_BIT, VK10.VK_IMAGE_ASPECT_COLOR_BIT,
+                    VK10.VK_IMAGE_USAGE_SAMPLED_BIT | VK10.VK_IMAGE_USAGE_STORAGE_BIT);
+            if (pyramid != null) {
+                pyramid.release();
+            }
+            pyramid = next;
+            hiZValid = false;
+        }
+        HiZSlot bound = hiZSlots[slot];
+        if (bound == null) {
+            bound = new HiZSlot();
+            hiZSlots[slot] = bound;
+        }
+        boolean sameDepth = bound.target == target && bound.depthImage == depthImage;
+        if (sameDepth && bound.pyramid == pyramid) {
+            return;
+        }
+        if (!sameDepth) {
+            long depthView = createImageView(depthImage, depthFormat, VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1);
+            VK10.vkDestroyImageView(context.device(), bound.depthView, null);
+            bound.depthView = depthView;
+            bound.depthImage = depthImage;
+            bound.target = target;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(pyramid.levels * 2, stack);
+            for (int level = 0; level < pyramid.levels; level++) {
+                long set = hiZProgram.sets[slot * MAX_HIZ_LEVELS + level];
+                imageWrite(stack, writes.get(level * 2), set, 0, VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                        level == 0 ? bound.depthView : pyramid.fullView, hiZSampler);
+                imageWrite(stack, writes.get(level * 2 + 1), set, 1, VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                        pyramid.levelViews[level], VK10.VK_NULL_HANDLE);
+            }
+            VK10.vkUpdateDescriptorSets(context.device(), writes, null);
+        }
+        pyramid.retain();
+        if (bound.pyramid != null) {
+            bound.pyramid.release();
+        }
+        bound.pyramid = pyramid;
+    }
+
+    private static final class HiZSlot {
+        FrameImageTarget target;
+        long depthImage;
+        long depthView;
+        HiZImage pyramid;
+    }
+
+    private static void imageWrite(MemoryStack stack, VkWriteDescriptorSet write, long set, int binding,
+                                   int type, long view, long sampler) {
+        VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(1, stack);
+        info.get(0).imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL).imageView(view).sampler(sampler);
+        write.sType$Default().dstSet(set).dstBinding(binding).descriptorType(type)
+                .descriptorCount(1).pImageInfo(info);
+    }
+
+    private long createImageView(long image, int format, int aspect, int baseLevel, int levels) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageViewCreateInfo info = VkImageViewCreateInfo.calloc(stack).sType$Default()
+                    .image(image).format(format).viewType(VK10.VK_IMAGE_VIEW_TYPE_2D);
+            info.subresourceRange().set(aspect, baseLevel, levels, 0, 1);
+            LongBuffer out = stack.mallocLong(1);
+            check(VK10.vkCreateImageView(context.device(), info, null, out), "create lane1 compute image view");
+            return out.get(0);
+        }
+    }
+
+    /** The active image and each slot's descriptor bindings hold references until replaced. */
+    private final class HiZImage {
+        private final int width;
+        private final int height;
+        private final int levels;
+        private final int barrierAspect;
+        private final long[] levelViews;
+        private long image;
+        private long fullView;
+        private SlabAllocator.SlabAllocation allocation;
+        private int references = 1;
+        private boolean inGeneral;
+        private boolean built;
+
+        HiZImage(int width, int height, int levels, int format, int viewAspect, int barrierAspect, int usage) {
+            this.width = width;
+            this.height = height;
+            this.levels = levels;
+            this.barrierAspect = barrierAspect;
+            this.levelViews = new long[(usage & VK10.VK_IMAGE_USAGE_STORAGE_BIT) != 0 ? levels : 0];
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkImageCreateInfo info = VkImageCreateInfo.calloc(stack).sType$Default()
+                        .imageType(VK10.VK_IMAGE_TYPE_2D).format(format).mipLevels(levels).arrayLayers(1)
+                        .samples(VK10.VK_SAMPLE_COUNT_1_BIT).tiling(VK10.VK_IMAGE_TILING_OPTIMAL).usage(usage)
+                        .sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE).initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
+                info.extent().set(width, height, 1);
+                LongBuffer out = stack.mallocLong(1);
+                check(VK10.vkCreateImage(context.device(), info, null, out), "create lane1 compute image");
+                image = out.get(0);
+                VkMemoryRequirements requirements = VkMemoryRequirements.malloc(stack);
+                VK10.vkGetImageMemoryRequirements(context.device(), image, requirements);
+                SlabAllocator allocator = context.celtium$deviceLocalImageSlabs(requirements.memoryTypeBits());
+                allocation = allocator.allocate(requirements.size(), requirements.alignment());
+                allocator.bindImage(image, allocation);
+                fullView = createImageView(image, format, viewAspect, 0, levels);
+                for (int i = 0; i < levelViews.length; i++) {
+                    levelViews[i] = createImageView(image, format, viewAspect, i, 1);
+                }
+            } catch (RuntimeException | LinkageError error) {
+                release();
+                throw error;
+            }
+        }
+
+        void toGeneral(VkCommandBuffer cmd, MemoryStack stack) {
+            if (!inGeneral) {
+                imageBarrier(cmd, stack, image, barrierAspect, levels, VK10.VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK10.VK_IMAGE_LAYOUT_GENERAL, VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                        VK10.VK_ACCESS_SHADER_READ_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT);
+                inGeneral = true;
+            }
+        }
+
+        void retain() {
+            references++;
+        }
+
+        void release() {
+            if (--references == 0) {
+                for (long view : levelViews) {
+                    VK10.vkDestroyImageView(context.device(), view, null);
+                }
+                VK10.vkDestroyImageView(context.device(), fullView, null);
+                VK10.vkDestroyImage(context.device(), image, null);
+                if (allocation != null) {
+                    allocation.owner().release(allocation, context.celtium$slabReleaseValue());
+                }
+            }
+        }
+    }
+
+    private final class ComputeProgram {
+        private final long[] sets;
+        private long setLayout;
+        private long pool;
+        private long layout;
+        private long pipeline;
+
+        ComputeProgram(String source, int pushBytes, int setCount, int... types) {
+            sets = new long[setCount];
+            long module = shaderModule(words(ModShaderCompiler.compileCompute(source)));
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(types.length, stack);
+                int[] counts = new int[VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER + 1];
+                for (int i = 0; i < types.length; i++) {
+                    bindings.get(i).binding(i).descriptorCount(1).descriptorType(types[i])
+                            .stageFlags(VK10.VK_SHADER_STAGE_COMPUTE_BIT);
+                    counts[types[i]] += setCount;
+                }
+                VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                        .sType$Default().pBindings(bindings);
+                LongBuffer out = stack.mallocLong(1);
+                check(VK10.vkCreateDescriptorSetLayout(context.device(), setInfo, null, out),
+                        "create lane1 compute set layout");
+                setLayout = out.get(0);
+
+                VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(types.length, stack);
+                int sizeCount = 0;
+                for (int type = 0; type < counts.length; type++) {
+                    if (counts[type] != 0) {
+                        sizes.get(sizeCount++).type(type).descriptorCount(counts[type]);
+                    }
+                }
+                sizes.limit(sizeCount);
+                VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                        .sType$Default().maxSets(setCount).pPoolSizes(sizes);
+                check(VK10.vkCreateDescriptorPool(context.device(), poolInfo, null, out),
+                        "create lane1 compute descriptor pool");
+                pool = out.get(0);
+                LongBuffer layouts = stack.mallocLong(setCount);
+                for (int i = 0; i < setCount; i++) {
+                    layouts.put(i, setLayout);
+                }
+                VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack)
+                        .sType$Default().descriptorPool(pool).pSetLayouts(layouts);
+                LongBuffer allocated = stack.mallocLong(setCount);
+                check(VK10.vkAllocateDescriptorSets(context.device(), allocate, allocated),
+                        "allocate lane1 compute descriptor sets");
+                allocated.get(sets);
+
+                VkPushConstantRange.Buffer push = VkPushConstantRange.calloc(1, stack);
+                push.get(0).stageFlags(VK10.VK_SHADER_STAGE_COMPUTE_BIT).offset(0).size(pushBytes);
+                VkPipelineLayoutCreateInfo layoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                        .sType$Default().pSetLayouts(stack.longs(setLayout)).pPushConstantRanges(push);
+                check(VK10.vkCreatePipelineLayout(context.device(), layoutInfo, null, out),
+                        "create lane1 compute pipeline layout");
+                layout = out.get(0);
+                VkComputePipelineCreateInfo.Buffer pipelineInfo = VkComputePipelineCreateInfo.calloc(1, stack);
+                pipelineInfo.get(0).sType$Default().layout(layout);
+                pipelineInfo.get(0).stage().sType$Default().stage(VK10.VK_SHADER_STAGE_COMPUTE_BIT)
+                        .module(module).pName(stack.UTF8("main"));
+                check(VK10.vkCreateComputePipelines(context.device(), VK10.VK_NULL_HANDLE, pipelineInfo, null, out),
+                        "create lane1 compute pipeline");
+                pipeline = out.get(0);
+            } catch (RuntimeException | LinkageError error) {
+                delete();
+                throw error;
+            } finally {
+                VK10.vkDestroyShaderModule(context.device(), module, null);
+            }
+        }
+
+        void bind(VkCommandBuffer commandBuffer, int set, MemoryStack stack) {
+            VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+            VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_COMPUTE,
+                    layout, 0, stack.longs(sets[set]), null);
+        }
+
+        void delete() {
+            VK10.vkDestroyPipeline(context.device(), pipeline, null);
+            VK10.vkDestroyPipelineLayout(context.device(), layout, null);
+            VK10.vkDestroyDescriptorPool(context.device(), pool, null);
+            VK10.vkDestroyDescriptorSetLayout(context.device(), setLayout, null);
         }
     }
 
@@ -815,7 +1366,7 @@ public final class Lane1TerrainFrontend {
                 for (int kind = 0; kind < KIND_COUNT; kind++) {
                     for (int stream = 0; stream < 2; stream++) {
                         long set = sets[slot][kind][stream];
-                        writes.add(bufferWrite(stack, set, 0, descBuffer.buffer(), DESC_BYTES));
+                        writes.add(bufferWrite(stack, set, 0, frameDescs[slot].buffer(), DESC_BYTES));
                         writes.add(bufferWrite(stack, set, 1, stream == 0
                                 ? axisSpace.bufferHandle() : generalSpace.bufferHandle(),
                                 stream == 0 ? AXIS_SLAB_BYTES : GENERAL_SLAB_BYTES));
@@ -881,14 +1432,17 @@ public final class Lane1TerrainFrontend {
     }
 
     private long createSampler(int filter, boolean mipmapped) {
+        return createSampler(filter, mipmapped, mipmapped
+                ? VK10.VK_SAMPLER_MIPMAP_MODE_LINEAR : VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST);
+    }
+
+    private long createSampler(int filter, boolean mipmapped, int mipmapMode) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSamplerCreateInfo info = VkSamplerCreateInfo.calloc(stack)
                     .sType(VK10.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO)
                     .magFilter(filter)
                     .minFilter(filter)
-                    .mipmapMode(mipmapped
-                            ? VK10.VK_SAMPLER_MIPMAP_MODE_LINEAR
-                            : VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST)
+                    .mipmapMode(mipmapMode)
                     .addressModeU(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .addressModeV(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .addressModeW(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
@@ -907,6 +1461,43 @@ public final class Lane1TerrainFrontend {
 
     /** Destroys every Vulkan object this frontend owns. The device must be idle. */
     public synchronized void delete() {
+        if (cullProgram != null) {
+            cullProgram.delete();
+        }
+        if (hiZProgram != null) {
+            hiZProgram.delete();
+        }
+        VK10.vkDestroySampler(context.device(), hiZSampler, null);
+        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
+            frameDescs[slot].delete();
+            if (frameRanges[slot] != null) {
+                frameRanges[slot].delete();
+            }
+            if (cullCommands[slot] != null) {
+                cullCommands[slot].delete();
+            }
+            if (cullCounters[slot] != null) {
+                cullCounters[slot].delete();
+            }
+            if (cullImages[slot] != null) {
+                cullImages[slot].release();
+            }
+            if (hiZSlots[slot] != null) {
+                VK10.vkDestroyImageView(context.device(), hiZSlots[slot].depthView, null);
+                if (hiZSlots[slot].pyramid != null) {
+                    hiZSlots[slot].pyramid.release();
+                }
+            }
+        }
+        if (pyramid != null) {
+            pyramid.release();
+        }
+        if (dummyDepth != null) {
+            dummyDepth.release();
+        }
+        if (rangesBuffer != null) {
+            rangesBuffer.delete();
+        }
         for (long pipeline : pipelines.values()) {
             VK10.vkDestroyPipeline(context.device(), pipeline, null);
         }
