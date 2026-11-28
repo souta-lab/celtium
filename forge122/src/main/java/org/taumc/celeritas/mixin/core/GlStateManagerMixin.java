@@ -1,7 +1,7 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.GlStateManager;
-import org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture;
+import org.soutalab.celtium.impl.font.CeltiumFontGlyphCapture;
 import org.soutalab.celtium.vulkan.CeltiumBackend;
 import org.soutalab.celtium.vulkan.CeltiumBackends;
 import org.spongepowered.asm.mixin.Mixin;

@@ -5,7 +5,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.impl.profile.GameLoopTiming;
+import org.soutalab.celtium.impl.profile.GameLoopTiming;
 
 /**
  * Times the client tick, head to return, for the (g) comparison's unattributed per-frame time.

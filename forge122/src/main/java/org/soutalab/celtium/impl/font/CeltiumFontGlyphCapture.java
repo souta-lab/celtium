@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.font;
+package org.soutalab.celtium.impl.font;
 
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import org.soutalab.celtium.vulkan.CeltiumBackend;

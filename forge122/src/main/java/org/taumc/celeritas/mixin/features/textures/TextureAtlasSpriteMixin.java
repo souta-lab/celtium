@@ -4,7 +4,7 @@ import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.taumc.celeritas.impl.extensions.SpriteExtension;
+import org.soutalab.celtium.impl.extensions.SpriteExtension;
 
 @Mixin(TextureAtlasSprite.class)
 public abstract class TextureAtlasSpriteMixin implements SpriteExtension {

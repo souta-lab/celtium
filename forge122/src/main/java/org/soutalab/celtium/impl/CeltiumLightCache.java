@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl;
+package org.soutalab.celtium.impl;
 
 import it.unimi.dsi.fastutil.longs.Long2LongLinkedOpenHashMap;
 

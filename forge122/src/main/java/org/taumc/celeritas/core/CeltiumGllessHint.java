@@ -1970,7 +1970,7 @@ public final class CeltiumGllessHint {
      * unlike a matrix operation, a colour does not accumulate.
      */
     public static void glColor4f(float red, float green, float blue, float alpha) {
-        org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
+        org.soutalab.celtium.impl.font.CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
         // The legacy immediate capture keeps its own current colour: glBegin geometry carries the colour at vertex
         // time, and the mirror's colour is state the batch path reads later.
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyColor(red, green, blue, alpha);

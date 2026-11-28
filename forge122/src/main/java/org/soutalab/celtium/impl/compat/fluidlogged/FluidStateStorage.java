@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.compat.fluidlogged;
+package org.soutalab.celtium.impl.compat.fluidlogged;
 
 import git.jbredwards.fluidlogged_api.api.capability.IFluidStateCapability;
 import git.jbredwards.fluidlogged_api.api.capability.IFluidStateContainer;

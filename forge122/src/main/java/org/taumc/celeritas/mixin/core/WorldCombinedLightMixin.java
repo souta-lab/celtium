@@ -5,7 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
-import org.taumc.celeritas.impl.CeltiumLightCache;
+import org.soutalab.celtium.impl.CeltiumLightCache;
 
 /**
  * The light cache's single funnel (item 378, addon connection surface ledger II-7):

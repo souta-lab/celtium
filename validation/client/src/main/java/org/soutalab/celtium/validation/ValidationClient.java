@@ -6282,7 +6282,7 @@ public final class ValidationClient {
      */
     private static String celtium$loopTimingSnapshot() {
         try {
-            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            Class<?> timing = Class.forName("org.soutalab.celtium.impl.profile.GameLoopTiming");
             long loop = ((Number) timing.getMethod("lastLoopMillis").invoke(null)).longValue();
             long tick = ((Number) timing.getMethod("lastLoopTickMillis").invoke(null)).longValue();
             long display = ((Number) timing.getMethod("lastLoopDisplayMillis").invoke(null)).longValue();
@@ -13651,7 +13651,7 @@ public final class ValidationClient {
         // frames), so the tick is the first candidate and had no instrument at all. Read reflectively, by name, so
         // this fixture stays loadable in a configuration without the Celtium jar (the reference arm's leg).
         try {
-            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            Class<?> timing = Class.forName("org.soutalab.celtium.impl.profile.GameLoopTiming");
             long ticks = ((Number) timing.getMethod("ticks").invoke(null)).longValue();
             long totalMillis = ((Number) timing.getMethod("totalMillis").invoke(null)).longValue();
             report.addProperty("gameTickSummary", String.valueOf(timing.getMethod("summary").invoke(null)));

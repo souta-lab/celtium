@@ -4,7 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.LoadingScreenRenderer;
 import org.soutalab.celtium.harness.HarnessConfig;
 import org.objectweb.asm.Opcodes;
-import org.taumc.celeritas.impl.profile.GameLoopTiming;
+import org.soutalab.celtium.impl.profile.GameLoopTiming;
 import org.taumc.celeritas.interfaces.LoadingProgressState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -334,7 +334,7 @@ public class MinecraftMixin {
      */
     @Inject(method = {"refreshResources", "func_110436_a"}, at = @At("RETURN"), require = 0)
     private void celtium$frameReleasePass(CallbackInfo ci) {
-        org.taumc.celeritas.impl.CeltiumFrameRelease.onResourceReloadComplete();
+        org.soutalab.celtium.impl.CeltiumFrameRelease.onResourceReloadComplete();
     }
 
     /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */

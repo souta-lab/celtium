@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.impl.model.ModelPhaseTrace;
+import org.soutalab.celtium.impl.model.ModelPhaseTrace;
 
 import java.util.HashSet;
 import java.util.Map;

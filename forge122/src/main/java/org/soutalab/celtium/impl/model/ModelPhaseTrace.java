@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.model;
+package org.soutalab.celtium.impl.model;
 
 import java.lang.management.ManagementFactory;
 import java.util.HashSet;

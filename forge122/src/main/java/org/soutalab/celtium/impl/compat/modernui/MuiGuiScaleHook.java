@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.compat.modernui;
+package org.soutalab.celtium.impl.compat.modernui;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;

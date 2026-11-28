@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.util;
+package org.soutalab.celtium.impl.util;
 
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.init.Biomes;

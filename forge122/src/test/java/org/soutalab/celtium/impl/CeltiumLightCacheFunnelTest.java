@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl;
+package org.soutalab.celtium.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

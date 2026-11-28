@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.impl.CeltiumAtlasLoader;
+import org.soutalab.celtium.impl.CeltiumAtlasLoader;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,7 +57,7 @@ public class TextureMapParallelMixin {
         // Item 387: the frame census/release registry is fed from here - the one call every sprite that takes
         // the generateMipmaps path passes, with the parallel loader on or off. Sprites whose custom loader
         // succeeds return before this call and stay unregistered (and unreleased) on purpose.
-        org.taumc.celeritas.impl.CeltiumFrameRelease.noteSprite(sprite);
+        org.soutalab.celtium.impl.CeltiumFrameRelease.noteSprite(sprite);
         if (!CeltiumAtlasLoader.ENABLED) {
             return this.func_184397_a(resourceManager, sprite);
         }

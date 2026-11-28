@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PRODUCTION = ROOT / "forge122/src/main/java/org/taumc/celeritas/impl/util/ServerShutdownAwaiter.java"
+PRODUCTION = ROOT / "forge122/src/main/java/org/soutalab/celtium/impl/util/ServerShutdownAwaiter.java"
 CHECK = ROOT / "scripts/cpu-contract/ServerShutdownAwaiterCheck.java"
 
 

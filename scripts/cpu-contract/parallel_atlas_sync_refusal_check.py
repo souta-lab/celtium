@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[2]
-LOADER=ROOT/'forge122/src/main/java/org/taumc/celeritas/impl/CeltiumAtlasLoader.java'
+LOADER=ROOT/'forge122/src/main/java/org/soutalab/celtium/impl/CeltiumAtlasLoader.java'
 MIXIN=ROOT/'forge122/src/main/java/org/taumc/celeritas/mixin/core/TextureMapParallelMixin.java'
 
 

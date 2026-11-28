@@ -6,7 +6,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.impl.model.ModelPhaseTrace;
+import org.soutalab.celtium.impl.model.ModelPhaseTrace;
 
 /**
  * Item 338a instrument: the outer bracket of one model reload. {@code require = 0} because the

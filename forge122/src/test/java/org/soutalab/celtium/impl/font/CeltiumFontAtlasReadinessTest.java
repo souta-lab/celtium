@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.font;
+package org.soutalab.celtium.impl.font;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,9 +30,9 @@ class CeltiumFontAtlasReadinessTest {
     @Test
     void buildGuardsDoNotLatchOrInvalidateRegistry() throws Exception {
         java.nio.file.Path direct = java.nio.file.Paths.get(
-                "forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontAtlas.java");
+                "forge122/src/main/java/org/soutalab/celtium/impl/font/CeltiumFontAtlas.java");
         java.nio.file.Path path = java.nio.file.Files.exists(direct) ? direct
-                : java.nio.file.Paths.get("../forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontAtlas.java");
+                : java.nio.file.Paths.get("../forge122/src/main/java/org/soutalab/celtium/impl/font/CeltiumFontAtlas.java");
         String src = java.nio.file.Files.readString(path).replace("\r\n", "\n");
         int start = src.indexOf("private static void build() {");
         int end = src.indexOf("private static void registerAtlasRemaps() {", start);

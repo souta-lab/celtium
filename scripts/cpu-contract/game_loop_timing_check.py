@@ -6,12 +6,12 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = ROOT / "forge122/src/main/java/org/taumc/celeritas/impl/profile/GameLoopTiming.java"
+SOURCE = ROOT / "forge122/src/main/java/org/soutalab/celtium/impl/profile/GameLoopTiming.java"
 
 
 def main():
     java = r'''
-import org.taumc.celeritas.impl.profile.GameLoopTiming;
+import org.soutalab.celtium.impl.profile.GameLoopTiming;
 class GameLoopTimingCheck {
     static void check(boolean ok,String label) { if (!ok) throw new AssertionError(label); }
     static void busy(long nanos) { long end=System.nanoTime()+nanos; while (System.nanoTime()<end) {} }

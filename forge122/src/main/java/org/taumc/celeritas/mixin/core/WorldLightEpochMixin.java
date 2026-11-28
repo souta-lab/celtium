@@ -5,7 +5,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.impl.CeltiumLightCache;
+import org.soutalab.celtium.impl.CeltiumLightCache;
 
 /**
  * Bumps the light epoch {@link CeltiumLightCache} reads, at the only place the light map is written.

@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.util;
+package org.soutalab.celtium.impl.util;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;

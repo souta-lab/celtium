@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.profile;
+package org.soutalab.celtium.impl.profile;
 
 /**
  * The client loop's own tick timing, which no other instrument in this project covers.

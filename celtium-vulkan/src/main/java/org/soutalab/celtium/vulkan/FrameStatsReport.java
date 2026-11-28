@@ -58,7 +58,7 @@ final class FrameStatsReport {
      */
     String celtium$gameLoopSummary() {
         try {
-            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
+            Class<?> timing = Class.forName("org.soutalab.celtium.impl.profile.GameLoopTiming");
             Object summary = timing.getMethod("summaryDelta").invoke(null);
             return String.valueOf(summary);
         } catch (ReflectiveOperationException | LinkageError failed) {

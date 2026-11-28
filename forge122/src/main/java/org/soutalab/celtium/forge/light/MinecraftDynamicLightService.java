@@ -13,7 +13,7 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 import org.soutalab.celtium.vulkan.DynamicLightService;
-import org.taumc.celeritas.impl.CeltiumLightCache;
+import org.soutalab.celtium.impl.CeltiumLightCache;
 
 /**
  * The Minecraft-backed {@link DynamicLightService}: every frame it walks the loaded entities and

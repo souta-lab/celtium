@@ -7,7 +7,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.taumc.celeritas.impl.CeltiumLightCache;
+import org.soutalab.celtium.impl.CeltiumLightCache;
 
 /**
  * Entity light lookups through the per-tick cache ({@link CeltiumLightCache}).

@@ -8,7 +8,7 @@ import net.minecraft.server.MinecraftServer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
-import org.taumc.celeritas.impl.util.ServerShutdownAwaiter;
+import org.soutalab.celtium.impl.util.ServerShutdownAwaiter;
 
 /**
  * World exit must not await work on an integrated server thread which has already terminated.

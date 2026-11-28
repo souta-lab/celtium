@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl;
+package org.soutalab.celtium.impl;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.TextureMap;

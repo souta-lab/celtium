@@ -86,7 +86,7 @@ class DrawPathLmContractTest {
     @Test
     void dp24FontGlyphCaptureCountsDropsAndNonVulkanRefusals() throws IOException {
         String capture = readSource(
-                "forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java");
+                "forge122/src/main/java/org/soutalab/celtium/impl/font/CeltiumFontGlyphCapture.java");
         int flushStart = capture.indexOf("public static void flushBufferedQuads(CeltiumBackend backend) {");
         int flushEnd = capture.indexOf("private static boolean ensureBufferedCapacity(int bytes) {", flushStart);
         assertTrue(flushStart >= 0 && flushEnd > flushStart, "flushBufferedQuads is located");
@@ -123,7 +123,7 @@ class DrawPathLmContractTest {
     @Test
     void dp26FontWindowOwnershipSuppressesLegacyBegin() throws IOException {
         String capture = readSource(
-                "forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.java");
+                "forge122/src/main/java/org/soutalab/celtium/impl/font/CeltiumFontGlyphCapture.java");
         int openStart = capture.indexOf("private static void openWindowBody(boolean unicode) {");
         int openEnd = capture.indexOf("public static boolean fastPathAvailable() {", openStart);
         assertTrue(openStart >= 0 && openEnd > openStart, "openWindowBody is located");

@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl.extensions;
+package org.soutalab.celtium.impl.extensions;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import org.soutalab.celtium.forge.util.QuadTree;

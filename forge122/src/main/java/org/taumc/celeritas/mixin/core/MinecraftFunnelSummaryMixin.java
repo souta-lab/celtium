@@ -6,7 +6,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.taumc.celeritas.impl.CeltiumLightCache;
+import org.soutalab.celtium.impl.CeltiumLightCache;
 
 /**
  * Prints the combined-light funnel's final summary when a world is exited.

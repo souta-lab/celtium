@@ -15,8 +15,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.taumc.celeritas.CeleritasVintage;
-import org.taumc.celeritas.impl.extensions.SpriteExtension;
-import org.taumc.celeritas.impl.extensions.TextureMapExtension;
+import org.soutalab.celtium.impl.extensions.SpriteExtension;
+import org.soutalab.celtium.impl.extensions.TextureMapExtension;
 
 import java.util.LinkedHashSet;
 import java.util.List;

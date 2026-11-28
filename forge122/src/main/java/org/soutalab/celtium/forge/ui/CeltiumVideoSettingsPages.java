@@ -9,7 +9,7 @@ import org.soutalab.celtium.forge.ui.OptionEntry.OptionGroup;
 import org.soutalab.celtium.forge.ui.OptionEntry.OptionPage;
 import org.soutalab.celtium.forge.ui.OptionEntry.SliderOption;
 import org.soutalab.celtium.forge.ui.OptionEntry.ToggleOption;
-import org.taumc.celeritas.impl.compat.modernui.MuiGuiScaleHook;
+import org.soutalab.celtium.impl.compat.modernui.MuiGuiScaleHook;
 
 import java.util.Arrays;
 import java.util.Collections;

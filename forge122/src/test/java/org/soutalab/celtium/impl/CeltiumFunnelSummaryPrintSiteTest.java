@@ -1,4 +1,4 @@
-package org.taumc.celeritas.impl;
+package org.soutalab.celtium.impl;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,8 +28,8 @@ class CeltiumFunnelSummaryPrintSiteTest {
     @Test
     void worldExitPrintSiteExistsBesideTheShutdownHook() throws Exception {
         String cache = Files.readString(findRepoFile(
-                "forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java",
-                "src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java"));
+                "forge122/src/main/java/org/soutalab/celtium/impl/CeltiumLightCache.java",
+                "src/main/java/org/soutalab/celtium/impl/CeltiumLightCache.java"));
         assertTrue(cache.contains("public static void printFunnelSummaryOnWorldExit()"),
                 "the world-exit print exists as the funnel summary's primary outlet");
         assertTrue(cache.contains("funnelPeriodicPrintDue(funnelCalls, FUNNEL_PERIODIC_PRINT_INTERVAL)"),
