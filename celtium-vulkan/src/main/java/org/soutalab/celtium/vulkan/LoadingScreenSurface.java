@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import java.awt.image.BufferedImage;
 import java.util.function.BooleanSupplier;
+import org.soutalab.celtium.harness.HarnessConfig;
 
 /**
  * The loading screen's own surface (S3-b addendum 4-1): the seat that owns the native loading screen's
