@@ -126,8 +126,10 @@ class TerrainDrawStageTest {
         world.putBlockEntity(-500, 64, -500, 98);
         TerrainDrawStage stage = new TerrainDrawStage(world, new TerrainCullStage(world),
                 (cmd, kind, commands) -> { });
+        FrustumPlanes frustum = xPositive();
+        stage.prepareShadowView(new CameraPose(0, 64, 0, 0, 0), frustum, 160.0f, 1L);
         AtomicInteger gathered = new AtomicInteger();
-        stage.gatherShadowBlockEntities(xPositive(), (x, y, z, type) -> {
+        stage.gatherShadowBlockEntities(frustum, (x, y, z, type) -> {
             gathered.incrementAndGet();
             assertEquals(99, type);
         });

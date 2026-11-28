@@ -30,6 +30,9 @@ public final class Lane1Shaders {
                 int lightBase;
                 int mcEntityBase;
             };
+            vec3 relativeSectionOrigin(ivec3 section, ivec3 cameraSection, vec3 cameraFrac) {
+                return vec3(section - cameraSection) * 16.0 - cameraFrac;
+            }
             struct LightRecord {
                 vec3 position;
                 float radius;
@@ -48,10 +51,9 @@ public final class Lane1Shaders {
             layout(set = 0, binding = 3) uniform sampler2D hiZ;
             layout(push_constant) uniform CullPush {
                 vec4 planes[6];
-                vec3 cameraPos;
-                uint sectionCount;
-                uint layer;
-                uint commandsPerSection;
+                ivec3 cameraSection; // byte 96
+                uint sectionCount;   // byte 108
+                vec4 cameraFrac;     // byte 112
             } pc;
             bool frustumVisible(vec3 mn, vec3 mx) {
                 for (int i = 0; i < 6; i++) {
@@ -66,7 +68,7 @@ public final class Lane1Shaders {
                 uint slot = gl_GlobalInvocationID.x;
                 if (slot >= pc.sectionCount) return;
                 SectionDesc d = descs[slot];
-                vec3 mn = vec3(d.section) * 16.0 - pc.cameraPos;
+                vec3 mn = relativeSectionOrigin(d.section, pc.cameraSection, pc.cameraFrac.xyz);
                 vec3 mx = mn + 16.0;
                 if (!frustumVisible(mn, mx)) return;
                 // Hi-Z occlusion against the previous frame's pyramid is sampled by the caller-side
@@ -115,12 +117,13 @@ public final class Lane1Shaders {
             layout(std430, set = 0, binding = 5) readonly buffer ClusterMasks { uint64_t masks[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
-                vec4 cameraPos;
+                ivec4 cameraSection;
                 ivec4 gridOrigin;
                 int lightCount;
                 float atlasCellsAcross;
                 int textureCellCount;
                 int pushPad2;
+                vec4 cameraFrac;
             } pc;
             layout(location = 0) out vec2 fragCell;
             layout(location = 1) out vec4 fragColor;
@@ -159,7 +162,7 @@ public final class Lane1Shaders {
                 else if (axis == 1u) { local.x += corner.x * float(extentU); local.z += corner.y * float(extentV); }
                 else { local.x += corner.x * float(extentU); local.y += corner.y * float(extentV); }
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
-                vec3 relative = worldPos - pc.cameraPos.xyz;
+                vec3 relative = relativeSectionOrigin(d.section, pc.cameraSection.xyz, pc.cameraFrac.xyz) + local;
                 gl_Position = pc.viewProj * vec4(relative, 1.0);
                 float cellU = float(q.z & 255u);
                 float cellV = float((q.z >> 8) & 255u);
@@ -190,12 +193,13 @@ public final class Lane1Shaders {
             layout(std430, set = 0, binding = 3) readonly buffer TextureCells { uvec2 textureCells[]; };
             layout(push_constant) uniform DrawPush {
                 mat4 viewProj;
-                vec4 cameraPos;
+                ivec4 cameraSection;
                 ivec4 gridOrigin;
                 int lightCount;
                 float atlasCellsAcross;
                 int textureCellCount;
                 int pushPad2;
+                vec4 cameraFrac;
             } pc;
             layout(location = 0) out vec2 fragCell;
             layout(location = 1) out vec4 fragColor;
@@ -213,7 +217,8 @@ public final class Lane1Shaders {
                                   generalWords[wordBase + uint(corner * 3) + 1u],
                                   generalWords[wordBase + uint(corner * 3) + 2u]);
                 vec3 worldPos = vec3(d.section) * 16.0 + local;
-                gl_Position = pc.viewProj * vec4(worldPos - pc.cameraPos.xyz, 1.0);
+                vec3 relative = relativeSectionOrigin(d.section, pc.cameraSection.xyz, pc.cameraFrac.xyz) + local;
+                gl_Position = pc.viewProj * vec4(relative, 1.0);
                 // The quad's texture index resolves through the frontend's cell table; the corner
                 // maps onto the sprite's full extent (the S2-a full-sprite approximation: the
                 // mesher's 80 B record carries no per-vertex sprite UVs).

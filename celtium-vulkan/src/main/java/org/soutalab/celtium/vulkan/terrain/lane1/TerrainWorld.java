@@ -56,14 +56,16 @@ public final class TerrainWorld {
         return blockEntities.size();
     }
 
-    /** Every registered block entity whose position lies inside the frustum (all six planes). */
-    public synchronized java.util.List<BlockEntityEntry> blockEntitiesIn(FrustumPlanes frustum) {
+    /** Every registered block entity within the origin-relative frustum's culling tolerance. */
+    public synchronized java.util.List<BlockEntityEntry> blockEntitiesIn(FrustumPlanes frustum, CameraPose origin) {
         java.util.List<BlockEntityEntry> inside = new java.util.ArrayList<>();
         for (BlockEntityEntry entry : blockEntities.values()) {
+            double x = entry.blockX() + 0.5 - origin.x();
+            double y = entry.blockY() + 0.5 - origin.y();
+            double z = entry.blockZ() + 0.5 - origin.z();
             boolean in = true;
             for (int plane = 0; plane < FrustumPlanes.PLANE_COUNT; plane++) {
-                if (frustum.signedDistance(plane, entry.blockX() + 0.5, entry.blockY() + 0.5,
-                        entry.blockZ() + 0.5) < -1.0f) {
+                if (frustum.signedDistance(plane, x, y, z) < -1.0f) {
                     in = false;
                     break;
                 }

@@ -39,9 +39,7 @@ public final class TerrainCullStage {
     }
 
     /**
-     * Origin-relative convenience form, kept for tests and diagnostics that build their frustum
-     * in world space. Production callers must use {@link #visibleSections(FrustumPlanes,
-     * CameraPose)}: the frustums the backend publishes are camera-relative.
+     * Convenience form for views whose origin is (0, 0, 0).
      */
     public List<SectionDesc> visibleSections(FrustumPlanes frustum) {
         return visibleSections(frustum, new CameraPose(0.0, 0.0, 0.0, 0.0f, 0.0f));
@@ -49,11 +47,8 @@ public final class TerrainCullStage {
 
     /**
      * Conservative AABB/frustum test: culled only when every corner is outside one plane.
-     * The frustum planes the backend publishes are camera-relative (extracted from a
-     * translation-free view matrix), so the section's world AABB is first shifted by the
-     * camera origin in double precision; testing world coordinates against those planes
-     * directly pins the frustum apex at the world origin and culls the surface in front of
-     * a raised camera (NEON-G1-DEPTH-RULING-2026-11-28 defect #1).
+     * Shifts the section's world AABB by the view's origin in double precision before
+     * evaluating the origin-relative planes.
      */
     public static boolean sectionVisible(FrustumPlanes frustum, CameraPose pose, SectionDesc desc) {
         double minX = desc.sectionX() * 16.0 - pose.x();
@@ -81,8 +76,7 @@ public final class TerrainCullStage {
     }
 
     /**
-     * Origin-relative convenience form of {@link #sectionVisible(FrustumPlanes, CameraPose,
-     * SectionDesc)} for world-space test frustums. Production callers must pass the pose.
+     * Convenience form for views whose origin is (0, 0, 0).
      */
     public static boolean sectionVisible(FrustumPlanes frustum, SectionDesc desc) {
         return sectionVisible(frustum, new CameraPose(0.0, 0.0, 0.0, 0.0f, 0.0f), desc);

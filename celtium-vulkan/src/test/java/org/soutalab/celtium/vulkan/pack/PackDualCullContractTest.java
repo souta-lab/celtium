@@ -409,7 +409,9 @@ class PackDualCullContractTest {
         // dropped anywhere on the path, this is the entity that would be gathered.
         world.putBlockEntity(0, 70, 0, 8);
 
-        FrustumPlanes shadow = boxFrustum(px - 32, 30, pz - 32, px + 32, 110, pz + 32);
+        CameraPose origin = new CameraPose(px, 70, pz, 0, 0);
+        FrustumPlanes shadow = boxFrustum(-32, -40, -32, 32, 40, 32);
+        stage.prepareShadowView(origin, shadow, 160.0f, 1L);
         assertEquals(Set.of(px + ",70," + pz + ":1",
                         (px + 31) + ",70," + (pz - 31) + ":2",
                         (px - 31) + ",30," + (pz + 31) + ":3"),
@@ -430,7 +432,8 @@ class PackDualCullContractTest {
         world.putBlockEntity(px, 70, pz, 1);
         world.putBlockEntity(0, 70, 0, 8);
 
-        FrustumPlanes dropped = boxFrustum(-32, 30, -32, 32, 110, 32);
+        FrustumPlanes dropped = boxFrustum(-32, -40, -32, 32, 40, 32);
+        stage.prepareShadowView(new CameraPose(0, 70, 0, 0, 0), dropped, 160.0f, 1L);
         assertEquals(Set.of("0,70,0:8"), gather(stage, dropped));
     }
 
@@ -454,8 +457,10 @@ class PackDualCullContractTest {
         world.putBlockEntity(px, 70, pz, 1);
         world.putBlockEntity(0, 70, 0, 2);
 
-        FrustumPlanes shadow = boxFrustum(px - 32, 30, pz - 32, px + 32, 110, pz + 32);
-        List<SectionDesc> visible = cull.visibleSections(shadow);
+        CameraPose origin = new CameraPose(px, 70, pz, 0, 0);
+        FrustumPlanes shadow = boxFrustum(-32, -40, -32, 32, 40, 32);
+        stage.prepareShadowView(origin, shadow, 160.0f, 1L);
+        List<SectionDesc> visible = cull.visibleSections(shadow, origin);
         assertEquals(1, visible.size());
         assertEquals(insideSectionX, visible.get(0).sectionX());
         assertEquals(insideSectionZ, visible.get(0).sectionZ());
@@ -467,17 +472,14 @@ class PackDualCullContractTest {
     void shadowGatherIsAnchoredAtTheFrameStateCameraPosition() {
         // The pack-side origin: ShaderFrameState.cameraPosition is the world-absolute
         // camera the uniforms publish. Build the shadow view over that state exactly
-        // the way the host feeder derives it (shadow camera = cameraPosition pushed
-        // along the sun direction by the shadow distance, looking back at the camera)
-        // and require the gather to work around that camera at large coordinates.
+        // the way the host feeder builds the matrices: the optical eye is displaced
+        // along the sun direction within model-view, relative to cameraPosition.
         ShaderFrameState state = new ShaderFrameState();
         state.cameraPosition.set(29_999_900.0, 70.0, -29_999_900.0);
         Vector3f sunDir = new Vector3f(1f, 1f, 0f).normalize();
         float shadowDistance = 160.0f;
-        Vector3f cam = new Vector3f((float) state.cameraPosition.x,
-                (float) state.cameraPosition.y, (float) state.cameraPosition.z);
-        Vector3f eye = new Vector3f(cam).add(new Vector3f(sunDir).mul(shadowDistance));
-        state.shadowModelView.set(new Matrix4f().lookAt(eye, cam, new Vector3f(0f, 1f, 0f)));
+        Vector3f eyeOffset = new Vector3f(sunDir).mul(shadowDistance);
+        state.shadowModelView.set(new Matrix4f().lookAt(eyeOffset, new Vector3f(), new Vector3f(0f, 1f, 0f)));
         state.shadowProjection.set(new Matrix4f().ortho(
                 -shadowDistance, shadowDistance, -shadowDistance, shadowDistance,
                 0.05f, shadowDistance * 2.0f));
@@ -486,8 +488,8 @@ class PackDualCullContractTest {
 
         TerrainWorld world = emptyWorld();
         TerrainDrawStage stage = stage(world, new ArrayList<>());
-        stage.prepareShadowView(new CameraPose(eye.x, eye.y, eye.z, -135f, -45f),
-                shadowFrustum, shadowDistance, 1L);
+        stage.prepareShadowView(new CameraPose(state.cameraPosition.x, state.cameraPosition.y,
+                state.cameraPosition.z, -135f, -45f), shadowFrustum, shadowDistance, 1L);
         int px = 29_999_900;
         int pz = -29_999_900;
         world.putBlockEntity(px, 70, pz, 1);
